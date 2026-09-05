@@ -13,15 +13,17 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.registry import (
     BOOTSTRAP_RUNTIME_PATHS,
     CONFIG_REGISTRY,
-    DYNAMIC_SEGMENT_CODEC_VECTORS,
-    INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS,
-    INVALID_DYNAMIC_SEGMENTS,
     ActivationPolicy,
     ConfigPatternSpec,
     ConfigSecrecy,
     ConfigVisibility,
     UnknownConfigKeyError,
     config_structured_identity_field,
+)
+from gobby.config.registry_key_encoding import (
+    DYNAMIC_SEGMENT_CODEC_VECTORS,
+    INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS,
+    INVALID_DYNAMIC_SEGMENTS,
     decode_dynamic_segment,
     encode_dynamic_segment,
 )

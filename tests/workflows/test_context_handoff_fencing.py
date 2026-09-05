@@ -1,9 +1,4 @@
-"""Injected-context fencing is scoped to session-start context templates.
-
-Handoff markdown is pull-only via ``get_handoff``. Remaining session-start
-injections that still render into additionalContext (wiki overview) keep
-sentinels. Per-turn injections (brevity, memory, task context) stay un-tagged.
-"""
+"""Context handoff boundaries stay explicit for surviving injected content."""
 
 from __future__ import annotations
 
@@ -38,14 +33,6 @@ def _inject_template(path: Path, rule_name: str) -> str:
 )
 def test_pull_only_handoff_templates_are_gone(filename: str) -> None:
     assert not (_HANDOFF_DIR / filename).exists()
-
-
-def test_wiki_overview_template_is_fenced() -> None:
-    template = _inject_template(_HANDOFF_DIR / "inject-wiki-overview.yaml", "inject-wiki-overview")
-
-    assert INJECTED_CONTEXT_BEGIN in template
-    assert INJECTED_CONTEXT_END in template
-    assert template.index(INJECTED_CONTEXT_BEGIN) < template.index(INJECTED_CONTEXT_END)
 
 
 def test_engine_inject_context_comment_cites_pull_only_handoff() -> None:

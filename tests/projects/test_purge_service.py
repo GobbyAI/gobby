@@ -115,7 +115,7 @@ class FakeCron:
 
     def disable_project_jobs(self, project_id: str) -> list[SimpleNamespace]:
         self.events.append("cron:disable")
-        return [SimpleNamespace(id="job-1", project_id=project_id, name="gobby:wiki-refresh")]
+        return [SimpleNamespace(id="job-1", project_id=project_id, name="project:refresh")]
 
     def list_active_runs(self) -> list[SimpleNamespace]:
         self.events.append("cron:drain")
@@ -141,35 +141,6 @@ class FakeFence:
             yield
         finally:
             self.events.append("fence:exit")
-
-
-class FakeGwikiBarrier:
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-
-    @asynccontextmanager
-    async def drain(self, project_id: str, *, timeout: float) -> AsyncIterator[None]:
-        del project_id, timeout
-        self.events.append("gwiki:drain:enter")
-        try:
-            yield
-        finally:
-            self.events.append("gwiki:drain:exit")
-
-
-class FakeWikiGateway:
-    def __init__(self, events: list[str], *, success: bool = True) -> None:
-        self.events = events
-        self.success = success
-        self.envs: list[Mapping[str, str] | None] = []
-
-    async def purge_project_scope(
-        self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
-    ) -> SimpleNamespace:
-        del project_id, timeout
-        self.events.append("wiki:purge")
-        self.envs.append(env)
-        return SimpleNamespace(success=self.success, stderr="wiki failed")
 
 
 class FakeCodeGateway:
@@ -238,7 +209,6 @@ class FakeGraphCleaner:
 def make_service(
     project: FakeProject,
     *,
-    wiki_success: bool = True,
     code_success: bool = True,
     active_cron: bool = False,
     launch_factory: FakeLaunchFactory | None = None,
@@ -252,8 +222,6 @@ def make_service(
         projects=projects,
         cron=FakeCron(events, active=active_cron),
         fence=FakeFence(events),
-        gwiki_barrier=FakeGwikiBarrier(events),
-        wiki_gateway=FakeWikiGateway(events, success=wiki_success),
         code_gateway=FakeCodeGateway(events, success=code_success),
         vector_cleaner=lambda: vectors,
         graph_cleaner=lambda: FakeGraphCleaner(events),
@@ -293,9 +261,6 @@ async def test_purge_orders_quiescence_projections_cleanup_and_hub_transaction()
         "cron:drain",
         "cron:delete",
         "fence:enter",
-        "gwiki:drain:enter",
-        "gwiki:drain:exit",
-        "wiki:purge",
         "code:invalidate",
         "vectors:clear",
         "graph:clear",
@@ -466,7 +431,7 @@ def test_purge_cron_registration_preserves_disabled_state_and_wakes_enabled_null
 async def test_purge_runs_projection_cleanup_under_a_maintenance_launch() -> None:
     """A soft-deleted project has no checkout and is refused an interactive grant.
 
-    gwiki purge and gcode invalidate therefore run inside a maintenance launch,
+    gcode invalidate therefore runs inside a maintenance launch,
     whose grant bootstrap env is handed to each child and released afterwards.
     """
     events: list[str] = []
@@ -480,16 +445,11 @@ async def test_purge_runs_projection_cleanup_under_a_maintenance_launch() -> Non
 
     assert result.success
     assert projects.get("p1") is None
-    assert factory.opened == ["p1", "p1"]
-    wiki = cast(FakeWikiGateway, service.wiki_gateway)
+    assert factory.opened == ["p1"]
     code = cast(FakeCodeGateway, service.code_gateway)
-    assert wiki.envs == [{"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/grants/p1.json"}]
     assert code.envs == [{"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/grants/p1.json"}]
-    purge_window = events[events.index("gwiki:drain:exit") + 1 : events.index("vectors:clear")]
+    purge_window = events[events.index("fence:enter") + 1 : events.index("vectors:clear")]
     assert purge_window == [
-        "launch:open",
-        "wiki:purge",
-        "launch:close",
         "launch:open",
         "code:invalidate",
         "launch:close",
@@ -503,5 +463,4 @@ async def test_purge_without_a_launch_factory_passes_no_grant_env() -> None:
     result = await service.purge_project("p1")
 
     assert result.success
-    assert cast(FakeWikiGateway, service.wiki_gateway).envs == [None]
     assert cast(FakeCodeGateway, service.code_gateway).envs == [None]

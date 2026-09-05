@@ -11,11 +11,8 @@ from fastapi.testclient import TestClient
 from gobby.ai.endpoint_activation import EndpointActivationResult
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
-from gobby.config.registry import (
-    CONFIG_REGISTRY,
-    DYNAMIC_SEGMENT_CODEC_VECTORS,
-    ConfigVisibility,
-)
+from gobby.config.registry import CONFIG_REGISTRY, ConfigVisibility
+from gobby.config.registry_key_encoding import DYNAMIC_SEGMENT_CODEC_VECTORS
 from gobby.config.runtime import ApplyFailure, ConfigSnapshot, RuntimeSecretBinding
 from gobby.config.values import ConfigValuesService
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext

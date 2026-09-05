@@ -502,7 +502,6 @@
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "64628aec03c9eb7495a8410dee0fd297448a818c97421cd92778df8762070237",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
     "workflows/rules/context-handoff/inject-user-profile.yaml": "50f0c6bb2450267e6e30aa583fef12305436f85a053f89ded871d036d883d614",
-    "workflows/rules/context-handoff/inject-wiki-overview.yaml": "933ebc5b62142a87088a7fb0c1445851075bdc3f64368f1260768d3db1e45e9c",
     "workflows/rules/context-handoff/nudge-compact-on-context-pressure.yaml": "5f2dd746f398ba3d29e44cae0f3de1332cf448173ba760fa8d28b9e8e73439f4",
     "workflows/rules/context-handoff/preserve-context-on-compact.yaml": "7d090a05b6113c0491823e35bc6d7a650a32798eb91a17d5d0ea30cf4cae7f01",
     "workflows/rules/development-discipline/require-development-discipline-skill.yaml": "659255f8bbad05e7f5608c84e294ac041a8c8ee720a384ca99355a370a7691c7",
@@ -612,7 +611,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "e6238077bea978ff1e470a4c65f4b5a13610704cc3c1aa917e147cfe43f06a40",
     "workflows/rules/worker-safety/no-push.yaml": "b2a686d08f0b3bc466a0c4b94a6295ca2eca17ef151b8143ca722392de671648",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "ade659ca1c9b87bc95b86b9c7ffe575fe56b0543ae3a271dba0c0fc1f2579991",
-    "workflows/variables/gobby-default-variables.yaml": "9733a6801f515efc2427f47fe12dd72406c5a94302ea2d41660b458facb60e3f"
+    "workflows/variables/gobby-default-variables.yaml": "5897bab0209e69018eeb0bc815f89154b2f6bf92f7aada5104fc7d967d0c9c2e"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

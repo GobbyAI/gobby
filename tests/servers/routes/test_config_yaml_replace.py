@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 from gobby.config._loading import _mask_reference_values
 from gobby.config.app import DaemonConfig
 from gobby.config.documents import ConfigDocumentsService
-from gobby.config.registry import CONFIG_REGISTRY, DYNAMIC_SEGMENT_CODEC_VECTORS
+from gobby.config.registry import CONFIG_REGISTRY
+from gobby.config.registry_key_encoding import DYNAMIC_SEGMENT_CODEC_VECTORS
 from gobby.config.runtime import (
     ApplyFailure,
     ConfigSnapshot,

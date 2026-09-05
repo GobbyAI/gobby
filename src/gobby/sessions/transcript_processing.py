@@ -25,7 +25,6 @@ from gobby.sessions.context_usage import (
 )
 from gobby.sessions.handoff_records import latest_delivered_clear_handoff
 from gobby.sessions.message_stats import compute_message_stats
-from gobby.sessions.session_wiki_file import session_wiki_path_is_fresh
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
@@ -183,7 +182,7 @@ class TranscriptProcessingMixin:
                 )
                 continue
 
-            # Step 2: Generate artifacts — summary and/or wiki (best-effort)
+            # Step 2: Generate the canonical summary (best-effort)
             try:
                 await self._generate_artifacts_if_needed(session.id, active.session_summary)
             except Exception as e:
@@ -239,22 +238,16 @@ class TranscriptProcessingMixin:
         *,
         allow_llm: bool = True,
     ) -> None:
-        """Generate the session summary (and its mirror wiki file) when missing.
+        """Generate a missing or invalid canonical session summary.
 
-        Safety net for ungraceful exits — if on_session_end or /clear never
-        triggered generation, this catches it during background transcript
-        processing. Proceeds when the summary is missing/invalid OR the flat
-        wiki file is absent; the summary flow no-ops an already-valid summary
-        and restores a missing flat wiki file, so only the missing artifact is
-        produced.
+        This catches ungraceful exits that did not trigger session-end or clear
+        generation. A valid stored summary is sufficient regardless of files.
         """
         session = self.session_manager.get(session_id)
         if not session:
             return
 
-        if is_summary_markdown_valid(session.summary_markdown) and session_wiki_path_is_fresh(
-            session
-        ):
+        if is_summary_markdown_valid(session.summary_markdown):
             return
 
         try:

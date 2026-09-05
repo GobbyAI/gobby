@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby import runner_shutdown_storage
+
 if TYPE_CHECKING:
     import uvicorn
 
@@ -1341,7 +1343,7 @@ class TestStopShutdownAgentPreservation:
             drain_deliveries,
         )
         monkeypatch.setattr(
-            runner_lifecycle_shutdown,
+            runner_shutdown_storage,
             "_shutdown_database_executor",
             shutdown_executor,
         )

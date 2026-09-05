@@ -22,7 +22,7 @@ from gobby.sessions.handoff import (
     build_handoff_continue_prompt,
 )
 
-from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
+from .agents import _seed_parent_turn_seq
 from .claims import preserve_task_claim_state, rehydrate_found_work_gate_arm
 from .context import (
     classify_session_start_context,
@@ -137,7 +137,6 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
             {
                 "_agent_context_injected": False,
                 "_agent_context_rehydrate_pending": True,
-                "wiki_overview_injected": False,
             },
         )
     except (json.JSONDecodeError, KeyError, psycopg.Error) as exc:
@@ -334,7 +333,6 @@ def activate_materialized_session(
             _seed_parent_turn_seq(handler, session_id)
         except Exception as exc:
             handler.logger.warning("Failed to seed memory recall vars: %s", exc)
-        _seed_wiki_overview_var(handler, session_id, project_id)
 
     clear_predecessor = getattr(resolution, "clear_predecessor", None)
     if session_obj is not None and (session_source == "clear" or clear_predecessor is not None):

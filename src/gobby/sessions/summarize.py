@@ -321,20 +321,6 @@ async def _generate_session_summary_core(
     generation_error = generated_summary.generation_error
 
     valid = is_summary_markdown_valid(full_markdown)
-    wiki_result: dict[str, Any] = {"written": False, "skipped": "invalid_summary"}
-    if valid:
-        try:
-            from gobby.sessions.session_wiki_file import write_session_wiki_page
-
-            wiki_result = await asyncio.to_thread(
-                write_session_wiki_page,
-                session,
-                full_markdown,
-            )
-        except Exception as exc:
-            logger.warning("Session wiki file write failed for session %s: %s", session_id, exc)
-            wiki_result = {"written": False, "skipped": "error", "error": str(exc)}
-
     result: dict[str, Any] = {
         "success": valid,
         "session_id": session_id,
@@ -342,7 +328,6 @@ async def _generate_session_summary_core(
         "generation_mode": generation_mode,
         "generation_error": generation_error,
         "source_context_hash": generated_summary.source_hash,
-        "session_wiki_file": wiki_result,
         "context_summary": generated_summary.context_summary,
     }
     if not valid:

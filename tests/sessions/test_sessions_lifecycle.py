@@ -819,9 +819,6 @@ class TestSessionLifecycleManager:
                 manager, "_process_session_transcript", new_callable=AsyncMock
             ) as mock_proc,
             patch.object(manager, "_generate_artifacts_if_needed", new_callable=AsyncMock),
-            patch(
-                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
-            ),
         ):
             mock_proc.side_effect = [Exception("Fail"), None]
 
@@ -859,9 +856,6 @@ class TestSessionLifecycleManager:
             ) as mock_gen,
             patch(
                 "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
-            ),
-            patch(
-                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
             ),
         ):
             processed = await manager._process_pending_transcripts(manager._capture_active())
@@ -1289,10 +1283,8 @@ class TestGenerateArtifactsIfNeeded:
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
-    async def test_session_has_summary_and_wiki_file_skips(
-        self, manager: SessionLifecycleManager
-    ) -> None:
-        """Skips when the session has a valid summary AND the flat wiki file exists."""
+    async def test_session_has_valid_summary_skips(self, manager: SessionLifecycleManager) -> None:
+        """A valid canonical summary needs no derived filesystem artifact."""
         _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "## Current State\nexisting summary"
@@ -1301,9 +1293,6 @@ class TestGenerateArtifactsIfNeeded:
         with (
             patch(
                 "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
-            ),
-            patch(
-                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
             ),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
@@ -1395,10 +1384,10 @@ class TestGenerateArtifactsIfNeeded:
             assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_valid_summary_missing_wiki_file_still_triggers(
+    async def test_valid_summary_without_transcript_skips_generation(
         self, manager: SessionLifecycleManager
     ) -> None:
-        """A missing transcript prevents restoring a missing wiki mirror."""
+        """A valid canonical summary remains sufficient without a transcript."""
         _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "## Current State\nvalid summary"
@@ -1409,10 +1398,6 @@ class TestGenerateArtifactsIfNeeded:
         with (
             patch(
                 "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
-            ),
-            patch(
-                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh",
-                return_value=False,
             ),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",

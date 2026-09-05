@@ -26,8 +26,8 @@ from gobby.config.registry import (
     ConfigSecrecy,
     UnknownConfigKeyError,
     config_key_secrecy,
-    decode_dynamic_segment,
 )
+from gobby.config.registry_key_encoding import decode_dynamic_segment
 from gobby.storage.config_mutations import (
     ConfigConflictError,
     ConfigMutationResult,

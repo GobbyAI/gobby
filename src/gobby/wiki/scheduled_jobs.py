@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGatewayError
-from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_schedule import compute_next_run
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.prune_job import guard_project_cron_handler

@@ -99,10 +99,6 @@ class ExclusiveFence(Protocol):
     ) -> AbstractAsyncContextManager[None]: ...
 
 
-class GwikiDrainBarrier(Protocol):
-    def drain(self, project_id: str, *, timeout: float) -> AbstractAsyncContextManager[None]: ...
-
-
 # Rows outside the purged project that still reference its tasks or sessions
 # through NO ACTION / RESTRICT foreign keys (tasks re-parented across projects,
 # sessions and agent runs spawned across projects, audit rows). Detach or drop
@@ -160,12 +156,6 @@ _FOREIGN_REFERENCE_DETACH_STATEMENTS: tuple[tuple[str, int], ...] = (
 )
 
 
-class WikiGateway(Protocol):
-    async def purge_project_scope(
-        self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
-    ) -> Any: ...
-
-
 class CodeGateway(Protocol):
     async def invalidate_project_by_id(
         self, project_id: str, *, timeout: float, env: Mapping[str, str] | None = None
@@ -204,8 +194,6 @@ class ProjectPurgeService:
         projects: ProjectStorage,
         cron: CronStorage,
         fence: ExclusiveFence,
-        gwiki_barrier: GwikiDrainBarrier,
-        wiki_gateway: WikiGateway,
         code_gateway: CodeGateway,
         vector_cleaner: Callable[[], VectorCleaner],
         graph_cleaner: Callable[[], GraphCleaner],
@@ -217,8 +205,6 @@ class ProjectPurgeService:
         self.projects = projects
         self.cron = cron
         self.fence = fence
-        self.gwiki_barrier = gwiki_barrier
-        self.wiki_gateway = wiki_gateway
         self.code_gateway = code_gateway
         self.vector_cleaner = vector_cleaner
         self.graph_cleaner = graph_cleaner
@@ -267,10 +253,7 @@ class ProjectPurgeService:
         await asyncio.to_thread(self.cron.delete_project_jobs, job_ids)
 
         async with self.fence.exclusive(project_id, timeout=self.drain_timeout):
-            async with self.gwiki_barrier.drain(project_id, timeout=self.drain_timeout):
-                pass
             memory_ids = await asyncio.to_thread(self._memory_ids, project_id)
-            await self._purge_wiki(project_id)
             await self._invalidate_code(project_id)
             await vector_cleaner.clear_project(project_id, memory_ids)
             await graph_cleaner.clear_project_graph_strict(project_id)
@@ -289,14 +272,6 @@ class ProjectPurgeService:
             if time.monotonic() >= deadline:
                 raise ProjectPurgeError("Timed out draining project cron runs")
             await asyncio.sleep(min(0.05, max(deadline - time.monotonic(), 0)))
-
-    async def _purge_wiki(self, project_id: str) -> None:
-        async with self._maintenance_env(project_id) as env:
-            result = await self.wiki_gateway.purge_project_scope(
-                project_id, timeout=self.command_timeout, env=env
-            )
-        if not bool(result.success):
-            raise ProjectPurgeError(_command_failure("gwiki purge", result))
 
     async def _invalidate_code(self, project_id: str) -> None:
         async with self._maintenance_env(project_id) as env:

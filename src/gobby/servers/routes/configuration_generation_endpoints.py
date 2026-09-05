@@ -17,7 +17,7 @@ from gobby.config.ai import (
     GenerationWireAPI,
 )
 from gobby.config.app import DaemonConfig
-from gobby.config.registry import encode_dynamic_segment
+from gobby.config.registry_key_encoding import encode_dynamic_segment
 from gobby.config.values import ConfigValuesError
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext

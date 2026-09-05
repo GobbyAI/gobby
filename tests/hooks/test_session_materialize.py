@@ -249,7 +249,6 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
 
     with (
         patch("gobby.hooks.event_handlers._session_start.materialize._seed_parent_turn_seq"),
-        patch("gobby.hooks.event_handlers._session_start.materialize._seed_wiki_overview_var"),
         patch("gobby.hooks.event_handlers._session_start.materialize.seed_user_profile_content"),
         patch(
             "gobby.hooks.event_handlers._session_start.materialize.prepare_compact_continuation_variables"
@@ -354,7 +353,6 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
 
     with (
         patch(f"{materialize}._seed_parent_turn_seq"),
-        patch(f"{materialize}._seed_wiki_overview_var"),
         patch(f"{materialize}.seed_user_profile_content"),
         patch(f"{materialize}.prepare_compact_continuation_variables"),
         patch(f"{materialize}._schedule_tmux_window_rename_for_session"),
@@ -383,7 +381,6 @@ _MATERIALIZE = "gobby.hooks.event_handlers._session_start.materialize"
 # one in ``overrides`` (``None`` keeps the real function).
 _ACTIVATION_STUBS = (
     "_seed_parent_turn_seq",
-    "_seed_wiki_overview_var",
     "seed_user_profile_content",
     "prepare_compact_continuation_variables",
     "_schedule_tmux_window_rename_for_session",
