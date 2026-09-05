@@ -15,11 +15,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import pickle
 import re
+import subprocess
+import sys
 import time
+from collections.abc import Iterator
+from concurrent.futures import BrokenExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from itertools import chain
 from pathlib import Path
-from typing import Any
+from tempfile import TemporaryDirectory
+from typing import Any, cast
 
 import httpx
 import yaml
@@ -60,6 +67,8 @@ _TYPED_EMPTY: dict[str, Any] = {
 _SPEC_FETCH_TIMEOUT_SECONDS = 30.0
 _FAILED_LOAD_RETRY_SECONDS = 300.0
 _MAX_REF_DEPTH = 32
+_PROCESS_THRESHOLD_CHARS = 256 * 1024
+_PROCESS_THRESHOLD_VALUES = 10_000
 _DROP = object()
 
 
@@ -103,6 +112,18 @@ class _CacheEntry:
 
 
 _INDEX_CACHE: dict[str, _CacheEntry] = {}
+_REPAIR_WORKER_GATE = asyncio.Semaphore(1)
+_REPAIR_DISPATCH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="output-repair-dispatch",
+)
+_REPAIR_WORKER_COMMAND = (
+    "import sys; "
+    "from gobby.mcp_proxy.services.output_repair import _repair_file; "
+    "_repair_file(sys.argv[1], sys.argv[2])"
+)
+
+type _RepairResult = tuple[CallToolResult, list[dict[str, str]]]
 
 
 # ---------------------------------------------------------------------------
@@ -501,15 +522,29 @@ def repair_call_result(
     """Repair a downstream result's structured and text payloads in place."""
     ctx = _RepairContext(document=index.document, null_policy=null_policy)
     structured = result.structured_content
-    if isinstance(structured, dict):
-        structured = _repair_structured(structured, output, ctx)
-    content = list(result.content)
-    for position, item in enumerate(content):
+    parsed_content: list[tuple[int, TextContent, Any, bool]] = []
+    can_reuse_structured = isinstance(structured, dict) and set(structured) != {"result"}
+    for position, item in enumerate(result.content):
         if not isinstance(item, TextContent):
             continue
         try:
             payload = json.loads(item.text)
         except ValueError:
+            continue
+        parsed_content.append(
+            (position, item, payload, can_reuse_structured and payload == structured)
+        )
+
+    if isinstance(structured, dict):
+        structured = _repair_structured(structured, output, ctx)
+    content = list(result.content)
+    repaired_structured_text: str | None = None
+    for position, item, payload, mirrors_structured in parsed_content:
+        if mirrors_structured:
+            if ctx.deviations:
+                if repaired_structured_text is None:
+                    repaired_structured_text = json.dumps(structured)
+                content[position] = item.model_copy(update={"text": repaired_structured_text})
             continue
         text_ctx = (
             ctx if not isinstance(structured, dict) else _RepairContext(ctx.document, null_policy)
@@ -532,6 +567,122 @@ def repair_call_result(
         update={"content": content, "structured_content": structured}
     )
     return repaired_result, ctx.deviations
+
+
+def _large_repair_input(result: CallToolResult) -> bool:
+    text_chars = 0
+    for item in result.content:
+        if isinstance(item, TextContent):
+            text_chars += len(item.text)
+            if text_chars >= _PROCESS_THRESHOLD_CHARS:
+                return True
+
+    structured = result.structured_content
+    if not isinstance(structured, (dict, list)):
+        return False
+
+    value_count = 0
+    stack: list[Iterator[Any]] = [iter((structured,))]
+    while stack:
+        try:
+            value = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            continue
+        value_count += 1
+        if value_count >= _PROCESS_THRESHOLD_VALUES:
+            return True
+        if isinstance(value, str):
+            text_chars += len(value)
+            if text_chars >= _PROCESS_THRESHOLD_CHARS:
+                return True
+        elif isinstance(value, dict):
+            stack.append(chain.from_iterable(value.items()))
+        elif isinstance(value, list):
+            stack.append(iter(value))
+    return False
+
+
+def _repair_in_worker(
+    result: CallToolResult,
+    output: ToolOutputSchema,
+    index: ResponseSchemaIndex,
+    null_policy: str,
+) -> _RepairResult:
+    return repair_call_result(result, output, index, null_policy=null_policy)
+
+
+def _repair_pickled(request: bytes) -> bytes:
+    result, output, index, null_policy = pickle.loads(request)
+    repaired = _repair_in_worker(result, output, index, null_policy)
+    return pickle.dumps(repaired, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _repair_file(request_path: str, response_path: str) -> None:
+    request = Path(request_path).read_bytes()
+    Path(response_path).write_bytes(_repair_pickled(request))
+
+
+def _dispatch_isolated_repair(
+    result: CallToolResult,
+    output: ToolOutputSchema,
+    index: ResponseSchemaIndex,
+    null_policy: str,
+) -> _RepairResult:
+    request = pickle.dumps(
+        (result, output, index, null_policy),
+        protocol=pickle.HIGHEST_PROTOCOL,
+    )
+    with TemporaryDirectory(prefix="gobby-output-repair-") as directory:
+        request_path = Path(directory, "request.pickle")
+        response_path = Path(directory, "response.pickle")
+        request_path.write_bytes(request)
+        command = (
+            sys.executable,
+            "-c",
+            _REPAIR_WORKER_COMMAND,
+            str(request_path),
+            str(response_path),
+        )
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        response = response_path.read_bytes()
+    return cast(_RepairResult, pickle.loads(response))
+
+
+def _release_repair_worker_slot(future: asyncio.Future[_RepairResult]) -> None:
+    _REPAIR_WORKER_GATE.release()
+    if not future.cancelled():
+        future.exception()
+
+
+async def _repair_large_result(
+    result: CallToolResult,
+    output: ToolOutputSchema,
+    index: ResponseSchemaIndex,
+    null_policy: str,
+) -> _RepairResult:
+    await _REPAIR_WORKER_GATE.acquire()
+    try:
+        pending = asyncio.get_running_loop().run_in_executor(
+            _REPAIR_DISPATCH_EXECUTOR,
+            _dispatch_isolated_repair,
+            result,
+            output,
+            index,
+            null_policy,
+        )
+    except (BrokenExecutor, OSError):
+        _REPAIR_WORKER_GATE.release()
+        raise
+
+    pending.add_done_callback(_release_repair_worker_slot)
+    return await asyncio.shield(pending)
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +720,10 @@ async def _repair_if_configured(
     if output is None:
         return result
     null_policy = str(values.get(NULL_POLICY_PARAM) or NULL_POLICY_DROP)
-    repaired, deviations = repair_call_result(result, output, index, null_policy=null_policy)
+    if _large_repair_input(result):
+        repaired, deviations = await _repair_large_result(result, output, index, null_policy)
+    else:
+        repaired, deviations = repair_call_result(result, output, index, null_policy=null_policy)
     if deviations:
         logger.info(
             "Repaired %d schema deviation(s) in %s/%s (null_policy=%s); first: %s",
