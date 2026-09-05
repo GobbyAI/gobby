@@ -614,13 +614,66 @@ class Datastores:
             if current is not None:
                 raise RetirementError(f"Restore target already exists: {target.key}")
             value = json.loads(data)
-            self._insert_row(REGISTRY_TABLES[target.kind], value["row"])
-            if target.kind == "job":
-                for row in value["runs"]:
-                    self._insert_row("cron_runs", row)
-            self.pg.commit()
+            if sha(canonical(value)) != target.digest or value["row"].get("id") != target.name:
+                raise RetirementError("Registry recovery data differs from the exact target")
+            if not WIKI_NAME.search(str(value["row"].get("name", ""))):
+                raise RetirementError("Registry recovery data lacks wiki ownership")
+            runs = value.get("runs", []) if target.kind == "job" else []
+            if any(row.get("cron_job_id") != target.name for row in runs):
+                raise RetirementError("Cron recovery contains an unrelated execution")
+            db = PostgresHubDatabase(self.database_url)
+            try:
+                with db.transaction() as txn:
+                    txn.execute(
+                        sql.SQL("SET LOCAL search_path TO {}, pg_catalog")
+                        .format(sql.Identifier(self.schema))
+                        .as_string(self.pg)
+                    )
+                    self._prepare_registry_references(db, value["row"], runs)
+                    self._insert_row(db, REGISTRY_TABLES[target.kind], value["row"])
+                    for row in runs:
+                        self._insert_row(db, "cron_runs", row)
+            finally:
+                db.close()
 
-    def _insert_row(self, table: str, row: dict[str, Any]) -> None:
+    def _prepare_registry_references(
+        self, db: PostgresHubDatabase, row: dict[str, Any], runs: list[dict[str, Any]]
+    ) -> None:
+        """Create only missing identity stubs in the isolated recovery transaction."""
+        if not self.isolated:
+            raise RetirementError("Reference preparation requires isolated restoration")
+        import secrets
+        from uuid import NAMESPACE_URL, UUID, uuid5
+
+        from gobby.identity import hash_password
+        from gobby.storage.machines import LocalMachineManager
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.users import LocalUserManager
+
+        projects = LocalProjectManager(db)
+        project_id = row.get("project_id")
+        if project_id is not None:
+            project_id = str(UUID(project_id))
+            if projects.get(project_id) is None:
+                projects.create(f"wiki-retirement-{project_id}", project_id=project_id)
+        machines = LocalMachineManager(db)
+        users = LocalUserManager(db)
+        for machine_id in sorted({str(UUID(run["machine_id"])) for run in runs}):
+            if machines.get(machine_id) is not None:
+                continue
+            owner_id = str(
+                uuid5(NAMESPACE_URL, f"gobby:wiki-retirement:machine-owner:{machine_id}")
+            )
+            if users.get(owner_id) is None:
+                users.create(
+                    user_id=owner_id,
+                    name="Wiki retirement rehearsal",
+                    email=f"wiki-retirement-{machine_id}@example.invalid",
+                    password_hash=hash_password(secrets.token_urlsafe(32)),
+                )
+            machines.upsert_seen(machine_id, owner_id, label="Wiki retirement rehearsal")
+
+    def _insert_row(self, db: PostgresHubDatabase, table: str, row: dict[str, Any]) -> None:
         if table not in {*REGISTRY_TABLES.values(), "cron_runs"}:
             raise RetirementError("Unowned restore table")
         query = sql.SQL(
@@ -631,7 +684,7 @@ class Datastores:
             sql.Identifier(self.schema),
             sql.Identifier(table),
         )
-        self.pg.execute(query, (canonical(row).decode(),))
+        db.execute(query.as_string(self.pg), (canonical(row).decode(),))
 
 
 def configured_stores(*, isolated: bool = False) -> Datastores:

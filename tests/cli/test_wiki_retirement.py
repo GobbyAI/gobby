@@ -783,6 +783,163 @@ def test_registry_compare_delete_rejects_new_content(postgres_db: PostgresHubDat
         stores.close()
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("existing_references", [False, True])
+def test_isolated_project_scoped_cron_restore(
+    postgres_db: PostgresHubDatabase,
+    postgres_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    existing_references: bool,
+) -> None:
+    from uuid import uuid4
+
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+
+    from gobby.identity import hash_password
+    from gobby.storage.cron import CronJobStorage
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+    from gobby.storage.definitions.variables import SessionVariableDefaultManager
+    from gobby.storage.machines import LocalMachineManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.schema_contract import apply_schema
+    from gobby.storage.users import LocalUserManager
+    from scripts.wiki_retirement_storage import Datastores
+    from tests.fixtures.postgres import isolated_test_schema
+
+    projects = LocalProjectManager(postgres_db)
+    project = projects.create("Original source project")
+    rule_project = projects.create("Original rule project")
+    variable_project = projects.create("Original variable project")
+    password = hash_password("Isolated-retirement-fixture-password-21857!")
+    owner = LocalUserManager(postgres_db).create(
+        name="Original source owner",
+        email="retirement-source@example.invalid",
+        password_hash=password,
+    )
+    machine_id = str(uuid4())
+    LocalMachineManager(postgres_db).upsert_seen(machine_id, owner.id, label="Original machine")
+    monkeypatch.setattr("gobby.storage.cron_runs.get_machine_id", lambda: machine_id)
+    cron = CronJobStorage(postgres_db)
+    job = cron.create_job(
+        project.id,
+        "wiki-retirement-project-cron",
+        "interval",
+        "handler",
+        {"handler": "wiki-retirement-fixture"},
+        interval_seconds=3600,
+        enabled=False,
+    )
+    run = cron.create_run(job.id)
+    assert run is not None
+    rule = RuleDefinitionManager(postgres_db).create(
+        "wiki-retirement-project-rule", {"event": "session-start"}, project_id=rule_project.id
+    )
+    variable = SessionVariableDefaultManager(postgres_db).create(
+        "wiki_retirement_project_variable", False, project_id=variable_project.id
+    )
+    schema_row = postgres_db.fetchone("SELECT current_schema() AS name")
+    assert schema_row is not None
+
+    def identity_rows(db: PostgresHubDatabase) -> list[list[Any]]:
+        return [
+            db.fetchall(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY id")
+            for table in ("projects", "machines", "users")
+        ]
+
+    original_identities = identity_rows(postgres_db)
+    source = Datastores(
+        postgres_db.conninfo,
+        "http://127.0.0.1:6338",
+        "redis://127.0.0.1:16389",
+        schema=schema_row["name"],
+        isolated=True,
+    )
+    backups: list[tuple[inv.StoreTarget, bytes]] = []
+    try:
+        for kind, name in (("job", job.id), ("rule", rule.id), ("variable", variable.id)):
+            data = source._registry_snapshot(kind, name)
+            assert data is not None
+            target = inv.StoreTarget(
+                kind=kind, name=name, digest=inv.sha(data), count=1, identity="source-fixture"
+            )
+            backups.append((target, source.backup(target)))
+        with isolated_test_schema(postgres_database_url, "wikirefs") as schema:
+            apply_schema(postgres_database_url, schema=schema)
+            conninfo = make_conninfo(
+                postgres_database_url, options=f"-csearch_path={schema} -ctimezone=UTC"
+            )
+            target_db = PostgresHubDatabase(conninfo)
+            target_stores = Datastores(
+                conninfo,
+                "http://127.0.0.1:6338",
+                "redis://127.0.0.1:16389",
+                schema=schema,
+                isolated=True,
+            )
+            try:
+                target_projects = LocalProjectManager(target_db)
+                target_projects.create("Unrelated target project")
+                if existing_references:
+                    target_projects.create("Existing target project", project_id=project.id)
+                    target_owner = LocalUserManager(target_db).create(
+                        name="Existing target owner",
+                        email="retirement-target@example.invalid",
+                        password_hash=password,
+                    )
+                    LocalMachineManager(target_db).upsert_seen(
+                        machine_id, target_owner.id, label="Existing target machine"
+                    )
+                before = identity_rows(target_db)
+                insert_row = target_stores._insert_row
+
+                def interrupt_run_insert(
+                    db: PostgresHubDatabase, table: str, row: dict[str, Any]
+                ) -> None:
+                    if table == "cron_runs":
+                        raise InterruptedError("Interrupted after definition and references")
+                    insert_row(db, table, row)
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(target_stores, "_insert_row", interrupt_run_insert)
+                    with pytest.raises(InterruptedError, match="after definition"):
+                        target_stores.restore(*backups[0])
+                assert identity_rows(target_db) == before
+                assert target_stores.capture(backups[0][0]) is None
+                for target, data in backups:
+                    target_stores.restore(target, data)
+                    assert target_stores.capture(target) == data
+                restored_identities = identity_rows(target_db)
+                for target, data in backups:
+                    target_stores.restore(target, data)
+                assert identity_rows(target_db) == restored_identities
+                for before_rows, after_rows in zip(before, restored_identities, strict=True):
+                    assert all(row in after_rows for row in before_rows)
+                assert LocalUserManager(target_db).get(owner.id) is None
+                restored_machine = LocalMachineManager(target_db).get(machine_id)
+                assert restored_machine is not None
+                if not existing_references:
+                    assert restored_machine.owner_user_id != owner.id
+                    assert restored_machine.label == "Wiki retirement rehearsal"
+                    assert len(restored_identities[0]) == len(before[0]) + 3
+                    assert len(restored_identities[1]) == len(before[1]) + 1
+                    assert len(restored_identities[2]) == len(before[2]) + 1
+                with pytest.raises(psycopg.errors.ForeignKeyViolation):
+                    with target_db.transaction() as txn:
+                        txn.execute(
+                            "UPDATE cron_runs SET machine_id=%s WHERE id=%s", (str(uuid4()), run.id)
+                        )
+                assert target_stores.capture(backups[0][0]) == backups[0][1]
+                assert identity_rows(postgres_db) == original_identities
+                for target, data in backups:
+                    assert source.capture(target) == data
+            finally:
+                target_stores.close()
+                target_db.close()
+    finally:
+        source.close()
+
+
 def test_legacy_mirror_admits_children_and_preserves_checkout(
     state: tuple[inv.Inventory, Path, FakeStores],
     tmp_path: Path,
