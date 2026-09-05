@@ -25,6 +25,7 @@ from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.run_completion import closed_task_completion_result
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
@@ -778,6 +779,7 @@ class AgentLifecycleMonitor:
                     "task_id": run.task_id,
                 },
                 message=f"Agent {run.id} completed bound task {task_ref}",
+                completion_result=closed_task_completion_result(task, run.result),
                 terminal_reason="task_completed",
             )
             if completed:
