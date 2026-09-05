@@ -13,29 +13,153 @@ use serde_json::json;
 use std::time::Duration;
 use tokio::time::{timeout, Instant};
 
-#[test]
-fn list_terminals_follows_cursor_and_pins_snapshot() {
-    let mut workspace = Workspace::scripted();
-    workspace.select_project("project-1");
-    workspace.daemon_mut().set_terminal_pages(vec![
+#[tokio::test]
+async fn list_terminals_follows_cursor_and_pins_snapshot() {
+    const PROJECT_ID: &str = "project-1";
+    const TERMINAL_1: &str = "00000000-0000-0000-0000-000000000001";
+    const TERMINAL_2: &str = "00000000-0000-0000-0000-000000000002";
+    const TERMINAL_3: &str = "00000000-0000-0000-0000-000000000003";
+    const STALE_TERMINAL: &str = "00000000-0000-0000-0000-000000000004";
+    const CURSOR_1: &str = "2026-01-01T00:00:00+00:00|00000000-0000-0000-0000-000000000001";
+    const BYTE_CAP_CURSOR: &str = "2026-01-02T00:00:00+00:00|00000000-0000-0000-0000-000000000002";
+
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
         json!({
-            "items": [{"terminal_id": "terminal-1", "state": "live"}],
-            "next_cursor": "cursor-1",
+            "items": [{"terminal_id": TERMINAL_1, "state": "live", "backend": "native"}],
+            "next_cursor": CURSOR_1,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 7}
         }),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
         json!({
-            "items": [{"terminal_id": "terminal-1", "state": "live"}],
+            "items": [{
+                "terminal_id": TERMINAL_2,
+                "state": "pending",
+                "backend": "native",
+                "title": "x".repeat(4096)
+            }],
+            "next_cursor": BYTE_CAP_CURSOR
+        }),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": TERMINAL_3, "state": "live", "backend": "native"}],
             "next_cursor": null
         }),
-    ]);
+    );
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({"epoch": "attention-1", "seq": 0, "entries": []}),
+    );
 
-    workspace.fetch_roster().expect("fetch roster");
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project(PROJECT_ID);
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("three-page roster traversal");
 
     assert_eq!(
         workspace.roster_terminal_ids(),
-        vec!["terminal-1".to_string()],
-        "rows repeated across page boundaries must be installed once"
+        vec![
+            TERMINAL_1.to_string(),
+            TERMINAL_2.to_string(),
+            TERMINAL_3.to_string(),
+        ]
     );
+    assert_eq!(workspace.pane_count(), 3);
+
+    let (_, mut observed) = daemon.subscribe();
+    mock.send_event_and_wait(json!({
+        "type": "terminal_event",
+        "event": "created",
+        "terminal_id": STALE_TERMINAL,
+        "daemon_epoch": "epoch-1",
+        "seq": 7,
+        "timestamp": "2026-01-03T00:00:00Z"
+    }))
+    .await;
+    assert!(matches!(
+        timeout(Duration::from_secs(1), observed.recv())
+            .await
+            .expect("stale event delivery")
+            .expect("stale event"),
+        DaemonEvent::Terminal { seq: 7, .. }
+    ));
+    workspace
+        .drain_live_events()
+        .await
+        .expect("discard event at page-one snapshot watermark");
+    assert!(!workspace
+        .roster_terminal_ids()
+        .iter()
+        .any(|terminal_id| terminal_id == STALE_TERMINAL));
+
+    let requests = mock.requests();
+    let list_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.method == "GET" && request.target.starts_with("/api/terminals"))
+        .collect();
+    assert_eq!(list_requests.len(), 3, "one paged request per mock page");
+    let expected_cursors = [None, Some(CURSOR_1), Some(BYTE_CAP_CURSOR)];
+    for (request, expected_cursor) in list_requests.iter().zip(expected_cursors) {
+        let url = reqwest::Url::parse(&format!("http://mock{}", request.target))
+            .expect("recorded terminal list URL");
+        let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(url.path(), "/api/terminals");
+        assert_eq!(
+            query.get("project_id").map(String::as_str),
+            Some(PROJECT_ID)
+        );
+        assert_eq!(
+            query.get("states").map(String::as_str),
+            Some("pending,live")
+        );
+        assert_eq!(
+            query.get("cursor").map(String::as_str),
+            expected_cursor,
+            "the byte-capped page must resume from its last included row"
+        );
+    }
+    assert!(requests.iter().all(|request| {
+        !request.target.contains("history")
+            && request
+                .body
+                .as_ref()
+                .is_none_or(|body| !body.to_string().contains("history"))
+    }));
+    let attached_terminal_ids: Vec<_> = requests
+        .iter()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body.as_ref())
+        .filter(|body| {
+            body.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach")
+        })
+        .filter_map(|body| body.get("terminal_id").and_then(serde_json::Value::as_str))
+        .collect();
+    assert_eq!(attached_terminal_ids, [TERMINAL_1, TERMINAL_2, TERMINAL_3]);
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
 }
 
 #[tokio::test]
@@ -769,10 +893,12 @@ async fn fragment_reassembly_bounds_hold_under_saturation() {
     send_fragment(&mock, "too-large", 4, 16, true, b"x").await;
     expect_protocol_disconnect(&mut events).await;
 
+    tokio::time::resume();
     daemon
         .reconnect(daemon.generation())
         .await
         .expect("reconnect after assembly limit");
+    tokio::time::pause();
     for attachment in 0..4 {
         for index in 0..16 {
             send_fragment(
