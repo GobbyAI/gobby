@@ -326,7 +326,12 @@ class Transaction(Protocol):
     is_immediate: bool
 
     def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Cursor:
-        """Execute a SQL statement and return a backend-neutral cursor."""
+        """Execute a SQL statement and return a backend-neutral cursor.
+
+        Deadline-scoped and explicitly bounded transactions accept one SQL
+        statement per call. PostgreSQL rejects a batch before any statement runs;
+        semicolons within strings, comments, and statement bodies remain valid.
+        """
         ...
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:

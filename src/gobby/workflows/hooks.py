@@ -16,6 +16,7 @@ from gobby.hooks.effect_deadline import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
@@ -904,10 +905,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             return await self._evaluate_rules(event, blocking_deadline=blocking_deadline)
 
         try:
-            return await asyncio.wait_for(
-                self._evaluate_rules(event, blocking_deadline=blocking_deadline),
-                timeout=timeout,
-            )
+            with database_operation_deadline(timeout_seconds=timeout):
+                return await asyncio.wait_for(
+                    self._evaluate_rules(event, blocking_deadline=blocking_deadline),
+                    timeout=timeout,
+                )
         except TimeoutError as exc:
             session_id = event.metadata.get("_platform_session_id") or ""
             raise WorkflowEvaluationTimeout(
