@@ -24,7 +24,7 @@ pub const FEATURE_MID: &str = "feature_mid";
 pub const FEATURE_HIGH: &str = "feature_high";
 
 /// Provider-neutral writing tier. Mirrors the consumer-side prompt tier without
-/// pulling any gcode/gwiki types into gcore.
+/// pulling consumer-specific types into gcore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GenerationTier {
     /// Per-file / per-symbol summaries.

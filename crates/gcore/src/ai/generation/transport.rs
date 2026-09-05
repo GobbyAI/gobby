@@ -25,8 +25,7 @@ use crate::config::{AiCapability, FeatureCandidate};
 /// Daemon tool-passthrough chat-completion path (#17393).
 const DAEMON_CHAT_COMPLETIONS_PATH: &str = "/api/llm/chat/completions";
 
-/// Final result of a one-shot daemon-side agentic narrative generation call
-/// (the tool-loop daemon route for codewiki and gwiki).
+/// Final result of a one-shot daemon-side agentic narrative generation call.
 ///
 /// The daemon runs its own Claude Agent SDK investigation loop (executing only
 /// the policy-whitelisted tools over the project) server-side and returns the
@@ -55,14 +54,14 @@ pub struct DaemonAgenticResult {
 
 /// Caller-declared description of the agent's investigation surface on the
 /// daemon `tool_chat` route. gcore stays generic over *what* the agent does:
-/// the caller (codewiki, gwiki) names the executable family and the exact
-/// subcommands it may run. `cli` selects the family (`"gcode"`/`"gwiki"`),
+/// the caller names the executable family and the exact
+/// subcommands it may run. `cli` selects the family (for example, `"gcode"`),
 /// `tools` lists the exposed subcommands, and `allow_mutation` gates mutating
 /// subcommands — a read-only caller leaves it `false`. The daemon validates
 /// these against its own whitelist before executing any tool.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolPolicy {
-    /// Executable family the daemon runs (`"gcode"` or `"gwiki"`).
+    /// Executable family the daemon runs (for example, `"gcode"`).
     pub cli: String,
     /// Whitelisted subcommands the agent may invoke.
     pub tools: Vec<String>,

@@ -2,7 +2,7 @@
 //!
 //! gcore owns the loop mechanics — message bookkeeping, tool-call execution
 //! limits, termination accounting, and observability — and defines the
-//! read-only [`ToolExecutor`] trait. It does **not** depend on gcode/gwiki:
+//! read-only [`ToolExecutor`] trait. It does not depend on consumer crates:
 //! consumers implement [`ToolExecutor`] over their own indexed read primitives
 //! (search, outline, symbol read, grep, bounded file read) and pass it in.
 //!
@@ -143,7 +143,7 @@ impl std::fmt::Display for ToolError {
 
 impl std::error::Error for ToolError {}
 
-/// Read-only repo tool executor. Implemented by consumers (gcode/gwiki) over
+/// Read-only repo tool executor. Implemented by consumers over
 /// their indexed read primitives. Implementations must not mutate the repo or
 /// any datastore. Each invocation may run on a detached worker after its caller
 /// times out, so implementations must own thread-safe read-only state.

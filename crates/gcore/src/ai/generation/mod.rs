@@ -1,11 +1,11 @@
-//! Shared, provider-neutral generation foundation for CodeWiki/gwiki narrative.
+//! Shared, provider-neutral text generation foundation.
 //!
 //! Two lanes share one tier -> feature-profile resolver and the same routing:
 //!
 //! * **One-shot** ([`one_shot`]) — single completion with tools suppressed.
 //! * **Tool loop** ([`tool_loop`]) — a gcore-owned, provider-neutral tool-calling
 //!   loop driven by a consumer-supplied [`ToolExecutor`]. gcore owns the loop,
-//!   limits, and observability and never depends on gcode/gwiki.
+//!   limits, and observability without depending on consumer crates.
 //!
 //! Profiles route by [`GenerationTier`]: the Daemon route forwards the profile
 //! name to the daemon, which owns provider and model selection.

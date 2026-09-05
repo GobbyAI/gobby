@@ -100,7 +100,7 @@ fn dispatch_one_shot<T>(
 }
 
 /// One-shot generation with an explicit provider/model candidate chain pinned
-/// for this call (codewiki's `--ai-aggregate-candidate`). The Daemon route
+/// for this call. The Daemon route
 /// forwards the chain via the request's `candidates` field, superseding the
 /// binding's profile/provider/model; the Direct route resolves exactly one
 /// profile target and cannot honor a candidate chain, so explicit candidates
