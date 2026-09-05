@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import stat
 import subprocess  # nosec B404 # fixed local cp/chmod commands.
 import sys
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +100,14 @@ _RUN_CACHE_ENV_VARS = (
 
 SRT_SETTINGS_RELATIVE_PATH = Path("assets") / "settings.json"
 SRT_VIOLATIONS_RELATIVE_PATH = Path("logs") / "violations.jsonl"
+PRE_COMMIT_STORE_SPARE_NAME = ".pre-commit-store-spare"
+PRE_COMMIT_STORE_SPARE_TEMP_NAME = ".pre-commit-store-spare.tmp"
+
+logger = logging.getLogger(__name__)
+
+_pre_commit_spare_lock = threading.Lock()
+_pre_commit_spare_thread: threading.Thread | None = None
+_pre_commit_spare_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -600,6 +610,15 @@ def managed_execution_root() -> Path:
     return get_gobby_home() / "runtime" / "managed-executions"
 
 
+def pre_commit_store_spare_paths(managed_root: Path | None = None) -> tuple[Path, Path]:
+    """Return the complete and in-progress spare-store paths."""
+    root = managed_execution_root() if managed_root is None else managed_root
+    return (
+        root / PRE_COMMIT_STORE_SPARE_NAME,
+        root / PRE_COMMIT_STORE_SPARE_TEMP_NAME,
+    )
+
+
 def srt_mux_tmpdir() -> Path:
     """Return the short shared directory for SRT runner-internal unix sockets.
 
@@ -623,14 +642,8 @@ def _operator_pre_commit_store() -> Path:
     return Path.home() / ".cache" / "pre-commit"
 
 
-def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
-    """Clone the operator's pre-commit store into one writable run cache."""
-    if not (workspace / ".pre-commit-config.yaml").is_file():
-        return
-    source = _operator_pre_commit_store()
-    if not source.is_dir():
-        return
-
+def _clone_pre_commit_store(source: Path, destination: Path) -> None:
+    """Clone one pre-commit store and make the clone writable."""
     cloned = False
     if sys.platform == "darwin":
         try:
@@ -659,6 +672,122 @@ def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
             if copied_path.is_dir():
                 required_mode |= stat.S_IXUSR
             copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
+
+
+def _remove_pre_commit_store(path: Path) -> None:
+    """Remove one daemon-owned store without following a replacement symlink."""
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+        return
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return
+    except PermissionError:
+        for copied_path in (path, *path.rglob("*")):
+            if copied_path.is_symlink():
+                continue
+            required_mode = stat.S_IRUSR | stat.S_IWUSR
+            if copied_path.is_dir():
+                required_mode |= stat.S_IXUSR
+            copied_path.chmod(stat.S_IMODE(copied_path.stat().st_mode) | required_mode)
+        shutil.rmtree(path)
+
+
+def _consume_pre_commit_store_spare(destination: Path) -> bool:
+    spare, _temporary = pre_commit_store_spare_paths()
+    try:
+        os.rename(spare, destination)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        logger.warning("Failed to consume pre-commit store spare", exc_info=True)
+        return False
+    return True
+
+
+def _replenish_pre_commit_store_spare(source: Path, managed_root: Path) -> None:
+    global _pre_commit_spare_thread
+
+    spare, temporary = pre_commit_store_spare_paths(managed_root)
+    current_thread = threading.current_thread()
+    try:
+        managed_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        managed_root.chmod(0o700)
+        _remove_pre_commit_store(temporary)
+        if spare.is_dir():
+            return
+        _clone_pre_commit_store(source, temporary)
+        os.rename(temporary, spare)
+    except Exception:
+        logger.warning("Failed to replenish pre-commit store spare", exc_info=True)
+    finally:
+        try:
+            _remove_pre_commit_store(temporary)
+        except OSError:
+            logger.warning("Failed to remove partial pre-commit store spare", exc_info=True)
+        with _pre_commit_spare_lock:
+            if _pre_commit_spare_thread is current_thread:
+                _pre_commit_spare_thread = None
+
+
+def _schedule_pre_commit_store_spare(source: Path) -> None:
+    """Start the sole background replenisher when no complete spare exists."""
+    global _pre_commit_spare_root, _pre_commit_spare_thread
+
+    managed_root = managed_execution_root()
+    spare, _temporary = pre_commit_store_spare_paths(managed_root)
+    with _pre_commit_spare_lock:
+        worker = _pre_commit_spare_thread
+        if spare.is_dir() or (worker is not None and worker.is_alive()):
+            return
+        worker = threading.Thread(
+            target=_replenish_pre_commit_store_spare,
+            args=(source, managed_root),
+            name="pre-commit-store-spare",
+        )
+        _pre_commit_spare_root = managed_root
+        _pre_commit_spare_thread = worker
+        try:
+            worker.start()
+        except RuntimeError:
+            _pre_commit_spare_thread = None
+            logger.warning("Failed to start pre-commit store spare replenisher", exc_info=True)
+
+
+def shutdown_pre_commit_store_spare() -> None:
+    """Drain replenishment and remove the daemon's complete and partial spares."""
+    global _pre_commit_spare_root, _pre_commit_spare_thread
+
+    with _pre_commit_spare_lock:
+        worker = _pre_commit_spare_thread
+        managed_root = _pre_commit_spare_root
+    if worker is not None and worker is not threading.current_thread():
+        worker.join()
+    if managed_root is not None:
+        for path in pre_commit_store_spare_paths(managed_root):
+            try:
+                _remove_pre_commit_store(path)
+            except OSError:
+                logger.warning("Failed to remove pre-commit store spare at %s", path, exc_info=True)
+    with _pre_commit_spare_lock:
+        if _pre_commit_spare_thread is worker:
+            _pre_commit_spare_thread = None
+        if _pre_commit_spare_thread is None:
+            _pre_commit_spare_root = None
+
+
+def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
+    """Materialize a writable run cache, consuming the spare when available."""
+    if not (workspace / ".pre-commit-config.yaml").is_file():
+        return
+    source = _operator_pre_commit_store()
+    if not source.is_dir():
+        return
+
+    if not _consume_pre_commit_store_spare(destination):
+        _clone_pre_commit_store(source, destination)
+    _schedule_pre_commit_store_spare(source)
 
 
 def prepare_sandbox_run_paths(

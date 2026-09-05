@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from gobby.agents import sandbox_reaper
+from gobby.agents.sandbox_policy import (
+    PRE_COMMIT_STORE_SPARE_NAME,
+    PRE_COMMIT_STORE_SPARE_TEMP_NAME,
+)
 from gobby.agents.sandbox_reaper import (
     SandboxReapResult,
     reap_sandbox_run_roots,
@@ -186,6 +190,22 @@ async def test_startup_sweep_removes_old_orphan_and_keeps_young_orphan(
     assert result.removed_roots == 1
     assert not old_orphan.exists()
     assert young_orphan.exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_sweep_removes_fresh_pre_commit_spare_and_partial_temp(
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    managed_root = gobby_home / "runtime" / "managed-executions"
+    spare = _create_root(managed_root / PRE_COMMIT_STORE_SPARE_NAME)
+    temporary = _create_root(managed_root / PRE_COMMIT_STORE_SPARE_TEMP_NAME)
+
+    result = await sweep_sandbox_run_roots(set(), gobby_home=gobby_home, now=_NOW)
+
+    assert result.removed_roots == 2
+    assert not spare.exists()
+    assert not temporary.exists()
 
 
 @pytest.mark.asyncio
