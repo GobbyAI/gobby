@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use gobby_core::vault::resolve_vault_dir;
-
 use crate::index::{normalize_storage_path, normalize_storage_path_str};
 
 const GCODE_CONFIG_PATH: &str = ".gobby/gcode.json";
@@ -12,35 +10,19 @@ const DEFAULT_HIDDEN_ALLOWLIST_PATTERNS: &[&str] = &[
     ".github/workflows/**/*.yaml",
 ];
 
-fn vault_dir_name(root: &Path) -> Option<String> {
-    resolve_vault_dir(root)?
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_owned)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HiddenPathContext {
-    vault_dir_name: Option<String>,
     allowlist: HiddenPathAllowlist,
 }
 
 impl HiddenPathContext {
     pub(super) fn load(root: &Path) -> Self {
-        let vault_dir_name = vault_dir_name(root);
-        let allowlist = HiddenPathAllowlist::load_with_vault(root, vault_dir_name.as_deref());
-        Self {
-            vault_dir_name,
-            allowlist,
-        }
+        let allowlist = HiddenPathAllowlist::load(root);
+        Self { allowlist }
     }
 
     pub(super) fn allowlist(&self) -> &HiddenPathAllowlist {
         &self.allowlist
-    }
-
-    fn vault_dir_name(&self) -> Option<&str> {
-        self.vault_dir_name.as_deref()
     }
 }
 
@@ -50,14 +32,11 @@ pub(super) struct HiddenPathAllowlist {
 }
 
 impl HiddenPathAllowlist {
-    fn load_with_vault(root: &Path, vault_dir_name: Option<&str>) -> Self {
+    fn load(root: &Path) -> Self {
         let mut patterns = DEFAULT_HIDDEN_ALLOWLIST_PATTERNS
             .iter()
             .map(|pattern| (*pattern).to_string())
             .collect::<Vec<_>>();
-        if let Some(vault) = vault_dir_name {
-            patterns.push(format!("{vault}/**/*.md"));
-        }
         patterns.extend(read_project_hidden_allowlist(root));
         Self::from_patterns(patterns)
     }
@@ -84,7 +63,7 @@ impl HiddenPathAllowlist {
             for entry in entries.flatten() {
                 // No hidden-path gate: allowlisted files skipped by the main
                 // walk for ANY reason (hidden dirs like .gobby, or gitignored
-                // ones like the wiki vault) are rescued here; files the walk
+                // ones configured by the project) are rescued here; files the walk
                 // already yielded dedup via the caller's `seen` set.
                 if entry.is_file() {
                     paths.insert(entry);
@@ -158,11 +137,7 @@ pub(super) fn is_hidden_path(root: &Path, path: &Path) -> bool {
     })
 }
 
-pub(super) fn is_hidden_metadata_content_only_with_context(
-    root: &Path,
-    path: &Path,
-    context: &HiddenPathContext,
-) -> bool {
+pub(super) fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let components = rel
         .components()
@@ -180,54 +155,10 @@ pub(super) fn is_hidden_metadata_content_only_with_context(
         return true;
     }
 
-    if components.len() >= 2
-        && path_has_extension(path, &["md"])
-        && context.vault_dir_name() == Some(components[0])
-    {
-        return true;
-    }
-
     components.len() >= 3
         && components[0] == ".github"
         && components[1] == "workflows"
         && path_has_extension(path, &["yml", "yaml"])
-}
-
-pub(super) fn is_generated_wiki_metadata_with_context(
-    root: &Path,
-    path: &Path,
-    context: &HiddenPathContext,
-) -> bool {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    let components = rel
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(value) => value.to_str(),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    let Some(vault) = context.vault_dir_name() else {
-        return false;
-    };
-    if components.first().copied() != Some(vault) {
-        return false;
-    }
-
-    if components.get(1).copied() == Some("_meta")
-        || components.get(1).copied() == Some(".obsidian")
-        || components.get(1).copied() == Some(gobby_core::vault::STATE_ROOT)
-    {
-        return true;
-    }
-
-    if components.len() == 2 && components[1] == "wikis.json" {
-        return true;
-    }
-
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".lock"))
 }
 
 fn path_has_extension(path: &Path, extensions: &[&str]) -> bool {

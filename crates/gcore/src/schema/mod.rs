@@ -26,8 +26,7 @@ pub use attached::{
 };
 pub use error::SchemaError;
 pub use external::{
-    ExternalPostgresObject, ExternalPostgresObjectKind, ExternalSchemaError,
-    gcode_postgres_objects, gwiki_postgres_objects,
+    ExternalPostgresObject, ExternalPostgresObjectKind, ExternalSchemaError, gcode_postgres_objects,
 };
 pub use gate::{
     ArtifactRecord, BackupGateContext, BackupManifestError, HubBackupManifest, SourceIdentity,

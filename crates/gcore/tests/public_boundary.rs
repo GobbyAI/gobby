@@ -69,7 +69,7 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod project;",
         "pub mod ai_context;",
         "pub mod ai_types;",
-        "pub mod codewiki_contract;",
+        "pub mod mermaid;",
         "pub mod config;",
         "pub mod degradation;",
         r#"#[cfg(test)]"#,

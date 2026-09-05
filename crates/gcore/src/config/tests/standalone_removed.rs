@@ -95,23 +95,8 @@ fn secret_markers_fail_typed_as_grant_issuance_bugs() {
 }
 
 #[test]
-fn gwiki_system_model_runtime_mode_enum_is_untouched() {
-    let path = crate_root().join("../gwiki/src/commands/code/system_model.rs");
-    let source = std::fs::read_to_string(&path).expect("read system_model.rs");
-    assert!(
-        source.contains("pub enum RuntimeMode"),
-        "gwiki system-model RuntimeMode must remain: {}",
-        path.display()
-    );
-}
-
-#[test]
 fn client_crates_have_no_qualified_standalone_surfaces() {
-    let roots = [
-        crate_root(),
-        crate_root().join("../gcode"),
-        crate_root().join("../gwiki"),
-    ];
+    let roots = [crate_root(), crate_root().join("../gcode")];
     let needles = removed_surface_needles();
     let mut hits = Vec::new();
     for root in roots {

@@ -26,9 +26,5 @@ filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-wiki) & (test(::serial_db::) | test(serial_db::))'
-test-group = 'serial-db'
-
-[[profile.default.overrides]]
 filter = 'package(gobby-terminal) & (test(::pty::) | test(pty::) | test(frame_producer))'
 test-group = 'gterm-pty'

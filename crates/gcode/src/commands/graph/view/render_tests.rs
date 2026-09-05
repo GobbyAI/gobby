@@ -1,5 +1,5 @@
 use super::*;
-use gobby_core::vault::mermaid::is_valid_mermaid;
+use gobby_core::mermaid::is_valid_mermaid;
 
 fn sample_seed() -> ViewSeed {
     ViewSeed {

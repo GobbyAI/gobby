@@ -146,8 +146,5 @@ pub(super) fn adopted_column_contracts() -> BTreeMap<&'static str, &'static [&'s
                 "created_at",
             ] as &[_],
         ),
-        ("gwiki_documents", &["id"] as &[_]),
-        ("gwiki_chunks", &["id", "document_id"] as &[_]),
-        ("gwiki_sources", &["id"] as &[_]),
     ])
 }

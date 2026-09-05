@@ -66,7 +66,7 @@ fn walk_rust_files(root: &Path, out: &mut Vec<PathBuf>) {
 fn client_crate_rust_files() -> Vec<PathBuf> {
     let root = workspace_root();
     let mut files = Vec::new();
-    for crate_name in ["gcode", "gcore", "gwiki", "gdaemon", "ghook"] {
+    for crate_name in ["gcode", "gcore", "gdaemon", "ghook"] {
         walk_rust_files(&root.join("crates").join(crate_name), &mut files);
     }
     let skip = this_test_file();
