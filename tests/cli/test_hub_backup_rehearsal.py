@@ -6,20 +6,24 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import click
 import psycopg
 import pytest
 from click.testing import CliRunner
+from psycopg.conninfo import conninfo_to_dict
 
 from gobby.cli import postgres_backup
 from gobby.cli.hub_backup import cli, rehearsal
 from gobby.cli.hub_backup.files_home import maintenance_claim
 from gobby.runner_pid_file import claim_pid_file
+from gobby.storage.maintenance_epoch import MaintenanceEpoch
 
 hub_maintenance = import_module("gobby.cli.hub_maintenance")
 
@@ -135,6 +139,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RehearsalHarness:
     monkeypatch.delenv("PGHOSTADDR", raising=False)
     monkeypatch.delenv("PGSERVICE", raising=False)
     monkeypatch.setattr(rehearsal, "ensure_docker_allowed", MagicMock())
+    monkeypatch.setattr(rehearsal, "discover_active_maintenance_epoch", lambda url: None)
     monkeypatch.setattr(subprocess, "run", harness.run)
     monkeypatch.setattr(psycopg, "connect", connect)
     return harness
@@ -225,6 +230,56 @@ def test_profile_rejects_unowned_docker_state(stack: RehearsalHarness, failure: 
         rehearsal.load_rehearsal_profile(stack.database_url)
     assert all(command[1] in {"container", "volume", "ps"} for command in stack.calls)
     stack.connect.assert_not_called()
+
+
+def test_profile_binds_discovered_epoch_without_changing_environment(
+    stack: RehearsalHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    epoch = MaintenanceEpoch(
+        id=UUID("a260be66-d16e-4a27-bc5b-d1d1b8d2c617"),
+        campaign="schema-apply",
+        opened_at=datetime(2026, 9, 5, tzinfo=UTC),
+        opened_by="hub-maintenance:schema-apply",
+        scope_note="isolated test",
+        released_at=None,
+        released_by_command=None,
+    )
+    discover = MagicMock(return_value=epoch)
+    monkeypatch.setattr(rehearsal, "discover_active_maintenance_epoch", discover)
+    before = dict(os.environ)
+    assert rehearsal.load_rehearsal_profile(stack.database_url) is not None
+    discover.assert_called_once_with(stack.database_url)
+    target = conninfo_to_dict(stack.connect.call_args.args[0])
+    assert target.pop("options") == f"-c gobby.maintenance_epoch={epoch.id}"
+    assert target == conninfo_to_dict(stack.database_url)
+    assert dict(os.environ) == before
+
+
+def test_profile_identity_without_epoch_keeps_original_connection_target(
+    stack: RehearsalHarness,
+) -> None:
+    assert rehearsal.load_rehearsal_profile(stack.database_url) is not None
+    stack.connect.assert_called_once_with(stack.database_url, connect_timeout=5, autocommit=True)
+
+
+@pytest.mark.parametrize("stage", ["discovery", "identity"])
+def test_profile_refuses_unavailable_epoch_or_identity(
+    stack: RehearsalHarness, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    error = psycopg.OperationalError("isolated connection unavailable")
+    if stage == "discovery":
+        monkeypatch.setattr(
+            rehearsal, "discover_active_maintenance_epoch", MagicMock(side_effect=error)
+        )
+    else:
+        stack.connect.side_effect = error
+    with pytest.raises(
+        click.ClickException, match="Could not verify rehearsal PostgreSQL identity"
+    ):
+        rehearsal.load_rehearsal_profile(stack.database_url)
+    assert all(command[1] in {"container", "volume", "ps"} for command in stack.calls)
+    if stage == "discovery":
+        stack.connect.assert_not_called()
 
 
 def test_profile_rejects_wrong_database_and_source_identity(stack: RehearsalHarness) -> None:
