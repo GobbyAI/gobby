@@ -2,10 +2,15 @@
 
 pub mod grid;
 
+use crate::app::run_live_loop;
+use crate::daemon::LiveDaemon;
 use crate::frame_source::AttachLocator;
 use crate::theme::{Theme, ThemeKind};
+use crate::ui::Chrome;
 use crate::Workspace;
 use gobby_terminal::protocol::{ClientMessage, RenderEncoding, PROTOCOL_VERSION};
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
 
 /// Handshake + user attach used by the live workspace and by Unix frame connect.
 pub fn observe_tmux_pane(locator: &AttachLocator) -> (ClientMessage, ClientMessage) {
@@ -31,12 +36,20 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
-    let mut ws = Workspace::scripted();
-    if let Some(project) = ready.project {
-        ws.select_project(project);
-    }
-    let _url = ready.daemon_url;
-    let _token = ready.token;
-    let _theme = Theme::new(ThemeKind::Dark);
-    Ok(())
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async move {
+            let daemon =
+                LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
+            let mut workspace = Workspace::live(daemon);
+            if let Some(project) = ready.project {
+                workspace.select_project(project);
+            }
+            let mut chrome = Chrome::new(Theme::new(ThemeKind::Dark));
+            let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+            let input = gobby_terminal::raw_input::spawn_input_reader();
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input).await?;
+            Ok(())
+        })
 }

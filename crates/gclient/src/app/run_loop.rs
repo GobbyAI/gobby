@@ -1,5 +1,7 @@
 //! Tokio event loop and reconnect ownership for the live client.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -252,6 +254,8 @@ pub enum ReconnectAttempt {
     Idle,
 }
 
+pub type ReconnectFuture = Pin<Box<dyn Future<Output = Result<Generation, DaemonError>> + 'static>>;
+
 #[derive(Debug)]
 enum ReconnectPhase {
     ReadyAt(Instant),
@@ -300,31 +304,61 @@ impl ReconnectSupervisor {
         self.episode.as_ref().map_or(0, |episode| episode.attempts)
     }
 
-    pub async fn attempt_when_due<D: Daemon>(&mut self, daemon: &D) -> ReconnectAttempt {
-        let Some(episode) = self.episode.as_ref() else {
-            return ReconnectAttempt::Idle;
-        };
+    pub fn next_attempt_at(&self) -> Option<Instant> {
+        match self.episode.as_ref()?.phase {
+            ReconnectPhase::ReadyAt(ready_at) => Some(ready_at),
+            ReconnectPhase::AwaitingHandshake => None,
+        }
+    }
+
+    fn begin_attempt(&mut self) -> Option<Generation> {
+        let episode = self.episode.as_mut()?;
         let ReconnectPhase::ReadyAt(ready_at) = episode.phase else {
+            return None;
+        };
+        if ready_at > Instant::now() {
+            return None;
+        }
+        episode.attempts += 1;
+        episode.phase = ReconnectPhase::AwaitingHandshake;
+        Some(episode.observed)
+    }
+
+    pub fn start_due_attempt<D>(&mut self, daemon: D) -> Option<ReconnectFuture>
+    where
+        D: Daemon + 'static,
+    {
+        let observed = self.begin_attempt()?;
+        Some(Box::pin(async move { daemon.reconnect(observed).await }))
+    }
+
+    pub fn complete_attempt(
+        &mut self,
+        result: Result<Generation, DaemonError>,
+    ) -> ReconnectAttempt {
+        match result {
+            Ok(generation) => {
+                if let Some(episode) = self.episode.as_mut() {
+                    episode.observed = episode.observed.max(generation);
+                }
+                ReconnectAttempt::Reconnected(generation)
+            }
+            Err(error) => self.record_failure(error),
+        }
+    }
+
+    pub async fn attempt_when_due<D: Daemon>(&mut self, daemon: &D) -> ReconnectAttempt {
+        let Some(ready_at) = self.next_attempt_at() else {
             return ReconnectAttempt::Idle;
         };
         if ready_at > Instant::now() {
             tokio::time::sleep_until(ready_at).await;
         }
-
-        let episode = self
-            .episode
-            .as_mut()
-            .expect("episode survived reconnect wait");
-        episode.attempts += 1;
-        episode.phase = ReconnectPhase::AwaitingHandshake;
-        let observed = episode.observed;
-        match daemon.reconnect(observed).await {
-            Ok(generation) => {
-                episode.observed = episode.observed.max(generation);
-                ReconnectAttempt::Reconnected(generation)
-            }
-            Err(error) => self.record_failure(error),
-        }
+        let Some(observed) = self.begin_attempt() else {
+            return ReconnectAttempt::Idle;
+        };
+        let result = daemon.reconnect(observed).await;
+        self.complete_attempt(result)
     }
 
     pub fn handshake_failed(&mut self, error: DaemonError) -> ReconnectAttempt {

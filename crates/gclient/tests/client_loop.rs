@@ -14,6 +14,7 @@ use gobby_client::daemon::{
     ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WsMessage, WsReply,
 };
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
+use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
@@ -25,6 +26,21 @@ use ratatui::Terminal;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
+
+#[test]
+fn live_entry_connects_before_running() {
+    let result = gobby_client::views::run_ready(Ready {
+        daemon_url: "not a URL".to_string(),
+        token: Some("test-token".to_string()),
+        project: None,
+        host: None,
+    });
+
+    assert!(
+        result.is_err(),
+        "the app entry must attempt a live daemon connection"
+    );
+}
 
 #[derive(Debug)]
 struct ReconnectDaemon {

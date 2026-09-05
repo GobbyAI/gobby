@@ -3,10 +3,12 @@
 mod apply;
 mod attach;
 mod live;
+mod live_loop;
 mod pane;
 pub mod run_loop;
 
 pub use attach::AttachState;
+pub use live_loop::run_live_loop;
 pub use pane::{ControlState, Pane, PaneId};
 
 use crate::copy_mode::PASTE_MAX_BYTES;

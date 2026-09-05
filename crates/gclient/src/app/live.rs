@@ -110,7 +110,7 @@ impl Workspace<LiveDaemon> {
         self.roster_ids = ids;
     }
 
-    async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
+    pub(super) async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
         let snapshot = self.daemon.subscribe().0;
         if !snapshot.ready {
             return Ok(());
@@ -249,9 +249,18 @@ impl Workspace<LiveDaemon> {
 
     pub async fn recv_live_frame(&mut self, pane_id: PaneId) -> Result<ServerMessage, FrameError> {
         let result = self.recv_pane_frame(pane_id).await;
-        let Err(error) = result else {
+        let Err(error) = &result else {
             return result;
         };
+        self.recover_live_frame_error(pane_id, error).await?;
+        result
+    }
+
+    pub(super) async fn recover_live_frame_error(
+        &mut self,
+        pane_id: PaneId,
+        error: &FrameError,
+    ) -> Result<(), FrameError> {
         match error {
             FrameError::Finalized { .. } => self.retire_pane_attachment(pane_id),
             FrameError::Eof
@@ -261,7 +270,7 @@ impl Workspace<LiveDaemon> {
             | FrameError::Protocol(_) => self.recover_proxy_source(pane_id).await?,
             FrameError::HostEpochChanged { .. } | FrameError::Other(_) => {}
         }
-        Err(error)
+        Ok(())
     }
 
     async fn recover_proxy_source(&mut self, pane_id: PaneId) -> Result<(), FrameError> {
@@ -630,7 +639,7 @@ impl Workspace<LiveDaemon> {
         }
     }
 
-    async fn apply_live_event(&mut self, event: DaemonEvent) -> Result<(), DaemonError> {
+    pub(super) async fn apply_live_event(&mut self, event: DaemonEvent) -> Result<(), DaemonError> {
         match event {
             DaemonEvent::Terminal {
                 daemon_epoch,
