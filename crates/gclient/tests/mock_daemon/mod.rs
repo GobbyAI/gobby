@@ -57,6 +57,7 @@ struct MockState {
     unique_attachment_ids: bool,
     next_attachment_id: u64,
     take_control_replies: VecDeque<(bool, u64, Option<String>)>,
+    write_outcomes: VecDeque<(String, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
     proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
     activity: Vec<String>,
@@ -92,6 +93,7 @@ impl MockDaemon {
             unique_attachment_ids: false,
             next_attachment_id: 0,
             take_control_replies: VecDeque::new(),
+            write_outcomes: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
             proxy_finalizations_before_reply: VecDeque::new(),
             activity: Vec::new(),
@@ -246,6 +248,14 @@ impl MockDaemon {
             .expect("mock state")
             .take_control_replies
             .push_back((granted, lease_generation, reason.map(ToString::to_string)));
+    }
+
+    pub fn enqueue_write_outcome(&self, outcome: &str, reason: Option<&str>) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .write_outcomes
+            .push_back((outcome.to_string(), reason.map(ToString::to_string)));
     }
 
     pub fn refuse_next_proxy_attach(&self, code: &str, reason: &str) {
@@ -678,14 +688,22 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "attachment_id": request.get("attachment_id"),
             "success": true,
         })),
-        "terminal_input" | "terminal_paste" => Some(json!({
-            "type": "terminal_write_outcome",
-            "attachment_id": request.get("attachment_id"),
-            "terminal_id": request.get("terminal_id"),
-            "client_write_seq": request.get("client_write_seq"),
-            "outcome": "applied",
-            "reason": null,
-        })),
+        "terminal_input" | "terminal_paste" => {
+            let (outcome, reason) = state
+                .lock()
+                .expect("mock state")
+                .write_outcomes
+                .pop_front()
+                .unwrap_or_else(|| ("delivered".to_string(), None));
+            Some(json!({
+                "type": "terminal_write_outcome",
+                "attachment_id": request.get("attachment_id"),
+                "terminal_id": request.get("terminal_id"),
+                "client_write_seq": request.get("client_write_seq"),
+                "outcome": outcome,
+                "reason": reason,
+            }))
+        }
         "terminal_take_control" => {
             let reply = state
                 .lock()

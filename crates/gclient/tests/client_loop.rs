@@ -557,41 +557,106 @@ async fn focus_moves_control_and_settles_pending_input_once() {
     mock.shutdown().await;
 }
 
-#[test]
-fn write_outcomes_drive_pane_state() {
-    let mut ws = Workspace::scripted();
-    let pane = ws
-        .open_terminal("term-write", "native", "epoch-write")
-        .expect("open terminal");
-    ws.force_held(pane);
-    ws.send_keys(pane, "one").expect("first write");
-    let attachment = ws.pane(pane).attachment_id().to_string();
-    ws.apply_ws(&json!({
-        "type": "terminal_write_outcome",
-        "attachment_id": attachment,
-        "outcome": "indeterminate",
-        "reason": "backend_unknown"
-    }))
-    .expect("apply outcome");
-    assert!(ws.pane(pane).is_uncertain_readonly());
-    assert!(ws.pane(pane).in_flight_write().is_none());
-
-    ws.apply_ws(&json!({
-        "type": "terminal_attachment_finalized",
-        "attachment_id": attachment,
-        "reason": "detach"
-    }))
-    .expect("finalize attachment");
-    ws.apply_ws(&json!({
-        "type": "terminal_write_outcome",
-        "attachment_id": attachment,
-        "outcome": "delivered"
-    }))
-    .expect("ignore tombstoned outcome");
-    assert!(
-        !ws.pane(pane).is_held(),
-        "late write outcomes for a finalized attachment must be ignored"
+#[tokio::test]
+async fn write_outcomes_drive_pane_state() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue_write_outcome("delivered", None);
+    mock.enqueue_write_outcome("indeterminate", Some("indeterminate_backend"));
+    mock.enqueue_write_outcome("refused", Some("write_refused"));
+    mock.enqueue_write_outcome("refused", Some("write_seq_conflict"));
+    mock.enqueue_write_outcome("refused", Some("write_seq_expired"));
+    mock.enqueue_write_outcome("refused", Some("write_seq_capacity"));
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "term-write", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-write", "seq": 1}
+        }),
     );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+
+        send_key(&input_tx, KeyCode::Char('d'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            1,
+            "a delivered write must leave the pane writable"
+        );
+
+        send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_input").len(),
+            2,
+            "an indeterminate write must not be resent"
+        );
+        send_key(&input_tx, KeyCode::Char('r'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 3).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_input").len(),
+            3,
+            "a refused write must not be resent"
+        );
+
+        send_key(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_input").len(),
+            4,
+            "write_seq_conflict must not resend"
+        );
+
+        send_key(&input_tx, KeyCode::Char('e'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 5).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_input").len(),
+            5,
+            "write_seq_expired must not resend"
+        );
+
+        send_key(&input_tx, KeyCode::Char('p'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 6).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_input").len(),
+            6,
+            "write_seq_capacity must not resend"
+        );
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane_id = workspace
+        .pane_for_terminal("term-write")
+        .expect("live write pane");
+    assert!(workspace.pane(pane_id).in_flight_write().is_none());
+    assert!(workspace.pane(pane_id).writable());
+    assert_eq!(websocket_requests(&mock, "terminal_input").len(), 6);
+    mock.shutdown().await;
 }
 
 #[tokio::test]
