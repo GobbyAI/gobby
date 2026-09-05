@@ -22,6 +22,8 @@ from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.sql_dialect import older_than_now_expr
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
     from gobby.storage.hub.protocol import HubDatabase
@@ -728,7 +730,20 @@ def setup_signal_handlers(
         return handle_shutdown
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _make_handler(sig))
+        handler = _make_handler(sig)
+        try:
+            loop.add_signal_handler(sig, handler)
+        except NotImplementedError:
+            # Windows event loops do not implement add_signal_handler. Fall back
+            # to signal.signal and marshal the callback onto the loop thread.
+            def _os_signal_handler(
+                _signum: int,
+                _frame: FrameType | None,
+                _handler: Callable[[], None] = handler,
+            ) -> None:
+                loop.call_soon_threadsafe(_handler)
+
+            signal.signal(sig, _os_signal_handler)
 
 
 def cleanup_pid_file() -> None:

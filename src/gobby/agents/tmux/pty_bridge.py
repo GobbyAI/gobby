@@ -11,13 +11,22 @@ This gives full terminal fidelity (Ctrl+C, arrows, Tab, etc.) unlike
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import logging
 import os
 import struct
-import termios
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+
+try:  # pragma: no cover - exercised per-platform
+    import fcntl
+    import termios
+
+    PTY_SUPPORTED = True
+except ImportError:  # pragma: no cover - Windows has no fcntl/termios
+    fcntl = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
+
+    PTY_SUPPORTED = False
 
 from gobby.config.tmux import TmuxConfig
 
@@ -75,6 +84,12 @@ class TmuxPTYBridge:
         async with self._lock:
             if streaming_id in self._bridges:
                 raise RuntimeError(f"Bridge {streaming_id} already exists")
+
+        if not PTY_SUPPORTED:
+            raise RuntimeError(
+                "tmux PTY bridging requires a POSIX platform (fcntl/termios); "
+                "it is unavailable on this system"
+            )
 
         master_fd, slave_fd = os.openpty()
 
@@ -172,7 +187,7 @@ class TmuxPTYBridge:
         async with self._lock:
             bridge = self._bridges.get(streaming_id)
 
-        if bridge:
+        if bridge and PTY_SUPPORTED:
             try:
                 fcntl.ioctl(
                     bridge.master_fd,
