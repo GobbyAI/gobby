@@ -98,6 +98,41 @@ class Process(Record):
     command: str
 
 
+class CodeIndexVersion(Record):
+    id: str
+    content_hash: str
+    symbol_ids: list[str]
+
+
+class CodeIndexFile(Record):
+    file_path: str
+    versions: list[CodeIndexVersion]
+    owner_path: str
+    removed_revision: str | None = None
+    archived_blob: str | None = None
+
+    def native(self) -> dict[str, Any]:
+        return {
+            "file_path": self.file_path,
+            "versions": [version.model_dump() for version in self.versions],
+        }
+
+
+class CodeIndexTarget(Record):
+    project_id: str
+    machine_id: str
+    root_path: str
+    files: list[CodeIndexFile]
+    digest: str
+
+    @property
+    def key(self) -> str:
+        return f"code_index:{self.project_id}"
+
+    def native_files(self) -> list[dict[str, Any]]:
+        return [file.native() for file in self.files]
+
+
 class Inventory(Record):
     version: Literal[1] = 1
     created_at: str
@@ -118,6 +153,10 @@ class Inventory(Record):
     backend_identities: dict[str, str]
     writers: list[Process]
     errors: list[str] = Field(default_factory=list)
+    # Empty omission preserves the identity of already archived v1 inventories.
+    code_indexes: list[CodeIndexTarget] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
 
     @property
     def digest(self) -> str:
@@ -519,6 +558,99 @@ def validate_inventory(inventory: Inventory) -> None:
             for tree in inventory.roots
         ):
             raise RetirementError("Cargo registration has no exact inventoried binary")
+    validate_code_indexes(inventory)
+
+
+def validate_code_indexes(inventory: Inventory) -> None:
+    seen = set()
+    vaults = {tree.path for tree in inventory.roots}
+    deleted_by_revision: dict[str, set[str]] = {}
+    archived_blobs: dict[str, str] = {}
+    repository = Path(inventory.repository)
+    common: str | None = None
+    if any(file.removed_revision for target in inventory.code_indexes for file in target.files):
+        common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        for line in git(repository, "ls-tree", "-r", inventory.baseline).splitlines():
+            metadata, path = line.split("\t", 1)
+            archived_blobs[path] = metadata.split()[2]
+    for target in inventory.code_indexes:
+        if target.project_id in seen or not target.files:
+            raise RetirementError("Duplicate or empty code-index target")
+        seen.add(target.project_id)
+        if any(str(UUID(value)) != value for value in (target.project_id, target.machine_id)):
+            raise RetirementError("Noncanonical code-index identity")
+        if target.root_path not in inventory.checkouts:
+            raise RetirementError("Code-index root is not a recorded checkout")
+        if not re.fullmatch(r"[0-9a-f]{64}", target.digest):
+            raise RetirementError("Invalid code-index snapshot digest")
+        if (
+            any(file.removed_revision for file in target.files)
+            and git(
+                Path(target.root_path), "rev-parse", "--path-format=absolute", "--git-common-dir"
+            )
+            != common
+        ):
+            raise RetirementError("Archived source path belongs to another repository")
+        paths = set()
+        versions = set()
+        symbols = set()
+        for file in target.files:
+            relative = Path(file.file_path)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or str(relative) != file.file_path
+                or file.file_path == "."
+            ):
+                raise RetirementError("Invalid code-index relative path")
+            if file.file_path in paths:
+                raise RetirementError("Duplicate code-index file")
+            paths.add(file.file_path)
+            if file.removed_revision is None:
+                if file.owner_path not in vaults or not (
+                    Path(target.root_path) / relative
+                ).is_relative_to(file.owner_path):
+                    raise RetirementError("Code-index path lacks inventoried vault ownership")
+            else:
+                if not re.fullmatch(r"[0-9a-f]{40}", file.removed_revision) or not re.fullmatch(
+                    r"[0-9a-f]{40}", file.archived_blob or ""
+                ):
+                    raise RetirementError(
+                        "Archived deletion requires full immutable Git object IDs"
+                    )
+                if file.removed_revision not in deleted_by_revision:
+                    git(
+                        repository,
+                        "merge-base",
+                        "--is-ancestor",
+                        inventory.baseline,
+                        file.removed_revision,
+                    )
+                    deleted_by_revision[file.removed_revision] = set(
+                        git(
+                            repository,
+                            "diff",
+                            "--name-only",
+                            "--diff-filter=D",
+                            inventory.baseline,
+                            file.removed_revision,
+                        ).splitlines()
+                    )
+                if (
+                    archived_blobs.get(file.file_path) != file.archived_blob
+                    or file.file_path not in deleted_by_revision[file.removed_revision]
+                ):
+                    raise RetirementError("Code-index path lacks exact archived deletion ownership")
+            for version in file.versions:
+                if str(UUID(version.id)) != version.id or version.id in versions:
+                    raise RetirementError("Duplicate or invalid code-index version")
+                versions.add(version.id)
+                if not re.fullmatch(r"[0-9a-f]{64}", version.content_hash):
+                    raise RetirementError("Invalid code-index content hash")
+                for symbol in version.symbol_ids:
+                    if str(UUID(symbol)) != symbol or symbol in symbols:
+                        raise RetirementError("Duplicate or invalid code-index symbol")
+                    symbols.add(symbol)
 
 
 def retirement_directory(inventory: Inventory) -> Path:

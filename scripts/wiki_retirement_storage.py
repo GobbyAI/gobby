@@ -21,6 +21,7 @@ from qdrant_client import QdrantClient, models
 from redis import Redis
 
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from scripts.wiki_retirement_code_index import CodeIndexStorage
 from scripts.wiki_retirement_config import WikiConfiguration, target_kind
 from scripts.wiki_retirement_inventory import (
     COLLECTION,
@@ -45,7 +46,8 @@ class RedisCommands(Protocol):
 
     def info(self, section: str) -> dict[str, Any]: ...
     def dump(self, key: str) -> bytes | None: ...
-    def execute_command(self, *args: str) -> object: ...
+    def exists(self, *names: str) -> object: ...
+    def execute_command(self, *args: Any, **kwargs: Any) -> Any: ...
     def restore(self, key: str, ttl: int, value: bytes, *, replace: bool) -> object: ...
     def close(self) -> None: ...
 
@@ -136,6 +138,20 @@ class Datastores:
         self.isolated = isolated
         self._identities: dict[str, str] | None = None
         self.configuration = WikiConfiguration(database_url, schema, self.pg)
+
+    @property
+    def code_index(self) -> CodeIndexStorage:
+        from scripts.wiki_retirement_code_projections import CodeProjections
+
+        return CodeIndexStorage(
+            self.database_url,
+            self.schema,
+            self.pg,
+            CodeProjections(self.qdrant, self.redis, isolated=self.isolated),
+            isolated=self.isolated,
+            qdrant_url=self.qdrant_url,
+            falkor_url=self.falkor_url,
+        )
 
     def close(self) -> None:
         self.pg.close()

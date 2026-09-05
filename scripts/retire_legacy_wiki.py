@@ -63,6 +63,7 @@ from scripts.wiki_retirement_cargo import (
     source_version,
     verify_cargo,
 )
+from scripts.wiki_retirement_code_index import CodeIndexStorage
 from scripts.wiki_retirement_inventory import (
     Inventory,
     RetirementError,
@@ -111,6 +112,13 @@ CHECKS = {
 }
 
 
+def code_index_manager(stores: Storage) -> CodeIndexStorage:
+    manager = getattr(stores, "code_index", None)
+    if not isinstance(manager, CodeIndexStorage):
+        raise RetirementError("Exact code-index storage is required by this inventory")
+    return manager
+
+
 def inventory(
     repository: Path, gobby_home: Path, files_home: Path, stores: Storage | None, errors: list[str]
 ) -> Inventory:
@@ -152,7 +160,7 @@ def inventory(
                 cargo_installs.append(item)
     except (OSError, ValueError, RetirementError) as exc:
         errors.append(f"Filesystem inventory incomplete: {exc}")
-    return Inventory(
+    value = Inventory(
         created_at=now(),
         repository=str(repository),
         baseline=baseline(repository),
@@ -169,6 +177,26 @@ def inventory(
         writers=writer_processes(),
         errors=errors,
     )
+    manager = getattr(stores, "code_index", None)
+    if manager is not None:
+        try:
+            targets = manager.inventory(
+                roots,
+                sorted(checkouts),
+                gobby_home,
+                Path(__file__).resolve().parents[1],
+                value.baseline,
+                repository,
+            )
+            value = value.model_copy(update={"code_indexes": targets})
+        except Exception as exc:
+            errors.append(
+                f"Code-index inventory incomplete: {exc}"
+                if isinstance(exc, RetirementError)
+                else f"Code-index inventory incomplete: {type(exc).__name__}"
+            )
+            value = value.model_copy(update={"errors": errors})
+    return value
 
 
 def load_inventory(path: Path) -> Inventory:
@@ -220,6 +248,11 @@ def create_backup(inventory: Inventory, root: Path, stores: Storage) -> Backup:
             artifacts[target.key] = put_artifact(root, target.key, data)
             value = value.model_copy(update={"artifacts": dict(artifacts)})
             write_private(path, value.model_dump_json(indent=2).encode())
+        for code_target in inventory.code_indexes:
+            data = code_index_manager(stores).backup(code_target)
+            artifacts[code_target.key] = put_artifact(root, code_target.key, data)
+            value = value.model_copy(update={"artifacts": dict(artifacts)})
+            write_private(path, value.model_dump_json(indent=2).encode())
         value = value.model_copy(update={"complete": True})
         write_private(path, value.model_dump_json(indent=2).encode())
         return value
@@ -245,6 +278,7 @@ def validate_backup(inventory: Inventory, root: Path, backup: Backup) -> None:
     if backup.baseline != inventory.baseline:
         raise RetirementError("Backup baseline differs")
     expected = {target.key for target in inventory.stores}
+    expected.update(target.key for target in inventory.code_indexes)
     expected.update(item.key for item in inventory.cargo_installs)
     for tree in inventory.roots:
         expected.update(
@@ -426,6 +460,15 @@ def apply(
                     journal.defer_schema()
                     return journal.receipt
                 delete_store(target, stores, journal)
+        for code_target in inventory.code_indexes:
+            stores.require_schema_retired()
+            code_index_manager(stores).delete(
+                code_target,
+                artifact_bytes(root, backup.artifacts[code_target.key]),
+                inventory.digest,
+                root,
+                journal,
+            )
         reject_new_roots(inventory)
         verify_ownership(inventory, journal)
         check_remaining_stores(inventory, stores, journal)
@@ -492,6 +535,12 @@ def restore(
             data is not None and sha(data) != target.digest
         ):
             raise RetirementError(f"Restored datastore differs: {target.key}")
+    for code_target in inventory.code_indexes:
+        manager = code_index_manager(isolated)
+        staged = manager.staged_root(code_target, root)
+        manager.restore(
+            code_target, artifact_bytes(root, backup.artifacts[code_target.key]), staged
+        )
     return list(trees)
 
 
@@ -566,6 +615,16 @@ def rehearse(
                 journal.defer_schema()
                 return journal.receipt
             delete_store(target, isolated, journal)
+        for code_target in inventory.code_indexes:
+            if journal.state(f"restored:{code_target.key}") != "done":
+                isolated.require_schema_retired()
+                code_index_manager(isolated).delete(
+                    code_target,
+                    artifact_bytes(root, backup.artifacts[code_target.key]),
+                    inventory.digest,
+                    root,
+                    journal,
+                )
         for target in inventory.stores:
             if journal.state(f"restored:{target.key}") != "done":
                 isolated.restore(target, artifact_bytes(root, backup.artifacts[target.key]))
@@ -573,6 +632,14 @@ def rehearse(
                 if data is None or sha(data) != target.digest:
                     raise RetirementError(f"Post-deletion restore differs: {target.key}")
                 journal.mark(f"restored:{target.key}", "done")
+        for code_target in inventory.code_indexes:
+            if journal.state(f"restored:{code_target.key}") != "done":
+                manager = code_index_manager(isolated)
+                staged = manager.staged_root(code_target, root)
+                manager.restore(
+                    code_target, artifact_bytes(root, backup.artifacts[code_target.key]), staged
+                )
+                journal.mark(f"restored:{code_target.key}", "done")
         if journal.state("restored:files") != "done":
             restore_files(inventory, backup, root, second)
             journal.mark("restored:files", "done")
