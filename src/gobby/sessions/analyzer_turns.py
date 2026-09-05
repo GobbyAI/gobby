@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from bisect import bisect_right
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -30,6 +32,10 @@ class _AdaptedCall:
     tool_use_id: str
     use_block: dict[str, Any]
     result_block: dict[str, Any] | None = None
+    result_record_index: int | None = None
+
+
+type _ActivityKey = tuple[int | None, str, str]
 
 
 def analyzer_turns_from_transcript(
@@ -111,6 +117,7 @@ def analyzer_turns_from_transcript(
                 )
                 if matched_call is not None:
                     matched_call.result_block = result_block
+                    matched_call.result_record_index = record_index
 
         for outcome in event.codex_exec_outcomes:
             outer = calls_by_id.get(outcome.outer_call_id)
@@ -146,6 +153,7 @@ def analyzer_turns_from_transcript(
                 "is_error": error is not None,
             }
             call.result_block = result_block
+            call.result_record_index = record_index
             _append_block(blocks_by_record, roles_by_record, record_index, "assistant", use_block)
             _append_block(blocks_by_record, roles_by_record, record_index, "user", result_block)
             calls.append(call)
@@ -183,20 +191,23 @@ def _add_codex_items(
     blocks_by_record: dict[int, list[dict[str, Any]]],
     roles_by_record: dict[int, str],
 ) -> None:
+    candidates: dict[_ActivityKey, deque[_AdaptedCall]] = {}
+    for call in calls:
+        key = _activity_key(
+            _turn_owner(call.record_index, user_indexes),
+            call.name,
+            call.tool_input,
+        )
+        if key is not None:
+            candidates.setdefault(key, deque()).append(call)
+
     for ordinal, item in enumerate(items):
         owner = _turn_owner(item.record_index, user_indexes)
-        match = next(
-            (
-                call
-                for call in calls
-                if _turn_owner(call.record_index, user_indexes) == owner
-                and _activity_matches(item, call)
-            ),
-            None,
-        )
+        key = _activity_key(owner, item.tool_name, item.tool_input)
+        queue = candidates.get(key) if key is not None else None
+        match = queue.popleft() if queue and _activity_matches(item, queue[0]) else None
         if match is not None:
             _remove_call_blocks(blocks_by_record, match)
-            calls.remove(match)
 
         tool_use_id = item.tool_use_id or f"codex-item-{item.record_index}-{ordinal}"
         use_block = {
@@ -236,16 +247,17 @@ def _add_codex_items(
                 "user",
                 result_block,
             )
-        calls.append(
-            _AdaptedCall(
-                item.record_index,
-                item.tool_name,
-                item.tool_input,
-                tool_use_id,
-                use_block,
-                result_block,
-            )
+        call = _AdaptedCall(
+            item.record_index,
+            item.tool_name,
+            item.tool_input,
+            tool_use_id,
+            use_block,
+            result_block,
+            item.record_index if result_block is not None else None,
         )
+        if key is not None:
+            candidates.setdefault(key, deque()).append(call)
 
 
 def _append_block(
@@ -266,15 +278,33 @@ def _remove_call_blocks(
     bucket = blocks_by_record.get(call.record_index, [])
     if call.use_block in bucket:
         bucket.remove(call.use_block)
-    if call.result_block is not None:
-        for blocks in blocks_by_record.values():
-            if call.result_block in blocks:
-                blocks.remove(call.result_block)
-                break
+    if call.result_block is not None and call.result_record_index is not None:
+        result_bucket = blocks_by_record.get(call.result_record_index, [])
+        if call.result_block in result_bucket:
+            result_bucket.remove(call.result_block)
 
 
 def _turn_owner(record_index: int, user_indexes: list[int]) -> int | None:
-    return next((index for index in reversed(user_indexes) if index <= record_index), None)
+    position = bisect_right(user_indexes, record_index)
+    return user_indexes[position - 1] if position else None
+
+
+def _activity_key(
+    owner: int | None,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> _ActivityKey | None:
+    if tool_name == "Bash":
+        comparable_input: Any = tool_input.get("command")
+    elif tool_name.startswith("mcp "):
+        comparable_input = tool_input
+    else:
+        return None
+    return (
+        owner,
+        tool_name,
+        json.dumps(comparable_input, sort_keys=True, separators=(",", ":"), default=str),
+    )
 
 
 def _activity_matches(item: ToolActivityEntry, call: _AdaptedCall) -> bool:
