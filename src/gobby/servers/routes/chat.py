@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from gobby import files_home_proxy
 from gobby.files_home_http import is_remote_files_mode
+from gobby.files_home_proxy import as_json_object
 from gobby.servers.chat_attachment_cleanup import cleanup_conversation_attachments
 from gobby.storage import chat_messages
-from gobby.wiki import owner_dispatch
-from gobby.wiki.owner_dispatch import as_json_object
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -57,7 +57,7 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
     async def delete_messages(request: Request, conversation_id: str) -> dict[str, Any]:
         """Delete all chat messages for a conversation."""
         if is_remote_files_mode():
-            return as_json_object(await owner_dispatch.proxy_owner_request(request))
+            return as_json_object(await files_home_proxy.proxy_owner_request(request))
         db = _get_db()
         await _delete_attachment_files_for_conversations(db, [conversation_id])
         count = await server.run_db(chat_messages.delete_messages, db, conversation_id)

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, Body, HTTPException, Query, Request, UploadFile
 
 from gobby.files_home_http import is_remote_files_mode
+from gobby.files_home_proxy import as_json_object, proxy_owner_request
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
@@ -27,9 +28,7 @@ from gobby.servers.chat_attachment_limits import (
 from gobby.servers.upload_limits import ensure_disk_space
 from gobby.wiki import WikiUpdateCoordinator
 from gobby.wiki.owner_dispatch import (
-    as_json_object,
     maybe_proxy_owner_request,
-    proxy_owner_request,
 )
 from gobby.wiki.scope_resolution import (
     ResolvedWikiScope,

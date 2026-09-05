@@ -24,6 +24,7 @@ import yaml
 
 from gobby.paths import get_gobby_home
 from gobby.sessions.summary_validity import is_summary_markdown_valid
+from gobby.utils.terminal_output import redact_terminal_output
 
 logger = logging.getLogger(__name__)
 
@@ -31,50 +32,6 @@ logger = logging.getLogger(__name__)
 #: summary skip policy so the wiki page never appears where the summary wouldn't.
 _EPHEMERAL_SOURCES = ("pipeline", "cron")
 _WIKI_MTIME_TOLERANCE_SECONDS = 1.0
-
-# Redaction patterns applied once to the assembled page before it is written.
-# Order matters: specific secrets first, then the home-directory path.
-_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # OpenAI / Anthropic style keys: sk-..., sk-proj-..., sk-ant-...
-    (re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"), "sk-<redacted>"),
-    # GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_, github_pat_
-    (
-        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})"),
-        "gh<redacted-token>",
-    ),
-    # AWS access key IDs
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AKIA<redacted>"),
-    # Bearer / Authorization tokens
-    (
-        re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{16,}"),
-        r"\1 <redacted>",
-    ),
-    # Generic secret-bearing key/value assignments
-    (
-        re.compile(
-            r"(?i)\b(api[_-]?key|secret|token|password|passwd)"
-            r"(\s*[:=]\s*[\"']?)([^\s\"']{12,})"
-        ),
-        r"\1\2<redacted>",
-    ),
-)
-
-
-def redact_session_markdown(text: str) -> str:
-    """Scrub secrets and the operator home path from session-wiki text.
-
-    Applied once to the assembled page; the redacted body is what is written to
-    disk and ingested by gwiki.
-    """
-    if not text:
-        return text
-    redacted = text
-    for pattern, replacement in _SECRET_PATTERNS:
-        redacted = pattern.sub(replacement, redacted)
-    home = str(Path.home())
-    if home and home != "/" and home in redacted:
-        redacted = redacted.replace(home, "~")
-    return redacted
 
 
 def _session_date(session: Any) -> str:
@@ -219,7 +176,7 @@ def write_session_wiki_page(session: Any, summary_markdown: str | None) -> dict[
     tags: list[str] = []
     frontmatter = _build_frontmatter(session, tags)
     page = f"{frontmatter}\n\n{summary_markdown.strip()}\n"
-    redacted = redact_session_markdown(page)
+    redacted = redact_terminal_output(page)
     path = resolve_session_wiki_path(session)
     if not _write_file(path, redacted):
         return {"written": False, "skipped": "write_failed", "path": str(path)}

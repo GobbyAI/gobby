@@ -12,7 +12,7 @@ import psycopg
 
 from gobby.agents.capture import _capture_marker, _capture_slot
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
-from gobby.sessions.session_wiki_file import redact_session_markdown
+from gobby.utils.terminal_output import redact_terminal_output
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class _RunnerWithRunStorage(Protocol):
 
 
 def _redacted_pane_output(output: str) -> str:
-    return redact_session_markdown(output.strip())
+    return redact_terminal_output(output.strip())
 
 
 def _intentional_pane_tail(redacted: str) -> str:

@@ -37,25 +37,6 @@ def _session(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**defaults)
 
 
-def test_redact_session_markdown_scrubs_secrets() -> None:
-    text = (
-        "key sk-ABCDEFGHIJKLMNOPQRSTUV and token ghp_ABCDEFGHIJKLMNOPQR "
-        "plus github_pat_1234567890_abcdefghijklmnopqrstuv"
-    )
-    redacted = swf.redact_session_markdown(text)
-    assert "sk-ABCDEFGHIJKLMNOPQRSTUV" not in redacted
-    assert "sk-<redacted>" in redacted
-    assert "ghp_ABCDEFGHIJKLMNOPQR" not in redacted
-    assert "github_pat_1234567890_abcdefghijklmnopqrstuv" not in redacted
-
-
-def test_redact_session_markdown_rewrites_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(swf.Path, "home", lambda: Path("/Users/secrethome"))
-    redacted = swf.redact_session_markdown("see /Users/secrethome/.gobby/x")
-    assert "/Users/secrethome" not in redacted
-    assert "~/.gobby/x" in redacted
-
-
 def test_build_frontmatter_emits_flat_keys() -> None:
     frontmatter = swf._build_frontmatter(_session(), [])
     lines = frontmatter.splitlines()

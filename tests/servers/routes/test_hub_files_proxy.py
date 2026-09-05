@@ -237,7 +237,7 @@ def test_remote_wiki_topic_proxies_without_creating_home_wiki(
         captured["kwargs"] = kwargs
         return {"ok": True, "proxied": True}
 
-    monkeypatch.setattr("gobby.wiki.owner_dispatch.proxy_owner_request", fake_proxy)
+    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
     server = create_http_server(config=DaemonConfig())
     app = FastAPI()
     app.include_router(create_wiki_router(server))
@@ -264,7 +264,7 @@ def test_remote_attachment_upload_proxies_and_skips_local_projects(
         captured["kwargs"] = kwargs
         return {"id": "att-1", "ok": True}
 
-    monkeypatch.setattr("gobby.wiki.owner_dispatch.proxy_owner_request", fake_proxy)
+    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
     server = create_http_server(config=DaemonConfig())
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
@@ -294,7 +294,7 @@ def test_remote_attachment_download_and_delete_proxy(
             return Response(content=b"hub-bytes", media_type="text/plain")
         return {"ok": True}
 
-    monkeypatch.setattr("gobby.wiki.owner_dispatch.proxy_owner_request", fake_proxy)
+    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
     server = create_http_server(config=DaemonConfig())
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
@@ -392,7 +392,7 @@ def test_remote_file_bearing_uses_request_stream(
         streamed["used"] = True
         return {"ok": True}
 
-    monkeypatch.setattr("gobby.wiki.owner_dispatch.proxy_owner_request", fake_proxy)
+    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
     server = create_http_server(config=DaemonConfig())
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
@@ -419,7 +419,7 @@ def test_remote_attach_sends_bytes_not_path(
         captured["json_body"] = kwargs.get("json_body")
         return {"ok": True, "command": "attach"}
 
-    monkeypatch.setattr("gobby.wiki.owner_dispatch.proxy_owner_request", fake_proxy)
+    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
     server = create_http_server(config=DaemonConfig())
     app = FastAPI()
     app.include_router(create_wiki_router(server))
@@ -493,7 +493,7 @@ def test_remote_conversation_delete_proxies_owner_cleanup(
         captured["path"] = request.url.path
         return {"deleted": 2}
 
-    monkeypatch.setattr("gobby.wiki.owner_dispatch.proxy_owner_request", fake_proxy)
+    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
     server = create_http_server(config=DaemonConfig())
     server.session_manager = SimpleNamespace(db=object())
     app = FastAPI()
