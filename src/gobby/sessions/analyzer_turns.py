@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from bisect import bisect_right
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,7 +35,9 @@ class _AdaptedCall:
     result_record_index: int | None = None
 
 
-type _ActivityKey = tuple[int | None, str, str]
+type _ActivityKey = tuple[int | None, str, Hashable]
+type _RecordBlocks = dict[int, dict[int, dict[str, Any]]]
+type _JSONInput = str | int | float | bool | None | list[_JSONInput] | dict[str, _JSONInput]
 
 
 def analyzer_turns_from_transcript(
@@ -43,9 +45,9 @@ def analyzer_turns_from_transcript(
 ) -> list[dict[str, Any]]:
     """Run an observational parser scan and materialize Claude-shaped turns."""
     scan = fresh_scan_parser(parser)
-    blocks_by_record: dict[int, list[dict[str, Any]]] = {}
+    blocks_by_record: _RecordBlocks = {}
     roles_by_record: dict[int, str] = {}
-    calls: list[_AdaptedCall] = []
+    calls: dict[int, _AdaptedCall] = {}
     calls_by_id: dict[str, _AdaptedCall] = {}
     user_record_indexes: list[int] = []
     texts = (json.dumps(turn, default=str) for turn in turns)
@@ -56,7 +58,9 @@ def analyzer_turns_from_transcript(
             if not isinstance(record, ParsedMessage):
                 continue
             if record.content_type == "text" and record.role in {"user", "assistant"}:
-                if record.role == "user" and record_index not in user_record_indexes:
+                if record.role == "user" and (
+                    not user_record_indexes or user_record_indexes[-1] != record_index
+                ):
                     user_record_indexes.append(record_index)
                 _append_block(
                     blocks_by_record,
@@ -94,7 +98,7 @@ def analyzer_turns_from_transcript(
                     tool_use_id=tool_use_id,
                     use_block=tool_use_block,
                 )
-                calls.append(call)
+                calls[id(call)] = call
                 calls_by_id[tool_use_id] = call
             elif record.content_type == "tool_result":
                 tool_use_id = record.tool_use_id or ""
@@ -123,7 +127,7 @@ def analyzer_turns_from_transcript(
             outer = calls_by_id.get(outcome.outer_call_id)
             if outer is not None and outer.name == "Bash":
                 _remove_call_blocks(blocks_by_record, outer)
-                calls.remove(outer)
+                calls.pop(id(outer))
                 calls_by_id.pop(outcome.outer_call_id, None)
             result = outcome.result
             error = _result_error(result)
@@ -156,7 +160,7 @@ def analyzer_turns_from_transcript(
             call.result_record_index = record_index
             _append_block(blocks_by_record, roles_by_record, record_index, "assistant", use_block)
             _append_block(blocks_by_record, roles_by_record, record_index, "user", result_block)
-            calls.append(call)
+            calls[id(call)] = call
             calls_by_id[outcome.identity] = call
 
     item_entries = (
@@ -165,7 +169,7 @@ def analyzer_turns_from_transcript(
     if item_entries is not None:
         _add_codex_items(
             item_entries,
-            calls,
+            calls.values(),
             user_record_indexes,
             blocks_by_record,
             roles_by_record,
@@ -176,7 +180,7 @@ def analyzer_turns_from_transcript(
             "type": roles_by_record.get(index, "assistant"),
             "message": {
                 "role": roles_by_record.get(index, "assistant"),
-                "content": blocks,
+                "content": list(blocks.values()),
             },
         }
         for index, blocks in sorted(blocks_by_record.items())
@@ -186,9 +190,9 @@ def analyzer_turns_from_transcript(
 
 def _add_codex_items(
     items: list[ToolActivityEntry],
-    calls: list[_AdaptedCall],
+    calls: Iterable[_AdaptedCall],
     user_indexes: list[int],
-    blocks_by_record: dict[int, list[dict[str, Any]]],
+    blocks_by_record: _RecordBlocks,
     roles_by_record: dict[int, str],
 ) -> None:
     candidates: dict[_ActivityKey, deque[_AdaptedCall]] = {}
@@ -261,27 +265,23 @@ def _add_codex_items(
 
 
 def _append_block(
-    blocks_by_record: dict[int, list[dict[str, Any]]],
+    blocks_by_record: _RecordBlocks,
     roles_by_record: dict[int, str],
     record_index: int,
     role: str,
     block: dict[str, Any],
 ) -> None:
-    blocks_by_record.setdefault(record_index, []).append(block)
+    blocks_by_record.setdefault(record_index, {})[id(block)] = block
     if role == "user" or record_index not in roles_by_record:
         roles_by_record[record_index] = role
 
 
-def _remove_call_blocks(
-    blocks_by_record: dict[int, list[dict[str, Any]]], call: _AdaptedCall
-) -> None:
-    bucket = blocks_by_record.get(call.record_index, [])
-    if call.use_block in bucket:
-        bucket.remove(call.use_block)
+def _remove_call_blocks(blocks_by_record: _RecordBlocks, call: _AdaptedCall) -> None:
+    bucket = blocks_by_record.get(call.record_index, {})
+    bucket.pop(id(call.use_block), None)
     if call.result_block is not None and call.result_record_index is not None:
-        result_bucket = blocks_by_record.get(call.result_record_index, [])
-        if call.result_block in result_bucket:
-            result_bucket.remove(call.result_block)
+        result_bucket = blocks_by_record.get(call.result_record_index, {})
+        result_bucket.pop(id(call.result_block), None)
 
 
 def _turn_owner(record_index: int, user_indexes: list[int]) -> int | None:
@@ -303,8 +303,17 @@ def _activity_key(
     return (
         owner,
         tool_name,
-        json.dumps(comparable_input, sort_keys=True, separators=(",", ":"), default=str),
+        _input_key(comparable_input),
     )
+
+
+def _input_key(value: _JSONInput) -> Hashable:
+    """Make JSON containers hashable while preserving Python's input equality."""
+    if isinstance(value, dict):
+        return frozenset((key, _input_key(item)) for key, item in value.items())
+    if isinstance(value, list):
+        return tuple(_input_key(item) for item in value)
+    return value
 
 
 def _activity_matches(item: ToolActivityEntry, call: _AdaptedCall) -> bool:

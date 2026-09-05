@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -17,13 +17,14 @@ import gobby.sessions.analyzer_turns as analyzer_turns_module
 import gobby.sessions.handoff_summary as handoff_summary_module
 import gobby.sessions.summarize as summarize_module
 from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+from gobby.sessions.transcripts.base import ParseEvent, RawLine
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.tool_activity import ToolActivityEntry
 
 pytestmark = pytest.mark.unit
 
 
-def _mcp_input(task_id: str) -> dict[str, Any]:
+def _mcp_input(task_id: object) -> dict[str, Any]:
     return {
         "server_name": "gobby-tasks",
         "tool_name": "get_task",
@@ -31,7 +32,7 @@ def _mcp_input(task_id: str) -> dict[str, Any]:
     }
 
 
-def _mcp_call(call_id: str, task_id: str) -> dict[str, Any]:
+def _mcp_call(call_id: str, task_id: object) -> dict[str, Any]:
     return {
         "type": "response_item",
         "payload": {
@@ -43,7 +44,7 @@ def _mcp_call(call_id: str, task_id: str) -> dict[str, Any]:
     }
 
 
-def _mcp_item(task_id: str, *, failed: bool = False) -> dict[str, Any]:
+def _mcp_item(task_id: object, *, failed: bool = False) -> dict[str, Any]:
     item: dict[str, Any] = {
         "type": "McpToolCall",
         "server": "gobby",
@@ -112,8 +113,7 @@ def test_codex_item_projection_preserves_turn_scoped_matching_and_native_details
     file_change = next(
         block
         for block in uses
-        if block["name"] == "apply_patch"
-        and block["input"] == {"file_path": "src/changed.py"}
+        if block["name"] == "apply_patch" and block["input"] == {"file_path": "src/changed.py"}
     )
     assert not any(result["tool_use_id"] == file_change["id"] for result in results)
     assert any(block["name"] == "Bash" for block in uses)
@@ -128,6 +128,122 @@ def _scaling_transcript(size: int) -> list[dict[str, Any]]:
     turns.extend(_mcp_call(f"owned-{index}", f"#owned-{index}") for index in range(size))
     turns.extend(_mcp_item(f"#owned-{index}") for index in reversed(range(size)))
     return turns
+
+
+@pytest.mark.parametrize(
+    ("call_value", "item_value", "matches"),
+    [
+        (1, 1.0, True),
+        (True, 1, True),
+        (0.0, -0.0, True),
+        ({"nested": [1, {"flag": False}]}, {"nested": [1.0, {"flag": 0}]}, True),
+        ({"a": 1, "b": 2}, {"b": 2.0, "a": True}, True),
+        ("1", 1, False),
+        ([], {}, False),
+        ([1, 2], [2, 1], False),
+    ],
+)
+def test_indexed_matching_preserves_json_equality_and_fifo(
+    call_value: object, item_value: object, matches: bool
+) -> None:
+    adapted = analyzer_turns_from_transcript(
+        CodexTranscriptParser(),
+        [
+            _user("match native items"),
+            _mcp_call("first", call_value),
+            _mcp_call("second", call_value),
+            _mcp_item(item_value),
+        ],
+    )
+    use_ids = [
+        block["id"]
+        for turn in adapted
+        for block in turn["message"]["content"]
+        if block["type"] == "tool_use"
+    ]
+    expected = ["second", "codex-item-3-0"] if matches else ["first", "second", "codex-item-3-0"]
+    assert use_ids == expected
+
+
+@pytest.mark.parametrize("size", [32, 128])
+def test_turn_collection_and_exec_replacement_bound_comparisons(
+    monkeypatch: pytest.MonkeyPatch, size: int
+) -> None:
+    index_comparisons = 0
+    call_comparisons = 0
+
+    class CountingIndex(int):
+        __hash__ = int.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            nonlocal index_comparisons
+            index_comparisons += 1
+            return super().__eq__(other)
+
+        def __ne__(self, other: object) -> bool:
+            nonlocal index_comparisons
+            index_comparisons += 1
+            return super().__ne__(other)
+
+    class CountingScan(CodexTranscriptParser):
+        def iter_parse_events(
+            self, raw_lines: Iterable[RawLine], start_index: int = 0
+        ) -> Iterator[ParseEvent]:
+            for event in super().iter_parse_events(raw_lines, start_index):
+                event.raw_line_no = CountingIndex(event.raw_line_no)
+                yield event
+
+    original_equal = analyzer_turns_module._AdaptedCall.__eq__
+
+    def counted_call_equal(self: analyzer_turns_module._AdaptedCall, other: object) -> bool:
+        nonlocal call_comparisons
+        call_comparisons += 1
+        return original_equal(self, other)
+
+    monkeypatch.setattr(analyzer_turns_module, "fresh_scan_parser", lambda parser: CountingScan())
+    monkeypatch.setattr(analyzer_turns_module._AdaptedCall, "__eq__", counted_call_equal)
+    turns: list[dict[str, Any]] = []
+    for index in range(size):
+        turns.extend(
+            [
+                _user(f"turn {index}"),
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "call_id": f"exec-{index}",
+                        "name": "functions.exec",
+                        "input": 'const r = await tools.exec_command({cmd:"git status"}); text(r);',
+                    },
+                },
+            ]
+        )
+        # Stay inside the parser's bounded pending-call window while the retained
+        # completed-call history grows across batches.
+        if (index + 1) % 32 == 0:
+            turns.extend(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": f"exec-{completed}",
+                        "output": '{"exit_code":0,"output":"clean"}',
+                    },
+                }
+                for completed in range(index, index - 32, -1)
+            )
+
+    adapted = analyzer_turns_from_transcript(CodexTranscriptParser(), turns)
+    use_ids = {
+        block["id"]
+        for turn in adapted
+        for block in turn["message"]["content"]
+        if block["type"] == "tool_use"
+    }
+
+    assert use_ids == {f"exec-{index}:0" for index in range(size)}
+    assert index_comparisons <= 4 * size
+    assert call_comparisons <= 4 * size
 
 
 def test_large_codex_reconstruction_bounds_owner_and_candidate_work(
@@ -159,6 +275,49 @@ def test_large_codex_reconstruction_bounds_owner_and_candidate_work(
 
     assert owner_lookups == 4 * size
     assert candidate_comparisons == size
+
+
+def test_native_items_replace_shared_record_blocks_with_bounded_comparisons() -> None:
+    comparisons = 0
+
+    class CountingCommand(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other: object) -> bool:
+            nonlocal comparisons
+            comparisons += 1
+            return super().__eq__(other)
+
+    size = 128
+    blocks: analyzer_turns_module._RecordBlocks = {}
+    roles: dict[int, str] = {}
+    calls: list[analyzer_turns_module._AdaptedCall] = []
+    items: list[ToolActivityEntry] = []
+    for index in range(size):
+        tool_input = {"command": CountingCommand(f"echo {index}")}
+        use = {"type": "tool_use", "input": tool_input, "id": f"call-{index}"}
+        result = {"type": "tool_result", "tool_use_id": f"call-{index}"}
+        analyzer_turns_module._append_block(blocks, roles, 0, "assistant", use)
+        analyzer_turns_module._append_block(blocks, roles, 0, "user", result)
+        calls.append(
+            analyzer_turns_module._AdaptedCall(
+                0, "Bash", tool_input, f"call-{index}", use, result, 0
+            )
+        )
+        items.append(
+            ToolActivityEntry(
+                "Bash",
+                {"command": f"echo {index}"},
+                tool_use_id=f"native-{index}",
+                record_index=index + 1,
+            )
+        )
+
+    analyzer_turns_module._add_codex_items(list(reversed(items)), calls, [0], blocks, roles)
+
+    assert not blocks[0]
+    assert all(len(blocks[index + 1]) == 1 for index in range(size))
+    assert comparisons <= 8 * size
 
 
 @dataclass(frozen=True, slots=True)
