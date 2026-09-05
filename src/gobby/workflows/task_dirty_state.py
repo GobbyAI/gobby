@@ -33,7 +33,14 @@ def task_dirty_paths(paths: set[str], cwd: str) -> set[str] | None:
 
 
 def _porcelain_path(line: str) -> str:
-    path = line[3:].strip() if len(line) > 3 else line.strip()
+    # ``run_git_command`` strips stdout, so a first line whose XY status starts
+    # with a space (" M path") arrives as "M path" with one status char.
+    if len(line) >= 3 and line[2] == " ":
+        path = line[3:].strip()
+    elif len(line) >= 2 and line[1] == " ":
+        path = line[2:].strip()
+    else:
+        path = line.strip()
     if " -> " in path:
         path = path.rsplit(" -> ", 1)[1]
     return path.strip('"')
