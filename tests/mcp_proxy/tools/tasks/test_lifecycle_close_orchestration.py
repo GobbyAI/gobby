@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -442,6 +443,79 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
     assert evaluate.call_args.kwargs["closing_session_id"] == "parent"
     assert evaluate.call_args.kwargs["submitted_review"].review_fingerprint == "close"
     commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_close_review_claims_before_heavy_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="running", run_id="run"))
+    _authenticate(monkeypatch, store.review)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation_started = asyncio.Event()
+    release_evaluation = asyncio.Event()
+
+    async def evaluate(*_args: object, **_kwargs: object) -> CloseEvaluation:
+        assert store.review.status == "finalizing"
+        evaluation_started.set()
+        await release_evaluation.wait()
+        return _evaluation()
+
+    async with asyncio.TaskGroup() as task_group:
+        submission = task_group.create_task(
+            submit_close_review(
+                _ctx(),
+                review_id="review",
+                verdict=_verdict("invalid"),
+                evaluate_close=evaluate,
+                commit_close=AsyncMock(),
+            )
+        )
+        await asyncio.wait_for(evaluation_started.wait(), timeout=1)
+        assert store.review.status == "finalizing"
+        release_evaluation.set()
+
+    result = submission.result()
+    assert result["review_status"] == "stale"
+
+
+@pytest.mark.asyncio
+async def test_late_verdict_after_run_end_is_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_end_message = "Task-close validator run ended with status success before finalization."
+    prior_payload = {"status": "error", "message": run_end_message}
+    store = _Store(
+        replace(
+            _review(status="error", run_id="run"),
+            result_payload=prior_payload,
+            error=run_end_message,
+        )
+    )
+    _authenticate(monkeypatch, store.review)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    commit = AsyncMock(
+        return_value={
+            "success": True,
+            "closed": True,
+            "task_id": "task",
+            "commit_shas": ["abc"],
+        }
+    )
+
+    result = await submit_close_review(
+        _ctx(),
+        review_id="review",
+        verdict=_verdict("valid"),
+        evaluate_close=AsyncMock(return_value=_evaluation(ready=True)),
+        commit_close=commit,
+    )
+
+    assert store.claimed is True
+    assert store.finished_status == "closed"
+    assert result["review_status"] == "closed"
+    assert result["terminal_payload"]["status"] == "closed"
+    assert result["terminal_payload"] != prior_payload
 
 
 @pytest.mark.asyncio
