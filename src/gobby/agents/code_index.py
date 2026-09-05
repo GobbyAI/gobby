@@ -12,7 +12,7 @@ import re
 import shlex
 import shutil
 import stat
-import subprocess  # nosec B404 # fixed git argv for local exclude updates.
+import subprocess  # nosec B404 # local command execution only.
 import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
@@ -685,32 +685,28 @@ async def _run_gcode(
     failure_code: str,
     env: Mapping[str, str] | None = None,
 ) -> None:
-    proc: asyncio.subprocess.Process | None = None
+    proc: subprocess.Popen[bytes] | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
+        proc = await asyncio.to_thread(
+            subprocess.Popen,  # nosec B603 # fixed gcode binary with controlled arguments.
+            args,
             cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env={**os.environ, **env} if env is not None else None,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout, stderr = await asyncio.to_thread(proc.communicate, timeout=timeout)
     except asyncio.CancelledError:
         if proc is not None and proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            await asyncio.to_thread(proc.wait)
         raise
-    except TimeoutError as exc:
+    except subprocess.TimeoutExpired as exc:
         if proc is not None:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-                await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except ProcessLookupError:
-                pass
-            except TimeoutError:
-                pass
+            await asyncio.to_thread(proc.wait)
         raise RuntimeError(f"{timeout_code}:{timeout:g}s") from exc
     except OSError as exc:
         raise RuntimeError(f"{failure_code}:{exc}") from exc
