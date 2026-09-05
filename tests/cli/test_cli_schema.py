@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -409,3 +410,46 @@ def test_destructive_schema_apply_without_epoch_aborts_before_execution(
     assert result.exit_code == 1
     assert "No maintenance epoch is open" in result.output
     assert applied is False
+
+
+def _write_candidate(root: Path, directory: str, created_at: datetime, *, legacy: bool) -> Path:
+    data = replace(_manifest(uuid.uuid4()), created_at=created_at.isoformat()).to_dict()
+    if legacy:
+        data["stores"].pop("files")
+    path = root / directory / "manifest.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_newest_manifest_ignores_older_incompatible_store_contract(tmp_path: Path) -> None:
+    old = _write_candidate(tmp_path, "z-old", NOW - timedelta(hours=1), legacy=True)
+    newest = _write_candidate(tmp_path, "a-new", NOW, legacy=False)
+
+    assert schema_module._newest_manifest_path(tmp_path) == newest
+    assert "files" not in json.loads(old.read_text())["stores"]
+    assert "files" in schema_module.load_manifest(newest).stores
+
+
+def test_newest_manifest_still_refuses_current_incompatible_backup(tmp_path: Path) -> None:
+    _write_candidate(tmp_path, "old", NOW - timedelta(hours=1), legacy=False)
+    _write_candidate(tmp_path, "new", NOW, legacy=True)
+
+    with pytest.raises(ValueError, match="'files' is a required property"):
+        schema_module._newest_manifest_path(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ("invalid json", "{}", '{"created_at": null}', '{"created_at": "2026-07-30"}'),
+)
+def test_newest_manifest_refuses_unrankable_historical_candidate(
+    tmp_path: Path, payload: str
+) -> None:
+    _write_candidate(tmp_path, "new", NOW, legacy=False)
+    older = tmp_path / "old" / "manifest.json"
+    older.parent.mkdir()
+    older.write_text(payload)
+
+    with pytest.raises(SchemaGateError, match="Cannot rank backup manifest"):
+        schema_module._newest_manifest_path(tmp_path)

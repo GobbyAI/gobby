@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import click
 
-from gobby.cli.hub_backup._integrity import file_digest, refuse_symlink_traversal
+from gobby.cli.hub_backup._integrity import (
+    file_digest,
+    read_bytes_no_follow,
+    refuse_symlink_traversal,
+)
 from gobby.cli.hub_backup._manifest import (
     DEFAULT_MAX_AGE_HOURS,
     MANIFEST_NAME,
@@ -189,11 +194,23 @@ def _newest_manifest_path(backup_root: Path) -> Path:
     ]
     if not candidates:
         raise SchemaGateError(f"No hub backup manifests found under {backup_root}")
-    manifests = [(load_manifest(path), path) for path in candidates]
-    return max(
-        manifests,
-        key=lambda item: datetime.fromisoformat(item[0].created_at),
-    )[1]
+    timestamps: dict[Path, datetime] = {}
+    for path in candidates:
+        # Historical backups can predate the current store contract. Only their
+        # timestamps determine selection; the chosen backup must satisfy it fully.
+        try:
+            data = json.loads(read_bytes_no_follow(path, label="backup manifest"))
+            if not isinstance(data, dict) or not isinstance(data.get("created_at"), str):
+                raise ValueError("created_at must be a timestamp string")
+            created_at = datetime.fromisoformat(data["created_at"])
+            if created_at.tzinfo is None:
+                raise ValueError("created_at must include a timezone")
+        except (TypeError, ValueError) as exc:
+            raise SchemaGateError(f"Cannot rank backup manifest {path}: {exc}") from exc
+        timestamps[path] = created_at
+    newest = max(candidates, key=timestamps.__getitem__)
+    load_manifest(newest)
+    return newest
 
 
 def _file_sha256(path: Path) -> str:
