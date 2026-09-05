@@ -353,6 +353,162 @@ def test_project_lock_key_matches_native_signed_sha256_prefix() -> None:
 
 
 @pytest.fixture
+def direct_indexed(
+    indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path, Journal]:
+    manager, original, root, recovery = indexed
+
+    def no_payload(_: inv.CodeIndexTarget) -> dict[str, object]:
+        pytest.fail("Direct retirement must not capture content or projection payloads")
+
+    monkeypatch.setattr(manager, "capture", no_payload)
+    monkeypatch.setattr(manager, "_rows", no_payload)
+    vault = inv.Root(
+        path=str(root / "wiki"),
+        kind="checkout_vault",
+        owner_path=str(root / "wiki/_gwiki/scope.json"),
+        owner_digest="fixture",
+        entries=inv.scan(root / "wiki"),
+    )
+    targets = manager.inventory(
+        [vault], [root], recovery.parent / "home", root, inv.baseline(root), root, direct=True
+    )
+    assert len(targets) == 1 and targets[0].native_files() == original.native_files()
+    target = targets[0]
+    inventory = inv.Inventory(
+        mode="direct",
+        created_at=inv.now(),
+        repository=str(root),
+        baseline=inv.baseline(root),
+        uid=root.stat().st_uid,
+        gobby_home=str(recovery),
+        files_home=str(recovery),
+        checkouts=[str(root)],
+        roots=[vault],
+        stores=[],
+        backend_identities={},
+        writers=[],
+        code_indexes=[target],
+    )
+    journal = Journal(recovery / "direct.json", inventory, None, "apply-direct")
+    return manager, target, root, recovery, journal
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_direct_code_retirement_uses_only_identities_and_native_receipt(
+    direct_indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path, Journal],
+    postgres_db: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupted: bool,
+) -> None:
+    manager, target, root, recovery, journal = direct_indexed
+    (root / "wiki/page.md").unlink()
+    monkeypatch.setattr(
+        "scripts.wiki_retirement_code_index.local_native_bin_path", lambda _: root / "keep.py"
+    )
+    fail_once = interrupted
+    applications = 0
+
+    def command(argv: list[str], cwd: Path, receipt: Path) -> None:
+        nonlocal fail_once, applications
+        assert cwd == root and receipt.is_relative_to(recovery)
+        if "index" in argv:
+            postgres_db.execute(
+                "DELETE FROM code_indexed_file_states WHERE project_id=%s AND file_path=ANY(%s)",
+                (target.project_id, argv[argv.index("--files") + 1 :]),
+            )
+        elif "--apply" in argv:
+            applications += 1
+            if fail_once:
+                fail_once = False
+                postgres_db.execute("DELETE FROM code_indexed_files WHERE file_path='removed.py'")
+                raise InterruptedError("native apply interrupted")
+            postgres_db.execute(
+                "DELETE FROM code_indexed_files WHERE project_id=%s AND file_path=ANY(%s)",
+                (target.project_id, ["removed.py", "wiki/page.md"]),
+            )
+            manifest = Path(argv[argv.index("--manifest") + 1]).read_bytes()
+            write_private(
+                Path(argv[argv.index("--receipt") + 1]),
+                inv.canonical(
+                    {
+                        "complete": True,
+                        "manifest_digest": inv.sha(manifest),
+                        "source_inventory_digest": journal.receipt.inventory_digest,
+                    }
+                ),
+            )
+
+    monkeypatch.setattr(manager, "_command", command)
+    if interrupted:
+        with pytest.raises(InterruptedError, match="native apply interrupted"):
+            manager.delete_direct(target, journal.receipt.inventory_digest, recovery, journal)
+        assert journal.state(target.key) == "intent"
+    manager.delete_direct(target, journal.receipt.inventory_digest, recovery, journal)
+    assert journal.state(target.key) == "done" and journal.receipt.backup_digest is None
+    manager.delete_direct(target, journal.receipt.inventory_digest, recovery, journal)
+    assert applications == (3 if interrupted else 2)
+    assert postgres_db.fetchone("SELECT file_path FROM code_indexed_files") == {
+        "file_path": "keep.py"
+    }
+    assert not (recovery / "backup.json").exists()
+    assert not list(recovery.glob("artifact-*.bin"))
+
+
+@pytest.mark.parametrize("state", [None, "intent"])
+def test_direct_code_retirement_refuses_new_versions_before_commands(
+    direct_indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path, Journal],
+    postgres_db: PostgresHubDatabase,
+    state: str | None,
+) -> None:
+    manager, target, _, recovery, journal = direct_indexed
+    if state is not None:
+        journal.mark(target.key, "intent")
+    postgres_db.execute(
+        "INSERT INTO code_indexed_files(id,project_id,file_path,language,content_hash,symbol_count) "
+        "VALUES (%s,%s,'wiki/page.md','python',%s,0)",
+        (str(uuid4()), target.project_id, "e" * 64),
+    )
+    with pytest.raises(
+        inv.RetirementError, match="identities changed|Unlisted code-index identities"
+    ):
+        manager.delete_direct(target, journal.receipt.inventory_digest, recovery, journal)
+    assert postgres_db.fetchone("SELECT COUNT(*) AS count FROM code_indexed_files") == {"count": 4}
+    assert not (recovery / "code-index-rehearsal-receipts").exists()
+
+
+def test_direct_code_retirement_requires_bound_complete_native_receipt(
+    direct_indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path, Journal],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager, target, root, recovery, journal = direct_indexed
+    (root / "wiki/page.md").unlink()
+    monkeypatch.setattr(
+        "scripts.wiki_retirement_code_index.local_native_bin_path", lambda _: root / "keep.py"
+    )
+
+    def command(argv: list[str], cwd: Path, receipt: Path) -> None:
+        assert cwd == root and receipt.is_relative_to(recovery)
+        if "--apply" in argv:
+            write_private(
+                Path(argv[argv.index("--receipt") + 1]),
+                inv.canonical(
+                    {
+                        "complete": True,
+                        "manifest_digest": "0" * 64,
+                        "source_inventory_digest": journal.receipt.inventory_digest,
+                    }
+                ),
+            )
+
+    monkeypatch.setattr(manager, "_command", command)
+    with pytest.raises(inv.RetirementError, match="does not prove exact completion"):
+        manager.delete_direct(target, journal.receipt.inventory_digest, recovery, journal)
+    assert journal.state(target.key) == "intent"
+
+
+@pytest.fixture
 def tombstone(
     indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path],
     postgres_db: PostgresHubDatabase,

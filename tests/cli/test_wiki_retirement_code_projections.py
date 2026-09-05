@@ -37,6 +37,51 @@ from scripts.wiki_retirement_inventory import (
 pytestmark = pytest.mark.cli
 
 
+def test_real_census_pages_distinct_paths_and_refuses_invalid_properties(
+    real_projections: tuple[CodeProjections, str, list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, project, _ = real_projections
+    adapter.graph.query(
+        "CREATE (f:CodeFile {project:$project,path:'wiki/page.py'}), "
+        "(m:CodeModule {project:$project,name:'outside'}) "
+        "WITH f,m UNWIND range(1,20) AS copy "
+        "CREATE (f)-[:IMPORTS {source_file_path:'wiki/page.py',content_hash:'irrelevant'}]->(m)",
+        {"project": project},
+    )
+    monkeypatch.setattr("scripts.wiki_retirement_code_projections.BATCH", 2)
+    original = adapter.graph.ro_query
+    queries: list[str] = []
+
+    def read(query: str, *args: Any, **kwargs: Any) -> Any:
+        queries.append(query)
+        return original(query, *args, **kwargs)
+
+    monkeypatch.setattr(adapter.graph, "ro_query", read)
+    assert adapter.discover_paths(project) == {"wiki/page.py"}
+    assert len(queries) == 4  # One identity check and one page for each path source.
+    adapter.graph.query(
+        "CREATE (:CodeSymbol {project:$project,id:17,file_path:'wiki/bad.py'})",
+        {"project": project},
+    )
+    with pytest.raises(RetirementError, match="invalid node identity"):
+        adapter.discover_paths(project)
+
+
+def test_real_distinct_census_refuses_nonstring_edge_path(
+    real_projections: tuple[CodeProjections, str, list[dict[str, Any]]],
+) -> None:
+    adapter, project, _ = real_projections
+    adapter.graph.query(
+        "CREATE (a:ExternalSymbol {project:$project,id:'a'}), "
+        "(b:ExternalSymbol {project:$project,id:'b'}), "
+        "(a)-[:CALLS {source_file_path:17}]->(b)",
+        {"project": project},
+    )
+    with pytest.raises(RetirementError, match="invalid path property"):
+        adapter.discover_paths(project)
+
+
 @pytest.mark.parametrize("mutation", ["valid", "id", "hash", "symbols"])
 def test_tombstone_projection_admission_is_exact_and_empty(mutation: str) -> None:
     project, files = selection()

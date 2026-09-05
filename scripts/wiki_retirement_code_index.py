@@ -157,6 +157,78 @@ class CodeIndexStorage:
         self.pg.rollback()
         return result
 
+    def _identity_rows(self, target: CodeIndexTarget) -> dict[str, list[dict[str, Any]]]:
+        """Read only native deletion identities, never source bodies or projection payloads."""
+        paths = [file.file_path for file in target.files]
+        result = {}
+        for table, columns in (
+            ("code_indexed_files", ("id", "file_path", "content_hash")),
+            ("code_symbols", ("id", "file_path", "file_content_hash")),
+        ):
+            fields = sql.SQL(",").join(
+                sql.SQL("{},{}").format(sql.Literal(name), sql.Identifier(name)) for name in columns
+            )
+            rows = self.pg.execute(
+                sql.SQL(
+                    "SELECT jsonb_build_object({}) FROM {} WHERE project_id=%s AND file_path=ANY(%s)"
+                ).format(fields, self._table(table)),
+                (target.project_id, paths),
+            )
+            result[table] = sorted([row[0] for row in rows], key=canonical)
+        foreign = self.pg.execute(
+            sql.SQL(
+                "SELECT 1 FROM {} WHERE project_id=%s AND file_path=ANY(%s) AND machine_id<>%s LIMIT 1"
+            ).format(self._table("code_indexed_file_states")),
+            (target.project_id, paths, target.machine_id),
+        ).fetchone()
+        self.pg.rollback()
+        if foreign:
+            raise RetirementError("Other-machine selectors retain wiki content")
+        return result
+
+    @staticmethod
+    def _bind_versions(
+        target: CodeIndexTarget, rows: dict[str, list[dict[str, Any]]]
+    ) -> CodeIndexTarget:
+        file_rows: dict[str, list[dict[str, Any]]] = {}
+        symbol_rows: dict[tuple[str, str], list[str]] = {}
+        for row in rows["code_indexed_files"]:
+            file_rows.setdefault(row["file_path"], []).append(row)
+        for row in rows["code_symbols"]:
+            symbol_rows.setdefault((row["file_path"], row["file_content_hash"]), []).append(
+                row["id"]
+            )
+        files = []
+        for file in target.files:
+            versions = []
+            for row in file_rows.get(file.file_path, []):
+                symbols = sorted(symbol_rows.get((file.file_path, row["content_hash"]), []))
+                validate_code_version(
+                    target.project_id, file.file_path, row["id"], row["content_hash"], symbols
+                )
+                versions.append(
+                    CodeIndexVersion(
+                        id=row["id"], content_hash=row["content_hash"], symbol_ids=symbols
+                    )
+                )
+            files.append(
+                file.model_copy(update={"versions": sorted(versions, key=lambda item: item.id)})
+            )
+        return target.model_copy(update={"files": files})
+
+    @staticmethod
+    def identity_digest(target: CodeIndexTarget) -> str:
+        return sha(
+            canonical(
+                {
+                    "project_id": target.project_id,
+                    "machine_id": target.machine_id,
+                    "root_path": target.root_path,
+                    "files": target.native_files(),
+                }
+            )
+        )
+
     def capture(self, target: CodeIndexTarget) -> dict[str, Any]:
         return {
             "sql": self._rows(target),
@@ -313,6 +385,33 @@ class CodeIndexStorage:
         if state is None and self.digest(current) != target.digest:
             raise RetirementError("Code index changed before deletion")
         self.assert_remaining(current, expected)
+        self._delete_native(target, inventory_digest, recovery, journal, expected)
+
+    def delete_direct(
+        self,
+        target: CodeIndexTarget,
+        inventory_digest: str,
+        receipt_root: Path,
+        journal: Journal,
+    ) -> None:
+        if self.identity_digest(target) != target.digest:
+            raise RetirementError("Direct code-index identity manifest differs from inventory")
+        current = self._bind_versions(target, self._identity_rows(target))
+        if journal.state(target.key) is None and self.identity_digest(current) != target.digest:
+            raise RetirementError("Code-index identities changed before direct deletion")
+        for actual, expected in zip(current.files, target.files, strict=True):
+            if any(version not in expected.versions for version in actual.versions):
+                raise RetirementError("Unlisted code-index identities appeared during direct retry")
+        self._delete_native(target, inventory_digest, receipt_root, journal, None)
+
+    def _delete_native(
+        self,
+        target: CodeIndexTarget,
+        inventory_digest: str,
+        recovery: Path,
+        journal: Journal,
+        expected: dict[str, Any] | None,
+    ) -> None:
         root = self.staged_root(target, recovery) if self.isolated else Path(target.root_path)
         refuse_symlink_traversal(root, label="Code-index checkout")
         native = local_native_bin_path("gcode")
@@ -352,7 +451,8 @@ class CodeIndexStorage:
                 root,
                 directory / f"{target.project_id}.selectors-{index}.json",
             )
-        self.assert_remaining(self.capture(target), expected)
+        if expected is not None:
+            self.assert_remaining(self.capture(target), expected)
         command = [
             str(native),
             "--project",
@@ -362,13 +462,23 @@ class CodeIndexStorage:
             str(manifest_path),
         ]
         self._command(command, root, directory / f"{target.project_id}.preflight.json")
+        native_receipt = directory / f"{target.project_id}.native.json"
         self._command(
-            [*command, "--apply", "--receipt", str(directory / f"{target.project_id}.native.json")],
+            [*command, "--apply", "--receipt", str(native_receipt)],
             root,
             directory / f"{target.project_id}.apply-command.json",
         )
-        if not self.is_absent(self.capture(target)):
-            raise RetirementError("Exact code-index retirement left selected artifacts")
+        if expected is not None:
+            if not self.is_absent(self.capture(target)):
+                raise RetirementError("Exact code-index retirement left selected artifacts")
+        else:
+            receipt = json.loads(read_private(native_receipt))
+            if (
+                receipt.get("complete") is not True
+                or receipt.get("manifest_digest") != sha(manifest)
+                or receipt.get("source_inventory_digest") != inventory_digest
+            ):
+                raise RetirementError("Native code-index receipt does not prove exact completion")
         journal.mark(target.key, "done")
 
     def restore(self, target: CodeIndexTarget, data: bytes, root: Path) -> None:
@@ -448,6 +558,8 @@ class CodeIndexStorage:
         source: Path,
         baseline: str,
         repository: Path,
+        *,
+        direct: bool = False,
     ) -> list[CodeIndexTarget]:
         machine_id = str(UUID(read_file(gobby_home / "machine_id").decode().strip()))
         revision, removed = source_deletions(source, baseline)
@@ -515,28 +627,13 @@ class CodeIndexStorage:
                 files=files,
                 digest="",
             )
-            rows = self._rows(target)
-            file_rows: dict[str, list[dict[str, Any]]] = {}
-            symbol_rows: dict[tuple[str, str], list[str]] = {}
-            for row in rows["code_indexed_files"]:
-                file_rows.setdefault(row["file_path"], []).append(row)
-            for row in rows["code_symbols"]:
-                symbol_rows.setdefault((row["file_path"], row["file_content_hash"]), []).append(
-                    row["id"]
-                )
-            for index, file in enumerate(files):
-                versions = []
-                for row in file_rows.get(file.file_path, []):
-                    symbol_ids = sorted(symbol_rows.get((file.file_path, row["content_hash"]), []))
-                    versions.append(
-                        CodeIndexVersion(
-                            id=row["id"], content_hash=row["content_hash"], symbol_ids=symbol_ids
-                        )
-                    )
-                files[index] = file.model_copy(
-                    update={"versions": sorted(versions, key=lambda v: v.id)}
-                )
-            target = target.model_copy(update={"files": files})
+            rows = self._identity_rows(target) if direct else self._rows(target)
+            target = self._bind_versions(target, rows)
+            if direct:
+                if self._identity_rows(target) != rows:
+                    raise RetirementError("Code-index identities changed during inventory")
+                targets.append(target.model_copy(update={"digest": self.identity_digest(target)}))
+                continue
             snapshot = self.capture(target)
             self.validate_snapshot(target, snapshot)
             if snapshot["sql"] != rows:

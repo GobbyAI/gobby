@@ -45,7 +45,7 @@ class Backup(Record):
 
 class Receipt(Record):
     inventory_digest: str
-    backup_digest: str
+    backup_digest: str | None
     operation: str
     updated_at: str
     items: dict[str, Literal["intent", "done"]] = Field(default_factory=dict)
@@ -165,9 +165,11 @@ def operation_lock(root: Path) -> Iterator[None]:
 
 
 class Journal:
-    def __init__(self, path: Path, inventory: Inventory, backup: Backup, operation: str) -> None:
+    def __init__(
+        self, path: Path, inventory: Inventory, backup: Backup | None, operation: str
+    ) -> None:
         self.path = path
-        backup_digest = sha(canonical(backup.model_dump(mode="json")))
+        backup_digest = sha(canonical(backup.model_dump(mode="json"))) if backup else None
         if path.exists():
             self.receipt = Receipt.model_validate_json(read_private(path))
             if (

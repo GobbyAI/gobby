@@ -394,26 +394,38 @@ class CodeProjections:
                     break
         if not self.redis.exists(GRAPH):
             return paths
-        for row in self._read(
-            "MATCH (n {project:$project}) WHERE (n:CodeFile OR n:CodeSymbol)",
+        invalid = self.graph.ro_query(
+            "MATCH (n {project:$project}) WHERE (n:CodeFile OR n:CodeSymbol) "
+            "WITH n, CASE WHEN n:CodeFile THEN n.path ELSE n.id END AS identity "
+            "WHERE size(labels(n))<>1 OR identity IS NULL OR identity='' "
+            "OR toString(identity)<>identity RETURN count(n)",
             {"project": project_id},
-        ):
-            node = _node(row[0], project_id)
-            add(node.properties.get("path" if node.label == "CodeFile" else "file_path"))
-        after = -1
-        while True:
-            rows = self.graph.ro_query(
-                "MATCH (s {project:$project})-[r]->() "
-                "WHERE r.source_file_path IS NOT NULL AND id(r)>$after "
-                "RETURN id(r), r.source_file_path ORDER BY id(r) LIMIT $limit",
-                {"project": project_id, "after": after, "limit": BATCH},
-                timeout=30000,
-            ).result_set
-            for row in rows:
-                add(row[1])
-            if not rows or len(rows) < BATCH:
-                return paths
-            after = rows[-1][0]
+            timeout=30000,
+        ).result_set
+        if invalid[0][0]:
+            raise RetirementError("Code projection census found an invalid node identity")
+        queries = (
+            "MATCH (n:CodeFile {project:$project}) WHERE n.path IS NOT NULL "
+            "RETURN DISTINCT n.path AS path",
+            "MATCH (n:CodeSymbol {project:$project}) WHERE n.file_path IS NOT NULL "
+            "RETURN DISTINCT n.file_path AS path",
+            "MATCH (s {project:$project})-[r]->() WHERE r.source_file_path IS NOT NULL "
+            "RETURN DISTINCT r.source_file_path AS path",
+        )
+        for query in queries:
+            offset = 0
+            while True:
+                rows = self.graph.ro_query(
+                    query + " ORDER BY path SKIP $offset LIMIT $limit",
+                    {"project": project_id, "offset": offset, "limit": BATCH},
+                    timeout=30000,
+                ).result_set
+                for row in rows:
+                    add(row[0])
+                if len(rows) < BATCH:
+                    break
+                offset += len(rows)
+        return paths
 
     def capture(self, project_id: str, files: list[dict[str, Any]]) -> dict[str, Any]:
         selected = _selection(project_id, files)

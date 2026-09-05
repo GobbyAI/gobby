@@ -152,6 +152,9 @@ def validate_code_version(
 
 class Inventory(Record):
     version: Literal[1] = 1
+    mode: Literal["recovery", "direct"] = Field(
+        default="recovery", exclude_if=lambda value: value == "recovery"
+    )
     created_at: str
     repository: str
     archive_tag: Literal["legacy-wiki-before-retirement-21771"] = (

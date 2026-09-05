@@ -1,6 +1,14 @@
 """Retire the archived wiki using an explicit inventory and private recovery set.
 
 Run with ``uv run python -m scripts.retire_legacy_wiki`` (inventory is the default).
+Direct retirement requires no wiki data backup, rehearsal, or runtime-proof file:
+  inventory --direct
+  apply --direct --inventory <private>/inventory.json --defer-schema
+  # MAIN operator runs canonical hub-maintenance schema-apply, then starts removal code.
+  retry --direct --inventory <private>/inventory.json
+Direct inventories contain exact deletion identities, not recovery snapshots. Stop
+legacy writers before apply. Keep the annotated Git archive tag for old source code.
+
 Connections: GOBBY_RETIRE_DATABASE_URL (defaults to operator bootstrap),
 GOBBY_RETIRE_QDRANT_URL, GOBBY_RETIRE_QDRANT_API_KEY, GOBBY_RETIRE_FALKOR_URL.
 Rehearsal uses the same names with GOBBY_RETIRE_ISOLATED_ prefix. PostgreSQL must
@@ -120,7 +128,13 @@ def code_index_manager(stores: Storage) -> CodeIndexStorage:
 
 
 def inventory(
-    repository: Path, gobby_home: Path, files_home: Path, stores: Storage | None, errors: list[str]
+    repository: Path,
+    gobby_home: Path,
+    files_home: Path,
+    stores: Storage | None,
+    errors: list[str],
+    *,
+    direct: bool = False,
 ) -> Inventory:
     checkouts = {repository}
     identities = {}
@@ -129,7 +143,7 @@ def inventory(
         try:
             identities = stores.identities()
             checkouts.update(getattr(stores, "checkouts", lambda: [])())
-            targets = stores.inventory()
+            targets = stores.inventory(direct=True) if direct else stores.inventory()
         except Exception as exc:
             errors.append(
                 f"Datastore inventory incomplete: {exc}"
@@ -161,6 +175,7 @@ def inventory(
     except (OSError, ValueError, RetirementError) as exc:
         errors.append(f"Filesystem inventory incomplete: {exc}")
     value = Inventory(
+        mode="direct" if direct else "recovery",
         created_at=now(),
         repository=str(repository),
         baseline=baseline(repository),
@@ -187,6 +202,7 @@ def inventory(
                 Path(__file__).resolve().parents[1],
                 value.baseline,
                 repository,
+                **({"direct": True} if direct else {}),
             )
             value = value.model_copy(update={"code_indexes": targets})
         except Exception as exc:
@@ -360,12 +376,14 @@ def verify_runtime(inventory: Inventory, proof: RuntimeProof, root: Path) -> Non
 
 
 def check_remaining_stores(inventory: Inventory, stores: Storage, journal: Journal) -> None:
-    actual = {target.key: target for target in stores.inventory()}
+    direct = inventory.mode == "direct"
+    targets = stores.inventory(direct=True) if direct else stores.inventory()
+    actual = {target.key: target for target in targets}
     expected = {target.key: target for target in inventory.stores}
     if actual.keys() - expected.keys():
         raise RetirementError("New datastore artifacts require a new inventory")
     for key, target in expected.items():
-        data = stores.capture(target)
+        data = stores.capture_direct(target) if direct else stores.capture(target)
         state = journal.state(key)
         if data is None:
             if state not in {"intent", "done"} and target.digest != sha(b"{}"):
@@ -419,6 +437,8 @@ def apply(
     defer_schema: bool = False,
     cargo_quiet_window: bool = False,
 ) -> Receipt:
+    if inventory.mode != "recovery":
+        raise RetirementError("Direct inventories require --direct apply/retry")
     if inventory.cargo_installs and not cargo_quiet_window:
         raise RetirementError("Cargo removal requires the announced --cargo-quiet-window")
     validate_inventory(inventory)
@@ -485,11 +505,80 @@ def apply(
         raise
 
 
-def delete_store(target: StoreTarget, stores: Storage, journal: Journal) -> None:
+def apply_direct(
+    inventory: Inventory,
+    root: Path,
+    stores: Storage,
+    *,
+    defer_schema: bool = False,
+    cargo_quiet_window: bool = False,
+) -> Receipt:
+    """Delete exact admitted targets without producing or requiring recovery data."""
+    if inventory.mode != "direct":
+        raise RetirementError("Direct apply requires an inventory created with --direct")
+    if inventory.cargo_installs and not cargo_quiet_window:
+        raise RetirementError("Cargo removal requires the announced --cargo-quiet-window")
+    validate_inventory(inventory)
+    check_connections(inventory, stores)
+    journal = Journal(root / "direct-apply.json", inventory, None, "apply-direct")
+    try:
+        if writer_processes():
+            raise RetirementError("Legacy wiki writer processes must stop before direct deletion")
+        reject_new_roots(inventory)
+        verify_ownership(inventory, journal)
+        check_remaining_stores(inventory, stores, journal)
+        for tree in inventory.roots:
+            verify_remaining(tree, journal)
+        for target in inventory.stores:
+            if target.kind != "postgres":
+                delete_store(target, stores, journal, direct=True)
+        for item in inventory.cargo_installs:
+            tree = next(
+                tree for tree in inventory.roots if Path(tree.path) == Path(item.home) / "bin/gwiki"
+            )
+            delete_cargo(item, tree, journal)
+        delete_files(inventory, journal)
+        for target in inventory.stores:
+            if target.kind != "postgres":
+                continue
+            if defer_schema and journal.state(target.key) != "done":
+                stores.require_schema_pending()
+                journal.mark(target.key, "intent")
+                journal.defer_schema()
+                return journal.receipt
+            delete_store(target, stores, journal, direct=True)
+        stores.require_schema_retired()
+        for code_target in inventory.code_indexes:
+            code_index_manager(stores).delete_direct(code_target, inventory.digest, root, journal)
+        reject_new_roots(inventory)
+        verify_ownership(inventory, journal)
+        check_remaining_stores(inventory, stores, journal)
+        for tree in inventory.roots:
+            verify_remaining(tree, journal)
+        if writer_processes():
+            raise RetirementError("Legacy wiki writer appeared during direct deletion")
+        journal.finish()
+        return journal.receipt
+    except BaseException as exc:
+        journal.failed(
+            f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, RetirementError)
+            else type(exc).__name__
+        )
+        raise
+
+
+def delete_store(
+    target: StoreTarget, stores: Storage, journal: Journal, *, direct: bool = False
+) -> None:
     if journal.state(target.key) == "done":
         return
-    data = stores.capture(target)
-    if data is None and journal.state(target.key) == "intent":
+    capture = stores.capture_direct if direct else stores.capture
+    data = capture(target)
+    if data is None and (
+        journal.state(target.key) == "intent"
+        or (direct and target.kind == "postgres" and target.digest == sha(b"{}"))
+    ):
         if target.kind == "postgres":
             stores.require_schema_retired()
         journal.mark(target.key, "done")
@@ -499,8 +588,11 @@ def delete_store(target: StoreTarget, stores: Storage, journal: Journal) -> None
     if target.kind == "postgres":
         stores.require_schema_pending()
     journal.mark(target.key, "intent")
-    stores.delete(target)
-    if stores.capture(target) is not None:
+    if direct:
+        stores.delete_direct(target)
+    else:
+        stores.delete(target)
+    if capture(target) is not None:
         raise RetirementError(f"Datastore deletion did not complete: {target.key}")
     if target.kind == "postgres":
         stores.require_schema_retired()
@@ -670,6 +762,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--runtime-proof", type=Path)
     parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="Inventory/apply exact targets without wiki backup, rehearsal, or runtime-proof gates",
+    )
+    parser.add_argument(
         "--cargo-quiet-window",
         action="store_true",
         help="Confirm the announced quiet window also fences Cargo install/uninstall",
@@ -680,6 +777,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Record exact426 intent and return incomplete for canonical hub-maintenance orchestration",
     )
     options = parser.parse_args(argv)
+    if options.direct and options.operation not in {"inventory", "apply", "retry"}:
+        parser.error("--direct supports only inventory, apply, or retry")
     stores = None
     isolated = None
     try:
@@ -705,6 +804,7 @@ def main(argv: list[str] | None = None) -> int:
                 files_home.absolute(),
                 stores,
                 errors,
+                direct=options.direct,
             )
             root = prepare_directory(value)
             write_private(root / "inventory.json", value.model_dump_json(indent=2).encode())
@@ -726,6 +826,18 @@ def main(argv: list[str] | None = None) -> int:
         value = load_inventory(options.inventory.absolute())
         root = prepare_directory(value)
         with operation_lock(root):
+            if options.direct:
+                result = apply_direct(
+                    value,
+                    root,
+                    stores,
+                    defer_schema=options.defer_schema,
+                    cargo_quiet_window=options.cargo_quiet_window,
+                )
+                print(result.model_dump_json())
+                return 0
+            if value.mode == "direct":
+                raise RetirementError("Direct inventories require --direct apply/retry")
             if options.operation == "backup":
                 create_backup(value, root, stores)
                 print(json.dumps({"backup": str(root / "backup.json"), "complete": True}))

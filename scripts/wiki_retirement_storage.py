@@ -54,10 +54,12 @@ class RedisCommands(Protocol):
 
 class Storage(Protocol):
     def identities(self) -> dict[str, str]: ...
-    def inventory(self) -> list[StoreTarget]: ...
+    def inventory(self, *, direct: bool = False) -> list[StoreTarget]: ...
     def capture(self, target: StoreTarget) -> bytes | None: ...
+    def capture_direct(self, target: StoreTarget) -> bytes | None: ...
     def backup(self, target: StoreTarget) -> bytes: ...
     def delete(self, target: StoreTarget) -> None: ...
+    def delete_direct(self, target: StoreTarget) -> None: ...
     def restore(self, target: StoreTarget, data: bytes) -> None: ...
     def close(self) -> None: ...
     def require_schema_pending(self) -> None: ...
@@ -219,6 +221,74 @@ class Datastores:
         self.pg.rollback()
         return canonical(tables)
 
+    def _pg_descriptor(self) -> bytes:
+        """Inventory the dedicated tables without retrieving their content."""
+        tables = {}
+        try:
+            for table in PG_TABLES:
+                if not self._table_exists(table):
+                    continue
+                row = self.pg.execute(
+                    sql.SQL("SELECT COUNT(*) FROM {}.{}").format(
+                        sql.Identifier(self.schema), sql.Identifier(table)
+                    )
+                ).fetchone()
+                if row is None:
+                    raise RetirementError("PostgreSQL count query returned no row")
+                tables[table] = int(row[0])
+        finally:
+            self.pg.rollback()
+        return canonical(tables)
+
+    def _wiki_scope_exists(self, kind: str, value: str) -> bool:
+        try:
+            for table in PG_TABLES:
+                if self._table_exists(table):
+                    row = self.pg.execute(
+                        sql.SQL(
+                            "SELECT EXISTS(SELECT 1 FROM {}.{} WHERE scope_kind=%s AND scope_id=%s)"
+                        ).format(sql.Identifier(self.schema), sql.Identifier(table)),
+                        (kind, value),
+                    ).fetchone()
+                    if row and row[0]:
+                        return True
+            return False
+        finally:
+            self.pg.rollback()
+
+    def _qdrant_descriptor(self, name: str) -> bytes | None:
+        if not COLLECTION.fullmatch(name):
+            raise RetirementError(f"Collection is outside wiki scope: {name}")
+        if not self.qdrant.collection_exists(name):
+            return None
+        _, kind, value = name.split("_", 2)
+        count = self.qdrant.count(name, exact=True).count
+        ownership = {"namespace": "gwiki", "scope_kind": kind, "scope_id": value}
+        if count:
+            owned = self.qdrant.count(
+                name,
+                exact=True,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(key=key, match=models.MatchValue(value=expected))
+                        for key, expected in ownership.items()
+                    ]
+                ),
+            ).count
+            if owned != count:
+                raise RetirementError(f"Collection contains unowned points: {name}")
+        elif not self._wiki_scope_exists(kind, value):
+            raise RetirementError(f"Empty wiki-like collection needs ownership evidence: {name}")
+        return canonical({"name": name, **ownership, "count": count})
+
+    def _falkor_descriptor(self) -> bytes | None:
+        if not self.redis.execute_command("EXISTS", GRAPH):
+            return None
+        graphs = self.redis.execute_command("GRAPH.LIST")
+        if GRAPH not in {name.decode() if isinstance(name, bytes) else name for name in graphs}:
+            raise RetirementError("Dedicated wiki key is not a Falkor graph")
+        return canonical({"graph": GRAPH})
+
     def _registry_snapshot(self, kind: str, name: str) -> bytes | None:
         rows = self._table_rows(REGISTRY_TABLES[kind], name)
         if not rows:
@@ -272,20 +342,22 @@ class Datastores:
         self.pg.rollback()
         return scopes
 
-    def inventory(self) -> list[StoreTarget]:
+    def inventory(self, *, direct: bool = False) -> list[StoreTarget]:
         identities = self.identities()
-        data = self._pg_snapshot()
+        data = self._pg_descriptor() if direct else self._pg_snapshot()
         pg_value = json.loads(data)
         targets = [
             record(
                 "postgres",
                 "wiki_schema",
                 data,
-                sum(len(value["rows"]) for value in pg_value.values()),
+                sum(pg_value.values())
+                if direct
+                else sum(len(v["rows"]) for v in pg_value.values()),
                 identities["postgres"],
             )
         ]
-        scopes = self._wiki_scopes()
+        scopes = set() if direct else self._wiki_scopes()
         targets.extend(self.configuration.inventory(identities["postgres"]))
         for kind, table in REGISTRY_TABLES.items():
             for row in self._table_rows(table):
@@ -299,6 +371,20 @@ class Datastores:
         for collection in self.qdrant.get_collections().collections:
             name = collection.name
             if not COLLECTION.fullmatch(name):
+                continue
+            if direct:
+                collection_data = self._qdrant_descriptor(name)
+                if collection_data is None:
+                    raise RetirementError("Collection changed during inventory")
+                targets.append(
+                    record(
+                        "qdrant",
+                        name,
+                        collection_data,
+                        json.loads(collection_data)["count"],
+                        identities["qdrant"],
+                    )
+                )
                 continue
             collection_data = self._qdrant_snapshot(name)
             if collection_data is None:
@@ -320,7 +406,7 @@ class Datastores:
             targets.append(
                 record("qdrant", name, collection_data, len(points), identities["qdrant"])
             )
-        graph_data = self._falkor_snapshot()
+        graph_data = self._falkor_descriptor() if direct else self._falkor_snapshot()
         if graph_data is not None:
             targets.append(record("falkor", GRAPH, graph_data, 1, identities["falkor"]))
         return targets
@@ -372,6 +458,22 @@ class Datastores:
         if target.name != GRAPH:
             raise RetirementError("Unexpected graph target")
         return self._falkor_snapshot()
+
+    def capture_direct(self, target: StoreTarget) -> bytes | None:
+        if target.kind == "postgres":
+            if target.name != "wiki_schema":
+                raise RetirementError("Unexpected PostgreSQL target")
+            data = self._pg_descriptor()
+            return None if data == b"{}" else data
+        if target.kind == "qdrant":
+            return self._qdrant_descriptor(target.name)
+        if target.kind == "falkor":
+            if target.name != GRAPH:
+                raise RetirementError("Unexpected graph target")
+            return self._falkor_descriptor()
+        if target.kind in {*REGISTRY_TABLES, "config", "discovery"}:
+            return self.capture(target)
+        raise RetirementError(f"Unexpected direct datastore target: {target.key}")
 
     def _pg_command(self, tool: str, *args: str, payload: bytes | None = None) -> bytes:
         from gobby.cli.hub_backup._stores import _postgres_client_command
@@ -477,8 +579,21 @@ class Datastores:
             raise RetirementError("Retirement admits exactly the canonical 425 to 426 migration")
 
     def require_schema_retired(self) -> None:
-        if self.schema_head() != 426 or self._pg_snapshot() != b"{}":
+        if self.schema_head() != 426 or self._pg_descriptor() != b"{}":
             raise RetirementError("Canonical schema 426 and exact five-table absence are required")
+
+    def delete_direct(self, target: StoreTarget) -> None:
+        backend = target.kind if target.kind in {"qdrant", "falkor"} else "postgres"
+        if self.identities()[backend] != target.identity:
+            raise RetirementError(f"Datastore identity changed: {target.key}")
+        data = self.capture_direct(target)
+        if data is None:
+            return
+        if sha(data) != target.digest:
+            raise RetirementError(f"Datastore changed since inventory: {target.key}")
+        # Configuration and registry deletion retain their transactional compare;
+        # wiki schema deletion still uses the canonical maintenance guard.
+        self.delete(target)
 
     def delete(self, target: StoreTarget) -> None:
         if target.kind in {"config", "discovery"}:
