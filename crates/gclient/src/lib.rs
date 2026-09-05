@@ -5,6 +5,7 @@ pub mod copy_mode;
 pub mod daemon;
 pub mod frame_source;
 pub mod input;
+pub mod key_input;
 pub mod persist;
 pub mod startup;
 pub mod teardown;

@@ -1,4 +1,5 @@
-//! Display-width helpers imported from herdr `ui/text.rs`.
+// upstream: herdr v0.8.0 src/ui/text.rs
+//! Display-width helpers: width, end truncation, middle elision.
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -67,4 +68,33 @@ fn take_suffix_width(text: &str, max_width: usize) -> String {
         width += ch_width;
     }
     output.into_iter().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_end_uses_display_width() {
+        let text = truncate_end("提交 gobby 的反馈", 16);
+
+        assert_eq!(text, "提交 gobby 的反…");
+        assert!(display_width(&text) <= 16);
+    }
+
+    #[test]
+    fn middle_elide_uses_display_width() {
+        let text = middle_elide("重构用户认证模块并迁移到统一登录服务", 12);
+
+        assert!(text.contains('…'));
+        assert!(display_width(&text) <= 12);
+    }
+
+    #[test]
+    fn truncate_end_handles_short_and_tiny_widths() {
+        assert_eq!(truncate_end("abc", 3), "abc");
+        assert_eq!(truncate_end("abcd", 0), "");
+        assert_eq!(truncate_end("abcd", 1), "…");
+        assert_eq!(middle_elide("abcdef", 1), "…");
+    }
 }

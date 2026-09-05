@@ -12,8 +12,9 @@ per-commit cherry-picks recorded below.
 
 | Upstream | Decision | Gobby |
 | --- | --- | --- |
-| `src/ui.rs` | accept (rewritten crate root) | `crates/gclient/src/ui/mod.rs` |
+| `src/ui.rs` | accept, split | `ui/chrome.rs` (view state, tabs, geometry) + `ui/chrome_render.rs` (frame composition) |
 | `src/ui/sidebar.rs` | accept, split | `ui/sidebar.rs` + `ui/sidebar_rows.rs` |
+| `src/ui/sidebar/tokens.rs` | accept | `ui/sidebar_tokens.rs` |
 | `src/ui/panes.rs` | accept, split | `ui/panes.rs` + `ui/pane_layout.rs` |
 | `src/ui/tabs.rs` | accept | `ui/tabs.rs` |
 | `src/ui/tab_surface.rs` | accept | `ui/tab_surface.rs` |
@@ -25,11 +26,45 @@ per-commit cherry-picks recorded below.
 | `src/ui/widgets.rs` | accept | `ui/widgets.rs` |
 | `src/ui/text.rs` | accept | `ui/text.rs` |
 | `src/ui/settings.rs` | accept (client-local only) | `ui/settings.rs` |
+| `src/config/keybinds.rs` | accept (chord parsing, formatting, matching) | `ui/keymap.rs` |
 | `src/ui/menus.rs` | reject / drop | plugin and herdr menu entries |
 | `src/ui/mobile.rs` | reject / drop | mobile layout |
 | `src/ui/onboarding.rs` | reject / drop | onboarding |
 | `src/ui/release_notes.rs` | reject / drop | release notes |
-| `src/app/` | reject / drop | herdr orchestration; Gobby `src/app/` is new |
+
+herdr's `src/app/` orchestration is dropped wholesale; Gobby's `src/app/` is
+new code that talks to the daemon.
+
+Keep-set count: 15 accepted upstream files carve into 18 modules under
+`crates/gclient/src/ui/`, each headed `// upstream: herdr v0.8.0 <path>`
+(split modules repeat their source's header). 4 upstream UI modules are
+dropped. `tests/ui_carve_guard.rs` checks this table against the tree.
+
+### Keymap provenance
+
+- Default chords are transcribed from herdr `src/config/model.rs`
+  `KeysConfig::default()` at v0.8.0 into `ui/keymap.rs::BINDINGS` (prefix
+  `ctrl+b`). Chord parsing, formatting, normalisation, event matching, and
+  `prefix+1..9` range expansion are ported from `src/config/keybinds.rs`.
+- herdr workspace/agent action names become terminal/attention names; the
+  worktree and mobile actions are not carried. `custom_command` stays as a
+  `reserved` binding: it never dispatches and is hidden from keybind help, so
+  its default chord is free for an override to reclaim.
+- Overrides are client-local TOML at `~/.gobby/client/keymap.toml`, parsed
+  with the `toml` crate; an override that collides with another active chord
+  is rejected and the defaults stand.
+
+### gobby-terminal links
+
+`gclient` links five `gobby_terminal` modules and copies none of them:
+`layout` (BSP tiles, `PaneId`, `ScrollMetrics`; `ui/chrome.rs`,
+`ui/pane_layout.rs`, `ui/scrollbar.rs`), `raw_input` and `input`
+(`src/key_input.rs` turns parsed host bytes into keymap events and pane
+bytes under the negotiated keyboard protocol), `selection`
+(`Chrome::selection`, painted per layout slot by `ui/panes.rs`), and
+`terminal_theme` (`Theme::terminal_theme` applies the `.impeccable.md` map).
+`gobby_terminal::protocol` carries the frame wire. No copied `layout.rs` or
+`raw_input.rs` exists in this crate; `tests/source_size.rs` checks both.
 
 ## Cherry-picks
 

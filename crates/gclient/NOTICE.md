@@ -33,8 +33,10 @@ in `Cargo.toml`.
 - Upstream ships no `NOTICE` file.
 
 The herdr-derived portions of this crate are the imported UI chrome under
-`src/ui/` (sidebar, tabs, navigator, status, keybind help, dialogs, scrollbar,
-widgets, text, settings, pane layout), BSP layout reuse from `gobby-terminal`,
+`src/ui/` (chrome view state and frame composition, sidebar, tabs, navigator,
+status, keybind help, dialogs, scrollbar, widgets, text, settings, pane
+layout), the keymap chord grammar in `src/ui/keymap.rs` (from herdr
+`src/config/keybinds.rs`), BSP layout reuse from `gobby-terminal`,
 input-capture patterns, copy-mode logical-line extract (`952729ee` / herdr
 #2735), paste_payload bracketing, and workspace-snapshot shapes. See
 `UPSTREAM.md` for the UI-module accept/reject map. This is a one-time fork;
@@ -46,9 +48,17 @@ there is no re-pin procedure.
   (roster, attention, tasks) rather than herdr app state.
 - Dropped herdr agent detection, plugin menus, worktree/session-persistence
   surfaces, onboarding, release-notes, and mobile modules.
-- `ui/sidebar.rs` split: rows live in `ui/sidebar_rows.rs`.
+- `src/ui.rs` split: view state in `ui/chrome.rs`, frame composition in
+  `ui/chrome_render.rs`; herdr app state is replaced by a `WorkspaceView`
+  trait over the Gobby workspace.
+- `ui/sidebar.rs` split: rows live in `ui/sidebar_rows.rs`; token stats in
+  `ui/sidebar_tokens.rs` (from `src/ui/sidebar/tokens.rs`).
 - `ui/panes.rs` split: layout helpers live in `ui/pane_layout.rs`.
+- Keymap: herdr defaults transcribed into `ui/keymap.rs`; worktree and mobile
+  actions dropped, plugin `custom_command` kept reserved and non-dispatching.
 - Theme values come from `.impeccable.md` (hue 125 accent, deutan-safe state
-  palette). Herdr's terminal_theme mechanism is reused via `gobby-terminal`.
+  palette, dark and light). `src/theme.rs` maps them onto
+  `gobby_terminal::terminal_theme::TerminalTheme`; herdr's catppuccin palette
+  survives only as the `Palette` field names.
 - Frame attach is read-only. Writes go through the daemon lease/input/paste
   surface. Settings edit client-local preferences only.
