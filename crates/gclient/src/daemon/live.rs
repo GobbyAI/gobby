@@ -1,13 +1,15 @@
-use super::live_reader::{connect_socket, run_connection, Outbound};
+use super::live_reader::{
+    connect_socket, run_connection, Outbound, WRITE_CANCELLED, WRITE_QUEUED, WRITE_STARTED,
+};
 use super::rest::RestClient;
 use super::{
-    route_key, Answer, Daemon, DaemonError, DaemonEvent, Generation, KillOutcome, Page,
-    RosterEntry, RouteKey, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
+    route_key, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome,
+    Page, RosterEntry, RouteKey, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
 };
 use reqwest::Url;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex as AsyncMutex, Notify};
@@ -175,6 +177,7 @@ impl LiveDaemon {
             self.inner.closed_tx.subscribe(),
         )
         .await?;
+        let mut reader = self.inner.reader.lock().await;
         let (outbound, receiver) = mpsc::channel(256);
         let generation = {
             let mut state = self.inner.state();
@@ -194,7 +197,7 @@ impl LiveDaemon {
         let handle = tokio::spawn(async move {
             run_connection(inner, generation, socket, receiver).await;
         });
-        *self.inner.reader.lock().await = Some(handle);
+        *reader = Some(handle);
         Ok(generation)
     }
 
@@ -287,7 +290,7 @@ impl LiveDaemon {
         let mut guard = PendingGuard {
             daemon: self,
             key: &key,
-            write_started: Arc::new(AtomicBool::new(false)),
+            write_state: Arc::new(AtomicU8::new(WRITE_QUEUED)),
             armed: true,
         };
         let (written_tx, written_rx) = oneshot::channel();
@@ -295,7 +298,7 @@ impl LiveDaemon {
             deadline,
             outbound.send(Outbound::Message {
                 value: message,
-                write_started: Arc::clone(&guard.write_started),
+                write_state: Arc::clone(&guard.write_state),
                 written: written_tx,
             }),
         )
@@ -345,7 +348,7 @@ impl LiveDaemon {
             deadline,
             outbound.send(Outbound::Message {
                 value: message,
-                write_started: Arc::new(AtomicBool::new(false)),
+                write_state: Arc::new(AtomicU8::new(WRITE_QUEUED)),
                 written,
             }),
         )
@@ -388,15 +391,23 @@ impl Drop for LiveDaemon {
 struct PendingGuard<'a> {
     daemon: &'a LiveDaemon,
     key: &'a RouteKey,
-    write_started: Arc<AtomicBool>,
+    write_state: Arc<AtomicU8>,
     armed: bool,
 }
 
 impl Drop for PendingGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
-            self.daemon
-                .remove_waiter(self.key, self.write_started.load(Ordering::Acquire));
+            let post_write = self
+                .write_state
+                .compare_exchange(
+                    WRITE_QUEUED,
+                    WRITE_CANCELLED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err_and(|state| state == WRITE_STARTED);
+            self.daemon.remove_waiter(self.key, post_write);
         }
     }
 }
@@ -476,8 +487,8 @@ impl Daemon for LiveDaemon {
         }
     }
 
-    fn subscribe(&self) -> (SubscribeSnapshot, broadcast::Receiver<DaemonEvent>) {
-        let receiver = self.inner.events.subscribe();
+    fn subscribe(&self) -> (SubscribeSnapshot, EventReceiver) {
+        let receiver = self.inner.events.subscribe().into();
         let state = self.inner.state();
         (
             SubscribeSnapshot {

@@ -274,6 +274,34 @@ pub enum DaemonEvent {
     Lagged,
 }
 
+/// Subscription receiver that keeps runtime lag details out of the semantic event API.
+#[derive(Debug)]
+pub struct EventReceiver {
+    inner: broadcast::Receiver<DaemonEvent>,
+}
+
+impl EventReceiver {
+    pub async fn recv(&mut self) -> Result<DaemonEvent, broadcast::error::RecvError> {
+        match self.inner.recv().await {
+            Err(broadcast::error::RecvError::Lagged(_)) => Ok(DaemonEvent::Lagged),
+            result => result,
+        }
+    }
+
+    pub fn try_recv(&mut self) -> Result<DaemonEvent, broadcast::error::TryRecvError> {
+        match self.inner.try_recv() {
+            Err(broadcast::error::TryRecvError::Lagged(_)) => Ok(DaemonEvent::Lagged),
+            result => result,
+        }
+    }
+}
+
+impl From<broadcast::Receiver<DaemonEvent>> for EventReceiver {
+    fn from(inner: broadcast::Receiver<DaemonEvent>) -> Self {
+        Self { inner }
+    }
+}
+
 // Static dispatch (`Workspace<D>`) is intentional; implementations return Send futures.
 #[allow(async_fn_in_trait)]
 pub trait Daemon: Send + Sync {
@@ -292,7 +320,7 @@ pub trait Daemon: Send + Sync {
     async fn mark_seen(&self, entry: &str, attention_id: &str) -> Result<(), DaemonError>;
     async fn spawn(&self, req: SpawnRequest) -> Result<SpawnOutcome, DaemonError>;
     async fn terminate(&self, terminal_id: &str) -> Result<KillOutcome, DaemonError>;
-    fn subscribe(&self) -> (SubscribeSnapshot, broadcast::Receiver<DaemonEvent>);
+    fn subscribe(&self) -> (SubscribeSnapshot, EventReceiver);
     async fn send(&self, msg: WsMessage) -> Result<WsReply, DaemonError>;
     async fn notify(&self, msg: WsMessage) -> Result<(), DaemonError>;
     async fn reconnect(&self, observed: Generation) -> Result<Generation, DaemonError>;
@@ -627,7 +655,7 @@ impl Daemon for ScriptedDaemon {
         })
     }
 
-    fn subscribe(&self) -> (SubscribeSnapshot, broadcast::Receiver<DaemonEvent>) {
+    fn subscribe(&self) -> (SubscribeSnapshot, EventReceiver) {
         self.subscribe_scripted();
         let state = self.state();
         (
@@ -636,7 +664,7 @@ impl Daemon for ScriptedDaemon {
                 ready: state.ws_connected,
                 last_error: state.closed.then(DaemonError::unavailable),
             },
-            self.events.subscribe(),
+            self.events.subscribe().into(),
         )
     }
 

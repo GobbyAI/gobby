@@ -6,7 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -20,6 +20,9 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 const FRAGMENT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_ASSEMBLY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_AGGREGATE_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const WRITE_QUEUED: u8 = 0;
+pub(super) const WRITE_STARTED: u8 = 1;
+pub(super) const WRITE_CANCELLED: u8 = 2;
 
 pub(super) type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -27,7 +30,7 @@ pub(super) type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub(super) enum Outbound {
     Message {
         value: Value,
-        write_started: Arc<AtomicBool>,
+        write_state: Arc<AtomicU8>,
         written: oneshot::Sender<()>,
     },
     Close {
@@ -108,7 +111,7 @@ pub(super) async fn run_connection(
         tokio::select! {
             command = outbound.recv() => {
                 match command {
-                    Some(Outbound::Message { value, write_started, written }) => {
+                    Some(Outbound::Message { value, write_state, written }) => {
                         let raw = match encode_message(&value)
                             .and_then(|bytes| String::from_utf8(bytes)
                                 .map_err(|error| super::WsCodecError::Json(
@@ -120,7 +123,18 @@ pub(super) async fn run_connection(
                             Ok(raw) => raw,
                             Err(error) => break protocol_error(error),
                         };
-                        write_started.store(true, Ordering::Release);
+                        if write_state
+                            .compare_exchange(
+                                WRITE_QUEUED,
+                                WRITE_STARTED,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_err()
+                        {
+                            let _ = written.send(());
+                            continue;
+                        }
                         if !matches!(
                             timeout(
                                 super::REQUEST_DEADLINE,

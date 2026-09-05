@@ -31,7 +31,8 @@ struct QueuedResponse {
     status: u16,
     body: Value,
     retry_after: Option<u64>,
-    event_before_response: Option<Value>,
+    events_before_response: Vec<Value>,
+    wait_for_events: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,12 @@ struct MockState {
     websocket_handshakes: usize,
     websocket_failures: usize,
     websocket_gate: Option<Arc<Notify>>,
+    websocket_read_gate: Option<Arc<Notify>>,
+    active_websockets: usize,
+    websocket_closes: usize,
+    unique_attachment_ids: bool,
+    next_attachment_id: u64,
+    activity: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -76,6 +83,12 @@ impl MockDaemon {
             websocket_handshakes: 0,
             websocket_failures: 0,
             websocket_gate: None,
+            websocket_read_gate: None,
+            active_websockets: 0,
+            websocket_closes: 0,
+            unique_attachment_ids: false,
+            next_attachment_id: 0,
+            activity: Vec::new(),
         }));
         let (events, _) = broadcast::channel(2048);
         let (shutdown, mut shutdown_rx) = oneshot::channel();
@@ -125,7 +138,8 @@ impl MockDaemon {
                 status,
                 body,
                 retry_after: None,
-                event_before_response: None,
+                events_before_response: Vec::new(),
+                wait_for_events: false,
             });
     }
 
@@ -140,7 +154,8 @@ impl MockDaemon {
                 status,
                 body: json!({"detail": "retry"}),
                 retry_after: Some(seconds),
-                event_before_response: None,
+                events_before_response: Vec::new(),
+                wait_for_events: false,
             });
     }
 
@@ -155,7 +170,30 @@ impl MockDaemon {
                 status: 200,
                 body,
                 retry_after: None,
-                event_before_response: Some(event),
+                events_before_response: vec![event],
+                wait_for_events: false,
+            });
+    }
+
+    pub fn enqueue_with_events(
+        &self,
+        method: &str,
+        path_prefix: &str,
+        body: Value,
+        events: Vec<Value>,
+    ) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .responses
+            .push_back(QueuedResponse {
+                method: method.to_string(),
+                path_prefix: path_prefix.to_string(),
+                status: 200,
+                body,
+                retry_after: None,
+                events_before_response: events,
+                wait_for_events: true,
             });
     }
 
@@ -173,6 +211,22 @@ impl MockDaemon {
 
     pub fn websocket_handshakes(&self) -> usize {
         self.state.lock().expect("mock state").websocket_handshakes
+    }
+
+    pub fn active_websockets(&self) -> usize {
+        self.state.lock().expect("mock state").active_websockets
+    }
+
+    pub fn websocket_closes(&self) -> usize {
+        self.state.lock().expect("mock state").websocket_closes
+    }
+
+    pub fn activity(&self) -> Vec<String> {
+        self.state.lock().expect("mock state").activity.clone()
+    }
+
+    pub fn use_unique_attachment_ids(&self) {
+        self.state.lock().expect("mock state").unique_attachment_ids = true;
     }
 
     pub fn fail_next_websocket(&self) {
@@ -208,6 +262,15 @@ impl MockDaemon {
         });
     }
 
+    pub async fn pause_websocket_reads(&self) -> Arc<Notify> {
+        self.wait_for_websocket().await;
+        let gate = Arc::new(Notify::new());
+        self.state.lock().expect("mock state").websocket_read_gate = Some(Arc::clone(&gate));
+        self.send_event_and_wait(json!({"__mock_pause_reads": true}))
+            .await;
+        gate
+    }
+
     pub fn send_event(&self, event: Value) {
         let _ = self.events.send(MockEvent {
             value: event,
@@ -237,6 +300,16 @@ impl MockDaemon {
         timeout(Duration::from_secs(10), delivered.notified())
             .await
             .expect("mock WebSocket event delivery");
+    }
+
+    pub async fn wait_for_no_websockets(&self) {
+        timeout(Duration::from_secs(10), async {
+            while self.active_websockets() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("mock WebSocket connections close");
     }
 
     pub async fn shutdown(&self) {
@@ -331,18 +404,24 @@ async fn serve_connection(
             authorization,
             body,
         });
+        state.activity.push(format!("{method} {target}"));
         let position = state.responses.iter().position(|response| {
             response.method == method && target.starts_with(&response.path_prefix)
         });
         position.and_then(|position| state.responses.remove(position))
     };
     let response = response.unwrap_or_else(|| default_response(&method, &target));
-    if let Some(event) = response.event_before_response {
+    for event in response.events_before_response {
+        let delivered = response.wait_for_events.then(|| Arc::new(Notify::new()));
         let _ = events.send(MockEvent {
             value: event,
-            delivered: None,
+            delivered: delivered.clone(),
         });
-        tokio::task::yield_now().await;
+        if let Some(delivered) = delivered {
+            let _ = timeout(Duration::from_secs(10), delivered.notified()).await;
+        } else {
+            tokio::task::yield_now().await;
+        }
     }
     write_response(
         &mut stream,
@@ -392,12 +471,18 @@ async fn serve_websocket(
     );
     stream.write_all(response.as_bytes()).await?;
     let mut websocket = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
+    {
+        let mut state = state.lock().expect("mock state");
+        state.active_websockets += 1;
+        state.activity.push("WS connected".into());
+    }
     let mut event_rx = events.subscribe();
     loop {
         tokio::select! {
             incoming = websocket.next() => {
                 let Some(Ok(message)) = incoming else { break };
                 if message.is_close() {
+                    state.lock().expect("mock state").websocket_closes += 1;
                     let _ = websocket.close(None).await;
                     break;
                 }
@@ -407,12 +492,18 @@ async fn serve_websocket(
                     _ => continue,
                 };
                 let Ok(value) = serde_json::from_str::<Value>(&text) else { continue };
-                state.lock().expect("mock state").requests.push(RequestRecord {
-                    method: "WS".into(),
-                    target: "/ws".into(),
-                    authorization: authorization.clone(),
-                    body: Some(value.clone()),
-                });
+                {
+                    let mut state = state.lock().expect("mock state");
+                    state.requests.push(RequestRecord {
+                        method: "WS".into(),
+                        target: "/ws".into(),
+                        authorization: authorization.clone(),
+                        body: Some(value.clone()),
+                    });
+                    if let Some(kind) = value.get("type").and_then(Value::as_str) {
+                        state.activity.push(format!("WS {kind}"));
+                    }
+                }
                 if let Some(reply) = websocket_reply(&state, &value) {
                     websocket.send(Message::Text(reply.to_string().into())).await
                         .map_err(std::io::Error::other)?;
@@ -424,6 +515,16 @@ async fn serve_websocket(
                         let _ = websocket.close(None).await;
                         break;
                     }
+                    if event.value.get("__mock_pause_reads").and_then(Value::as_bool) == Some(true) {
+                        let gate = state.lock().expect("mock state").websocket_read_gate.take();
+                        if let Some(delivered) = event.delivered {
+                            delivered.notify_one();
+                        }
+                        if let Some(gate) = gate {
+                            gate.notified().await;
+                        }
+                        continue;
+                    }
                     websocket.send(Message::Text(event.value.to_string().into())).await
                         .map_err(std::io::Error::other)?;
                     if let Some(delivered) = event.delivered {
@@ -433,6 +534,7 @@ async fn serve_websocket(
             }
         }
     }
+    state.lock().expect("mock state").active_websockets -= 1;
     Ok(())
 }
 
@@ -447,19 +549,30 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
         return None;
     }
     match kind {
-        "terminal_attach" => Some(json!({
-            "type": "terminal_attach_result",
-            "request_id": request.get("request_id"),
-            "terminal_id": request.get("terminal_id"),
-            "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-            "success": true,
-            "backend": "native",
-            "rows": 24,
-            "cols": 80,
-            "lease_generation": 0,
-            "direct": null,
-            "frame_delivery": request.get("frame_delivery"),
-        })),
+        "terminal_attach" => {
+            let attachment_id = {
+                let mut state = state.lock().expect("mock state");
+                if state.unique_attachment_ids {
+                    state.next_attachment_id += 1;
+                    format!("attachment-{}", state.next_attachment_id)
+                } else {
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into()
+                }
+            };
+            Some(json!({
+                "type": "terminal_attach_result",
+                "request_id": request.get("request_id"),
+                "terminal_id": request.get("terminal_id"),
+                "attachment_id": attachment_id,
+                "success": true,
+                "backend": "native",
+                "rows": 24,
+                "cols": 80,
+                "lease_generation": 0,
+                "direct": null,
+                "frame_delivery": request.get("frame_delivery"),
+            }))
+        }
         "terminal_create" => {
             if let Some(reason) = state.lock().expect("mock state").spawn_refusal.clone() {
                 Some(json!({
@@ -524,7 +637,8 @@ fn default_response(method: &str, target: &str) -> QueuedResponse {
         status: 200,
         body,
         retry_after: None,
-        event_before_response: None,
+        events_before_response: Vec::new(),
+        wait_for_events: false,
     }
 }
 

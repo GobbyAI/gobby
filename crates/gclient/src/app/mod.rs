@@ -7,7 +7,8 @@ pub use pane::{ControlState, Pane, PaneId};
 
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
-    Daemon, DaemonError, DaemonEvent, Generation, LiveDaemon, ScriptedDaemon, Snapshot, TerminalRow,
+    Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon, ScriptedDaemon,
+    Snapshot, TerminalRow,
 };
 use crate::frame_source::{AttachLocator, FrameError, FrameSource, ScriptedFrameSource};
 use crate::persist::{load_snapshot, WorkspaceSnapshot};
@@ -41,7 +42,7 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     lifecycle: Option<Snapshot>,
     daemon_ready: bool,
     daemon_error: Option<DaemonError>,
-    event_rx: Option<tokio::sync::broadcast::Receiver<DaemonEvent>>,
+    event_rx: Option<EventReceiver>,
     attached_generation: HashMap<PaneId, Generation>,
 }
 
@@ -787,14 +788,12 @@ impl Workspace<LiveDaemon> {
         result
     }
 
-    async fn drain_receiver(
-        &mut self,
-        receiver: &mut tokio::sync::broadcast::Receiver<DaemonEvent>,
-    ) -> Result<(), DaemonError> {
+    async fn drain_receiver(&mut self, receiver: &mut EventReceiver) -> Result<(), DaemonError> {
         loop {
             let mut buffered = Vec::new();
             let relist = loop {
                 match receiver.try_recv() {
+                    Ok(DaemonEvent::Lagged) => break true,
                     Ok(event) if buffered.len() < WORKSPACE_EVENT_BUFFER => buffered.push(event),
                     Ok(_) | Err(TryRecvError::Lagged(_)) => break true,
                     Err(TryRecvError::Empty | TryRecvError::Closed) => break false,
@@ -803,6 +802,8 @@ impl Workspace<LiveDaemon> {
             if relist {
                 let (status, replacement) = self.daemon.subscribe();
                 *receiver = replacement;
+                self.daemon_ready = status.ready;
+                self.daemon_error = status.last_error.clone();
                 if !status.ready {
                     self.daemon.reconnect(status.generation).await?;
                     *receiver = self.daemon.subscribe().1;
@@ -951,12 +952,11 @@ impl Workspace<LiveDaemon> {
 }
 
 fn is_cursor_error(error: &DaemonError) -> bool {
-    matches!(
-        error,
-        DaemonError::Protocol { detail }
-            if detail.to_ascii_lowercase().contains("cursor")
-                || detail.to_ascii_lowercase().contains("stale")
-    )
+    let DaemonError::Protocol { detail } = error else {
+        return false;
+    };
+    let detail = detail.to_ascii_lowercase();
+    detail.contains("cursor_stale") || detail.contains("invalid cursor")
 }
 
 impl<D: Daemon> Workspace<D> {
