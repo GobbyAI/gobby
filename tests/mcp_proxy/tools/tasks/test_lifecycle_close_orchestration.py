@@ -49,6 +49,7 @@ from gobby.storage.task_close_reviews import (
 )
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import agentic_close_review as agentic_close_review_module
+from gobby.tasks.close_review_delivery import terminal_review_delivery
 from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
@@ -159,7 +160,8 @@ async def test_launch_prompt_carries_gate10_validation_facts(
         ],
     }
 
-    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+    arguments = {**_arguments(), "response_detail": "diagnostic"}
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=arguments)
 
     launch_prompt = registry.call.await_args.args[1]["prompt"]
     assert "validation_commands=" in launch_prompt
@@ -167,6 +169,47 @@ async def test_launch_prompt_carries_gate10_validation_facts(
     assert "gate 10's authoritative transcript record" in launch_prompt
     assert result["validation_commands"] == evaluation.extra["validation_commands"]
     assert result["validation_commands"]["uncredited_runs"][0]["reason"] == "wrapped"
+
+
+@pytest.mark.asyncio
+async def test_launch_refuses_actual_prompt_over_limit_without_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    config = TaskValidationConfig()
+    ctx = _ctx(registry=registry, validation_config=config)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    evaluation.extra["validation_commands"] = {
+        "latest_runs": ["x" * config.close_review_prompt_max_chars]
+    }
+
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    registry.call.assert_not_awaited()
+    assert store.finished_status == "error"
+    assert result["closed"] is False
+    assert result["error"] == "agentic_review_prompt_too_large"
+    assert result["prompt_chars"] > result["prompt_limit"]
+    assert "validation_commands" not in result
+
+
+@pytest.mark.asyncio
+async def test_pending_concise_response_keeps_commands_only_in_validator_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(registry=registry)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    evaluation.extra["validation_commands"] = {"latest_runs": [{"command": "npm ci"}]}
+
+    result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
+
+    assert "validation_commands" not in result
+    assert "npm ci" in registry.call.await_args.args[1]["prompt"]
 
 
 @pytest.mark.asyncio
@@ -497,13 +540,15 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.parametrize("validator_ended", [False, True], ids=["running", "late-success"])
 async def test_submit_close_review_claims_before_heavy_work(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    validator_ended: bool,
 ) -> None:
-    """Default stdio health preflight completes before the atomic finalizing claim."""
+    """Real stdio/HTTP accepts both active and late verdicts before heavy reads."""
     session_manager = SessionManager(temp_db)
     caller_transcript = tmp_path / "caller.jsonl"
     await asyncio.to_thread(_write_oversized_codex_transcript, caller_transcript)
@@ -537,10 +582,19 @@ async def test_submit_close_review_claims_before_heavy_work(
     )
     assert run_manager.start(run.id) is not None
 
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Review the oversized transcript",
+        created_in_session_id=caller.id,
+        validation_criteria=_REQUIRED_EVIDENCE,
+    )
     store = TaskCloseReviewStore(temp_db)
     review, created = store.create_or_get_active(
         **{
             **_persisted_review_intent(),
+            "task_id": task.id,
+            "task_ref": f"#{task.seq_num}",
+            "close_arguments": {**_arguments(), "task_id": task.id},
             "caller_session_id": caller.id,
             "review_fingerprint": "oversized-transcript-review",
             "evidence_fingerprint": "oversized-transcript-evidence",
@@ -548,6 +602,19 @@ async def test_submit_close_review_claims_before_heavy_work(
     )
     assert created is True
     assert store.bind_run(review.id, run.id) is not None
+    initial_status: TaskCloseReviewStatus = "running"
+    if validator_ended:
+        completed_run = run_manager.complete(run.id)
+        assert completed_run is not None
+        assert completed_run.status == "success"
+        delivery = terminal_review_delivery(temp_db, run.id)
+        assert delivery is not None
+        assert delivery[1] == VALIDATOR_RUN_ENDED_SUCCESS_ERROR
+        abandoned = store.get(review.id)
+        assert abandoned is not None
+        assert abandoned.status == "error"
+        assert abandoned.error == VALIDATOR_RUN_ENDED_SUCCESS_ERROR
+        initial_status = "error"
     transcript_reader = TranscriptReader(session_manager)
     default_preflight_observations: list[tuple[str, TaskCloseReviewStatus]] = []
     observed_finalizing: list[str] = []
@@ -555,14 +622,12 @@ async def test_submit_close_review_claims_before_heavy_work(
     def observe_default_preflight() -> None:
         persisted = store.get(review.id)
         assert persisted is not None
-        default_preflight_observations.append(
-            (_STDIO_DEFAULT_PREFLIGHT_PATH, persisted.status)
-        )
+        default_preflight_observations.append((_STDIO_DEFAULT_PREFLIGHT_PATH, persisted.status))
 
     async def evaluate_close(_ctx: RegistryContext, **kwargs: Any) -> CloseEvaluation:
         assert default_preflight_observations[-1] == (
             _STDIO_DEFAULT_PREFLIGHT_PATH,
-            "running",
+            initial_status,
         )
         persisted = await asyncio.to_thread(store.get, review.id)
         assert persisted is not None
@@ -573,7 +638,7 @@ async def test_submit_close_review_claims_before_heavy_work(
         assert messages
         submitted = kwargs["submitted_review"]
         assert isinstance(submitted, SubmittedCloseReview)
-        evaluation = CloseEvaluation("#42")
+        evaluation = CloseEvaluation(review.task_ref)
         evaluation.task_id = review.task_id
         evaluation.error = "validation_failed"
         evaluation.message = "The close evidence is incomplete."
@@ -663,13 +728,14 @@ async def test_submit_close_review_claims_before_heavy_work(
     assert len(default_preflight_observations) == startup_health_count + 1
     assert default_preflight_observations[-1] == (
         _STDIO_DEFAULT_PREFLIGHT_PATH,
-        "running",
+        initial_status,
     )
     assert observed_finalizing == ["finalizing"]
     finished = store.get(review.id)
     assert finished is not None
     assert finished.status == "invalid"
     assert finished.result_payload is not None
+    assert finished.result_payload["status"] == "invalid"
 
 
 @pytest.mark.asyncio

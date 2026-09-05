@@ -48,8 +48,14 @@ async function main() {
   // on macOS). Run the runner itself out of the short GOBBY_SRT_TMPDIR while
   // the provider child keeps the policy-allowed per-run TMPDIR.
   const providerTmpdir = process.env.TMPDIR
+  const providerClaudeTmpdir = process.env.CLAUDE_CODE_TMPDIR
   const muxTmpdir = process.env.GOBBY_SRT_TMPDIR
-  if (muxTmpdir) process.env.TMPDIR = muxTmpdir
+  if (muxTmpdir) {
+    process.env.TMPDIR = muxTmpdir
+    // SRT embeds its temp selector in the shell/bwrap command as well as env.
+    // Point it at the managed directory already allowed by this run's policy.
+    if (providerTmpdir !== undefined) process.env.CLAUDE_CODE_TMPDIR = providerTmpdir
+  }
   const rawSettings = JSON.parse(readFileSync(options.settingsPath, 'utf8'))
   const parsed = SandboxRuntimeConfigSchema.safeParse(rawSettings)
   if (!parsed.success) {
@@ -84,9 +90,11 @@ async function main() {
     )
     const childEnv = { ...process.env, ...wrapped.env }
     delete childEnv.GOBBY_SRT_TMPDIR
-    if (muxTmpdir && !('TMPDIR' in wrapped.env)) {
+    if (muxTmpdir) {
       if (providerTmpdir === undefined) delete childEnv.TMPDIR
       else childEnv.TMPDIR = providerTmpdir
+      if (providerClaudeTmpdir === undefined) delete childEnv.CLAUDE_CODE_TMPDIR
+      else childEnv.CLAUDE_CODE_TMPDIR = providerClaudeTmpdir
     }
     const child = spawn(wrapped.argv[0], wrapped.argv.slice(1), {
       cwd: process.cwd(),

@@ -1,15 +1,105 @@
 """Real-database contracts for destructive isolation cleanup selectors."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
+import psycopg
 import pytest
 
 from gobby.storage.clones import CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("kind", ["worktree", "clone"])
+@pytest.mark.parametrize("task_state", ["open", "claimed", "closed"])
+def test_cleanup_requires_closed_linked_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    session_manager: SessionManager,
+    kind: str,
+    task_state: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    session = session_manager.register(
+        external_id=f"cleanup-{kind}-{task_state}",
+        source="codex",
+        machine_id=None,
+        project_id=project_id,
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id,
+        "Cleanup owner",
+        claimed_by_session_id=session.id if task_state == "claimed" else None,
+        validation_criteria="Only closed unclaimed task isolation is eligible",
+    )
+    if task_state == "closed":
+        temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    manager = LocalWorktreeManager(temp_db) if kind == "worktree" else LocalCloneManager(temp_db)
+    workspace = manager.create(project_id, "expired", f"/tmp/{kind}/expired", task_id=task.id)
+    manager.update(workspace.id, status="merged", cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))
+
+    selected = [row.id for row in manager.find_expired(project_id)]
+    with manager.lock_for_cleanup(workspace.id) as locked:
+        if task_state == "closed":
+            assert selected == [workspace.id]
+            assert locked is not None and locked.id == workspace.id
+        else:
+            assert selected == []
+            assert locked is None
+
+
+@pytest.mark.parametrize("kind", ["worktree", "clone"])
+def test_cleanup_lock_rechecks_claims_and_blocks_reopen_until_release(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    session_manager: SessionManager,
+    kind: str,
+) -> None:
+    project_id = str(sample_project["id"])
+    session = session_manager.register(
+        external_id=f"cleanup-lock-{kind}", source="codex", machine_id=None, project_id=project_id
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id, "Closed cleanup task", validation_criteria="Claims cannot race cleanup"
+    )
+    temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    manager = LocalWorktreeManager(temp_db) if kind == "worktree" else LocalCloneManager(temp_db)
+    workspace = manager.create(project_id, "expired", f"/tmp/{kind}/expired", task_id=task.id)
+    manager.update(workspace.id, status="merged", cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))
+    assert [row.id for row in manager.find_expired(project_id)] == [workspace.id]
+
+    def reopen_task() -> None:
+        with temp_db.bounded_transaction(lock_timeout_ms=50) as conn:
+            conn.execute("UPDATE tasks SET closed_at = NULL WHERE id = %s", (task.id,))
+
+    def claim_workspace() -> None:
+        with temp_db.bounded_transaction(lock_timeout_ms=50):
+            manager.claim(workspace.id, session.id)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            with manager.lock_for_cleanup(workspace.id) as locked:
+                assert locked is not None
+                raise RuntimeError("cleanup failed")
+        with manager.lock_for_cleanup(workspace.id) as locked:
+            assert locked is not None
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                executor.submit(reopen_task).result(timeout=2)
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                executor.submit(claim_workspace).result(timeout=2)
+        executor.submit(reopen_task).result(timeout=2)
+
+    with manager.lock_for_cleanup(workspace.id) as locked:
+        assert locked is None
+    temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    assert manager.claim(workspace.id, session.id) is not None
+    with manager.lock_for_cleanup(workspace.id) as locked:
+        assert locked is None
 
 
 def test_worktree_sweeps_exclude_claimed_and_ineligible_rows(

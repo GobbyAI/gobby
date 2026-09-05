@@ -145,7 +145,14 @@ class CloseEvaluation:
             response["validation_status"] = self.validation_status
         if self.verdict:
             response["verdict"] = self.verdict
-        response.update(self.extra)
+        diagnostic_fields = {"validation_commands", "stable_facts"}
+        response.update(
+            {
+                key: value
+                for key, value in self.extra.items()
+                if self.response_detail == "diagnostic" or key not in diagnostic_fields
+            }
+        )
         if self.response_detail == "diagnostic":
             response.update(
                 {

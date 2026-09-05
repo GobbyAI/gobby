@@ -267,6 +267,7 @@ def start_periodic_tasks(
             runner.database,
             lambda: runner._shutdown_requested,
             run_db=getattr(db_executor, "run", None),
+            worktree_delete_executor=getattr(runner, "worktree_delete_executor", None),
         ),
         name="expired-isolation-cleanup",
     )

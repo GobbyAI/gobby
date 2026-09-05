@@ -782,8 +782,8 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         return {"stats": stats}
 
     @router.delete("/worktrees/{worktree_id}")
-    async def delete_worktree(worktree_id: str) -> dict[str, Any]:
-        """Delete a worktree."""
+    async def delete_worktree(worktree_id: str, merged_into: str | None = None) -> dict[str, Any]:
+        """Delete a worktree after verifying its stored base or explicit local landing branch."""
         worktree_storage = server.services.worktree_storage
         if worktree_storage is None:
             raise HTTPException(503, "Worktree storage not available")
@@ -805,6 +805,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         request = WorktreeDeletionRequest(
             worktree_id=worktree_id,
             surface=DeletionSurface.HTTP,
+            merged_into=merged_into,
         )
         try:
             result = await server.services.run_worktree_delete(
@@ -829,6 +830,8 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not result.git_deleted:
             response["git_error"] = result.error
             response["message"] = "Git worktree deletion failed; DB record was preserved"
+        if result.error_code:
+            response["error_code"] = result.error_code
         return response
 
     @router.post("/worktrees/cleanup")

@@ -156,6 +156,9 @@ async def _evaluate(
     dirty_paths: set[str] | None = None,
     foreign_owner_sessions: dict[str, str] | None = None,
     response_detail: Literal["concise", "diagnostic"] = "diagnostic",
+    reason: str = "completed",
+    has_edits: bool = True,
+    transcript_deriver: AsyncMock | None = None,
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -172,7 +175,7 @@ async def _evaluate(
         findings=(),
         evidence_files=(),
     )
-    attributed_paths = dirty_paths or {"src/a.py"}
+    attributed_paths = (dirty_paths or {"src/a.py"}) if has_edits else set()
     foreign_owners = {
         path: (SimpleNamespace(session_ref=session_ref),)
         for path, session_ref in (foreign_owner_sessions or {}).items()
@@ -208,7 +211,7 @@ async def _evaluate(
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
-            AsyncMock(return_value=transcript or _transcript()),
+            transcript_deriver or AsyncMock(return_value=transcript or _transcript()),
         ),
         patch.object(
             lifecycle,
@@ -217,7 +220,7 @@ async def _evaluate(
         ),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_criteria_review", review),
-        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=has_edits),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",
             return_value=attributed_paths,
@@ -226,7 +229,7 @@ async def _evaluate(
         return await _evaluate_close(
             _ctx(task),
             task_id=task.id,
-            reason="completed",
+            reason=reason,
             changes_summary=changes_summary,
             commit_sha="abc123",
             project_path=project_path,
@@ -305,7 +308,7 @@ async def test_close_preview_surfaces_uncredited_validation_runs() -> None:
         _task(escalated=False),
         override_justification=None,
         transcript=transcript,
-        response_detail="concise",
+        response_detail="diagnostic",
     )
 
     response = evaluation.response(preview=True)
@@ -313,6 +316,29 @@ async def test_close_preview_surfaces_uncredited_validation_runs() -> None:
     assert response["validation_commands"]["uncredited_runs"] == [
         {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_unclaimed_no_work_close_reviews_disposition_without_session_commands() -> None:
+    task = replace(_task(escalated=False), claimed_by_session_id=None)
+    derive = AsyncMock(return_value=_operational_transcript())
+    review = AsyncMock(return_value=ValidationResult(can_close=True, validation_status="valid"))
+    with patch("gobby.utils.session_context.get_current_session_id", return_value=SESSION_ID):
+        evaluation = await _evaluate(
+            task,
+            override_justification=None,
+            reason="obsolete",
+            has_edits=False,
+            transcript_deriver=derive,
+            review=review,
+            changes_summary="This task is obsolete because its requested feature was retired.",
+        )
+    derive.assert_not_awaited()
+    review.assert_awaited_once()
+    assert review.await_args is not None
+    assert review.await_args.kwargs["reason"] == "obsolete"
+    assert evaluation.ready
+    assert evaluation.extra["validation_commands"]["latest_runs"] == []
 
 
 def _unresolved_artifacts() -> AcceptanceArtifactResult:

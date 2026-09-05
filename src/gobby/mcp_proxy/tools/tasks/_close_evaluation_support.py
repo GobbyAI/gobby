@@ -128,6 +128,7 @@ async def derive_close_transcript_evidence(
     owner_window_start: str | None,
     task_edited_files: set[str],
     repo_path: str,
+    require_task_link: bool = False,
 ) -> TranscriptEvidence:
     """Parse and merge every session transcript that worked the task.
 
@@ -150,6 +151,13 @@ async def derive_close_transcript_evidence(
     required = frozenset(windows)
     for session_id, window_start in _linked_session_windows(ctx, task_id).items():
         windows.setdefault(session_id, window_start)
+        if windows[session_id] is None:
+            windows[session_id] = window_start
+    if require_task_link:
+        # Optional no-edit evidence must not credit a caller's unrelated session.
+        # A known claim window or a claimed/worked_on link bounds admissible work.
+        windows = {session_id: start for session_id, start in windows.items() if start is not None}
+        required = required.intersection(windows)
     evidence: list[TranscriptEvidence] = []
     for session_id, window_start in windows.items():
         session = ctx.session_manager.get(session_id)
