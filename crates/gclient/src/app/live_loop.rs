@@ -202,10 +202,61 @@ pub async fn run_live_loop<B: Backend>(
             }
             frame = recv_workspace_frame(workspace) => {
                 if let Some((pane_id, Err(error))) = frame {
-                    if let Err(recovery_error) =
-                        workspace.recover_live_frame_error(pane_id, &error).await
-                    {
-                        chrome.status_message = Some(recovery_error.to_string());
+                    let mut deferred_input = Vec::new();
+                    let mut probe_prefix = prefix_armed;
+                    let recovery_outcome = {
+                        let recovery = workspace.recover_live_frame_error(pane_id, &error);
+                        tokio::pin!(recovery);
+                        loop {
+                            tokio::select! {
+                                biased;
+                                event = input.recv() => {
+                                    let Some(event) = event else {
+                                        break FrameRecovery::Exit("terminal input closed");
+                                    };
+                                    let exits = input_requests_exit(
+                                        chrome,
+                                        &event,
+                                        &mut probe_prefix,
+                                    );
+                                    deferred_input.push(event);
+                                    if exits {
+                                        break FrameRecovery::Exit("quit");
+                                    }
+                                }
+                                result = &mut recovery => {
+                                    break FrameRecovery::Complete(result);
+                                }
+                            }
+                        }
+                    };
+                    match recovery_outcome {
+                        FrameRecovery::Exit(reason) => {
+                            prefix_armed = false;
+                            workspace.latch_exit(reason);
+                        }
+                        FrameRecovery::Complete(result) => {
+                            if let Err(recovery_error) = result {
+                                chrome.status_message = Some(recovery_error.to_string());
+                            }
+                            for event in deferred_input {
+                                match route_live_input(
+                                    workspace,
+                                    chrome,
+                                    &event,
+                                    &mut prefix_armed,
+                                ).await {
+                                    Ok(true) => {
+                                        workspace.latch_exit("quit");
+                                        break;
+                                    }
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        chrome.status_message = Some(error.to_string());
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
@@ -257,6 +308,31 @@ pub async fn run_live_loop<B: Backend>(
     match (loop_error, shutdown_result) {
         (Some(error), _) => Err(error),
         (None, result) => result,
+    }
+}
+
+enum FrameRecovery {
+    Complete(Result<(), FrameError>),
+    Exit(&'static str),
+}
+
+fn input_requests_exit(chrome: &Chrome, event: &RawInputEvent, prefix_armed: &mut bool) -> bool {
+    if chrome.mode == Mode::Respond {
+        return false;
+    }
+    let Some(input) = key_input(event, KeyboardProtocol::Legacy) else {
+        return false;
+    };
+    match resolve_chord(&chrome.keymap, &input.key, *prefix_armed) {
+        Resolution::Prefix => {
+            *prefix_armed = true;
+            false
+        }
+        Resolution::Action(Action::Quit) => true,
+        Resolution::Action(_) | Resolution::Unbound => {
+            *prefix_armed = false;
+            false
+        }
     }
 }
 

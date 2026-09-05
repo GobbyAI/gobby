@@ -40,6 +40,27 @@ fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
         .collect()
 }
 
+fn terminal_side_effects(mock: &MockDaemon) -> Vec<Value> {
+    mock.requests()
+        .into_iter()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body)
+        .filter(|body| {
+            matches!(
+                body.get("type").and_then(Value::as_str),
+                Some(
+                    "terminal_attach"
+                        | "terminal_detach"
+                        | "terminal_take_control"
+                        | "terminal_release_control"
+                        | "terminal_set_viewport"
+                        | "terminal_input"
+                )
+            )
+        })
+        .collect()
+}
+
 async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: usize) {
     timeout(Duration::from_secs(1), async {
         loop {
@@ -1228,37 +1249,125 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
     assert_eq!(supervisor.attempt_count(), 0);
 }
 
-#[test]
-fn latched_exit_issues_no_further_requests() {
-    let mut ws = Workspace::scripted();
-    ws.select_project("proj-exit");
-    let pane = ws
-        .open_terminal("term-exit", "native", "epoch-exit")
-        .expect("open terminal");
-    ws.force_held(pane);
-    let sent_before = ws.daemon().ws_sent().len();
+#[tokio::test]
+async fn latched_exit_issues_no_further_requests() {
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        for _ in 0..2 {
+            mock.enqueue(
+                "GET",
+                "/api/terminals?",
+                200,
+                json!({
+                    "items": [{"terminal_id": "terminal-reconnect-exit", "backend": "native", "state": "live"}],
+                    "next_cursor": null,
+                    "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+                }),
+            );
+        }
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-1");
+        workspace
+            .reconcile_subscribe_first()
+            .await
+            .expect("initial reconnect pane");
+        let pane_id = workspace
+            .pane_for_terminal("terminal-reconnect-exit")
+            .expect("reconnect pane");
+        let attachment = workspace.pane(pane_id).attachment_id().to_string();
+        let reconnect_gate = mock.pause_next_websocket();
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
 
-    assert!(ws.latch_exit("quit"));
-    assert!(!ws.latch_exit("duplicate quit"));
-    assert_eq!(ws.exit_reason(), Some("quit"));
-    assert!(ws.send_input(pane, b"blocked").is_err());
-    assert!(ws.take_control(pane).is_err());
-    assert!(ws.release_control(pane).is_err());
-    assert!(ws.kill_frame_stream(pane).is_err());
-    assert!(ws.reconnect_daemon_ws().is_err());
-    assert!(ws
-        .spawn_agent(json!({"task_id": "task-after-exit"}))
-        .is_err());
-    assert!(ws.terminate_terminal("term-exit").is_err());
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            mock.drop_websockets();
+            timeout(Duration::from_secs(1), async {
+                while mock.websocket_handshakes() < 2 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("reconnect attempt starts");
+            let before_exit = terminal_side_effects(&mock);
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+            reconnect_gate.notify_waiters();
+            before_exit
+        };
 
-    ws.apply_ws(&json!({
-        "type": "terminal_event",
-        "event": "exited",
-        "terminal_id": "term-exit"
-    }))
-    .expect("post-latch lifecycle is inert");
-    assert_eq!(ws.pane_for_terminal("term-exit"), Some(pane));
-    assert_eq!(ws.daemon().ws_sent().len(), sent_before);
+        let (result, before_exit) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("exit cancels reconnect");
+        assert_eq!(terminal_side_effects(&mock), before_exit);
+        assert_eq!(
+            workspace
+                .pane_for_terminal("terminal-reconnect-exit")
+                .map(|id| workspace.pane(id).attachment_id()),
+            Some(attachment.as_str())
+        );
+        mock.shutdown().await;
+    }
+
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        mock.suppress_ws("terminal_detach");
+        let terminal_id = "terminal-fallback-exit";
+        let (mut workspace, old_attachment) =
+            live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+            let before_exit = terminal_side_effects(&mock);
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+            mock.send_event(json!({
+                "type": "terminal_attachment_finalized",
+                "daemon_epoch": "epoch-1",
+                "seq": 2,
+                "terminal_id": terminal_id,
+                "attachment_id": old_attachment,
+                "code": "host_eof",
+                "reason": "direct observer ended"
+            }));
+            mock.send_event(json!({
+                "type": "terminal_event",
+                "event": "killed",
+                "daemon_epoch": "epoch-1",
+                "seq": 3,
+                "terminal_id": terminal_id
+            }));
+            settle_live_event().await;
+            before_exit
+        };
+
+        let (result, before_exit) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("exit cancels fallback");
+        assert_eq!(
+            terminal_side_effects(&mock),
+            before_exit,
+            "fallback must issue no request after the exit input is queued"
+        );
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("post-latch lifecycle is inert");
+        assert_eq!(workspace.pane(pane_id).attachment_id(), old_attachment);
+        mock.shutdown().await;
+    }
 }
 
 #[tokio::test]
