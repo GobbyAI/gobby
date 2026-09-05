@@ -117,7 +117,7 @@ reference accept a full ID or an unambiguous ID prefix.
 | `gobby worktrees create BRANCH_NAME` | Create a worktree and branch. | `--base BRANCH`, `--task TASK`, `--json` |
 | `gobby worktrees list` | List recorded worktrees. | `--status STATUS`, `--project PROJECT`, `--json` |
 | `gobby worktrees show WORKTREE` | Show one worktree. | `--json` |
-| `gobby worktrees delete WORKTREE` | Delete git worktree and record through MCP. | `--force`, `--yes` |
+| `gobby worktrees delete WORKTREE` | Delete git worktree and record through MCP. | `--force`, `--yes`, `--merged-into BRANCH` |
 | `gobby worktrees claim WORKTREE SESSION` | Assign worktree ownership to a session. | none |
 | `gobby worktrees release WORKTREE` | Clear worktree ownership. | none |
 | `gobby worktrees sync WORKTREE` | Sync with the worktree's base branch. | `--source SOURCE` (currently non-functional, see below), `--json` |
@@ -150,7 +150,7 @@ automating against them.
 | `get_worktree_by_task` | `task_id` | none |
 | `claim_worktree` | `worktree_id`, `session_id` | none |
 | `release_worktree` | `worktree_id` | none |
-| `delete_worktree` | `worktree_id` | `force`, `project_path` |
+| `delete_worktree` | `worktree_id` or `worktree_path` | `force`, `force_delete_branch`, `merged_into`, `project_path` |
 | `mark_worktree_merged` | `worktree_id` | none |
 | `abandon_worktree` | `worktree_id` | none |
 | `reactivate_worktree` | `worktree_id` | none |
@@ -160,6 +160,25 @@ automating against them.
 | `push_branch` | `worktree_id` | `branch`, `remote`, `target_branch`, `force_with_lease`, `project_path` |
 | `detect_stale_worktrees` | none | `project_path`, `hours`, `limit` |
 | `cleanup_stale_worktrees` | none | `project_path`, `hours`, `dry_run`, `delete_git` |
+
+### Deleting After Final Landing
+
+Ordinary deletion verifies that the worktree branch is fully merged into its
+stored base branch. If an intermediate base branch has already been deleted,
+name the actual local landing branch explicitly:
+
+```bash
+gobby worktrees delete WORKTREE --merged-into 0.5.0 --yes
+```
+
+MCP accepts `merged_into="0.5.0"` on `delete_worktree`; HTTP accepts the same
+query parameter on `DELETE /api/source-control/worktrees/{worktree_id}`.
+The target must be an existing local branch containing the entire source tip.
+Remote refs, tags, revision expressions and the source branch itself cannot
+authorize deletion. Failed proof preserves the branch and Gobby record.
+`merged_into` cannot be combined with `force_delete_branch`; `force` continues
+to control only removal of dirty files. Omitting `merged_into` retains the
+stored-base check without guessing another target.
 
 ### Creation
 

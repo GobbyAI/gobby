@@ -35,6 +35,7 @@ class WorktreeDeletionRequest:
     surface: DeletionSurface
     force: bool = False
     force_delete_branch: bool = False
+    merged_into: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class WorktreeDeletionResult:
     found: bool = True
     git_deleted: bool = True
     error: str | None = None
+    error_code: str | None = None
     uncommitted_changes: bool = False
     artifact_refs_cleared: int = 0
     event: WorktreeEvent | None = None
@@ -68,6 +70,13 @@ def delete_worktree_transaction(
         return WorktreeDeletionResult(success=True, found=False)
 
     git_manager = resolve_git_manager(worktree)
+    if request.merged_into is not None and git_manager is None:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error="Cannot verify merged_into without a resolved git manager",
+            error_code="merged_into_requires_git_manager",
+        )
     worktree_exists = Path(worktree.worktree_path).exists()
     if request.surface is DeletionSurface.MCP:
         precheck = _mcp_precheck(request, worktree, git_manager, worktree_exists)
@@ -150,6 +159,7 @@ def _delete_git_worktree(
             force_delete_branch=request.force_delete_branch,
             branch_name=worktree.branch_name,
             base_branch=worktree.base_branch,
+            merged_into=request.merged_into,
         )
     except Exception as exc:
         if request.surface is DeletionSurface.MCP:
@@ -163,6 +173,13 @@ def _delete_git_worktree(
 
     if result.success:
         return None
+    if request.merged_into is not None:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error=result.message,
+            error_code=result.error,
+        )
     if request.surface is DeletionSurface.HTTP:
         logger.warning("Git worktree deletion failed: %s", result.message)
         return WorktreeDeletionResult(

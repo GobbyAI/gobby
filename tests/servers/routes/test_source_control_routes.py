@@ -1799,7 +1799,10 @@ class TestDeleteWorktree:
         assert data["id"] == "wt-1"
         assert data["git_deleted"] is True  # defaults to True when no git_manager
 
-    def test_delete_success_with_git_manager(self, client, mock_server) -> None:
+    @pytest.mark.parametrize("merged_into", [None, "0.5.0"])
+    def test_delete_success_with_git_manager(
+        self, client: TestClient, mock_server: MagicMock, merged_into: str | None
+    ) -> None:
         wt = MagicMock()
         wt.worktree_path = "/tmp/wt"
         wt.project_id = "proj-1"
@@ -1832,7 +1835,10 @@ class TestDeleteWorktree:
         ):
             mock_wgm_cls.return_value.delete_worktree.return_value = mock_git_result
 
-            response = client.delete("/api/source-control/worktrees/wt-1")
+            response = client.delete(
+                "/api/source-control/worktrees/wt-1",
+                params={"merged_into": merged_into} if merged_into is not None else None,
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -1845,6 +1851,7 @@ class TestDeleteWorktree:
             force_delete_branch=False,
             branch_name="feature",
             base_branch="main",
+            merged_into=merged_into,
         )
         mock_storage.delete.assert_called_once_with("wt-1")
         mock_artifacts.clear_worktree_references.assert_called_once_with("wt-1")

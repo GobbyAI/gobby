@@ -28,6 +28,26 @@ def test_full_uuid_foreign_worktree_reports_ownership_mismatch() -> None:
 
 pytestmark = pytest.mark.unit
 
+
+def test_delete_explicit_landing_target_is_forwarded_without_force() -> None:
+    with (
+        patch("gobby.cli.worktrees.worktree_manager_context"),
+        patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-landed"),
+        patch("gobby.cli.worktrees._call_worktree_tool", return_value={"success": True}) as call,
+    ):
+        result = CliRunner().invoke(
+            worktrees, ["delete", "wt-landed", "--yes", "--merged-into", "0.5.0"]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Deleted worktree: wt-landed" in result.output
+    call.assert_called_once_with(
+        "delete_worktree",
+        {"worktree_id": "wt-landed", "force": False, "merged_into": "0.5.0"},
+        timeout=30.0,
+    )
+
+
 # Mock worktree data
 MOCK_WORKTREE = Worktree(
     id="wt-123",

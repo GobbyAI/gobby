@@ -234,7 +234,10 @@ def show_worktree(worktree_ref: str, json_format: bool) -> None:
 @click.argument("worktree_ref")
 @click.option("--force", "-f", is_flag=True, help="Force delete even if active")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
-def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
+@click.option(
+    "--merged-into", help="Verify merge into this local branch instead of the stored base"
+)
+def delete_worktree(worktree_ref: str, force: bool, yes: bool, merged_into: str | None) -> None:
     """Delete a worktree (UUID or prefix)."""
     if not yes:
         click.confirm("Are you sure you want to delete this worktree?", abort=True)
@@ -246,9 +249,12 @@ def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
             e.show()
             raise SystemExit(1) from e
 
+    arguments: dict[str, Any] = {"worktree_id": worktree_id, "force": force}
+    if merged_into is not None:
+        arguments["merged_into"] = merged_into
     _call_worktree_tool(
         "delete_worktree",
-        {"worktree_id": worktree_id, "force": force},
+        arguments,
         timeout=30.0,
     )
     click.echo(f"Deleted worktree: {worktree_id}")

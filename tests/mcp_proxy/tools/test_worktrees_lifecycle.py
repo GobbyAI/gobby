@@ -785,6 +785,7 @@ async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git
             force_delete_branch=False,
             branch_name="b1",
             base_branch="main",
+            merged_into=None,
         )
         mock_worktree_storage.delete.assert_called_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
         emit_event.assert_called_once_with(
@@ -837,6 +838,7 @@ async def test_delete_worktree_uncommitted_changes(
             force_delete_branch=False,
             branch_name="b1",
             base_branch="main",
+            merged_into=None,
         )
 
 
@@ -882,6 +884,7 @@ async def test_delete_worktree_path_not_exists(
             force_delete_branch=False,
             branch_name=wt.branch_name,
             base_branch=wt.base_branch,
+            merged_into=None,
         )
         mock_worktree_storage.delete.assert_called_once_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
 
