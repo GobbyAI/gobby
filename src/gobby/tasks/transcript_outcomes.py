@@ -19,6 +19,9 @@ _SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
 _FAILURE_STATUSES = {"error", "failed", "failure"}
 _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# The rtk hook rewrites shell commands as `rtk <cmd>` or `uv run rtk <cmd>`;
+# rtk filters output and propagates the wrapped command's exit code (#21766).
+_RTK_WRAPPER_PREFIX = re.compile(r"^(uv\s+run\s+)?rtk\s+")
 _SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
 
@@ -71,7 +74,7 @@ def _strip_exit_preserving_prefixes(command: str) -> str:
         if word_end is None or word_end >= len(command) or not command[word_end].isspace():
             break
         cursor = _skip_whitespace(command, word_end)
-    return command[cursor:].strip()
+    return _RTK_WRAPPER_PREFIX.sub(r"\1", command[cursor:].strip(), count=1)
 
 
 def _consume_cd_prefix(command: str, cursor: int) -> int | None:
