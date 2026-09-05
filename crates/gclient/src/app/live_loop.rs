@@ -565,6 +565,7 @@ async fn handle_live_action(
         Action::CloseTerminal | Action::ClosePane => {
             if let Some(pane_id) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane_id).await?;
+                sync_live_chrome(workspace, chrome);
             }
         }
         Action::TakeControl | Action::TakeBack => {
