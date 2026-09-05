@@ -43,36 +43,11 @@ class _ManagerState(_SessionMappingState, Protocol):
         session_type: str | None = "terminal",
     ) -> Session | None: ...
 
-    def find_by_external_id_all_sources(
-        self,
-        external_id: str,
-        project_id: str | None,
-        session_type: str | None = "terminal",
-    ) -> list[Session]: ...
-
-    def find_parent(
-        self,
-        machine_id: str,
-        project_id: str,
-        source: str | None = None,
-        status: str = "awaiting_handoff",
-        max_age_minutes: int = 10,
-    ) -> Session | None: ...
-
     def get(self, session_id: str) -> Session | None: ...
 
     def update_status(self, session_id: str, status: str) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
-
-    def cache_session_mapping(
-        self,
-        external_id: str,
-        source: str,
-        session_id: str,
-        project_id: str | None = None,
-        session_type: str = "terminal",
-    ) -> None: ...
 
 
 def _session_mapping_key(
