@@ -183,12 +183,17 @@ def write_srt_content_manifest(root: Path) -> None:
 
 
 def make_srt_installation_immutable(root: Path) -> None:
-    """Remove write bits from the complete promoted SRT tree."""
+    """Remove write bits and establish execution permissions for pinned helpers."""
+    helpers = {
+        root
+        / f"node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/{architecture}/apply-seccomp"
+        for architecture in ("arm64", "x64")
+    }
     paths = sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True)
     for path in paths:
         if path.is_symlink():
             continue
-        executable = path.is_dir() or bool(path.stat().st_mode & 0o111)
+        executable = path in helpers or path.is_dir() or bool(path.stat().st_mode & 0o111)
         path.chmod(0o555 if executable else 0o444)
     root.chmod(0o555)
 
