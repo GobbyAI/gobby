@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any
 
 from gobby.agents.tmux.session_manager import TmuxProbeState
+from gobby.clones.git import CloneGitManager, GitOperationResult
 from gobby.runner_maintenance.isolation_reconciliation import reconcile_isolation_registry
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_tmux_repair import (
@@ -22,7 +25,23 @@ from gobby.sessions.tmux_window_naming import (
     release_window_name_if_unowned,
     resolve_tmux_repair_owner,
 )
+from gobby.storage.clones import LocalCloneManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import require_root
+from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminal_ownership import TERMINAL_TITLE_REPAIR_STATUSES
+from gobby.worktrees.deletion import (
+    DeletionSurface,
+    WorktreeDeletionRequest,
+    delete_worktree_transaction,
+)
+from gobby.worktrees.executor import (
+    DestructiveBoundary,
+    WorktreeDeleteExecutor,
+    run_worktree_delete,
+)
+from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
@@ -146,23 +165,17 @@ async def tmux_window_name_repair_loop(
 
 
 async def cleanup_expired_isolation_loop(
-    db: Any,
+    db: HubDatabase,
     is_shutdown_requested: Callable[[], bool],
     interval_hours: int = 1,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    worktree_delete_executor: WorktreeDeleteExecutor | None = None,
 ) -> None:
     """Reap expired worktrees and clones whose cleanup_after window has passed.
 
-    After a successful merge, worktrees/clones get a 7-day grace period
-    (cleanup_after). Once that expires, this loop deletes the directory,
-    git branch (worktrees only), and database record.
+    Expiry selects candidates. The worker rechecks ownership and local Git
+    evidence before deleting any directory, branch or database record.
     """
-    import shutil
-
-    from gobby.storage.clones import LocalCloneManager
-    from gobby.storage.project_checkouts import require_root
-    from gobby.storage.worktrees import LocalWorktreeManager
-
     worktree_storage = LocalWorktreeManager(db)
     clone_storage = LocalCloneManager(db)
     interval_seconds = interval_hours * 3600
@@ -175,67 +188,27 @@ async def cleanup_expired_isolation_loop(
             expired_worktrees = await _run_db(run_db, worktree_storage.find_expired)
             for wt in expired_worktrees:
                 try:
-                    path = wt.worktree_path
-                    checkout_root = await _run_db(
-                        run_db,
-                        require_root,
-                        db,
-                        wt.project_id,
-                        wt.machine_id,
+                    request = WorktreeDeletionRequest(wt.id, DeletionSurface.MAINTENANCE)
+                    result = await run_worktree_delete(
+                        worktree_delete_executor,
+                        partial(
+                            delete_worktree_transaction,
+                            request=request,
+                            worktree_storage=worktree_storage,
+                            resolve_git_manager=lambda current: WorktreeGitManager(
+                                require_root(db, current.project_id, current.machine_id)
+                            ),
+                            task_manager=LocalTaskManager(db),
+                        ),
                     )
-                    # Try git worktree remove first, fall back to shutil
-                    removed = False
-                    try:
-                        result = await asyncio.to_thread(
-                            _run_git_command,
-                            ["git", "worktree", "remove", "--force", path],
-                            cwd=checkout_root,
-                        )
-                        removed = result == 0
-                        if not removed:
-                            logger.warning(
-                                "git worktree remove failed for %s in %s (exit code %d)",
-                                path,
-                                checkout_root,
-                                result,
-                            )
-                    except Exception as e:
-                        logger.debug("git worktree remove failed for %s: %s", path, e)
-                    if not removed and await asyncio.to_thread(os.path.exists, path):
-                        await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
-                    # Prune stale worktree references
-                    prune_result = await asyncio.to_thread(
-                        _run_git_command,
-                        ["git", "worktree", "prune"],
-                        cwd=checkout_root,
-                    )
-                    if prune_result != 0:
-                        logger.warning(
-                            "git worktree prune failed in %s (exit code %d)",
-                            checkout_root,
-                            prune_result,
-                        )
-                    # Delete the branch
-                    if wt.branch_name:
-                        branch_result = await asyncio.to_thread(
-                            _run_git_command,
-                            ["git", "branch", "-D", wt.branch_name],
-                            cwd=checkout_root,
-                        )
-                        if branch_result != 0:
-                            logger.warning(
-                                "git branch deletion failed for %s in %s (exit code %d)",
-                                wt.branch_name,
-                                checkout_root,
-                                branch_result,
-                            )
-                    # Remove DB record
-                    await _run_db(run_db, worktree_storage.delete, wt.id)
+                    if not result.success or not result.found:
+                        logger.debug("Skipped expired worktree %s: %s", wt.id, result.error)
+                        continue
                     logger.info(
                         "Expired worktree cleanup: deleted %s (branch=%s, path=%s)",
                         wt.id,
                         wt.branch_name,
-                        path,
+                        wt.worktree_path,
                     )
                 except Exception:
                     logger.exception(
@@ -247,15 +220,18 @@ async def cleanup_expired_isolation_loop(
             expired_clones = await _run_db(run_db, clone_storage.find_expired)
             for clone in expired_clones:
                 try:
-                    path = clone.clone_path
-                    if await asyncio.to_thread(os.path.exists, path):
-                        await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
-                    await _run_db(run_db, clone_storage.delete, clone.id)
+                    clone_result = await run_worktree_delete(
+                        worktree_delete_executor,
+                        partial(_delete_expired_clone, db, clone_storage, clone.id),
+                    )
+                    if not clone_result.success:
+                        logger.debug("Skipped expired clone %s: %s", clone.id, clone_result.message)
+                        continue
                     logger.info(
                         "Expired clone cleanup: deleted %s (branch=%s, path=%s)",
                         clone.id,
                         clone.branch_name,
-                        path,
+                        clone.clone_path,
                     )
                 except Exception:
                     logger.exception(
@@ -267,6 +243,7 @@ async def cleanup_expired_isolation_loop(
                 worktree_storage,
                 clone_storage,
                 run_db=run_db,
+                worktree_delete_executor=worktree_delete_executor,
             )
             await reconcile_isolation_registry(db, run_db=run_db)
 
@@ -276,9 +253,63 @@ async def cleanup_expired_isolation_loop(
             logger.error("Error in expired isolation cleanup loop: %s", e)
 
 
+def _delete_expired_clone(
+    db: HubDatabase,
+    storage: LocalCloneManager,
+    clone_id: str,
+    boundary: DestructiveBoundary,
+) -> GitOperationResult:
+    """Verify the clone's exact HEAD is retained in the parent before removing it."""
+    with storage.lock_for_cleanup(clone_id) as clone:
+        if clone is None:
+            return GitOperationResult(False, "Clone is no longer eligible")
+        root = require_root(db, clone.project_id, clone.machine_id)
+        manager = CloneGitManager(root)
+        path = manager.resolve_managed_clone_path(clone.clone_path)
+        if path is None:
+            return GitOperationResult(False, "Clone path is outside managed storage")
+        status = manager.get_clone_status(path)
+        if (
+            status is None
+            or status.branch is None
+            or status.branch != clone.branch_name
+            or status.has_uncommitted_changes
+            or status.has_staged_changes
+            or status.has_untracked_files
+        ):
+            return GitOperationResult(False, "Clone branch or clean state cannot be verified")
+        target = clone.base_branch
+        if target.startswith("origin/") or (
+            target.startswith("refs/") and not target.startswith("refs/heads/")
+        ):
+            return GitOperationResult(False, "Clone base must be a local branch")
+        target_ref = target if target.startswith("refs/heads/") else f"refs/heads/{target}"
+        if manager.run_git_command(["check-ref-format", target_ref], timeout=5).returncode != 0:
+            return GitOperationResult(False, "Clone base is not a valid local branch")
+        if (
+            manager.run_git_command(["symbolic-ref", "--quiet", target_ref], timeout=5).returncode
+            != 1
+        ):
+            return GitOperationResult(False, "Clone base must be a direct local branch")
+        head = manager.run_git_command(["rev-parse", "--verify", "HEAD"], cwd=path, timeout=5)
+        if head.returncode != 0 or not head.stdout.strip():
+            return GitOperationResult(False, "Clone HEAD cannot be verified")
+        proof = manager.run_git_command(
+            ["merge-base", "--is-ancestor", head.stdout.strip(), target_ref], timeout=10
+        )
+        if proof.returncode != 0:
+            return GitOperationResult(False, "Clone HEAD is not merged into its local base")
+        if not boundary.begin_mutation():
+            return GitOperationResult(False, "Clone cleanup cancelled before mutation")
+        result = manager.delete_clone(path, force=False)
+        if result.success and not storage.delete(clone_id):
+            return GitOperationResult(False, "Failed to delete clone record")
+        return result
+
+
 def _cleanup_missing_isolation_records(
-    worktree_storage: Any,
-    clone_storage: Any,
+    worktree_storage: LocalWorktreeManager,
+    clone_storage: LocalCloneManager,
     *,
     limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
 ) -> dict[str, int]:
@@ -297,95 +328,98 @@ def _cleanup_missing_isolation_records(
 
 
 async def _cleanup_missing_isolation_records_async(
-    worktree_storage: Any,
-    clone_storage: Any,
+    worktree_storage: LocalWorktreeManager,
+    clone_storage: LocalCloneManager,
     *,
     run_db: Callable[..., Awaitable[Any]] | None,
     limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
+    worktree_delete_executor: WorktreeDeleteExecutor | None = None,
 ) -> dict[str, int]:
-    """Async missing-record cleanup that keeps path checks off the DB executor."""
-    # Storage list methods machine-scope unconditionally via require_machine_id().
-    worktrees = await _run_db(
-        run_db,
-        worktree_storage.list_worktrees,
-        limit=limit,
-    )
-    clones = await _run_db(
-        run_db,
-        clone_storage.list_clones,
-        limit=limit,
-    )
-
-    removed_worktrees = 0
+    """Keep each complete guarded metadata deletion off the event loop."""
+    worktrees = await _run_db(run_db, worktree_storage.list_worktrees, limit=limit)
+    clones = await _run_db(run_db, clone_storage.list_clones, limit=limit)
+    counts = {"worktrees": 0, "clones": 0}
     for worktree in worktrees:
-        path = worktree.worktree_path
-        if path and await asyncio.to_thread(os.path.isdir, path):
-            continue
-        if await _run_db(run_db, worktree_storage.delete, worktree.id):
-            removed_worktrees += 1
-            logger.info(
-                "Removed missing worktree record %s (branch=%s, path=%s)",
-                worktree.id,
-                worktree.branch_name,
-                path,
-            )
-
-    removed_clones = 0
+        counts["worktrees"] += await run_worktree_delete(
+            worktree_delete_executor,
+            partial(_delete_missing_worktree_record, worktree_storage, worktree.id),
+        )
     for clone in clones:
-        path = clone.clone_path
-        if path and await asyncio.to_thread(os.path.isdir, path):
-            continue
-        if await _run_db(run_db, clone_storage.delete, clone.id):
-            removed_clones += 1
-            logger.info(
-                "Removed missing clone record %s (branch=%s, path=%s)",
-                clone.id,
-                clone.branch_name,
-                path,
-            )
-
-    counts = {"worktrees": removed_worktrees, "clones": removed_clones}
-    if counts["worktrees"] or counts["clones"]:
-        logger.info(
-            "Missing isolation cleanup: removed %s worktree records and %s clone records",
-            counts["worktrees"],
-            counts["clones"],
+        counts["clones"] += await run_worktree_delete(
+            worktree_delete_executor,
+            partial(_delete_missing_clone_record, clone_storage, clone.id),
         )
     return counts
 
 
-def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> int:
-    removed = 0
-    for worktree in worktree_storage.list_worktrees(limit=limit):
-        path = worktree.worktree_path
-        if path and os.path.isdir(path):
-            continue
-        if worktree_storage.delete(worktree.id):
-            removed += 1
-            logger.info(
-                "Removed missing worktree record %s (branch=%s, path=%s)",
-                worktree.id,
-                worktree.branch_name,
-                path,
-            )
-    return removed
+def _delete_missing_worktree_records(worktree_storage: LocalWorktreeManager, *, limit: int) -> int:
+    return sum(
+        _delete_missing_worktree_record(worktree_storage, row.id, DestructiveBoundary())
+        for row in worktree_storage.list_worktrees(limit=limit)
+    )
 
 
-def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
-    removed = 0
-    for clone in clone_storage.list_clones(limit=limit):
-        path = clone.clone_path
-        if path and os.path.isdir(path):
-            continue
-        if clone_storage.delete(clone.id):
-            removed += 1
-            logger.info(
-                "Removed missing clone record %s (branch=%s, path=%s)",
-                clone.id,
-                clone.branch_name,
-                path,
+def _delete_missing_worktree_record(
+    worktree_storage: LocalWorktreeManager,
+    worktree_id: str,
+    boundary: DestructiveBoundary,
+) -> int:
+    with worktree_storage.lock_for_cleanup(worktree_id, expired_only=False) as current:
+        if current is None or (current.worktree_path and os.path.isdir(current.worktree_path)):
+            return 0
+        if not current.branch_name:
+            return 0
+        branch_ref = f"refs/heads/{current.branch_name.removeprefix('refs/heads/')}"
+        try:
+            root = require_root(worktree_storage.db, current.project_id, current.machine_id)
+            manager = WorktreeGitManager(root)
+            result = manager.run_git_command(
+                ["show-ref", "--verify", "--quiet", branch_ref], timeout=5
             )
-    return removed
+        except (ValueError, OSError, subprocess.SubprocessError):
+            logger.debug("Cannot verify missing worktree branch %s", current.id, exc_info=True)
+            return 0
+        if result.returncode != 1:
+            return 0
+        if not boundary.begin_mutation():
+            return 0
+        if not worktree_storage.delete(current.id):
+            return 0
+        logger.info(
+            "Removed missing worktree record %s (branch=%s, path=%s)",
+            current.id,
+            current.branch_name,
+            current.worktree_path,
+        )
+        return 1
+
+
+def _delete_missing_clone_records(clone_storage: LocalCloneManager, *, limit: int) -> int:
+    return sum(
+        _delete_missing_clone_record(clone_storage, row.id, DestructiveBoundary())
+        for row in clone_storage.list_clones(limit=limit)
+    )
+
+
+def _delete_missing_clone_record(
+    clone_storage: LocalCloneManager,
+    clone_id: str,
+    boundary: DestructiveBoundary,
+) -> int:
+    with clone_storage.lock_for_cleanup(clone_id, expired_only=False) as current:
+        if current is None or (current.clone_path and os.path.isdir(current.clone_path)):
+            return 0
+        if not boundary.begin_mutation():
+            return 0
+        if not clone_storage.delete(current.id):
+            return 0
+        logger.info(
+            "Removed missing clone record %s (branch=%s, path=%s)",
+            current.id,
+            current.branch_name,
+            current.clone_path,
+        )
+        return 1
 
 
 def _run_git_command(args: list[str], *, cwd: str) -> int:

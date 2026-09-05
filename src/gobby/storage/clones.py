@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -17,6 +18,10 @@ from typing import Any
 import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.isolation_cleanup import (
+    CLOSED_TASK_CLEANUP_PREDICATE,
+    lock_isolation_for_cleanup,
+)
 from gobby.storage.workspace_machine_scope import (
     get_owned_workspace_row,
     raise_if_foreign_workspace,
@@ -701,8 +706,7 @@ class LocalCloneManager:
         """
         Find clones past their cleanup window.
 
-        These are clones where merge succeeded and the cleanup_after
-        grace period has elapsed. Safe to delete — work is in target branch.
+        These are cleanup candidates; deletion must recheck ownership and Git state.
 
         Args:
             project_id: Optional project filter (None = all projects)
@@ -712,36 +716,33 @@ class LocalCloneManager:
             List of expired Clone instances
         """
         now = utc_now()
+        query = (
+            """
+            SELECT w.* FROM clones w
+            WHERE w.machine_id = %s AND w.status = %s
+              AND w.agent_session_id IS NULL
+              AND w.cleanup_after < %s
+        """
+            + CLOSED_TASK_CLEANUP_PREDICATE
+        )
+        params: list[Any] = [require_machine_id(), CloneStatus.MERGED.value, now]
         if project_id:
-            rows = self.db.fetchall(
-                """
-                SELECT * FROM clones
-                WHERE project_id = %s
-                  AND machine_id = %s
-                  AND status = %s
-                  AND agent_session_id IS NULL
-                  AND cleanup_after IS NOT NULL
-                  AND cleanup_after < %s
-                ORDER BY cleanup_after ASC
-                LIMIT %s
-                """,
-                (project_id, require_machine_id(), CloneStatus.MERGED.value, now, limit),
-            )
-        else:
-            rows = self.db.fetchall(
-                """
-                SELECT * FROM clones
-                WHERE machine_id = %s
-                  AND status = %s
-                  AND agent_session_id IS NULL
-                  AND cleanup_after IS NOT NULL
-                  AND cleanup_after < %s
-                ORDER BY cleanup_after ASC
-                LIMIT %s
-                """,
-                (require_machine_id(), CloneStatus.MERGED.value, now, limit),
-            )
+            query += " AND w.project_id = %s"
+            params.append(project_id)
+        query += " ORDER BY w.cleanup_after ASC LIMIT %s"
+        params.append(limit)
+        rows = self.db.fetchall(query, tuple(params))
         return [Clone.from_row(row) for row in rows]
+
+    @contextmanager
+    def lock_for_cleanup(
+        self, clone_id: str, *, expired_only: bool = True
+    ) -> Iterator[Clone | None]:
+        """Hold an eligible clone and its closed task against concurrent claims."""
+        with lock_isolation_for_cleanup(
+            self.db, "clones", clone_id, expired_only=expired_only
+        ) as row:
+            yield Clone.from_row(row) if row is not None else None
 
     def cleanup_stale(
         self,
