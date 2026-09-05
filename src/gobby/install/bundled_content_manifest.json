@@ -563,7 +563,7 @@
     "workflows/rules/skill-discovery/reset-skill-injection.yaml": "6ed239d8f0fc029fa85e88cf6e130f96a3f6847cc936d9718e57c3842611b7b7",
     "workflows/rules/stop-gates/enforce-found-work-ladder.yaml": "c492013203660d72401e31872f58b617d5d10f48af90074bd437b060fef5ebba",
     "workflows/rules/stop-gates/require-epic-tree-close.yaml": "eb214b9c697664db4adfd2d2b0ce224566e97714ac9ed654cedd0c1eba78d0b2",
-    "workflows/rules/stop-gates/require-step-completion.yaml": "6f756605a0e4613b26fdd315b61752ee710cc5cc0d00d5840f14228cb00f09bd",
+    "workflows/rules/stop-gates/require-step-completion.yaml": "fc8d52e1240787030ebf39ab889915d53161e8c8c92c37578a7152d9de32e675",
     "workflows/rules/stop-gates/require-task-close.yaml": "e626dc10f077ef033f7dfd8284419301001dedd0cd422b870d97fe96832f6721",
     "workflows/rules/task-enforcement/block-ask-during-stop-compliance.yaml": "7b16c2815fc86668a7ed36500d417c18660af5e41cfb373cbda5f6b219fad11d",
     "workflows/rules/task-enforcement/block-cross-session-foreign-dirty-edit.yaml": "d7683b08de5b39d6714d51fc3b7af349e064d6338d61aea261cbd9fd26d29fac",
