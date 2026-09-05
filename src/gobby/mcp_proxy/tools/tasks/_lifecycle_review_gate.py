@@ -40,11 +40,7 @@ def _is_spawned_agent_caller(ctx: RegistryContext, session_id: str | None) -> bo
         "SELECT id FROM agent_runs WHERE child_session_id = %s LIMIT 1",
         (session_id,),
     )
-    try:
-        run_id = row["id"] if row is not None else None
-    except (KeyError, TypeError, IndexError):
-        return False
-    return isinstance(run_id, str) and bool(run_id)
+    return row is not None
 
 
 def _sequence_delta(label: str, before: object, after: object) -> str | None:

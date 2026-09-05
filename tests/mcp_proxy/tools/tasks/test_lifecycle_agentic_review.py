@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 
@@ -386,7 +387,11 @@ async def _evaluate(
     else:
         closing_session_id = "caller"
         db = SimpleNamespace(
-            fetchone=MagicMock(return_value={"id": "run"} if agent_caller else None)
+            fetchone=MagicMock(
+                return_value={"id": UUID("00000000-0000-0000-0000-000000000001")}
+                if agent_caller
+                else None
+            )
         )
         ctx = cast(
             RegistryContext,
