@@ -2341,6 +2341,37 @@ async def test_codex_uncompounded_passing_run_is_still_a_success(tmp_path: Path)
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
 
 
+@pytest.mark.asyncio
+async def test_codex_passing_test_types_suppression_ratchet_is_recorded(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "codex-suppressions.jsonl"
+    command = (
+        "uv run gobby test-types suppressions . "
+        "--baseline .gobby/python-suppressions-baseline.json"
+    )
+    _write_jsonl(
+        transcript,
+        _codex_nested_exec_pair(
+            command=command,
+            result={"exit_code": 0, "output": "New: 0\nStale: 0"},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [
+        (run.command, run.categories, run.outcome, run.exit_code)
+        for run in evidence.validation_runs
+    ] == [(command, ("type_check",), "success", 0)]
+
+
 def _timestamped(stamp: str) -> str:
     return json.dumps({"type": "assistant", "timestamp": stamp, "message": {}})
 
