@@ -158,10 +158,13 @@ and isolated work have resumed. No retirement binaries have been installed.
 
 ## Final state audit follow-through
 
-#21871 owns exact persisted wiki configuration cleanup. A read-only configuration
-load using retirement source against live 425 raised `UnknownStoredConfigKeyError`
-for `wiki.codewiki_nightly_enabled`. Inventory, scoped recovery and deletion must
-cover these settings before startup, while preserving unrelated config and secrets.
+#21871 is closed at `17c9b45796`. Its exact persisted configuration and discovery
+cleanup covers three wiki settings and 14 tool-schema hashes. Root verification
+passed 56 focused tests in 16.26 seconds plus Ruff, format and mypy checks. Cleanup
+compares the inventoried values before mutation, preserves unrelated settings and
+secrets, and advances the configuration revision through the supported manager.
+The live audit found both writer switches already false. No live settings or
+discovery rows have been removed.
 
 #21872 owns inventory-scoped retained code-index cleanup. Read-only inspection
 matched 6,301 Gobby wiki paths and 4,041 Gobby Web wiki paths to the original
@@ -176,3 +179,43 @@ and isolated recovery evidence before live application. The original successful
 rehearsal remains valid evidence for its exact inventory, not for new targets.
 Memory corrections are drafted as 22 compare-before-update proposals on #21772;
 no memories have changed. Their application follows the live preservation check.
+
+## Expanded rehearsal preparation
+
+The expanded rehearsal has a separate private home,
+`~/.gobby/retirement/gobby-rehearsal-21771-875d8f04`, with PostgreSQL 60896,
+Qdrant 6340 and FalkorDB 16391. Owner-only setup and profile records bind the
+container, image, volume and PostgreSQL system identities. Canonical schema 425
+initialization and profile admission passed. The image's preexisting probe database
+was preserved as `gobby_image_probe`; the rehearsal uses a separate fresh database
+with the canonical PostgreSQL extensions. The earlier successful rehearsal is intact.
+
+The private grant broker is prepared on HTTP 60897 and WebSocket 60898 with a
+separate tmux socket and machine identity. Its configuration disables indexing,
+task automation and memory dreaming. It has not started; startup follows canonical
+426 and scoped project admission during the recovery exercise.
+
+#21872 adds exact native content-version and projection cleanup; #21874 binds it
+to the inventory, backup and recovery procedure. Root's initial native run passed
+34 tests in 5.500 seconds. The worker's final run passed 35 tests in 5.793 seconds,
+including a real linked-worktree identity without fabricated primary-checkout rows.
+Root review and the final combined adapter verification are pending.
+
+The read-only path census selected 6,779 paths in the canonical Gobby index
+(6,301 vault paths and 478 deleted tracked files), 4,041 vault paths in the Web
+index, and 478 deleted tracked files in this worktree's synthetic index. None of
+these selected paths has another machine's selector. Private recovery preserves
+the source UUIDs using isolated ordinary projects; the native regression separately
+verifies production synthetic-index admission. The final census also checks for
+projection-only artifacts before freezing the expanded inventory.
+
+Main advanced to `c497d184ba`. Session #11789 restored the shared daemon as PID
+62410, then took ownership of installer execution-permission and shutdown-ordering
+findings. Retirement landing remains held for its next restart and observation
+window. No retirement source, binaries, schema or live deletion has been deployed.
+
+An obsolete close review for #19777 generated 837,323 prompt characters from 1,748
+session command records, exceeding its 256,000-character limit. Session #11789
+owns the bounded-evidence fix in #21879. Further obsolete submissions are paused
+while that fix is completed. Review `836904fe-4256-485e-b75a-9c765af3e229` remains
+historically recorded; a later background notification reported #19777 closed.
