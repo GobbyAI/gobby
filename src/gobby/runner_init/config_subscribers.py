@@ -266,7 +266,6 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "voice": _route("voice routes", "request ConfigRuntime.capture"),
     "web_chat_sandbox": _route("web chat launch", "operation ConfigRuntime.capture"),
     "websocket": _route("WebSocket operations", "message ConfigRuntime.capture"),
-    "wiki": _route("wiki operations", "operation ConfigRuntime.capture"),
     "workflow": _route("workflow execution", "operation ConfigRuntime.capture"),
     "worktrees_dir": _route("worktree operations", "operation ConfigRuntime.capture"),
 }

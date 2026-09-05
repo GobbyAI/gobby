@@ -47,8 +47,6 @@ from gobby.servers.routes.terminals import create_terminals_router
 from gobby.servers.routes.traces import create_traces_router
 from gobby.servers.routes.variable_definitions import create_variable_definitions_router
 from gobby.servers.routes.voice import create_voice_router
-from gobby.servers.routes.wiki import create_wiki_router
-from gobby.servers.routes.wiki_code import create_wiki_code_router
 
 __all__ = [
     "create_admin_router",
@@ -93,6 +91,4 @@ __all__ = [
     "create_variable_definitions_router",
     "create_voice_router",
     "create_webhooks_router",
-    "create_wiki_router",
-    "create_wiki_code_router",
 ]

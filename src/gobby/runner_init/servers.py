@@ -650,7 +650,7 @@ def maintenance_target_admitted(database: Any, project_id: str) -> bool:
 
     Any shared code-index identity qualifies, registered or not, so orphaned
     path-derived projects can be granted for projection purge; so does a
-    soft-deleted project, whose purge runs gwiki/gcode cleanup under a
+    soft-deleted project, whose purge runs gcode cleanup under a
     maintenance grant after its checkouts were released (#21458).
     """
     try:

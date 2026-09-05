@@ -139,9 +139,7 @@ class EffectsMixin(DeliveryFormattingMixin):
                     ctx,
                     allowed_funcs,
                 )
-                # Injected-context fencing lives in templates that still inject
-                # session-start context (wiki overview), not here, so per-turn
-                # injections (brevity, memory, task context) stay un-tagged.
+                # Per-turn injections (brevity, memory, task context) stay un-tagged.
                 # Handoff markdown is pull-only via get_handoff; see
                 # docs/contracts/session-boundary.md.
                 context_parts.append(template_text)

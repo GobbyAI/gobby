@@ -60,7 +60,6 @@ from gobby.config.tasks import (
     WorkflowConfig,
 )
 from gobby.config.ui import UIConfig
-from gobby.config.wiki import WikiConfig
 from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
 from gobby.telemetry.config import TelemetrySettings
 
@@ -78,30 +77,6 @@ def test_code_index_config_maintenance_defaults() -> None:
     assert config.nightly_repair_timeout_seconds == 8 * 60 * 60
     assert config.nightly_repair_concurrency == 1
     assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
-
-
-def test_wiki_config_codewiki_scope_defaults() -> None:
-    config = WikiConfig()
-
-    assert config.codewiki_scopes == []
-    assert config.codewiki_project_scopes_by_name == {}
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"codewiki_scopes": "src"},
-        {"codewiki_scopes": ["src", ""]},
-        {"codewiki_scopes": ["src", 1]},
-        {"codewiki_project_scopes_by_name": ["gobby"]},
-        {"codewiki_project_scopes_by_name": {"": ["src"]}},
-        {"codewiki_project_scopes_by_name": {"gobby": "src"}},
-        {"codewiki_project_scopes_by_name": {"gobby": ["src", None]}},
-    ],
-)
-def test_wiki_config_rejects_malformed_codewiki_scope_config(kwargs: dict[str, object]) -> None:
-    with pytest.raises(ValidationError):
-        WikiConfig(**kwargs)
 
 
 @pytest.mark.parametrize(

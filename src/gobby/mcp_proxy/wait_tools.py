@@ -35,11 +35,6 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # daemon after the caller had already given up at 30s (#21058).
     "create_worktree",
     "delete_worktree",
-    # Generation-backed gwiki calls: daemon-side synthesis scales with vault
-    # size and cannot fit the default 30s request timeout (#17593). The
-    # daemon's gwiki subprocess guard (GENERATION_GWIKI_TIMEOUT_SECONDS) sits
-    # 30s below this HTTP cap so structured timeout envelopes still arrive.
-    "wiki_compile",
     # Agent spawn performs bounded isolation repair (env preseed, hook copy),
     # child-session creation, and tmux launch; under concurrent fleet load the
     # daemon side exceeds 30s while still succeeding, so keep the caller alive

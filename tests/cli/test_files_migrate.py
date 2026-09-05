@@ -200,11 +200,7 @@ def test_6_1_12_empty_source_seeds_baseline_without_creating_root(owner: OwnerEn
     assert (owner.files_home / "_personal" / "notes").is_dir()
     assert (owner.files_home / "_personal" / "reminders").is_dir()
     assert (owner.files_home / "_personal" / "attachments").is_dir()
-    assert (owner.files_home / "wiki").is_dir()
-    registry = json.loads((owner.files_home / "wiki" / "wikis.json").read_text(encoding="utf-8"))
-    assert registry["topics"] == {}
-    assert registry["projects"] == {}
-    assert not (owner.files_home / "wiki" / "_gwiki" / "scope.json").exists()
+    assert not (owner.files_home / "wiki").exists()
 
 
 def test_6_1_12_missing_files_home_does_not_create_root(
@@ -236,13 +232,12 @@ def test_6_1_1_first_migrate_moves_every_present_class(owner: OwnerEnv) -> None:
     assert not paths["profile"].exists()
     assert (owner.files_home / "_personal" / ".gobby" / "project.json").is_file()
     assert not paths["marker"].exists()
-    assert (owner.files_home / "wiki" / "personal" / "page.md").read_text() == "personal-wiki"
-    assert not paths["personal_wiki"].exists()
+    assert paths["personal_wiki"].read_text() == "personal-wiki"
     assert (owner.files_home / "_personal" / "notes" / "n.md").read_text() == "notes"
     assert (owner.files_home / "_personal" / "reminders" / "r.md").read_text() == "reminders"
     assert (owner.files_home / "_personal" / "scrap" / "s.md").read_text() == "scrap"
-    assert (owner.files_home / "wiki" / "alpha" / "t.md").read_text() == "topic-alpha"
-    assert not paths["topic"].exists()
+    assert (owner.topics / "alpha" / "t.md").read_text() == "topic-alpha"
+    assert paths["topic"].read_text() == "topic-alpha"
     assert (
         owner.files_home / "_personal" / "attachments" / "proj-a" / "aa" / "id-a" / "a.txt"
     ).read_text() == "p-att"
@@ -281,21 +276,25 @@ def test_6_1_5_unrecognized_destination_refuses_before_mutation(owner: OwnerEnv)
     assert paths["profile"].read_text(encoding="utf-8") == "hello-profile"
 
 
-def test_6_1_6_and_6_1_7_scope_and_registry_are_wiki_home_relative(owner: OwnerEnv) -> None:
-    _legacy_layout(owner)
+def test_legacy_wiki_scopes_registries_and_originals_remain_untouched(owner: OwnerEnv) -> None:
+    paths = _legacy_layout(owner)
+    original = owner.checkout / "sources" / "original.md"
+    _write(original, "original source")
+    preserved = [
+        paths["personal_wiki"],
+        paths["topic"],
+        paths["checkout_wiki"],
+        original,
+        owner.personal / "wiki" / "_gwiki" / "scope.json",
+        owner.topics / "alpha" / "_gwiki" / "scope.json",
+        owner.wiki_hub / "wikis.json",
+    ]
+    before = {path: path.read_bytes() for path in preserved}
     _run()
-    personal_scope = json.loads(
-        (owner.files_home / "wiki" / "personal" / "_gwiki" / "scope.json").read_text()
-    )
-    topic_scope = json.loads(
-        (owner.files_home / "wiki" / "alpha" / "_gwiki" / "scope.json").read_text()
-    )
-    assert personal_scope["root"] == str(owner.files_home / "wiki" / "personal")
-    assert topic_scope["root"] == str(owner.files_home / "wiki" / "alpha")
-    registry = json.loads((owner.files_home / "wiki" / "wikis.json").read_text())
-    assert registry["topics"]["alpha"]["path"] == "alpha"
-    assert registry["projects"][PERSONAL_PROJECT_ID]["path"] == "personal"
-    assert all(not Path(str(entry["path"])).is_absolute() for entry in registry["topics"].values())
+    _run()
+    assert {path: path.read_bytes() for path in preserved} == before
+    assert not (owner.files_home / "wiki").exists()
+    assert not (owner.files_home / "_personal" / "wiki").exists()
 
 
 def test_6_1_8_recognized_partial_resumes(owner: OwnerEnv) -> None:
@@ -303,7 +302,7 @@ def test_6_1_8_recognized_partial_resumes(owner: OwnerEnv) -> None:
     _write(owner.files_home / "USER.md", "hello-profile")
     (owner.personal / "USER.md").unlink()
     _run()
-    assert (owner.files_home / "wiki" / "alpha" / "t.md").read_text() == "topic-alpha"
+    assert (owner.topics / "alpha" / "t.md").read_text() == "topic-alpha"
     assert (owner.files_home / "_personal" / "notes" / "n.md").read_text() == "notes"
 
 
@@ -315,35 +314,23 @@ def test_6_1_9_injected_failure_after_first_class_leaves_remaining(owner: OwnerE
         _run(after_class="profile")
     assert (owner.files_home / "USER.md").read_text() == "hello-profile"
     assert not paths["profile"].exists()
+    assert paths["notes"].read_text() == "notes"
+    _run()
+    assert (owner.topics / "alpha" / "t.md").read_text() == "topic-alpha"
+    assert not paths["notes"].exists()
+    assert (owner.files_home / "_personal" / "notes" / "n.md").read_text() == "notes"
+
+
+def test_malformed_legacy_registry_does_not_block_shared_files(owner: OwnerEnv) -> None:
+    paths = _legacy_layout(owner)
+    registry = owner.wiki_hub / "wikis.json"
+    _write(registry, "{not-json")
+    report = _run()
+    assert report.status == "success"
+    assert (owner.files_home / "USER.md").read_text() == "hello-profile"
+    assert not paths["profile"].exists()
+    assert registry.read_text() == "{not-json"
     assert paths["topic"].read_text() == "topic-alpha"
-    _run()
-    assert (owner.files_home / "wiki" / "alpha" / "t.md").read_text() == "topic-alpha"
-    assert not paths["topic"].exists()
-
-
-def test_6_1_11_malformed_registry_refuses_before_mutation(owner: OwnerEnv) -> None:
-    from gobby.files_migrate import FilesMigrateError
-
-    paths = _legacy_layout(owner)
-    _write(owner.wiki_hub / "wikis.json", "{not-json")
-    with pytest.raises(FilesMigrateError, match="registry|malformed"):
-        _run()
-    assert paths["profile"].exists()
-    assert paths["topic"].exists()
-
-
-def test_6_1_11_crash_before_registry_leaves_remaining_sources(owner: OwnerEnv) -> None:
-    from gobby.files_migrate import FilesMigratePartialError
-
-    paths = _legacy_layout(owner)
-    with pytest.raises(FilesMigratePartialError):
-        _run(before_registry_publish=True)
-    assert not paths["topic"].exists()
-    assert (owner.wiki_hub / "wikis.json").exists()
-    _run()
-    registry = json.loads((owner.files_home / "wiki" / "wikis.json").read_text())
-    assert registry["topics"]["alpha"]["path"] == "alpha"
-    assert not (owner.wiki_hub / "wikis.json").exists()
 
 
 def test_6_1_13_refuses_while_daemon_running(owner: OwnerEnv) -> None:
@@ -396,15 +383,13 @@ def test_6_1_15_present_profile_publishes_before_seeding(owner: OwnerEnv) -> Non
     assert (owner.files_home / "_personal" / "notes" / "n.md").read_text() == "notes"
 
 
-def test_6_1_17_reserved_topic_refuses(owner: OwnerEnv) -> None:
-    from gobby.files_migrate import FilesMigrateError
-
+def test_legacy_topic_names_do_not_affect_shared_files(owner: OwnerEnv) -> None:
     _write(owner.personal / "USER.md", "p")
-    _write(owner.topics / "personal" / "x.md", "reserved")
-    with pytest.raises(FilesMigrateError, match="topic|reserved|personal"):
-        _run()
-    assert (owner.personal / "USER.md").exists()
-    assert (owner.topics / "personal" / "x.md").exists()
+    topic = owner.topics / "personal" / "x.md"
+    _write(topic, "reserved")
+    assert _run().status == "success"
+    assert (owner.files_home / "USER.md").read_text() == "p"
+    assert topic.read_text() == "reserved"
 
 
 def test_6_1_17_prefix_overlap_refuses(owner: OwnerEnv) -> None:
@@ -454,31 +439,6 @@ def test_6_1_19_held_claim_blocks_daemon_start(owner: OwnerEnv) -> None:
 
     _run(on_claimed=_on_claimed)
     assert seen == [True]
-
-
-def test_6_1_20_wiki_home_is_not_a_vault(owner: OwnerEnv) -> None:
-    _legacy_layout(owner)
-    _run()
-    _run()
-    assert not (owner.files_home / "wiki" / "_gwiki" / "scope.json").exists()
-
-
-def test_6_1_21_scope_rewrite_after_source_retirement(owner: OwnerEnv) -> None:
-    from gobby.files_migrate import FilesMigratePartialError
-
-    _legacy_layout(owner)
-    with pytest.raises(FilesMigratePartialError):
-        _run(before_scope_rewrite=True)
-    assert not (owner.personal / "wiki" / "page.md").exists()
-    old_root = json.loads(
-        (owner.files_home / "wiki" / "personal" / "_gwiki" / "scope.json").read_text()
-    )["root"]
-    assert old_root != str(owner.files_home / "wiki" / "personal")
-    _run()
-    new_root = json.loads(
-        (owner.files_home / "wiki" / "personal" / "_gwiki" / "scope.json").read_text()
-    )["root"]
-    assert new_root == str(owner.files_home / "wiki" / "personal")
 
 
 def test_6_1_22_filesystem_root_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -569,16 +529,16 @@ def test_6_1_24_source_swap_after_first_class_is_recognized_partial(owner: Owner
     _legacy_layout(owner)
 
     def _swap() -> None:
-        target = owner.topics / "alpha" / "t.md"
+        target = owner.personal / "notes" / "n.md"
         target.unlink()
-        _write(target, "swapped-topic")
+        _write(target, "swapped-note")
 
     with pytest.raises(FilesMigratePartialError):
         _run(swap_after_class="profile", swap_fn=_swap)
     assert (owner.files_home / "USER.md").read_text() == "hello-profile"
-    assert (owner.topics / "alpha" / "t.md").read_text() == "swapped-topic"
+    assert (owner.personal / "notes" / "n.md").read_text() == "swapped-note"
     _run()
-    assert (owner.files_home / "wiki" / "alpha" / "t.md").read_text() == "swapped-topic"
+    assert (owner.files_home / "_personal" / "notes" / "n.md").read_text() == "swapped-note"
 
 
 def test_6_1_25_attachment_merge_and_divergent_leaf(owner: OwnerEnv) -> None:

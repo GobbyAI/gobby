@@ -273,14 +273,12 @@ def _assert_disjoint_files_home(files_home: Path) -> None:
     forbidden = (
         get_gobby_home() / "personal",
         get_gobby_home() / "projects",
-        Path.home() / "wiki" / "topics",
     )
     candidate = files_home
     for other in forbidden:
         if _paths_overlap(candidate, other):
             raise BootstrapConfigError(
-                "files_home must be disjoint from $GOBBY_HOME/personal, "
-                "$GOBBY_HOME/projects, and ~/wiki/topics"
+                "files_home must be disjoint from $GOBBY_HOME/personal, $GOBBY_HOME/projects"
             )
 
 

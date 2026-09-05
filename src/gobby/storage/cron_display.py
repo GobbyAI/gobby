@@ -1,7 +1,7 @@
 """Human-friendly display names for cron jobs.
 
 System cron identifiers are stable machine names like
-``gobby:wiki-recap:project:<uuid>``. These helpers derive a readable
+``gobby:nightly-memory:project:<uuid>``. These helpers derive a readable
 default display name from that identifier (resolving project UUIDs to
 project names) while leaving the identifier itself untouched. A stored
 ``display_name`` on the row always wins over the generated default.

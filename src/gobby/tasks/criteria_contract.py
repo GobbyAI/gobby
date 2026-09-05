@@ -152,7 +152,7 @@ _NOMINAL_FOLLOWER_RE = re.compile(
 
 _OPERATIONAL_SUBJECT_RE = re.compile(
     r"\b(?:(?P<generic>artifact|package|build)s?|release|binary|executable|service|plugin|skill|"
-    r"ghook|gcode|gwiki|gobby|daemon|server|app|application|site)\b",
+    r"ghook|gcode|gobby|daemon|server|app|application|site)\b",
     re.IGNORECASE,
 )
 
@@ -306,7 +306,7 @@ def operational_actions_from_command(command: str) -> tuple[str, ...]:
         if action == "restart" and "gobby restart" in normalized:
             subjects.update(("daemon", "gobby"))
         elif action == "install" and "gobby install" in normalized:
-            subjects.update(("gobby", "ghook", "gcode", "gwiki"))
+            subjects.update(("gobby", "ghook", "gcode"))
         markers.append(_evidence_marker(action, subjects))
     return tuple(markers)
 

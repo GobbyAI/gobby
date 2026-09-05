@@ -13,7 +13,7 @@ _ExcludePattern = Annotated[
 
 
 class IndexingConfig(BaseModel):
-    """Indexing behavior shared by gcode and gwiki."""
+    """Code indexing behavior."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -122,7 +122,6 @@ def test_mapping_patterns_are_complete() -> None:
         "verification_defaults.custom.{command}",
         "skills.hubs.{hub}.{field}",
         "context_window_overrides.{model_match}",
-        "wiki.codewiki_project_scopes_by_name.{project_name}",
         "launch_defaults.{project_id}",
     }.issubset({pattern.pattern for pattern in CONFIG_REGISTRY.pattern_specs})
 

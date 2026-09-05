@@ -1418,7 +1418,7 @@ async def test_cancel_periodic_tasks_cancels_hook_quarantine_retention_once() ->
     task = asyncio.create_task(blocked())
     runner = cast(
         GobbyRunner,
-        SimpleNamespace(_hook_quarantine_retention_task=task, _wiki_watcher=None),
+        SimpleNamespace(_hook_quarantine_retention_task=task),
     )
     try:
         await entered.wait()
@@ -1452,7 +1452,7 @@ async def test_cancel_periodic_tasks_cancels_hook_receipt_retention_once() -> No
     task = asyncio.create_task(blocked())
     runner = cast(
         GobbyRunner,
-        SimpleNamespace(_hook_receipt_retention_task=task, _wiki_watcher=None),
+        SimpleNamespace(_hook_receipt_retention_task=task),
     )
     try:
         await entered.wait()

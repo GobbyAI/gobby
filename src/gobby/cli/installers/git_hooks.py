@@ -18,8 +18,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .wiki_branch_setup import default_wiki_setup_result, setup_wiki_branch
-
 logger = logging.getLogger(__name__)
 
 # Markers for identifying Gobby hook sections
@@ -475,7 +473,6 @@ def install_git_hooks(
         "skipped": [],
         "backups": [],
         "precommit_installed": False,
-        "wiki_setup": default_wiki_setup_result(),
         "error": None,
     }
 
@@ -560,7 +557,6 @@ def install_git_hooks(
             "Pre-commit detected - gobby hooks will run verification first, then pre-commit framework"
         )
 
-    result["wiki_setup"] = setup_wiki_branch(project_path)
     result["success"] = True
     return result
 

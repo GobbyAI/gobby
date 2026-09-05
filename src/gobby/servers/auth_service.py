@@ -94,8 +94,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/sessions/*/variables/set", True),
     # Hook execution (ghook).
     _AgentRoute("POST", _HOOKS_EXECUTE_PATH, True),
-    # Dormant wiki code status and code-index graph lifecycle.
-    _AgentRoute("GET", "/api/wiki/code/status", True),
+    # Code-index graph lifecycle.
     _AgentRoute("POST", "/api/code-index/graph/clear", True),
     _AgentRoute("POST", "/api/code-index/graph/rebuild", True),
     _AgentRoute("POST", "/api/code-index/invalidate", True),

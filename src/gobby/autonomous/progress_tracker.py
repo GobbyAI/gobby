@@ -67,7 +67,7 @@ HIGH_VALUE_PROGRESS = {
 }
 
 # Inner MCP tool-name prefixes that only read state; everything else mutates.
-# Agents doing pure MCP work (wiki ingest/compile, task filing) must reset the
+# Agents doing pure MCP work (task and memory filing) must reset the
 # stagnation clock, or the stuck detector kills healthy research runs.
 MCP_READONLY_TOOL_PREFIXES = (
     "list",

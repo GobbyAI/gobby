@@ -117,7 +117,7 @@ async def test_graph_view_is_readonly_without_graph_mutators(
 
 
 def test_validate_policy_allows_mutator_when_opted_in() -> None:
-    policy = ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True)
+    policy = ToolPolicy(cli="gcode", tools=("search", "index"), allow_mutation=True)
     validate_policy(policy)
     assert policy.allow_mutation is True
 
@@ -132,7 +132,7 @@ def test_validate_policy_rejects_codewiki_when_mutation_enabled() -> None:
 
 def test_validate_policy_rejects_unlisted_tool_even_when_opted_in() -> None:
     with pytest.raises(ToolPolicyError):
-        validate_policy(ToolPolicy(cli="gwiki", tools=("destroy",), allow_mutation=True))
+        validate_policy(ToolPolicy(cli="gcode", tools=("destroy",), allow_mutation=True))
 
 
 def test_validate_policy_rejects_metacharacter_subcommand() -> None:

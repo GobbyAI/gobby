@@ -1504,7 +1504,7 @@ class _FakeToolChatService:
 
 
 _READONLY_TOOL_POLICY = {"cli": "gcode", "tools": ["search", "outline"]}
-_TOOL_CHAT_CALLER = "gwiki.ask.deep"
+_TOOL_CHAT_CALLER = "gcode.ask"
 _TOOL_CHAT_REQUEST_ID = "019fc08a-1d63-4b23-bbc8-659d56bc4168"
 
 
@@ -1636,7 +1636,7 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     assert request.session_id == UUID("019fc08a-1d63-4b23-bbc8-659d56bc4168")
 
 
-def test_chat_completions_accepts_gwiki_tool_policy(
+def test_chat_completions_rejects_retired_gwiki_tool_policy(
     client: TestClient,
     server_with_llm: MagicMock,
 ) -> None:
@@ -1647,12 +1647,9 @@ def test_chat_completions_accepts_gwiki_tool_policy(
     payload["tool_policy"] = {"cli": "gwiki", "tools": ["compile", "upkeep"]}
     response = client.post("/api/llm/chat/completions", json=payload)
 
-    assert response.status_code == 200
-    assert len(service.requests) == 1
-    request = service.requests[0]
-    assert request.tool_policy.cli == "gwiki"
-    assert request.tool_policy.tools == ("compile", "upkeep")
-    assert request.tool_policy.allow_mutation is False
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "tool_policy", "cli"]
+    assert service.requests == []
 
 
 def test_chat_completions_uses_verified_agent_session_claim(

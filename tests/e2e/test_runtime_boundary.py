@@ -31,7 +31,6 @@ from gobby.runtime_grants.schema import FalkorDirect, GrantBundle, PostgresDirec
 from gobby.runtime_grants.signing import payload_checksum
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.secrets import SecretStore
-from gobby.wiki.codewiki_dormant import CODEWIKI_DISABLED_REASON
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -204,15 +203,6 @@ SEMANTIC_WARNING = {
     "lane": "semantic",
     "cause": "daemon_unreachable",
     "message": "semantic search degraded: daemon unreachable; lexical and graph results only",
-}
-DORMANT_STATUS = {
-    "enabled": False,
-    "state": "disabled",
-    "reason": CODEWIKI_DISABLED_REASON,
-}
-DORMANT_REFRESH = {
-    "error": "codewiki_disabled_pending_redesign",
-    "reason": CODEWIKI_DISABLED_REASON,
 }
 _MODALITY_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/api/embeddings"),
@@ -894,36 +884,15 @@ def boundary(daemon_instance: DaemonInstance, e2e_project_dir: Path) -> Iterator
     )
 
 
-def _wiki_read(boundary: BoundaryHarness, *args: str) -> subprocess.CompletedProcess[str]:
-    return boundary.run("gwiki", *args, "--topic", "rust")
-
-
 def test_runtime_boundary_scenarios(boundary: BoundaryHarness) -> None:
     search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert search.returncode == 0, search.stderr or search.stdout
-    initialized = _wiki_read(boundary, "init")
-    assert initialized.returncode == 0, initialized.stderr or initialized.stdout
-    vault = Path(str(_json_payload(initialized).get("root") or ""))
-    assert vault.is_dir(), initialized.stdout
-    page = vault / "knowledge" / "concepts" / "e2e.md"
-    page.parent.mkdir(parents=True, exist_ok=True)
-    page.write_text("# E2E\nwiki read fixture\n")
-    wiki_read = _wiki_read(boundary, "read", "--path", "knowledge/concepts/e2e.md")
-    assert wiki_read.returncode == 0, wiki_read.stderr or wiki_read.stdout
-    assert "wiki read fixture" in f"{wiki_read.stdout}\n{wiki_read.stderr}"
 
     boundary.daemon.stop()
     assert daemon_health_unavailable(boundary.daemon.http_port)
 
     offline_search = boundary.run("gcode", "--allow-stale", "search", "fixture")
     assert offline_search.returncode == 0, offline_search.stderr or offline_search.stdout
-    offline_wiki = _wiki_read(boundary, "read", "--path", "knowledge/concepts/e2e.md")
-    assert offline_wiki.returncode == 0, offline_wiki.stderr or offline_wiki.stdout
-    assert "wiki read fixture" in f"{offline_wiki.stdout}\n{offline_wiki.stderr}"
-    image = boundary.project_dir / "e2e-vision.png"
-    image.write_bytes(_TINY_PNG)
-    offline_ai = _wiki_read(boundary, "ingest-file", str(image))
-    _assert_typed_failure(offline_ai, "daemon_required", "daemon_error", "config_error")
     listed = boundary.run("gcode", "projects")
     _assert_typed_failure(listed, "daemon_required")
 
@@ -931,10 +900,6 @@ def test_runtime_boundary_scenarios(boundary: BoundaryHarness) -> None:
     write_grant_file(boundary.grant_path, expired)
     expired_cmd = boundary.run("gcode", "--allow-stale", "search", "fixture")
     _assert_typed_failure(expired_cmd, "daemon_required", "expired")
-    status = boundary.run("gwiki", "status", "--topic", "rust")
-    assert status.returncode == 0, status.stderr or status.stdout
-    status_payload = _json_payload(status)
-    assert status_payload.get("grant", {}).get("state") in {"expired", "absent", "malformed"}
 
     write_grant_file(boundary.grant_path, boundary.grant)
     boundary.daemon.restart()
@@ -1145,30 +1110,6 @@ def test_broker_scope_paths(boundary: BoundaryHarness) -> None:
         assert capability.status_code == 401, capability.text
 
 
-def test_diagnostics_under_expiry(boundary: BoundaryHarness) -> None:
-    expired = _rechecksum(boundary.grant.model_copy(update={"expires_at": int(time.time()) - 10}))
-    write_grant_file(boundary.grant_path, expired)
-    status = boundary.run("gwiki", "status", "--topic", "rust")
-    assert status.returncode == 0, status.stderr or status.stdout
-    payload = _json_payload(status)
-    assert payload.get("grant", {}).get("state") in {"expired", "absent", "malformed"}
-    hidden = boundary.grant_path.with_suffix(".json.hidden")
-    boundary.grant_path.rename(hidden)
-    try:
-        completed = subprocess.run(
-            [str(_native_bin("gwiki")), "--format", "json", "status", "--topic", "rust"],
-            cwd=boundary.project_dir,
-            env=boundary.command_env(),
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
-    finally:
-        hidden.rename(boundary.grant_path)
-    assert completed.returncode == 0, completed.stderr or completed.stdout
-
-
 def test_search_degrades_with_warning(boundary: BoundaryHarness) -> None:
     boundary.daemon.stop()
     search = boundary.run("gcode", "--allow-stale", "search", "fixture", "--format", "json")
@@ -1178,17 +1119,6 @@ def test_search_degrades_with_warning(boundary: BoundaryHarness) -> None:
     assert SEMANTIC_WARNING in warnings
     listed = boundary.run("gcode", "projects")
     _assert_typed_failure(listed, "daemon_required")
-
-
-def test_dormant_codewiki_unchanged(boundary: BoundaryHarness) -> None:
-    headers = boundary.grant_headers()
-    with authenticated_daemon_client(boundary.daemon) as client:
-        status = client.get("/api/wiki/code/status", headers=headers)
-        refresh = client.post("/api/wiki/code/refresh", headers=headers)
-    assert status.status_code == 200
-    assert status.json() == DORMANT_STATUS
-    assert refresh.status_code == 409
-    assert refresh.json() == DORMANT_REFRESH
 
 
 def test_restore_replay_rejected(

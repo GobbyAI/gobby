@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 REMOVED_AUTOMATION_JOB_NAMES = frozenset({"gobby:dispatcher", "gobby:pipeline-heartbeat"})
 CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
 # Per-project automation whose handlers were retired; rows are kept dormant
-# for the wiki redesign but must never list, dispatch, or re-enable.
+# until their inventoried retirement; they must never list, dispatch, or re-enable.
 RETIRED_AUTOMATION_JOB_NAME_PREFIXES = (CODEWIKI_NIGHTLY_JOB_PREFIX,)
 CRON_JOB_NAME_PRIORITIES = {
     "gobby:pipeline-heartbeat": 0,

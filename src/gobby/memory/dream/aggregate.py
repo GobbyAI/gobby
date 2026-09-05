@@ -62,11 +62,7 @@ class _AggregateDreamHost(Protocol):
         run_id: str | None = None,
     ) -> dict[str, Any]: ...
 
-    async def _truth_changed_project_ids(
-        self, scopes: list[MemoryScope] | None = None
-    ) -> list[str]: ...
-
-    async def _apply_truth_change_triggers(self) -> None: ...
+    async def _apply_platform_truth_change_trigger(self) -> None: ...
 
     async def _run_nested_target(self, options: DreamRunOptions) -> dict[str, Any]: ...
 
@@ -172,20 +168,10 @@ class _AggregateDreamRunner:
         cutoff: str,
         deadline: float,
     ) -> dict[str, Any]:
-        """Serial per-target preview sweep (dry-run and inventory runs).
-
-        The truth-change trigger mutates cooldown/hash state, so preview runs
-        only observe which projects would trigger instead of applying it.
-        """
+        """Serial per-target preview sweep without mutating cooldown/hash state."""
         targets = await asyncio.to_thread(
             self._host.memory_manager.list_dream_scopes, redream_cutoff=cutoff
         )
-        truth_triggered_targets = await self._host._truth_changed_project_ids(targets)
-        for target_project_id in truth_triggered_targets:
-            target_scope = MemoryScope.project_only(target_project_id)
-            if target_scope not in targets:
-                targets.append(target_scope)
-
         runs: list[dict[str, Any]] = []
         completed = 0
         failed = 0
@@ -263,7 +249,7 @@ class _AggregateDreamRunner:
         completed checkpoints stay durable and untouched candidates remain
         due. Structural per-scope failures are isolated and logged at ERROR.
         """
-        await self._host._apply_truth_change_triggers()
+        await self._host._apply_platform_truth_change_trigger()
 
         sweeps: dict[str, _ScopeSweep] = {}
         entries: dict[str, dict[str, Any]] = {}

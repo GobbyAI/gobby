@@ -831,7 +831,6 @@ class TestInitSubsystems:
                 "_start_agent_lifecycle_monitor",
                 async_noop,
             ),
-            patch.object(runner_lifecycle_subsystems, "_register_wiki_cron_handlers", async_noop),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_code_index_tasks",

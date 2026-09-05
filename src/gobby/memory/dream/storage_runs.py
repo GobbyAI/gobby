@@ -250,7 +250,7 @@ class _DreamRunMixin:
         self: _DreamRunHost,
         project_id: str,
     ) -> str | None:
-        """Return the last-seen codewiki truth-digest hash for a project."""
+        """Return the last-seen truth-digest hash for a project."""
         row = self.db.fetchone(
             "SELECT digest_hash FROM memory_dream_truth_state WHERE project_id = %s",
             (project_id,),
@@ -266,7 +266,7 @@ class _DreamRunMixin:
         project_id: str,
         digest_hash: str,
     ) -> None:
-        """Record the current codewiki truth-digest hash for a project."""
+        """Record the current truth-digest hash for a project."""
         self.db.execute(
             """
             INSERT INTO memory_dream_truth_state (project_id, digest_hash, updated_at)

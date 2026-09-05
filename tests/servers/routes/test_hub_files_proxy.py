@@ -1,4 +1,4 @@
-"""Hub files proxy: USER.md, hop bound, remote wiki/attachment dispatch."""
+"""Hub files proxy: USER.md, hop bound, remote attachment dispatch."""
 
 from __future__ import annotations
 
@@ -294,51 +294,6 @@ def test_remote_user_md_is_remote_target(isolated_home: Path) -> None:
         assert "remote" in str(detail).lower()
 
 
-def test_repeated_hop_on_remote_wiki_refuses(isolated_home: Path) -> None:
-    from gobby.servers.routes.wiki import create_wiki_router
-
-    del isolated_home
-    _write_remote_bootstrap()
-    server = create_http_server(config=DaemonConfig())
-    app = FastAPI()
-    app.include_router(create_wiki_router(server))
-    client = TestClient(app)
-    response = client.get(
-        "/api/wiki/status",
-        params={"topic": "research"},
-        headers={FILES_PROXY_HOP_HEADER: "1"},
-    )
-    assert response.status_code in {400, 409, 421}
-    assert "hop" in response.text.lower() or "remote" in response.text.lower()
-    assert not (Path.home() / "wiki").exists()
-
-
-def test_remote_wiki_topic_proxies_without_creating_home_wiki(
-    isolated_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.servers.routes.wiki import create_wiki_router
-
-    del isolated_home
-    _write_remote_bootstrap("http://hub.example.test:7443")
-    captured: dict[str, Any] = {}
-
-    async def fake_proxy(request: Request, **kwargs: Any) -> dict[str, Any]:
-        captured["path"] = request.url.path
-        captured["kwargs"] = kwargs
-        return {"ok": True, "proxied": True}
-
-    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
-    server = create_http_server(config=DaemonConfig())
-    app = FastAPI()
-    app.include_router(create_wiki_router(server))
-    response = TestClient(app).get("/api/wiki/status", params={"topic": "research"})
-    assert response.status_code == 200
-    assert response.json()["proxied"] is True
-    assert captured["path"] == "/api/wiki/status"
-    assert not (Path.home() / "wiki").exists()
-    assert not (get_gobby_home() / "personal").exists()
-
-
 def test_remote_attachment_upload_proxies_and_skips_local_projects(
     isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -494,40 +449,8 @@ def test_remote_file_bearing_uses_request_stream(
     assert streamed["used"] is True
 
 
-def test_remote_attach_sends_bytes_not_path(
-    isolated_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.servers.routes.wiki import create_wiki_router
-
-    del isolated_home
-    _write_remote_bootstrap()
-    captured: dict[str, Any] = {}
-
-    async def fake_proxy(request: Request, **kwargs: Any) -> dict[str, Any]:
-        captured["path"] = request.url.path
-        captured["stream_body"] = kwargs.get("stream_body")
-        captured["json_body"] = kwargs.get("json_body")
-        return {"ok": True, "command": "attach"}
-
-    monkeypatch.setattr("gobby.files_home_proxy.proxy_owner_request", fake_proxy)
-    server = create_http_server(config=DaemonConfig())
-    app = FastAPI()
-    app.include_router(create_wiki_router(server))
-    response = TestClient(app).post(
-        "/api/wiki/attach",
-        params={"topic": "research"},
-        files={"file": ("note.md", b"# Note", "text/markdown")},
-    )
-    assert response.status_code == 200
-    assert captured["path"] == "/api/wiki/attach"
-    assert captured["stream_body"] is True
-    if captured["json_body"] is not None:
-        assert "path" not in json.dumps(captured["json_body"])
-    assert not (Path.home() / "wiki").exists()
-
-
 @pytest.mark.asyncio
-async def test_attachment_and_wiki_forward_conditional_headers(
+async def test_attachment_forward_conditional_headers(
     isolated_home: Path,
 ) -> None:
     del isolated_home
@@ -594,29 +517,6 @@ def test_remote_conversation_delete_proxies_owner_cleanup(
     assert captured["path"] == "/api/chat/conv-1/messages"
 
 
-@pytest.mark.asyncio
-async def test_sync_sessions_container_refuses_special_and_missing_wiki(
-    isolated_home: Path, tmp_path: Path
-) -> None:
-    from gobby.wiki.sync_container import SyncContainerError, build_sync_container
-
-    del isolated_home
-    archive = tmp_path / "archives"
-    wiki = tmp_path / "wiki"
-    archive.mkdir()
-    wiki.mkdir()
-    (archive / "ok.jsonl").write_text("{}", encoding="utf-8")
-    os_module = __import__("os")
-    if not hasattr(os_module, "mkfifo"):
-        pytest.skip("mkfifo unavailable")
-    os_module.mkfifo(archive / "fifo")
-    with pytest.raises(SyncContainerError, match="special"):
-        build_sync_container(archive_dir=archive, wiki_dir=wiki)
-    (archive / "fifo").unlink()
-    with pytest.raises(SyncContainerError, match="wiki_dir"):
-        build_sync_container(archive_dir=archive, wiki_dir=tmp_path / "missing-wiki")
-
-
 def test_remote_upload_then_bind_uses_hub_identity(
     isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -658,11 +558,3 @@ def test_remote_upload_then_bind_uses_hub_identity(
     )
     assert [item.id for item in result] == ["att-hub"]
     assert bound["ids"] == ["att-hub"]
-
-
-def test_wiki_and_scheduled_modules_stay_under_line_ceiling() -> None:
-    repo = Path(__file__).resolve().parents[3]
-    wiki = (repo / "src/gobby/servers/routes/wiki.py").read_text(encoding="utf-8")
-    jobs = (repo / "src/gobby/wiki/scheduled_jobs.py").read_text(encoding="utf-8")
-    assert wiki.count("\n") < 1000
-    assert jobs.count("\n") < 1000

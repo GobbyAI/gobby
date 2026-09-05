@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_lifecycle")
-WIKI_WATCHER_STOP_TIMEOUT_SECONDS: float = 2.0
 
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
@@ -173,18 +172,6 @@ async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2
 
 
 async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
-    wiki_watcher = getattr(runner, "_wiki_watcher", None)
-    if wiki_watcher is not None:
-        try:
-            await asyncio.wait_for(
-                wiki_watcher.stop(),
-                timeout=WIKI_WATCHER_STOP_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning("Wiki watcher shutdown timed out")
-        except Exception as e:
-            logger.warning("Wiki watcher shutdown failed: %s", e)
-
     periodic_task_attrs = (
         "_metrics_cleanup_task",
         "_test_schema_sweep_task",
@@ -214,7 +201,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_memory_reconcile_task",
         "_recall_drift_task",
         "_tmux_window_repair_task",
-        "_wiki_watcher_task",
     )
 
     code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
@@ -271,11 +257,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
     for (attr, _), result in zip(cancellations, results, strict=True):
         if isinstance(result, BaseException):
             logger.warning("Failed to cancel periodic task %s: %r", attr, result)
-
-    if hasattr(runner, "_wiki_watcher_task"):
-        runner._wiki_watcher_task = None
-    if hasattr(runner, "_wiki_watcher"):
-        runner._wiki_watcher = None
 
 
 async def _cleanup_pipeline_background_tasks() -> None:

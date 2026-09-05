@@ -214,7 +214,7 @@ class ProjectPurgeService:
 
     @asynccontextmanager
     async def _maintenance_env(self, project_id: str) -> AsyncIterator[dict[str, str] | None]:
-        """Grant gwiki/gcode a maintenance launch: the project is soft-deleted, so an
+        """Grant gcode a maintenance launch: the project is soft-deleted, so an
         interactive grant is refused and its checkouts are already released."""
         factory = self.launch_factory() if self.launch_factory is not None else None
         if factory is None:

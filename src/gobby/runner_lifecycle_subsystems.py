@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
@@ -45,43 +44,6 @@ async def _run_db(
     if db_executor is not None:
         return await db_executor.run(operation, *args, **kwargs)
     return await asyncio.to_thread(operation, *args, **kwargs)
-
-
-def _discover_wiki_cron_project_scopes(
-    database: Any,
-) -> tuple[list[tuple[str, list[str] | None]], list[str]]:
-    from gobby.storage.project_checkouts import LocalProjectCheckoutManager
-    from gobby.storage.projects import LocalProjectManager
-    from gobby.utils.machine_id import require_machine_id
-
-    project_manager = LocalProjectManager(database)
-    checkout_manager = LocalProjectCheckoutManager(database)
-    checkouts = {
-        checkout.project_id: checkout
-        for checkout in checkout_manager.list_for_machine(require_machine_id())
-    }
-    scopes: list[tuple[str, list[str] | None]] = []
-    stale_project_ids: list[str] = []
-    offset = 0
-    while True:
-        projects = project_manager.list_page(
-            limit=_PROJECT_ENUMERATION_PAGE_SIZE,
-            offset=offset,
-        )
-        if not projects:
-            break
-        for project in projects:
-            if project_manager.is_protected(project):
-                continue
-            checkout = checkouts.get(project.id)
-            if checkout is None or not Path(checkout.root_path).is_dir():
-                stale_project_ids.append(project.id)
-                continue
-            scopes.append((project.id, None))
-        offset += len(projects)
-        if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
-            break
-    return scopes, stale_project_ids
 
 
 async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
@@ -365,94 +327,7 @@ async def _start_agent_lifecycle_monitor(
 
 
 async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    await _register_wiki_cron_handlers(runner, tracker)
     await _start_tracked_service(runner.cron_scheduler, "Cron scheduler", tracker)
-
-
-async def _register_wiki_cron_handlers(
-    runner: GobbyRunner,
-    tracker: StartupTracker | None,
-) -> None:
-    cron_storage = getattr(runner, "cron_storage", None)
-    if cron_storage is None:
-        if tracker:
-            tracker.error("Wiki cron handlers", "skipped: cron storage unavailable")
-        return
-    executor = getattr(runner.cron_scheduler, "executor", None)
-    if executor is None:
-        if tracker:
-            tracker.error("Wiki cron handlers", "skipped: cron executor unavailable")
-        return
-    try:
-        from gobby.wiki.owner_dispatch import prune_gateway
-        from gobby.wiki.prune_job import register_wiki_prune_cron
-        from gobby.wiki.scheduled_jobs import (
-            WIKI_JOB_NAME_PREFIX,
-            park_wiki_cron_jobs,
-            register_wiki_cron_jobs_for_projects,
-        )
-
-        if not runner.config_runtime.capture().snapshot.active.wiki.enabled:
-            parked = await _run_db(runner, park_wiki_cron_jobs, cron_storage)
-            logger.info(
-                "Wiki cron registration skipped: wiki.enabled is false; parked %s row(s)",
-                parked,
-            )
-            if tracker:
-                tracker.complete("Wiki cron handlers")
-            return
-
-        await _run_db(
-            runner,
-            register_wiki_prune_cron,
-            cron_storage=cron_storage,
-            cron_executor=executor,
-            gateway=prune_gateway(),
-            project_id=getattr(runner, "project_id", None),
-        )
-
-        project_scopes, stale_project_ids = await _run_db(
-            runner,
-            _discover_wiki_cron_project_scopes,
-            runner.database,
-        )
-        if not project_scopes and not stale_project_ids:
-            if tracker:
-                tracker.error("Wiki cron handlers", "skipped: no registered projects")
-            return
-
-        for stale_project_id in stale_project_ids:
-            deleted = await _run_db(
-                runner,
-                cron_storage.delete_system_jobs_by_project_and_name_prefix,
-                stale_project_id,
-                WIKI_JOB_NAME_PREFIX,
-            )
-            logger.info(
-                "Deleted %s stale wiki cron job(s) for project %s",
-                deleted,
-                stale_project_id,
-            )
-
-        registered = await register_wiki_cron_jobs_for_projects(
-            cron_storage=cron_storage,
-            cron_executor=executor,
-            db=runner.database,
-            project_scopes=project_scopes,
-            run_sync=lambda operation, *args, **kwargs: _run_db(
-                runner,
-                operation,
-                *args,
-                **kwargs,
-            ),
-        )
-        logger.debug("Wiki cron handlers registered: %s", registered)
-        if tracker:
-            tracker.complete("Wiki cron handlers")
-    except Exception as e:
-        logger.exception("Failed to register wiki cron handlers: %s", e)
-        if tracker:
-            tracker.error("Wiki cron handlers", str(e))
 
 
 async def _start_system_automation_loop(

@@ -79,7 +79,6 @@ if TYPE_CHECKING:
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.services import TerminalServices
-    from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
@@ -160,8 +159,6 @@ class GobbyRunner:
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     _tmux_window_repair_task: asyncio.Task[None] | None
-    _wiki_watcher_task: asyncio.Task[None] | None
-    _wiki_watcher: WikiWatcher | None
     database: HubDatabase
     managed_credential_manager: ManagedCredentialManager
     db_executor: DatabaseExecutor
