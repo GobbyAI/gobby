@@ -13,6 +13,7 @@ from gobby.agents.watchdog._scan import ScanVerdict
 from gobby.agents.watchdog.models import (
     WATCHDOG_TAIL_LIMIT,
     ActivityKind,
+    ProviderErrorKind,
     TranscriptEventSummary,
     TurnEventKind,
     WatchdogTranscriptSnapshot,
@@ -39,6 +40,7 @@ class _CodexScanState:
     latest_turn_event: TranscriptEventSummary | None = None
     latest_turn_kind: TurnEventKind | None = None
     provider_error_event: TranscriptEventSummary | None = None
+    provider_error_kind: ProviderErrorKind | None = None
     provider_error_reason: str | None = None
     latest_activity_kind: ActivityKind | None = None
     latest_model_output_line_num: int | None = None
@@ -131,6 +133,24 @@ def _read_codex_snapshot(
         elif payload_type == "task_complete":
             state.latest_turn_event = summary
             state.latest_turn_kind = "completed"
+            error = payload.get("error")
+            if isinstance(error, dict):
+                error_info = error.get("codex_error_info")
+                message = error.get("message")
+                has_error = (
+                    isinstance(error_info, str)
+                    and bool(error_info.strip())
+                    or isinstance(message, str)
+                    and bool(message.strip())
+                )
+                if has_error and error_info != "server_overloaded":
+                    state.provider_error_event = summary
+                    state.provider_error_kind = "terminal"
+                    state.provider_error_reason = (
+                        "usage_limit_exceeded"
+                        if error_info == "usage_limit_exceeded"
+                        else "provider_error"
+                    )
         elif payload_type == "turn_aborted":
             state.latest_turn_event = summary
             state.latest_turn_kind = "aborted"
@@ -140,6 +160,7 @@ def _read_codex_snapshot(
             and payload.get("codex_error_info") == "server_overloaded"
         ):
             state.provider_error_event = summary
+            state.provider_error_kind = "capacity"
             state.provider_error_reason = "server_overloaded"
         return ScanVerdict.VALID
 
@@ -182,7 +203,7 @@ def _read_codex_snapshot(
         latest_turn_event=state.latest_turn_event,
         latest_turn_kind=state.latest_turn_kind,
         provider_error_event=state.provider_error_event,
-        provider_error_kind="capacity" if state.provider_error_event is not None else None,
+        provider_error_kind=state.provider_error_kind,
         provider_error_reason=state.provider_error_reason,
         latest_activity_kind=state.latest_activity_kind,
         latest_model_output_line_num=state.latest_model_output_line_num,

@@ -35,7 +35,12 @@ if TYPE_CHECKING:
     from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
     from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
     from gobby.config.tmux import TmuxConfig
-    from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
+    from gobby.storage.agents import (
+        AgentRun,
+        AgentRunTerminalReason,
+        LocalAgentRunManager,
+        TerminalAction,
+    )
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
@@ -657,6 +662,39 @@ class WatchdogRecoveryCoordinator:
                 run,
                 terminal_payload=payload,
                 terminal_reason="provider_quota_exhausted",
+            )
+            return cast(
+                "AgentRun | None",
+                await self._run_db(self._agent_run_manager.get, run.id),
+            )
+
+        await self._terminalize_idle_agent(
+            run,
+            action="fail",
+            payload=payload,
+            terminalize=terminalize,
+        )
+
+    async def fail_terminal_provider_agent(
+        self,
+        run: AgentRun,
+        snapshot: WatchdogTranscriptSnapshot,
+    ) -> None:
+        """Fail a run after a conclusive hard provider error ended its turn."""
+        reason = snapshot.provider_error_reason or "provider_error"
+        payload = f"{snapshot.provider.title()} provider error: {reason}"
+        terminal_reason: AgentRunTerminalReason = (
+            "provider_quota_exhausted" if reason == "usage_limit_exceeded" else "provider_error"
+        )
+
+        async def terminalize(
+            _action: TerminalAction,
+            _captured: str | None,
+        ) -> AgentRun | None:
+            await self._cleanup_handler.cleanup_agent(
+                run,
+                terminal_payload=payload,
+                terminal_reason=terminal_reason,
             )
             return cast(
                 "AgentRun | None",

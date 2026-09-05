@@ -123,6 +123,7 @@ def _write_codex_lifecycle_transcript(
     response_payload_type: str | None = None,
     age_seconds: int = 120,
     malformed_tail: bool = False,
+    task_complete_error: dict[str, str] | None = None,
 ) -> None:
     timestamp = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
     lines: list[str] = []
@@ -140,19 +141,22 @@ def _write_codex_lifecycle_transcript(
                 }
             )
         )
-    lines.extend(
-        json.dumps(
-            {
-                "timestamp": timestamp,
-                "type": "event_msg",
-                "payload": {
-                    "type": lifecycle_event,
-                    "last_agent_message": "prompt-and-tool-secret",
-                },
-            }
+    for lifecycle_event in lifecycle_events:
+        payload: dict[str, object] = {
+            "type": lifecycle_event,
+            "last_agent_message": "prompt-and-tool-secret",
+        }
+        if lifecycle_event == "task_complete" and task_complete_error is not None:
+            payload["error"] = task_complete_error
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "event_msg",
+                    "payload": payload,
+                }
+            )
         )
-        for lifecycle_event in lifecycle_events
-    )
     if malformed_tail:
         lines.append('{"timestamp":"unterminated"')
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -616,6 +620,90 @@ async def test_fresh_task_complete_waits_for_base_timeout_before_any_recovery(
     assert handled == 0
     assert _runtime_of(monitor).write_log == []
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_fresh_task_complete_usage_limit_promptly_fails_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-usage-limit.jsonl"
+    _write_codex_lifecycle_transcript(
+        transcript_path,
+        age_seconds=1,
+        task_complete_error={
+            "message": "You've hit your usage limit. Account-specific reset details.",
+            "codex_error_info": "usage_limit_exceeded",
+        },
+    )
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1017",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "error"
+    assert updated_run.terminal_reason == "provider_quota_exhausted"
+    assert updated_run.error == "Codex provider error: usage_limit_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_terminal_provider_error_keeps_closed_task_success_precedence(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Already completed task",
+        validation_criteria="Done before provider failure.",
+    )
+    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    transcript_path = tmp_path / "codex-usage-limit-after-close.jsonl"
+    _write_codex_lifecycle_transcript(
+        transcript_path,
+        age_seconds=1,
+        task_complete_error={
+            "message": "You've hit your usage limit. Account-specific reset details.",
+            "codex_error_info": "usage_limit_exceeded",
+        },
+    )
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1018",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+        task_manager=task_manager,
+        task_id=task.id,
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "success"
+    assert updated_run.error is None
 
 
 @pytest.mark.asyncio

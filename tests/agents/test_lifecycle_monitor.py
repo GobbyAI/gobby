@@ -1107,7 +1107,7 @@ async def test_unchanged_draft_within_grace_remains_active(
     )
 
 
-async def test_changed_draft_resets_grace_window(
+async def test_changed_draft_does_not_renew_expired_grace_window(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     sample_session: dict[str, Any],
@@ -1119,7 +1119,7 @@ async def test_changed_draft_resets_grace_window(
     )
 
     with (
-        _pane_text(monitor, ["❯ first draft\n", "❯ changed draft\n", "❯ changed draft\n"]),
+        _pane_text(monitor, ["❯ first draft\n", "❯ changed draft\n"]),
         patch.object(
             monitor._cleanup_handler,
             "cleanup_agent",
@@ -1127,14 +1127,49 @@ async def test_changed_draft_resets_grace_window(
         ) as cleanup_agent,
     ):
         first = await monitor.check_autonomous_stuck_agents()
-        first_observation = monitor._draft_grace_observations[run.id]
+        fingerprint, _first_seen = monitor._draft_grace_observations[run.id]
+        monitor._draft_grace_observations[run.id] = (
+            fingerprint,
+            time.monotonic() - 300,
+        )
         changed = await monitor.check_autonomous_stuck_agents()
-        changed_observation = monitor._draft_grace_observations[run.id]
-        unchanged = await monitor.check_autonomous_stuck_agents()
 
-    assert [first, changed, unchanged] == [0, 0, 0]
-    assert changed_observation[0] != first_observation[0]
-    assert monitor._draft_grace_observations[run.id] == changed_observation
+    assert [first, changed] == [0, 1]
+    cleanup_agent.assert_awaited_once_with(
+        run,
+        terminal_payload="autonomous stuck: No progress events for 634 seconds",
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_pane_grace_survives_brief_loss_of_live_marker(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+
+    with (
+        _pane_text(monitor, ["❯ draft in progress\n", "❯\n"]),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+    ):
+        first = await monitor.check_autonomous_stuck_agents()
+        fingerprint, _first_seen = monitor._draft_grace_observations[run.id]
+        monitor._draft_grace_observations[run.id] = (
+            fingerprint,
+            time.monotonic() - 33,
+        )
+        marker_missing = await monitor.check_autonomous_stuck_agents()
+
+    assert [first, marker_missing] == [0, 0]
     cleanup_agent.assert_not_awaited()
 
 
@@ -1170,7 +1205,7 @@ async def test_unchanged_draft_past_grace_cleans_up_once(
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
     inc_counter.assert_called_once_with("agent_lifecycle_autonomous_stuck_detected_total", 1)
-    assert len(runtime.snapshot_calls) == 2
+    assert len(runtime.snapshot_calls) == 1
     assert run.id not in monitor._draft_grace_observations
 
 
@@ -1261,10 +1296,7 @@ async def test_noneligible_draft_boundaries_preserve_immediate_enforcement(
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
     assert run.id not in monitor._draft_grace_observations
-    if missing_tmux or layer != "progress_stagnation":
-        assert runtime.snapshot_calls == []
-    else:
-        assert runtime.snapshot_calls == [15]
+    assert runtime.snapshot_calls == []
 
 
 async def test_nonfatal_progress_stagnation_action_is_not_deferred(
