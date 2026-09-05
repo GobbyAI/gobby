@@ -4,7 +4,7 @@ use std::env;
 use std::sync::Mutex;
 
 use gobby_core::schema::{
-    CATALOG_MANIFEST_JSON, SchemaRunner, catalog_manifest, render_catalog_manifest,
+    CATALOG_MANIFEST_JSON, SchemaRunner, catalog_manifest, render_catalog_manifest, schema_identity,
 };
 use postgres::{Client, Config, NoTls};
 use uuid::Uuid;
@@ -77,7 +77,11 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 5);
+    let identity = schema_identity();
+    assert_eq!(
+        first.migrations_applied,
+        usize::try_from(identity.latest_asset.version - identity.baseline.version)?,
+    );
     let baseline_receipts: i64 = client.query_one(
         "SELECT COUNT(*) FROM schema_migrations WHERE version = 420 AND filename = 'baseline@420'",
         &[],
@@ -232,7 +236,6 @@ fn catalog_identity_ignores_column_ordinals() -> anyhow::Result<()> {
     client.batch_execute(
         "CREATE SCHEMA first_order;
          CREATE TABLE first_order.sample (id uuid NOT NULL, detail text);
-         CREATE TABLE first_order.gwiki_external_projection (id uuid PRIMARY KEY);
          CREATE FUNCTION first_order.stable_label() RETURNS text
              LANGUAGE sql IMMUTABLE AS $$
              -- Function-body comments are not executable schema semantics.
@@ -250,6 +253,17 @@ fn catalog_identity_ignores_column_ordinals() -> anyhow::Result<()> {
     let first = catalog_manifest(&mut client, "first_order")?;
     let last = catalog_manifest(&mut client, "last_order")?;
     assert_eq!(first, last);
+    client.batch_execute(
+        "CREATE TABLE first_order.gwiki_external_projection (id uuid PRIMARY KEY)",
+    )?;
+    let with_retired_projection = catalog_manifest(&mut client, "first_order")?;
+    assert_ne!(with_retired_projection, last);
+    assert!(
+        with_retired_projection
+            .columns
+            .iter()
+            .any(|entry| { entry.name == "gwiki_external_projection.id" })
+    );
     assert!(
         first
             .constraints
@@ -435,9 +449,14 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
         return Ok(());
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
+    let future_version = schema_identity().latest_asset.version + 1;
     client.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (424, '424_future.sql', $1)",
-        &[&"f".repeat(64)],
+        "INSERT INTO schema_migrations(version, filename, checksum) VALUES ($1, $2, $3)",
+        &[
+            &future_version,
+            &format!("{future_version}_future.sql"),
+            &"f".repeat(64),
+        ],
     )?;
 
     let error = SchemaRunner::new(&mut client, "public")?
