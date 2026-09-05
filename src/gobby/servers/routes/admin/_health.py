@@ -4,8 +4,10 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import psutil
 from fastapi import APIRouter
@@ -15,12 +17,200 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from gobby.cli.services import is_qdrant_healthy
 from gobby.hooks.runtime_compat import read_ghook_runtime_diagnostic
 from gobby.paths import get_install_dir
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+_STATUS_COLLECTION_BUDGET_SECONDS = 2.25
+_STATUS_DB_OPERATION_TIMEOUT_SECONDS = 1.0
+_STATUS_DEPENDENCY_TIMEOUT_SECONDS = 1.0
+_STATUS_DEPENDENCY_TRANSPORT_TIMEOUT_SECONDS = 2.0
+
+
+@dataclass
+class _StatusCollection:
+    values: dict[str, Any] = field(default_factory=dict)
+    timed_out: list[str] = field(default_factory=list)
+    failed: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def complete(self) -> bool:
+        return not self.timed_out and not self.failed
+
+    def to_dict(self, *, budget_seconds: float) -> dict[str, Any]:
+        return {
+            "complete": self.complete,
+            "budget_seconds": budget_seconds,
+            "timed_out": self.timed_out,
+            "failed": self.failed,
+        }
+
+
+async def _collect_status_item(
+    name: str,
+    awaitable: Awaitable[Any],
+    result: _StatusCollection,
+) -> None:
+    try:
+        result.values[name] = await awaitable
+    except asyncio.CancelledError:
+        raise
+    except TimeoutError:
+        result.timed_out.append(name)
+        logger.warning("Status collector %s timed out", name)
+    except Exception as exc:
+        result.failed[name] = type(exc).__name__
+        logger.warning(
+            "Status collector %s failed: %s",
+            name,
+            type(exc).__name__,
+            exc_info=True,
+        )
+
+
+async def _collect_status_items(
+    collectors: dict[str, Awaitable[Any]],
+    *,
+    budget_seconds: float,
+) -> _StatusCollection:
+    """Collect independent status sections within one cancellation and DB budget."""
+    result = _StatusCollection()
+    try:
+        with database_operation_deadline(
+            timeout_seconds=budget_seconds,
+            operation_timeout_seconds=min(
+                budget_seconds,
+                _STATUS_DB_OPERATION_TIMEOUT_SECONDS,
+            ),
+        ):
+            async with asyncio.timeout(budget_seconds):
+                async with asyncio.TaskGroup() as group:
+                    for name, awaitable in collectors.items():
+                        group.create_task(
+                            _collect_status_item(name, awaitable, result),
+                            name=f"gobby-status-{name}",
+                        )
+    except TimeoutError:
+        result.timed_out = [
+            name for name in collectors if name not in result.values and name not in result.failed
+        ]
+    return result
+
+
+async def _collect_process_metrics() -> dict[str, Any]:
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    cpu_percent = await asyncio.to_thread(process.cpu_percent, 0.1)
+    return {
+        "memory_rss_mb": round(memory_info.rss / (1024 * 1024), 2),
+        "memory_vms_mb": round(memory_info.vms / (1024 * 1024), 2),
+        "cpu_percent": cpu_percent,
+        "num_threads": process.num_threads(),
+    }
+
+
+async def _collect_session_stats(server: "HTTPServer") -> dict[str, Any]:
+    status_counts = await server.run_db(server.session_manager.count_by_status)
+    return {
+        "total": sum(status_counts.values()),
+        "active": status_counts.get("active", 0),
+        "paused": status_counts.get("paused", 0),
+        "awaiting_handoff": status_counts.get("awaiting_handoff", 0),
+    }
+
+
+async def _collect_task_stats(server: "HTTPServer") -> dict[str, Any]:
+    def collect() -> dict[str, Any]:
+        state_counts = server.task_manager.count_by_state()
+        stats = {
+            key: state_counts.get(key, 0)
+            for key in (
+                "ready",
+                "in_progress",
+                "closed",
+                "needs_review",
+                "review_approved",
+                "escalated",
+            )
+        }
+        stats["ready_unblocked"] = server.task_manager.count_ready_tasks()
+        stats["blocked"] = server.task_manager.count_blocked_tasks()
+        stats["closed_24h"] = server.task_manager.count_closed_since(hours=24)
+        return stats
+
+    return cast(dict[str, Any], await server.run_db(collect))
+
+
+async def _collect_memory_stats(server: "HTTPServer") -> dict[str, Any]:
+    stats = await server.memory_manager.get_stats(include_vector_count=False)
+    return {
+        "count": stats.get("total_count", 0),
+        "by_type": stats.get("by_type", {}),
+        "recent_count": stats.get("recent_count", 0),
+    }
+
+
+async def _collect_qdrant_status(server: "HTTPServer") -> dict[str, Any]:
+    vector_store = getattr(server.memory_manager, "_vector_store", None)
+    qdrant_url = _get_qdrant_url(server, vector_store)
+    status: dict[str, Any] = {
+        "configured": vector_store is not None or qdrant_url is not None,
+        "healthy": False,
+    }
+    snapshot: dict[str, Any] = {}
+    if vector_store is not None:
+        status_snapshot = getattr(vector_store, "status_snapshot", None)
+        if callable(status_snapshot):
+            candidate = status_snapshot()
+            if isinstance(candidate, dict):
+                snapshot = candidate
+
+    if qdrant_url:
+        async with asyncio.timeout(_STATUS_DEPENDENCY_TIMEOUT_SECONDS):
+            status["healthy"] = await is_qdrant_healthy(
+                qdrant_url,
+                timeout=_STATUS_DEPENDENCY_TRANSPORT_TIMEOUT_SECONDS,
+            )
+    elif vector_store is not None:
+        status["healthy"] = snapshot.get("state") in {
+            "ready",
+            "dimension_mismatch_pending_rebuild",
+        }
+        status["probe"] = "snapshot"
+    status.update(snapshot)
+    return status
+
+
+async def _collect_pipeline_stats(server: "HTTPServer") -> dict[str, Any]:
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+
+    def collect() -> dict[str, Any]:
+        manager = LocalPipelineExecutionManager(
+            db=server.services.database,
+            project_id=None,
+        )
+        status_counts = manager.count_by_status()
+        stats = {
+            key: status_counts.get(key, 0)
+            for key in ("running", "waiting_approval", "completed", "failed")
+        }
+        stats["total"] = sum(stats.values())
+        return stats
+
+    return cast(dict[str, Any], await server.run_db(collect))
+
+
+async def _collect_agent_stats(server: "HTTPServer") -> dict[str, int]:
+    from gobby.storage.agents import LocalAgentRunManager
+
+    def collect() -> list[Any]:
+        return LocalAgentRunManager(server.services.database).list_running()
+
+    return {"running": len(await server.run_db(collect))}
 
 
 def _get_qdrant_url(server: "HTTPServer", vector_store: Any | None) -> str | None:
@@ -78,7 +268,10 @@ async def _get_postgres_dashboard_status(
     try:
         from gobby.cli.installers.postgres import get_postgres_status
 
-        return await get_postgres_status(readiness_timeout=1.5, connect_timeout=1)
+        return await get_postgres_status(
+            database=server.services.database,
+            run_db=server.run_db,
+        )
     except Exception as exc:
         logger.warning("Failed to get PostgreSQL status: %s", type(exc).__name__)
         return {
@@ -138,18 +331,23 @@ async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
             raise RuntimeError("server database unavailable")
 
         falkor_cfg = daemon_config.databases.falkordb
-        status = await get_falkordb_status(
-            db=database,
-            host=falkor_cfg.host,
-            port=falkor_cfg.port,
-            password=falkor_cfg.password,
-        )
+        async with asyncio.timeout(_STATUS_DEPENDENCY_TIMEOUT_SECONDS):
+            status = await get_falkordb_status(
+                db=database,
+                host=falkor_cfg.host,
+                port=falkor_cfg.port,
+                password=falkor_cfg.password,
+                run_db=server.run_db,
+                health_timeout=_STATUS_DEPENDENCY_TRANSPORT_TIMEOUT_SECONDS,
+            )
         return {
             "configured": is_falkordb_enabled(daemon_config.databases),
             "installed": status["installed"],
             "healthy": status["healthy"],
             "url": status["url"],
         }
+    except TimeoutError:
+        raise
     except Exception as e:
         logger.warning(
             "Failed to check FalkorDB status: %s: %s",
@@ -232,23 +430,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             except Exception as e:
                 logger.warning("Failed to get daemon status: %s", e)
 
-        # Get process metrics
-        try:
-            process = psutil.Process(os.getpid())
-            memory_info = process.memory_info()
-            # Run cpu_percent in a thread executor to avoid blocking the event loop
-            # (interval=0.1 would block for 100ms otherwise)
-            cpu_percent = await asyncio.to_thread(process.cpu_percent, 0.1)
-
-            process_metrics = {
-                "memory_rss_mb": round(memory_info.rss / (1024 * 1024), 2),
-                "memory_vms_mb": round(memory_info.vms / (1024 * 1024), 2),
-                "cpu_percent": cpu_percent,
-                "num_threads": process.num_threads(),
-            }
-        except Exception as e:
-            logger.warning("Failed to get process metrics: %s", e)
-            process_metrics = None
+        process_metrics: dict[str, Any] | None = None
 
         # Get background task status
         all_metrics = get_all_metrics()
@@ -312,25 +494,12 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "tool_count": len(tools),
                 }
 
-        # Get session statistics using efficient count queries
         session_stats: dict[str, Any] = {
             "active": 0,
             "paused": 0,
             "awaiting_handoff": 0,
             "total": 0,
         }
-        if server.session_manager is not None:
-            try:
-                # Use count_by_status for efficient grouped counts
-                status_counts = await server.run_db(server.session_manager.count_by_status)
-                session_stats["total"] = sum(status_counts.values())
-                session_stats["active"] = status_counts.get("active", 0)
-                session_stats["paused"] = status_counts.get("paused", 0)
-                session_stats["awaiting_handoff"] = status_counts.get("awaiting_handoff", 0)
-            except Exception as e:
-                logger.warning("Failed to get session stats: %s", e)
-
-        # Get task statistics using efficient count queries
         task_stats: dict[str, Any] = {
             "ready": 0,
             "in_progress": 0,
@@ -342,89 +511,23 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "blocked": 0,
             "closed_24h": 0,
         }
-        if server.task_manager is not None:
-            try:
-
-                def _collect_task_stats() -> dict[str, Any]:
-                    # Use count_by_state for efficient grouped counts
-                    state_counts = server.task_manager.count_by_state()
-                    stats = dict(task_stats)
-                    for key in (
-                        "ready",
-                        "in_progress",
-                        "closed",
-                        "needs_review",
-                        "review_approved",
-                        "escalated",
-                    ):
-                        stats[key] = state_counts.get(key, 0)
-                    # Keep availability and recent closure counters alongside state buckets.
-                    stats["ready_unblocked"] = server.task_manager.count_ready_tasks()
-                    stats["blocked"] = server.task_manager.count_blocked_tasks()
-                    stats["closed_24h"] = server.task_manager.count_closed_since(hours=24)
-                    return stats
-
-                task_stats = await server.run_db(_collect_task_stats)
-            except Exception as e:
-                logger.warning("Failed to get task stats: %s", e)
-
-        # Get memory statistics
-        memory_stats: dict[str, Any] = {"count": 0, "by_type": {}, "recent_count": 0}
-        if server.memory_manager is not None:
-            try:
-                stats = await server.memory_manager.get_stats()
-                memory_stats["count"] = stats.get("total_count", 0)
-                memory_stats["by_type"] = stats.get("by_type", {})
-                memory_stats["recent_count"] = stats.get("recent_count", 0)
-            except Exception as e:
-                logger.warning("Failed to get memory stats: %s", e)
-
-            # Qdrant vector store status
-            try:
-                vector_store = getattr(server.memory_manager, "_vector_store", None)
-                qdrant_url = _get_qdrant_url(server, vector_store)
-                qdrant_configured = vector_store is not None or qdrant_url is not None
-                qdrant_healthy = False
-                if qdrant_url:
-                    qdrant_healthy = await is_qdrant_healthy(qdrant_url)
-                elif vector_store is not None:
-                    qdrant_client = getattr(vector_store, "_client", None)
-                    if qdrant_client is not None:
-                        try:
-                            await asyncio.to_thread(
-                                qdrant_client.count, vector_store._collection_name
-                            )
-                            qdrant_healthy = True
-                        except Exception as e:
-                            logger.debug(
-                                "Qdrant health check failed: %s: %s",
-                                type(e).__name__,
-                                e,
-                                exc_info=True,
-                            )
-                            qdrant_healthy = False
-                qdrant_status: dict[str, Any] = {
-                    "configured": qdrant_configured,
-                    "healthy": qdrant_healthy,
-                }
-                if vector_store is not None:
-                    status_snapshot = getattr(vector_store, "status_snapshot", None)
-                    if callable(status_snapshot):
-                        snapshot = status_snapshot()
-                        if isinstance(snapshot, dict):
-                            qdrant_status.update(snapshot)
-                memory_stats["qdrant"] = qdrant_status
-            except Exception as e:
-                logger.warning(
-                    "Failed to check Qdrant status: %s: %s",
-                    type(e).__name__,
-                    e,
-                )
-                memory_stats["qdrant"] = {"configured": False, "healthy": False}
-
-        memory_stats["falkordb"] = await _get_falkordb_memory_status(server)
-
-        # Get pipeline execution statistics
+        vector_store = (
+            getattr(server.memory_manager, "_vector_store", None)
+            if server.memory_manager is not None
+            else None
+        )
+        memory_stats: dict[str, Any] = {
+            "count": 0,
+            "by_type": {},
+            "recent_count": 0,
+            "qdrant": {
+                "configured": bool(
+                    vector_store is not None or _get_qdrant_url(server, vector_store)
+                ),
+                "healthy": False,
+            },
+            "falkordb": _unavailable_falkordb_memory_status(),
+        }
         pipeline_stats: dict[str, Any] = {
             "running": 0,
             "waiting_approval": 0,
@@ -432,31 +535,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "failed": 0,
             "total": 0,
         }
-        try:
-            from gobby.storage.pipelines import LocalPipelineExecutionManager
-
-            def _collect_pipeline_stats() -> dict[str, Any]:
-                mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
-                status_counts = mgr.count_by_status()
-                stats = dict(pipeline_stats)
-                for key in ["running", "waiting_approval", "completed", "failed"]:
-                    stats[key] = status_counts.get(key, 0)
-                stats["total"] = sum(
-                    stats[k] for k in ["running", "waiting_approval", "completed", "failed"]
-                )
-                return stats
-
-            pipeline_stats = await server.run_db(_collect_pipeline_stats)
-        except Exception as e:
-            logger.warning("Failed to get pipeline stats: %s", e)
-
-        # Get skills statistics
         skills_stats: dict[str, Any] = {"total": 0}
-        if server.skill_manager is not None:
-            try:
-                skills_stats["total"] = await server.run_db(server.skill_manager.count_skills)
-            except Exception as e:
-                logger.warning("Failed to get skills stats: %s", e)
 
         # Compute total cached tools across downstream servers
         downstream_tools_count = 0
@@ -501,22 +580,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         except Exception:
             logger.debug("Could not read the last shutdown source", exc_info=True)
 
-        # Agent run statistics
         agent_stats: dict[str, int] = {"running": 0}
-        try:
-            from gobby.storage.agents import LocalAgentRunManager
-
-            def _list_running_agents() -> list[Any]:
-                arm = LocalAgentRunManager(server.services.database)
-                return arm.list_running()
-
-            runs = await server.run_db(_list_running_agents)
-            agent_stats["running"] = len(runs)
-        except Exception:
-            logger.debug("Could not collect running agent count", exc_info=True)
-
-        # Calculate response time
-        response_time_ms = (time.perf_counter() - start_time) * 1000
 
         provider_model_status = {}
         provider_capability_service = getattr(server.services, "provider_capability_service", None)
@@ -560,9 +624,61 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             except Exception as exc:
                 logger.warning("Failed to collect database concurrency status: %s", exc)
 
-        postgres_status = await _get_postgres_dashboard_status(server, database_status)
+        collectors: dict[str, Awaitable[Any]] = {
+            "process": _collect_process_metrics(),
+            "pipelines": _collect_pipeline_stats(server),
+            "agents": _collect_agent_stats(server),
+        }
+        if server.session_manager is not None:
+            collectors["sessions"] = _collect_session_stats(server)
+        if server.task_manager is not None:
+            collectors["tasks"] = _collect_task_stats(server)
+        if server.memory_manager is not None:
+            collectors["memory"] = _collect_memory_stats(server)
+            collectors["qdrant"] = _collect_qdrant_status(server)
+            collectors["falkordb"] = _get_falkordb_memory_status(server)
+        if server.skill_manager is not None:
+            collectors["skills"] = server.run_db(server.skill_manager.count_skills)
+        if _is_postgres_runtime(server, database_status):
+            collectors["postgres"] = _get_postgres_dashboard_status(server, database_status)
+
+        remaining_collection_budget = max(
+            0.001,
+            _STATUS_COLLECTION_BUDGET_SECONDS - (time.perf_counter() - start_time),
+        )
+        collection = await _collect_status_items(
+            collectors,
+            budget_seconds=remaining_collection_budget,
+        )
+        process_metrics = collection.values.get("process")
+        session_stats.update(collection.values.get("sessions", {}))
+        task_stats.update(collection.values.get("tasks", {}))
+        memory_stats.update(collection.values.get("memory", {}))
+        memory_stats["qdrant"] = collection.values.get("qdrant", memory_stats["qdrant"])
+        memory_stats["falkordb"] = collection.values.get("falkordb", memory_stats["falkordb"])
+        pipeline_stats.update(collection.values.get("pipelines", {}))
+        if "skills" in collection.values:
+            skills_stats["total"] = collection.values["skills"]
+        agent_stats.update(collection.values.get("agents", {}))
+
+        postgres_status = collection.values.get("postgres")
+        if "postgres" in collection.timed_out:
+            postgres_status = {
+                "available": False,
+                "healthy": False,
+                "error": "status collection timed out",
+            }
+        elif "postgres" in collection.failed:
+            postgres_status = {
+                "available": False,
+                "healthy": False,
+                "error": collection.failed["postgres"],
+            }
+
+        postgres_healthy = True
         postgres_code_index_healthy = True
         if postgres_status is not None:
+            postgres_healthy = bool(postgres_status.get("healthy"))
             code_index_status = postgres_status.get("code_index")
             if isinstance(code_index_status, dict):
                 postgres_code_index_healthy = bool(code_index_status.get("healthy"))
@@ -576,6 +692,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         endpoint_health = getattr(server.services, "generation_endpoint_health", None)
         generation_endpoints = endpoint_health.snapshot() if endpoint_health is not None else []
+        response_time_ms = (time.perf_counter() - start_time) * 1000
 
         payload: dict[str, Any] = {
             "status": (
@@ -584,6 +701,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                     server._running
                     and not hook_runtime.is_degraded
                     and not degraded_services
+                    and collection.complete
+                    and postgres_healthy
                     and postgres_code_index_healthy
                 )
                 else "degraded"
@@ -618,6 +737,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "last_shutdown": last_shutdown,
             "hook_runtime": hook_runtime.to_dict(),
             "response_time_ms": response_time_ms,
+            "status_collection": collection.to_dict(
+                budget_seconds=_STATUS_COLLECTION_BUDGET_SECONDS
+            ),
         }
         gterm_host = _gterm_host_status(server)
         if gterm_host is not None:

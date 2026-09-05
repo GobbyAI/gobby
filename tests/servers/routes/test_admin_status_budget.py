@@ -1,0 +1,100 @@
+"""Integration coverage for rich-status database worker lifetime."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from gobby.cli.installers.postgres import get_postgres_status
+from gobby.config.persistence import MemoryConfig
+from gobby.memory.manager import MemoryManager
+from gobby.servers.routes.admin._health import _collect_status_items, _StatusCollection
+from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.hub.protocol import HubDatabase
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.mark.asyncio
+async def test_memory_status_uses_manager_database_executor(
+    postgres_db: HubDatabase,
+) -> None:
+    executor = DatabaseExecutor(max_workers=1, thread_name_prefix="status-memory-db")
+    manager = MemoryManager(
+        db=postgres_db,
+        config=MemoryConfig(enabled=True, backend="local"),
+        run_db=executor.run,
+    )
+    try:
+        stats = await manager.get_stats(include_vector_count=False)
+        assert stats["total_count"] == 0
+        assert executor.stats().completed == 1
+    finally:
+        await manager.close()
+        executor.shutdown()
+        executor.join()
+
+
+@pytest.mark.asyncio
+async def test_postgres_dashboard_uses_managed_database_executor(
+    postgres_db: HubDatabase,
+) -> None:
+    executor = DatabaseExecutor(max_workers=1, thread_name_prefix="status-postgres-db")
+    runtime_db = PostgresHubDatabase(
+        postgres_db.conninfo,
+        runtime_role="gobby_daemon_runtime",
+    )
+    try:
+        status = await get_postgres_status(database=runtime_db, run_db=executor.run)
+        assert status["healthy"] is True
+        assert status["dsn_db"]
+        assert set(status["extensions"]) == {"pg_search", "pgaudit", "pgcrypto"}
+        assert isinstance(status["code_index"]["healthy"], bool)
+        assert executor.stats().completed == 1
+    finally:
+        executor.shutdown()
+        executor.join()
+        runtime_db.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_status_deadlines_drain_executor_and_allow_later_work(
+    postgres_db: HubDatabase,
+) -> None:
+    executor = DatabaseExecutor(max_workers=1, thread_name_prefix="status-budget-db")
+
+    def slow_query() -> None:
+        with postgres_db.transaction() as txn:
+            txn.execute("SELECT pg_sleep(1)")
+
+    async def slow_collector() -> None:
+        await executor.run(slow_query)
+
+    async def collect_once() -> _StatusCollection:
+        return await _collect_status_items(
+            {"database": slow_collector()},
+            budget_seconds=0.12,
+        )
+
+    try:
+        results = await asyncio.gather(*(collect_once() for _ in range(3)))
+        for result in results:
+            assert result.complete is False
+            assert set(result.timed_out) | set(result.failed) == {"database"}
+
+        def healthy_query() -> int:
+            with postgres_db.transaction() as txn:
+                row = txn.execute("SELECT 1 AS value").fetchone()
+            assert row is not None
+            return int(row["value"])
+
+        assert await asyncio.wait_for(executor.run(healthy_query), timeout=0.8) == 1
+        stats = executor.stats()
+        assert stats.active == 0
+        assert stats.queued == 0
+        assert stats.completed == stats.submitted
+    finally:
+        executor.shutdown()
+        executor.join()

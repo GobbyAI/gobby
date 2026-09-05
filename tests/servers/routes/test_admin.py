@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -104,7 +106,7 @@ class TestAdminRoutes:
         server.services = SimpleNamespace(
             config=SimpleNamespace(
                 databases=DatabasesConfig(),
-                hub_backend="postgres",
+                hub_backend=None,
             ),
             database=MagicMock(),
             db_executor_stats=lambda: None,
@@ -339,11 +341,13 @@ class TestAdminRoutes:
             response = client.get("/api/admin/status")
 
         assert response.status_code == 200
+        assert response.json()["status"] == "degraded"
         assert response.json()["agents"]["running"] == 0
+        assert response.json()["status_collection"]["failed"] == {"agents": "RuntimeError"}
         record = next(
             record
             for record in caplog.records
-            if record.message == "Could not collect running agent count"
+            if record.message == "Status collector agents failed: RuntimeError"
         )
         assert record.exc_info is not None
 
@@ -373,6 +377,100 @@ class TestAdminRoutes:
         )
         assert record.exc_info is not None
 
+    def test_status_endpoint_bounds_slow_dependency_and_later_probe_progresses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        client: TestClient,
+        mock_server: MagicMock,
+    ) -> None:
+        import gobby.servers.routes.admin._health as health_route
+
+        monkeypatch.setattr(
+            health_route,
+            "_STATUS_COLLECTION_BUDGET_SECONDS",
+            0.1,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            health_route,
+            "_STATUS_DEPENDENCY_TIMEOUT_SECONDS",
+            0.02,
+        )
+        vector_store = MagicMock()
+        vector_store._url = "http://localhost:6333"
+        mock_server.memory_manager._vector_store = vector_store
+
+        calls = 0
+        active = 0
+        stalled = asyncio.Event()
+
+        async def qdrant_health(_url: str, *, timeout: float = 5.0) -> bool:
+            nonlocal active, calls
+            calls += 1
+            if calls == 1:
+                active += 1
+                try:
+                    await stalled.wait()
+                finally:
+                    active -= 1
+            return True
+
+        process = MagicMock()
+        process.memory_info.return_value = MagicMock(rss=1024, vms=2048)
+        process.cpu_percent.return_value = 0.0
+        process.num_threads.return_value = 1
+
+        with (
+            patch(
+                "gobby.servers.routes.admin._health.psutil.Process",
+                return_value=process,
+            ),
+            patch.object(
+                health_route,
+                "is_qdrant_healthy",
+                new=AsyncMock(side_effect=qdrant_health),
+            ),
+            patch.object(
+                health_route,
+                "_get_falkordb_memory_status",
+                new=AsyncMock(return_value=health_route._unavailable_falkordb_memory_status()),
+            ),
+            patch.object(
+                health_route,
+                "_get_postgres_dashboard_status",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            started = time.monotonic()
+            first = client.get("/api/admin/status")
+            first_elapsed = time.monotonic() - started
+
+            assert first.status_code == 200
+            assert first_elapsed < 0.5
+            assert first.json()["status"] == "degraded"
+            assert first.json()["status_collection"] == {
+                "complete": False,
+                "budget_seconds": 0.1,
+                "timed_out": ["qdrant"],
+                "failed": {},
+            }
+            assert active == 0
+
+            started = time.monotonic()
+            second = client.get("/api/admin/status")
+            second_elapsed = time.monotonic() - started
+
+        assert second.status_code == 200
+        assert second_elapsed < 0.5
+        assert second.json()["status_collection"]["complete"] is True
+        assert second.json()["memory"]["qdrant"]["healthy"] is True
+        assert calls == 2
+        assert mock_server.memory_manager.get_stats.await_count == 2
+        assert all(
+            awaited.kwargs == {"include_vector_count": False}
+            for awaited in mock_server.memory_manager.get_stats.await_args_list
+        )
+
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_uses_qdrant_service_health_when_url_configured(
@@ -401,7 +499,10 @@ class TestAdminRoutes:
 
         data = response.json()
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
-        mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
+        mock_is_qdrant_healthy.assert_awaited_once_with(
+            "http://localhost:6333",
+            timeout=2.0,
+        )
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
@@ -487,6 +588,8 @@ class TestAdminRoutes:
             host="127.0.0.1",
             port=16379,
             password="Valid-123",
+            run_db=mock_server.run_db,
+            health_timeout=2.0,
         )
 
     @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
@@ -555,8 +658,8 @@ class TestAdminRoutes:
         assert "mode" not in data["postgres"]
         assert data["postgres"]["healthy"] is True
         mock_get_postgres_status.assert_awaited_once_with(
-            readiness_timeout=1.5,
-            connect_timeout=1,
+            database=mock_server.services.database,
+            run_db=mock_server.run_db,
         )
 
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)

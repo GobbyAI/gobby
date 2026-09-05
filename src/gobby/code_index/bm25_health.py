@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any
 
@@ -17,6 +18,21 @@ BM25_REPAIR_COMMAND = "gobby postgres repair-code-index"
 
 _REPAIR_LOCK_NAME = "gobby:code-index-bm25-repair"
 _CORRUPTION_SQLSTATES = {"XX000", "XX001", "XX002"}
+
+
+def _row_value(row: Any, key: str, position: int) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(key)
+    return row[position]
+
+
+def _verification_check(row: Any) -> dict[str, Any]:
+    details = _row_value(row, "details", 2)
+    return {
+        "name": str(_row_value(row, "check_name", 0)),
+        "passed": bool(_row_value(row, "passed", 1)),
+        "details": None if details is None else str(details),
+    }
 
 
 def unavailable_bm25_status(error: str) -> dict[str, Any]:
@@ -109,8 +125,11 @@ def _verify_index(conn: Any, name: str) -> dict[str, Any]:
     try:
         transaction = getattr(conn, "transaction", None)
         with transaction() if callable(transaction) else nullcontext():
-            row = conn.execute("SELECT to_regclass(%s)::text", (name,)).fetchone()
-            if row is None or row[0] is None:
+            row = conn.execute(
+                "SELECT to_regclass(%s)::text AS index_name",
+                (name,),
+            ).fetchone()
+            if row is None or _row_value(row, "index_name", 0) is None:
                 return _index_payload(
                     name,
                     state="missing",
@@ -127,14 +146,7 @@ def _verify_index(conn: Any, name: str) -> dict[str, Any]:
         state = "damaged" if exc.sqlstate in _CORRUPTION_SQLSTATES else "error"
         return _index_payload(name, state=state, error=_postgres_error(exc))
 
-    checks = [
-        {
-            "name": str(check_name),
-            "passed": bool(passed),
-            "details": None if details is None else str(details),
-        }
-        for check_name, passed, details in rows
-    ]
+    checks = [_verification_check(row) for row in rows]
     if not checks:
         return _index_payload(
             name,
@@ -159,10 +171,10 @@ def _acquire_repair_lock(
     deadline = time.monotonic() + max(0, timeout_seconds)
     while True:
         row = conn.execute(
-            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0)) AS acquired",
             (_REPAIR_LOCK_NAME,),
         ).fetchone()
-        if row and bool(row[0]):
+        if row and bool(_row_value(row, "acquired", 0)):
             return True
         if time.monotonic() >= deadline:
             return False
@@ -176,8 +188,9 @@ def _qualified_identifier(name: str) -> sql.Identifier:
 
 def _required_index_names(conn: Any) -> tuple[str, ...]:
     """Qualify required indexes with the connection's active schema."""
-    row = conn.execute("SELECT current_schema()").fetchone()
-    schema = str(row[0]) if row and row[0] else "public"
+    row = conn.execute("SELECT current_schema() AS schema_name").fetchone()
+    value = _row_value(row, "schema_name", 0) if row else None
+    schema = str(value) if value else "public"
     return tuple(f"{schema}.{name.rsplit('.', 1)[1]}" for name in BM25_INDEXES)
 
 
