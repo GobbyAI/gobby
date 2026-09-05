@@ -243,7 +243,7 @@ class TestRunDaemonSetup:
         mock_init.assert_called_once()
         assert mock_init.call_count == 1
         assert mock_init.call_args is not None
-        mock_sync.assert_called_once_with(mock_db)
+        mock_sync.assert_called_once_with(mock_db, only=None, skip_types=None)
         assert mock_sync.call_count == 1
         assert mock_sync.call_args is not None
         mock_context.__exit__.assert_called_once()
@@ -425,6 +425,7 @@ class TestRunDaemonSetup:
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.utils.native_bin.Path.home", return_value=tmp_path),
+            patch.dict(os.environ, {"GOBBY_NATIVE_BIN_DIR": str(tmp_path / ".gobby" / "bin")}),
             patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux,
         ):
             mock_tmux.return_value = {"success": True, "updated": False}
@@ -509,7 +510,7 @@ def _stub_post_hub_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(
         "gobby.sync_registry.sync_bundled_content_to_db",
-        lambda db: {"total_synced": 0, "errors": []},
+        lambda db, *, only=None, skip_types=None: {"total_synced": 0, "errors": []},
     )
     monkeypatch.setattr(
         install_setup_srt,
@@ -836,9 +837,20 @@ class TestGcodeHelpers:
                 str(workspace / "src" / "gobby" / "cli" / "install_setup_gcode.py"),
             ),
             patch(
-                "gobby.cli.install_setup_gcode.try_acquire_native_bin_lock",
+                "gobby.install.bin_set_coherence.try_acquire_native_bin_lock",
                 return_value=lock,
             ) as acquire_lock,
+            patch(
+                "gobby.install.bin_set_coherence.probe_set_member_identity",
+                return_value={
+                    "runner_protocol": 1,
+                    "baseline_version": 420,
+                    "baseline_checksum": "baseline-420",
+                    "latest_version": 420,
+                    "latest_checksum": "latest-420",
+                    "assets_root_hash": "root-420",
+                },
+            ),
             patch("gobby.install.bin_freshness_promotion.os.replace", wraps=os.replace) as replace,
         ):
             result = _install_gcode_from_submodule(destination_dir)
@@ -846,7 +858,8 @@ class TestGcodeHelpers:
         assert result is True
         assert (destination_dir / "gcode").read_bytes() == b"new-binary"
         acquire_lock.assert_called_once_with("gcode", bin_dir=destination_dir)
-        lock.__enter__.assert_called_once_with()
+        lock.__enter__.assert_called_once()
+        lock.__exit__.assert_called_once()
         assert replace.call_args.args[1] == destination_dir / "gcode"
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
