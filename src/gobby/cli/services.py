@@ -13,6 +13,7 @@ import logging
 import shutil
 import subprocess
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -47,7 +48,7 @@ def is_qdrant_installed(*, gobby_home: Path | None = None) -> bool:
     return compose.exists()
 
 
-async def is_qdrant_healthy(url: str | None) -> bool:
+async def is_qdrant_healthy(url: str | None, *, timeout: float = 5.0) -> bool:
     """Check if a Qdrant instance is reachable and healthy.
 
     Sends a GET request to /healthz with a short timeout.
@@ -58,7 +59,7 @@ async def is_qdrant_healthy(url: str | None) -> bool:
     healthz_url = f"{url.rstrip('/')}/healthz"
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(healthz_url, timeout=5)
+            resp = await client.get(healthz_url, timeout=timeout)
             if resp.status_code == 200:
                 return True
             logger.debug(
@@ -159,6 +160,8 @@ async def is_falkordb_healthy(
     host: str | None,
     port: int | None,
     password: str | None,
+    *,
+    timeout: float = 5.0,
 ) -> bool:
     """Check if FalkorDB responds to Redis PING."""
     if not host or not port:
@@ -167,7 +170,13 @@ async def is_falkordb_healthy(
     client: Any | None = None
     try:
         redis = importlib.import_module("redis.asyncio")
-        client = redis.Redis(host=host, port=port, password=password, socket_timeout=5)
+        client = redis.Redis(
+            host=host,
+            port=port,
+            password=password,
+            socket_connect_timeout=timeout,
+            socket_timeout=timeout,
+        )
         result = client.ping()
         if inspect.isawaitable(result):
             result = await result
@@ -195,15 +204,28 @@ async def get_falkordb_status(
     host: str | None = None,
     port: int | None = None,
     password: str | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+    health_timeout: float = 5.0,
 ) -> dict[str, Any]:
     """Get FalkorDB install and runtime health status."""
-    installed = is_falkordb_installed(db=db)
+    if run_db is None:
+        installed = is_falkordb_installed(db=db)
+    else:
+        installed = await run_db(is_falkordb_installed, db=db)
     if installed and (host is None or port is None or password is None):
-        configured_host, configured_port, configured_password = _read_falkordb_connection_config(db)
+        if run_db is None:
+            configured = _read_falkordb_connection_config(db)
+        else:
+            configured = await run_db(_read_falkordb_connection_config, db)
+        configured_host, configured_port, configured_password = configured
         host = host if host is not None else configured_host
         port = port if port is not None else configured_port
         password = password if password is not None else configured_password
-    healthy = await is_falkordb_healthy(host, port, password) if installed else False
+    healthy = (
+        await is_falkordb_healthy(host, port, password, timeout=health_timeout)
+        if installed
+        else False
+    )
 
     return {
         "installed": installed,

@@ -1701,26 +1701,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/code_index/test_bm25_health.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 110,
-      "message": "Module \"gobby.code_index.bm25_health\" does not explicitly export attribute \"psycopg\"",
-      "occurrences": 3,
-      "path": "tests/code_index/test_bm25_health.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/code_index/test_bm25_health.py::::mypy:override",
-      "issue_code": "mypy:override",
-      "line": 81,
-      "message": "Cannot override writeable attribute with read-only property",
-      "occurrences": 1,
-      "path": "tests/code_index/test_bm25_health.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/code_index/test_sync_worker_breaker.py::::mypy:comparison-overlap",
       "issue_code": "mypy:comparison-overlap",
       "line": 75,
@@ -6377,36 +6357,6 @@
       "message": "Function is missing a return type annotation",
       "occurrences": 2,
       "path": "tests/servers/routes/mcp_endpoints/test_registry_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 708,
-      "message": "Argument 1 to \"_request_runner_shutdown\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 2,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 939,
-      "message": "\"append\" of \"list\" does not return a value (it only ever returns None)",
-      "occurrences": 1,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 59,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 47,
-      "path": "tests/servers/routes/test_admin.py",
       "severity": "high",
       "test_name": ""
     },

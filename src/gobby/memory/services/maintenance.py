@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +36,8 @@ async def get_stats(
     db: HubDatabase,
     project_id: str | None = None,
     vector_store: VectorStore | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+    include_vector_count: bool = True,
 ) -> dict[str, Any]:
     """Get statistics about stored memories.
 
@@ -44,15 +46,17 @@ async def get_stats(
         db: Database connection.
         project_id: Optional project to filter stats by.
         vector_store: Optional VectorStore for vector count stats.
+        run_db: Optional managed database offload.
+        include_vector_count: Whether to query Qdrant for its live count.
 
     Returns:
         Dictionary with memory statistics.
     """
-    memories = await asyncio.to_thread(
-        storage.list_memories,
-        scope=_maintenance_scope(project_id),
-        limit=10000,
-    )
+    scope = _maintenance_scope(project_id)
+    if run_db is None:
+        memories = await asyncio.to_thread(storage.list_memories, scope=scope, limit=10000)
+    else:
+        memories = await run_db(storage.list_memories, scope=scope, limit=10000)
 
     if not memories:
         return {
@@ -78,7 +82,7 @@ async def get_stats(
         "project_id": project_id,
     }
 
-    if vector_store is not None:
+    if vector_store is not None and include_vector_count:
         try:
             stats["vector_count"] = await vector_store.count()
         except Exception:

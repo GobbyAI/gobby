@@ -1,6 +1,8 @@
 """Tests for updated maintenance.py — no decay, Qdrant stats."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,14 +13,14 @@ from gobby.storage.memories_scope import MemoryScope
 pytestmark = pytest.mark.unit
 
 
-def _make_storage(memories=None):
+def _make_storage(memories: list[MagicMock] | None = None) -> MagicMock:
     """Create a mock storage with configurable memories."""
     storage = MagicMock()
     storage.list_memories.return_value = memories or []
     return storage
 
 
-def _make_memory(memory_type="fact"):
+def _make_memory(memory_type: str = "fact") -> MagicMock:
     """Create a mock memory."""
     m = MagicMock()
     m.memory_type = memory_type
@@ -59,6 +61,31 @@ class TestGetStatsVectorCount:
         stats = await get_stats(storage, db, project_id=None)
 
         assert "vector_count" not in stats
+
+    async def test_managed_db_path_can_skip_vector_probe(self) -> None:
+        storage = _make_storage([_make_memory()])
+        db = MagicMock()
+        vector_store = MagicMock()
+        vector_store.count = AsyncMock(return_value=42)
+
+        async def run_db(
+            func: Callable[..., Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            return func(*args, **kwargs)
+
+        stats = await get_stats(
+            storage,
+            db,
+            vector_store=vector_store,
+            run_db=run_db,
+            include_vector_count=False,
+        )
+
+        assert stats["total_count"] == 1
+        assert "vector_count" not in stats
+        vector_store.count.assert_not_awaited()
 
     async def test_vector_count_graceful_on_error(
         self,
