@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -12,10 +14,10 @@ from unittest.mock import MagicMock
 import pytest
 from psycopg_pool import ConnectionPool, PoolTimeout
 
+from gobby.hooks.adapter_execution import run_adapter_hook as _run_adapter_hook
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
-from gobby.servers.routes.mcp.hooks import _run_adapter_hook
 from gobby.storage.hub import postgres_pool
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
@@ -59,7 +61,9 @@ def _handler(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path: Path) -> None:
+async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     worker_count = 3
     started = 0
     started_lock = threading.Lock()
@@ -85,7 +89,7 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path:
 
     runtime = WorkflowEvaluationRuntime(max_workers=worker_count)
     handler = WorkflowHookHandler(timeout=0.8, evaluation_runtime=runtime)
-    handler._evaluate_rules = blocking_evaluation
+    monkeypatch.setattr(handler, "_evaluate_rules", blocking_evaluation)
     event = _event(tmp_path)
     adapter = MagicMock()
     adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
@@ -102,7 +106,9 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path:
 
     try:
         results = await asyncio.gather(*evaluations)
-        assert [result.decision for result in results] == ["allow"] * worker_count
+        assert [cast(HookResponse, result).decision for result in results] == [
+            "allow"
+        ] * worker_count
         assert evaluation_threads
         assert all(thread_id != daemon_thread for thread_id in evaluation_threads)
     finally:
@@ -127,6 +133,7 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         del event, session_id, variables, eval_context, blocking_deadline
         try:
             await asyncio.Event().wait()
+            raise AssertionError("The cancellation sentinel must never be released")
         finally:
             cancelled.set()
 
@@ -167,7 +174,10 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
             return HookResponse(decision="allow")
 
         handler.rule_engine.evaluate = fast_evaluate
-        response = await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5)
+        response = cast(
+            HookResponse,
+            await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5),
+        )
         assert response.decision == "allow"
     finally:
         handler.shutdown()
@@ -176,7 +186,6 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
 @pytest.mark.asyncio
 async def test_database_acquisition_timeout_does_not_retry_inside_workflow(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class TimeoutOncePool:
         def __init__(self) -> None:
@@ -189,14 +198,20 @@ async def test_database_acquisition_timeout_does_not_retry_inside_workflow(
             self.connection_calls += 1
             self.timeouts.append(timeout)
             if self.connection_calls == 1:
+                assert timeout is not None
+                entered_pool.set()
+                release_pool.wait(timeout=1.0)
                 raise PoolTimeout("pool busy")
             yield object()
 
         def check(self) -> None:
             self.check_calls += 1
+            release_check.wait(timeout=0.3)
 
     pool = TimeoutOncePool()
-    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    entered_pool = threading.Event()
+    release_pool = threading.Event()
+    release_check = threading.Event()
 
     def acquire_connection() -> None:
         with postgres_pool.pool_connection(
@@ -218,29 +233,87 @@ async def test_database_acquisition_timeout_does_not_retry_inside_workflow(
         return HookResponse(decision="allow")
 
     runtime = WorkflowEvaluationRuntime(max_workers=1)
-    handler = _handler(evaluate, timeout=0.25, runtime=runtime)
+    evaluation_timeout = 0.08
+    handler = _handler(evaluate, timeout=evaluation_timeout, runtime=runtime)
     event = _event(tmp_path)
     adapter = MagicMock()
     adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
 
     try:
-        with pytest.raises(PoolTimeout, match="pool busy"):
+        started = time.monotonic()
+        with pytest.raises(WorkflowEvaluationTimeout):
             await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
+        first_elapsed = time.monotonic() - started
 
         assert pool.connection_calls == 1
-        assert pool.check_calls == 1
         assert len(pool.timeouts) == 1
         assert pool.timeouts[0] is not None
-        assert 0 < pool.timeouts[0] <= 0.25
+        assert 0 < pool.timeouts[0] <= evaluation_timeout
+        assert evaluation_timeout <= first_elapsed < evaluation_timeout + 0.08
+        assert entered_pool.is_set()
+        release_pool.set()
 
+        next_started = time.monotonic()
         response = cast(
             HookResponse,
-            await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0),
+            await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5),
         )
         assert response.decision == "allow"
         assert pool.connection_calls == 2
+        assert pool.check_calls == 0
+        assert time.monotonic() - next_started < evaluation_timeout
     finally:
+        release_pool.set()
+        release_check.set()
         handler.shutdown()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_exhausted_pool_releases_workflow_worker(tmp_path: Path) -> None:
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        pytest.skip("DATABASE_URL is required for the PostgreSQL pool test")
+    finished = threading.Event()
+    with ConnectionPool[Any](dsn, min_size=1, max_size=1, timeout=0.05) as pool:
+        pool.wait(timeout=3.0)
+
+        def acquire() -> None:
+            try:
+                with postgres_pool.pool_connection(
+                    pool, pool.get_stats, acquire_timeout_seconds=0.05
+                ):
+                    pass
+            finally:
+                finished.set()
+
+        async def evaluate(**_kwargs: Any) -> HookResponse:
+            await asyncio.to_thread(acquire)
+            return HookResponse(decision="allow")
+
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        handler = _handler(evaluate, timeout=0.4, runtime=runtime)
+        event = _event(tmp_path)
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
+        try:
+            with pool.connection():
+                started = time.monotonic()
+                with pytest.raises(PoolTimeout):
+                    await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
+                assert time.monotonic() - started < 0.3
+                assert finished.is_set()
+
+            # psycopg_pool discards expired queue entries when a connection returns.
+            assert pool.get_stats()["requests_waiting"] == 0
+            response = cast(
+                HookResponse,
+                await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0),
+            )
+            assert response.decision == "allow"
+            assert pool.get_stats()["pool_available"] == 1
+        finally:
+            handler.shutdown()
 
 
 @pytest.mark.asyncio
@@ -326,13 +399,6 @@ def test_rule_evaluator_propagates_workflow_timeout_without_logging() -> None:
             self.calls += 1
             raise timeout
 
-    class RecordingLogger:
-        def __init__(self) -> None:
-            self.errors: list[tuple[object, ...]] = []
-
-        def error(self, *args: object, **_kwargs: object) -> None:
-            self.errors.append(args)
-
     def unexpected_dispatch(
         _calls: list[dict[str, Any]], _event: HookEvent
     ) -> list[dict[str, Any]]:
@@ -342,7 +408,7 @@ def test_rule_evaluator_propagates_workflow_timeout_without_logging() -> None:
         raise AssertionError("timeout must propagate before discovery formatting")
 
     workflow_handler = TimeoutHandler()
-    logger = RecordingLogger()
+    logger = MagicMock(spec=logging.Logger)
     evaluator = WorkflowRuleEvaluator(
         workflow_handler=workflow_handler,
         dispatch_mcp_calls=unexpected_dispatch,
@@ -355,4 +421,4 @@ def test_rule_evaluator_propagates_workflow_timeout_without_logging() -> None:
         evaluator.evaluate(_event(Path("/tmp")))
 
     assert workflow_handler.calls == 1
-    assert logger.errors == []
+    logger.error.assert_not_called()

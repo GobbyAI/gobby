@@ -11231,56 +11231,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 277,
-      "message": "Argument \"logger\" to \"WorkflowRuleEvaluator\" has incompatible type \"RecordingLogger\"; expected \"Logger\"",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:assignment",
-      "issue_code": "mypy:assignment",
-      "line": 84,
-      "message": "Incompatible types in assignment (expression has type \"def blocking_evaluation(_event: HookEvent, *, blocking_deadline: BlockingEffectDeadline | None = ...) -> Coroutine[Any, Any, HookResponse]\", variable has type \"def _evaluate_rules(self, event: HookEvent, *, blocking_deadline: BlockingEffectDeadline | None = ...) -> Coroutine[Any, Any, HookResponse]\")",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 15,
-      "message": "Module \"gobby.servers.routes.mcp.hooks\" does not explicitly export attribute \"_run_adapter_hook\"",
-      "occurrences": 3,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 84,
-      "message": "Cannot assign to a method",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:return",
-      "issue_code": "mypy:return",
-      "line": 115,
-      "message": "Missing return statement",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/test_hooks.py::::mypy:method-assign",
       "issue_code": "mypy:method-assign",
       "line": 227,

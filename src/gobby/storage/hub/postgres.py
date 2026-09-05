@@ -266,33 +266,9 @@ class PostgresHubDatabase:
         with self.transaction() as txn:
             if repeatable_read_read_only:
                 txn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            settings = txn.execute(
-                "SELECT current_setting('statement_timeout') AS statement_timeout, "
-                "current_setting('lock_timeout') AS lock_timeout"
-            ).fetchone()
-            if settings is None:
-                raise RuntimeError("Could not read transaction timeout settings")
-            statement_timeout = str(settings["statement_timeout"])
-            lock_timeout = str(settings["lock_timeout"])
-            txn.execute(
-                "SELECT set_config('statement_timeout', %s, true)",
-                (f"{statement_timeout_ms}ms",),
-            )
-            txn.execute(
-                "SELECT set_config('lock_timeout', %s, true)",
-                (f"{lock_timeout_ms}ms",),
-            )
-            try:
+            native = cast(_postgres_pool._PostgresTransaction, txn)
+            with native._deadline.bounds(statement_timeout_ms, lock_timeout_ms):
                 yield txn
-            finally:
-                txn.execute(
-                    "SELECT set_config('statement_timeout', %s, true)",
-                    (statement_timeout,),
-                )
-                txn.execute(
-                    "SELECT set_config('lock_timeout', %s, true)",
-                    (lock_timeout,),
-                )
 
     @contextmanager
     def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
