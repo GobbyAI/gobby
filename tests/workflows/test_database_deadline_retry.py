@@ -1,5 +1,8 @@
 """Database deadlines must survive hook fallbacks and remain retryable."""
 
+import logging
+from collections.abc import Iterator
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,11 +15,197 @@ from pytest_mock import MockerFixture
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, WorkflowEvaluationTimeout
 from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.observer_plan_mode import resolve_plan_mode
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+
+@pytest.fixture
+def real_deadline_handler(
+    temp_db: HubDatabase, tmp_path: Path, mocker: MockerFixture
+) -> Iterator[tuple[WorkflowHookHandler, MagicMock, MagicMock]]:
+    tasks = MagicMock()
+    tasks.get_task.return_value = None
+    variables = MagicMock()
+    variables.get_variables.return_value = {
+        "baseline_dirty_files": [],
+        "session_edited_files": [],
+        "_variable_defaults_loaded": True,
+        "project": {"path": str(tmp_path)},
+        "context_compact_guidance_kind": "warn",
+        "context_compact_guidance_message": "Existing handoff guidance",
+    }
+    handler = WorkflowHookHandler(
+        timeout=5,
+        rule_engine=RuleEngine(temp_db, task_manager=tasks),
+        evaluation_runtime=WorkflowEvaluationRuntime(max_workers=1),
+    )
+    handler._session_var_manager = variables
+    mocker.patch.object(handler, "_resolve_project_path", return_value=str(tmp_path))
+    try:
+        yield handler, variables, tasks
+    finally:
+        handler.shutdown()
+
+
+def _deadline_event(event_type: HookEventType, cwd: Path | None = None) -> HookEvent:
+    return HookEvent(
+        event_type=event_type,
+        session_id="external-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": "11111111-1111-4111-8111-111111111111"},
+        cwd=str(cwd) if cwd is not None else None,
+    )
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+@pytest.mark.parametrize("event_type", [HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL])
+def test_real_rule_condition_deadline_retries_without_committing_effects(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    real_deadline_handler: tuple[WorkflowHookHandler, MagicMock, MagicMock],
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+    event_type: HookEventType,
+) -> None:
+    handler, variables, tasks = real_deadline_handler
+    error = error_type("task condition query expired")
+    tasks.get_task.side_effect = [error, None]
+    RuleDefinitionManager(temp_db).create(
+        name="deadline-retry-directive",
+        definition_json=RuleDefinitionBody(
+            event=RuleTriggerEvent(event_type.value),
+            when="not task_state_in('task-under-review', 'closed')",
+            effects=[
+                RuleEffect(type="inject_context", template="Load the plan skill."),
+                RuleEffect(type="set_variable", variable="directive_evaluated", value=True),
+            ],
+        ).model_dump_json(),
+        enabled=True,
+    )
+    event = _deadline_event(event_type, tmp_path)
+    stored = deepcopy(variables.get_variables.return_value)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(WorkflowEvaluationTimeout) as raised:
+            handler.evaluate(event)
+        assert raised.value.__cause__ is error
+        variables.merge_variables.assert_not_called()
+        assert variables.get_variables.return_value == stored
+
+        response = handler.evaluate(event)
+
+    assert "Load the plan skill." in (response.context or "")
+    assert variables.merge_variables.call_args.args[1]["directive_evaluated"] is True
+    assert tasks.get_task.call_count == 2
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+def test_real_context_observer_deadline_retries_without_clearing_stored_guidance(
+    tmp_path: Path,
+    real_deadline_handler: tuple[WorkflowHookHandler, MagicMock, MagicMock],
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+) -> None:
+    handler, variables, _tasks = real_deadline_handler
+    error = error_type("context usage query expired")
+    sessions = MagicMock()
+    sessions.get.side_effect = [
+        error,
+        SimpleNamespace(context_used_tokens=150_000, context_window=1_000_000),
+    ]
+    handler._session_manager = sessions
+    # Keep the failure at the real context-usage observer's session lookup.
+    mocker.patch("gobby.workflows.observer_plan_mode.resolve_plan_mode")
+    event = _deadline_event(HookEventType.BEFORE_AGENT, tmp_path)
+    stored = deepcopy(variables.get_variables.return_value)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(WorkflowEvaluationTimeout) as raised:
+            handler.evaluate(event)
+        assert raised.value.__cause__ is error
+        variables.merge_variables.assert_not_called()
+        assert variables.get_variables.return_value == stored
+
+        assert handler.evaluate(event).decision == "allow"
+
+    updates = variables.merge_variables.call_args.args[1]
+    assert "150k tokens" in updates["context_compact_guidance_message"]
+    assert sessions.get.call_count == 2
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+def test_context_observer_preserves_guidance_and_counters_until_session_read_succeeds(
+    error_type: type[Exception],
+) -> None:
+    variables: dict[str, Any] = {
+        "context_compact_guidance_kind": "warn",
+        "context_compact_guidance_message": "Existing handoff guidance",
+        "turns_since_compact": 3,
+        "_context_usage_turn_seq": 3,
+    }
+    stored = dict(variables)
+    sessions = MagicMock()
+    error = error_type("context usage query expired")
+    sessions.get.side_effect = [error, None]
+
+    with pytest.raises(error_type) as raised:
+        detect_context_compact_guidance(variables, "session-id", sessions)
+    assert raised.value is error
+    assert variables == stored
+
+    detect_context_compact_guidance(variables, "session-id", sessions)
+    assert variables["context_compact_guidance_kind"] == ""
+    assert variables["context_compact_guidance_message"] == ""
+    assert variables["turns_since_compact"] == 4
+    assert variables["_context_usage_turn_seq"] == 4
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+@pytest.mark.parametrize("entrypoint", ["evaluate", "evaluate_value"])
+def test_expression_entrypoints_preserve_task_query_deadline(
+    error_type: type[Exception], entrypoint: str
+) -> None:
+    error = error_type("task condition query expired")
+    tasks = MagicMock()
+    tasks.get_task.side_effect = error
+    evaluator = SafeExpressionEvaluator({}, build_condition_helpers(task_manager=tasks))
+
+    with pytest.raises(error_type) as raised:
+        getattr(evaluator, entrypoint)("task_state_in('task-under-review', 'closed')")
+
+    assert raised.value is error
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+def test_template_project_lookup_preserves_database_deadline(
+    temp_db: HubDatabase,
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+) -> None:
+    error = error_type("project context query expired")
+    mocker.patch("gobby.storage.sessions.SessionManager.get", side_effect=error)
+    event = _deadline_event(HookEventType.BEFORE_AGENT)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(error_type) as raised:
+        RuleEngine(temp_db)._resolve_project_info(event)
+
+    assert raised.value is error
+    assert not caplog.records
 
 
 @pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])

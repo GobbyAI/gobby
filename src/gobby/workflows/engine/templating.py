@@ -14,6 +14,7 @@ from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
+from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.workflows.enforcement.blocking import (
@@ -95,6 +96,8 @@ class TemplatingMixin:
                             "path": checkout_path,
                         }
                     )
+        except (DatabaseOperationDeadlineExceeded, psycopg.errors.QueryCanceled):
+            raise
         except (OSError, psycopg.Error) as e:
             logger.warning("Storage failure resolving project info for template context: %s", e)
         except (AttributeError, KeyError, TypeError, ValueError) as e:
@@ -284,6 +287,8 @@ class TemplatingMixin:
                 allowed_funcs=allowed_funcs,
             )
             return evaluator.evaluate(condition)
+        except (DatabaseOperationDeadlineExceeded, psycopg.errors.QueryCanceled):
+            raise
         except Exception as e:
             if fail_closed is None:
                 fail_closed = effect_type == "block"
