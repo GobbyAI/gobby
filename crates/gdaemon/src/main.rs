@@ -248,9 +248,20 @@ fn hold_open_maintenance_epoch_lease(
 
 fn load_newest_backup_manifest() -> Result<(PathBuf, HubBackupManifest)> {
     let backup_root = gobby_home()?.join("backups/hub");
-    refuse_symlink_traversal(&backup_root)?;
+    load_newest_backup_manifest_from_root(&backup_root)
+}
+
+fn load_newest_backup_manifest_from_root(
+    backup_root: &Path,
+) -> Result<(PathBuf, HubBackupManifest)> {
+    #[derive(serde::Deserialize)]
+    struct CandidateTimestamp {
+        created_at: String,
+    }
+
+    refuse_symlink_traversal(backup_root)?;
     let mut candidates = Vec::new();
-    for entry in fs::read_dir(&backup_root).with_context(|| {
+    for entry in fs::read_dir(backup_root).with_context(|| {
         format!(
             "no hub backup manifests found under {}",
             backup_root.display()
@@ -289,27 +300,39 @@ fn load_newest_backup_manifest() -> Result<(PathBuf, HubBackupManifest)> {
         }
         let payload = fs::read_to_string(&manifest_path)
             .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-        let manifest = parse_backup_manifest(&payload).map_err(|error| {
+        // Historical manifests may predate the current store contract. Rank
+        // their timestamps first; only the newest must satisfy that contract.
+        let timestamp: CandidateTimestamp = serde_json::from_str(&payload).map_err(|error| {
             anyhow::anyhow!(
                 "invalid hub backup manifest {}: {error}",
                 manifest_path.display()
             )
         })?;
-        let created_at = OffsetDateTime::parse(&manifest.created_at, &Rfc3339)
+        let created_at = OffsetDateTime::parse(&timestamp.created_at, &Rfc3339)
             .with_context(|| format!("invalid created_at in {}", manifest_path.display()))?;
-        candidates.push((created_at, entry.path(), manifest));
+        candidates.push((created_at, entry.path(), payload));
     }
-    candidates
+    let (_, root, payload) = candidates
         .into_iter()
         .max_by_key(|(created_at, _, _)| *created_at)
-        .map(|(_, root, manifest)| (root, manifest))
         .with_context(|| {
             format!(
                 "no hub backup manifests found under {}",
                 backup_root.display()
             )
-        })
+        })?;
+    let manifest = parse_backup_manifest(&payload).map_err(|error| {
+        anyhow::anyhow!(
+            "invalid hub backup manifest {}: {error}",
+            root.join(BACKUP_MANIFEST_NAME).display()
+        )
+    })?;
+    Ok((root, manifest))
 }
+
+#[cfg(test)]
+#[path = "main/tests.rs"]
+mod tests;
 
 fn refuse_symlink_traversal(path: &Path) -> Result<()> {
     let mut current = PathBuf::new();
