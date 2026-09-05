@@ -21,16 +21,23 @@ projects, original files outside wiki storage, gcode services and explicit grant
 | --- | --- | --- |
 | Shared utilities, Python, Rust and schema retirement | #21783, #21784, #21787, #21778, #21796, #21803 | Committed and validated |
 | Wiki UI and saved-tab fallback | #21816, #21828; `200d7aa050`, `3312725c36`, `ae8dfd7999` | Closed and memory-reviewed |
-| Installer removal and shared release transport | #21834; `faef8aad4c` | Closure review submitted |
+| Installer removal and shared release transport | #21834; `faef8aad4c` | Closed and memory-reviewed |
 | Guidance and release workflows | #21835; `c03ed6aa03`, `28ab42162d`, `dda4cb5bf1` | Committed; child reviews pending |
-| Actionlint evidence classifier | #21839; `6301c6e97b` | Closure review submitted |
+| Actionlint evidence classifier | #21839; `6301c6e97b` | Closed and memory-reviewed |
 | Inventory, backup, restore and purge procedure | #21836 | Implementation and independent review in progress |
+| Real daemon retirement verification | #21846; `5920dcefdd` | Committed and tested; attribution cleanup pending |
 
 Root-session verification passed 506 focused Python tests across 21 named files
 in 49.45 seconds, 10 Rust workflow/security tests, and Actionlint on both changed
 workflows. The final classifier check passed 243 focused tests in 5.32 seconds.
 Exact commands and static-check results are recorded on the corresponding tasks.
 The full pytest suite was not run.
+
+Additional root verification passed 182 focused preservation and real-daemon tests
+in 47.01 seconds, then 57 procedure, daemon, skill-parity and manifest tests in
+71.94 seconds. Summary revisions, handoffs, transcript archives, attachment
+forwarding and redaction remain covered. The procedure's Falkor fingerprint fix
+will receive another focused run after its final edit.
 
 A read-only merge rehearsal against `0.5.0` at `88e5cd8b66` found no conflicts and
 preserved main's transcript, gzip, task-review and terminal changes. Final
@@ -62,3 +69,33 @@ Task #21772 records all 38 old-task dispositions. Shared #21577 and #21586 retai
 their gcode obligations. Old-task closure retries and #21837's Actionlint review
 await deployment of committed validator fixes. The old plan will be archived
 through the registry after landing; replacement planning is a separate session.
+
+## Inventory and rehearsal checkpoint
+
+The first complete inventory has digest
+`e6c4ea9667fa8b54f01a62fd6ee51432093ad93826a22868730e3a43e4e295ff`.
+Its private record is under `~/.gobby/retirement/<digest>/inventory.json`, outside
+repository indexing and wiki discovery. It found 21 filesystem roots, including
+the Cargo-owned Gobby wiki binary, and 26 datastore/registry targets: the five-table
+wiki schema (78,390 rows), five Qdrant collections, the dedicated Falkor graph,
+one rule, one variable and 17 jobs. No writer process was detected.
+
+The backup attempt refused on a changed Falkor fingerprint and did not complete.
+Consecutive read-only captures showed nondeterministic raw DUMP bytes. Task #21836
+is separating deterministic semantic comparison from the exact recovery artifact;
+the corrected procedure must produce a new inventory. No content was deleted.
+
+Task #21853 owns the discovered canonical-maintenance rehearsal gap: admission
+currently supports only production and the shared test hub. A dedicated verified
+Docker profile will retain the existing epoch, backup and schema guards while
+operating only the isolated retirement services.
+
+Task #21772 now records 12 old tasks closed obsolete and 26 still open. All 38
+are unclaimed and unavailable for automation. Its readable record contains the
+remaining leaves-first closure order and the exact later plan-archive operation.
+Shared #21577 and #21586 remain open with gcode-only obligations.
+
+Main is `b5f7d2fa23`. Session #11789 owns the preceding restart and observation
+window; retirement landing and schema apply wait for that coordination. Session
+#11776 confirmed that its later migrations 427/428 will remain unlanded until
+retirement 426 and the preservation receipt are complete.
