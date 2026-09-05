@@ -16,7 +16,7 @@ use gobby_client::app::{run_live_loop, AttachState};
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, LiveDaemon, Page,
     RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
-    WsMessage, WsReply,
+    WsMessage, WsReply, CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
@@ -1933,8 +1933,106 @@ fn daemon_loss_reducer_clears_control_without_frames() {
         .is_some_and(|message| message.contains("unavailable")));
 }
 
+#[tokio::test]
+async fn control_tombstone_retires_the_attachment() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-tombstone", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-tombstone", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let observed_daemon = workspace.daemon().clone();
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let old_attachment = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("attachment_id")
+            .and_then(Value::as_str)
+            .expect("initial control attachment")
+            .to_string();
+
+        mock.suppress_ws("terminal_take_control");
+        tokio::time::pause();
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
+        for _ in 0..1_024 {
+            if websocket_requests(&mock, "terminal_take_control").len() >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let timed_take = websocket_requests(&mock, "terminal_take_control");
+        assert_eq!(timed_take.len(), 2);
+        assert_eq!(
+            timed_take[1].get("attachment_id").and_then(Value::as_str),
+            Some(old_attachment.as_str()),
+            "the indeterminate request reached the socket on the old scope"
+        );
+        assert_eq!(observed_daemon.pending_counts().2, 1);
+
+        tokio::time::advance(CONTROL_REQUEST_DEADLINE + Duration::from_millis(1)).await;
+        for _ in 0..1_024 {
+            if observed_daemon.pending_counts().2 == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(observed_daemon.pending_counts().2, 0);
+        assert!(
+            websocket_requests(&mock, "terminal_detach").is_empty(),
+            "the daemon fences even detach traffic on a tombstoned control scope"
+        );
+        mock.allow_ws("terminal_take_control");
+
+        tokio::time::advance(Duration::from_secs(2) + RENDER_TICK * 2).await;
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        drop(input_tx);
+        old_attachment
+    };
+
+    let (result, old_attachment) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("control tombstone recovery loop");
+    let pane_id = workspace
+        .pane_for_terminal("terminal-tombstone")
+        .expect("recovered tombstone pane");
+    let fresh_attachment = workspace.pane(pane_id).attachment_id().to_string();
+    assert_ne!(fresh_attachment, old_attachment);
+    assert!(workspace.pane(pane_id).writable());
+    let takes = websocket_requests(&mock, "terminal_take_control");
+    assert_eq!(takes.len(), 3);
+    assert_eq!(
+        takes[2].get("attachment_id").and_then(Value::as_str),
+        Some(fresh_attachment.as_str())
+    );
+    assert!(websocket_requests(&mock, "terminal_release_control").is_empty());
+    mock.shutdown().await;
+}
+
 #[test]
-fn control_tombstone_retires_the_attachment() {
+fn control_tombstone_reducer_retires_the_attachment() {
     let mut ws = Workspace::scripted();
     let pane = ws
         .open_terminal("term-tombstone", "native", "epoch-tombstone")
