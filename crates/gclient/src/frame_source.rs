@@ -6,7 +6,11 @@ pub use proxy::ProxyFrameSource;
 
 use std::collections::VecDeque;
 use std::path::Path;
+use std::pin::Pin;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use gobby_core::local_token::{read_local_cli_token, read_local_cli_token_for};
@@ -15,7 +19,7 @@ use gobby_terminal::protocol::{
     ServerMessage, MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -30,10 +34,8 @@ pub struct AttachLocator {
     pub backend: String,
     pub frame_host_epoch: String,
     pub host_terminal_id: String,
-    pub socket_path: String,
-    pub pane_id: Option<String>,
-    pub server_pid: Option<i32>,
-    pub server_start_time: Option<i64>,
+    pub frame_socket_path: String,
+    pub pane: Option<gobby_terminal::protocol::PaneLocator>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,12 +257,84 @@ struct WriteRequest {
     done: oneshot::Sender<Result<(), FrameError>>,
 }
 
+struct SourceReadHalf {
+    inner: OwnedReadHalf,
+    #[cfg(test)]
+    progress: Arc<AtomicUsize>,
+}
+
+impl AsyncRead for SourceReadHalf {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        #[cfg(test)]
+        let filled_before = buffer.filled().len();
+        let outcome = Pin::new(&mut this.inner).poll_read(cx, buffer);
+        #[cfg(test)]
+        if matches!(outcome, Poll::Ready(Ok(()))) {
+            this.progress
+                .fetch_add(buffer.filled().len() - filled_before, Ordering::SeqCst);
+        }
+        outcome
+    }
+}
+
+struct SourceWriteHalf {
+    inner: OwnedWriteHalf,
+    #[cfg(test)]
+    progress: Arc<AtomicUsize>,
+    #[cfg(test)]
+    pause_after: Arc<AtomicUsize>,
+}
+
+impl AsyncWrite for SourceWriteHalf {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        #[cfg(test)]
+        let bytes = {
+            let progress = this.progress.load(Ordering::SeqCst);
+            let pause_after = this.pause_after.load(Ordering::SeqCst);
+            if progress >= pause_after {
+                return Poll::Pending;
+            }
+            &bytes[..bytes.len().min(pause_after - progress)]
+        };
+        let outcome = Pin::new(&mut this.inner).poll_write(cx, bytes);
+        #[cfg(test)]
+        if let Poll::Ready(Ok(written)) = &outcome {
+            this.progress.fetch_add(*written, Ordering::SeqCst);
+        }
+        outcome
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
 pub struct UnixSocketFrameSource {
     outbound: mpsc::Sender<WriteRequest>,
     inbound: mpsc::Receiver<ServerMessage>,
     retired: Retired,
     shutdown: watch::Sender<bool>,
     _cleanup: JoinHandle<()>,
+    #[cfg(test)]
+    read_progress: Arc<AtomicUsize>,
+    #[cfg(test)]
+    write_progress: Arc<AtomicUsize>,
+    #[cfg(test)]
+    write_pause_after: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for UnixSocketFrameSource {
@@ -278,9 +352,12 @@ impl UnixSocketFrameSource {
         cols: u16,
         rows: u16,
     ) -> Result<Self, FrameError> {
-        let stream = timeout(CONNECT_TIMEOUT, UnixStream::connect(&locator.socket_path))
-            .await
-            .map_err(|_| FrameError::Io("frame socket connect timed out".into()))??;
+        let stream = timeout(
+            CONNECT_TIMEOUT,
+            UnixStream::connect(&locator.frame_socket_path),
+        )
+        .await
+        .map_err(|_| FrameError::Io("frame socket connect timed out".into()))??;
         Self::connect_stream(stream, locator, local_token, cols, rows).await
     }
 
@@ -366,6 +443,24 @@ impl UnixSocketFrameSource {
 
     fn from_stream(stream: UnixStream) -> Self {
         let (read_half, write_half) = stream.into_split();
+        #[cfg(test)]
+        let read_progress = Arc::new(AtomicUsize::new(0));
+        #[cfg(test)]
+        let write_progress = Arc::new(AtomicUsize::new(0));
+        #[cfg(test)]
+        let write_pause_after = Arc::new(AtomicUsize::new(usize::MAX));
+        let read_half = SourceReadHalf {
+            inner: read_half,
+            #[cfg(test)]
+            progress: Arc::clone(&read_progress),
+        };
+        let write_half = SourceWriteHalf {
+            inner: write_half,
+            #[cfg(test)]
+            progress: Arc::clone(&write_progress),
+            #[cfg(test)]
+            pause_after: Arc::clone(&write_pause_after),
+        };
         let (frame_tx, inbound) = mpsc::channel(DIRECT_FRAME_CAPACITY);
         let (write_tx, write_rx) = mpsc::channel(16);
         let retired = Arc::new(Mutex::new(None));
@@ -394,6 +489,12 @@ impl UnixSocketFrameSource {
             retired,
             shutdown,
             _cleanup: cleanup,
+            #[cfg(test)]
+            read_progress,
+            #[cfg(test)]
+            write_progress,
+            #[cfg(test)]
+            write_pause_after,
         }
     }
 
@@ -515,12 +616,12 @@ impl Drop for SendCancellationGuard<'_> {
 }
 
 async fn run_reader(
-    mut reader: OwnedReadHalf,
+    mut reader: SourceReadHalf,
     frames: mpsc::Sender<ServerMessage>,
     retired: Retired,
     shutdown: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
-) -> OwnedReadHalf {
+) -> SourceReadHalf {
     loop {
         let read = tokio::select! {
             biased;
@@ -558,12 +659,12 @@ async fn run_reader(
 }
 
 async fn run_writer(
-    mut writer: OwnedWriteHalf,
+    mut writer: SourceWriteHalf,
     mut requests: mpsc::Receiver<WriteRequest>,
     retired: Retired,
     shutdown: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
-) -> OwnedWriteHalf {
+) -> SourceWriteHalf {
     loop {
         let request = tokio::select! {
             biased;
@@ -610,12 +711,12 @@ async fn run_writer(
     }
 }
 
-async fn shutdown_socket(reader: JoinHandle<OwnedReadHalf>, writer: JoinHandle<OwnedWriteHalf>) {
+async fn shutdown_socket(reader: JoinHandle<SourceReadHalf>, writer: JoinHandle<SourceWriteHalf>) {
     let (reader, writer) = tokio::join!(reader, writer);
     let (Ok(reader), Ok(writer)) = (reader, writer) else {
         return;
     };
-    if let Ok(mut stream) = reader.reunite(writer) {
+    if let Ok(mut stream) = reader.inner.reunite(writer.inner) {
         let _ = stream.shutdown().await;
     }
 }
@@ -624,5 +725,105 @@ fn set_retired(retired: &Retired, reason: RetireReason) {
     let mut slot = retired.lock().expect("frame retirement mutex poisoned");
     if slot.is_none() {
         *slot = Some(reason);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    use gobby_terminal::protocol::write_message;
+    use tokio::io::AsyncReadExt;
+
+    async fn wait_for_progress(progress: &std::sync::atomic::AtomicUsize, expected: usize) {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if progress.load(Ordering::SeqCst) >= expected {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("frame task made partial progress");
+    }
+
+    async fn assert_peer_eof(mut peer: UnixStream, expected: &[u8]) {
+        let mut received = Vec::new();
+        timeout(Duration::from_secs(1), peer.read_to_end(&mut received))
+            .await
+            .expect("frame source closed its socket")
+            .expect("peer read succeeds");
+        assert_eq!(received, expected);
+    }
+
+    #[tokio::test]
+    async fn reader_cancellation_after_partial_frame_retires_whole_source() {
+        for read_limit in [2, 6] {
+            let (stream, mut peer) = UnixStream::pair().expect("socket pair");
+            let mut source = UnixSocketFrameSource::from_stream(stream);
+            let progress = Arc::clone(&source.read_progress);
+            let message = ServerMessage::Welcome {
+                host_epoch: "epoch-cancel".into(),
+            };
+            let mut encoded = Vec::new();
+            write_message(&mut encoded, &message).expect("encode server message");
+
+            peer.write_all(&encoded[..read_limit])
+                .await
+                .expect("write partial server frame");
+            wait_for_progress(&progress, read_limit).await;
+            source.cancel_reader_task();
+
+            assert!(matches!(source.recv().await, Err(FrameError::Cancelled)));
+            assert!(matches!(
+                source
+                    .send(&ClientMessage::SetScrollOffset {
+                        rows_from_live_edge: 1,
+                    })
+                    .await,
+                Err(FrameError::Cancelled)
+            ));
+            assert_peer_eof(peer, &[]).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn writer_cancellation_after_partial_frame_retires_whole_source() {
+        for write_limit in [2, 6] {
+            let (stream, peer) = UnixStream::pair().expect("socket pair");
+            let mut source = UnixSocketFrameSource::from_stream(stream);
+            source
+                .write_pause_after
+                .store(write_limit, Ordering::SeqCst);
+            let progress = Arc::clone(&source.write_progress);
+            let retired = Arc::clone(&source.retired);
+            let shutdown = source.shutdown.clone();
+            let message = ClientMessage::SetScrollOffset {
+                rows_from_live_edge: u32::MAX,
+            };
+            let mut encoded = Vec::new();
+            write_message(&mut encoded, &message).expect("encode client message");
+            assert!(encoded.len() > write_limit);
+
+            let cancel = tokio::spawn(async move {
+                wait_for_progress(&progress, write_limit).await;
+                set_retired(&retired, RetireReason::Cancelled);
+                let _ = shutdown.send(true);
+            });
+
+            assert!(matches!(
+                source.send(&message).await,
+                Err(FrameError::Cancelled)
+            ));
+            cancel.await.expect("cancellation task completed");
+            assert!(matches!(
+                source.send(&message).await,
+                Err(FrameError::Cancelled)
+            ));
+            assert!(matches!(source.recv().await, Err(FrameError::Cancelled)));
+            assert_peer_eof(peer, &encoded[..write_limit]).await;
+        }
     }
 }

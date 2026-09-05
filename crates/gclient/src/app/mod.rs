@@ -237,10 +237,8 @@ impl Workspace {
             backend: pane.backend.clone(),
             frame_host_epoch: pane.expected_host_epoch.clone(),
             host_terminal_id: pane.terminal_id.clone(),
-            socket_path: "/tmp/gterm-frames.sock".into(),
-            pane_id: None,
-            server_pid: None,
-            server_start_time: None,
+            frame_socket_path: "/tmp/gterm-frames.sock".into(),
+            pane: None,
         }
     }
 

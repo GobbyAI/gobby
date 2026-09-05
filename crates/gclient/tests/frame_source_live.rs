@@ -10,26 +10,370 @@ use gobby_client::frame_source::{
 use gobby_client::Workspace;
 use gobby_terminal::protocol::{
     read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
-    PaneModes, ServerMessage, MAX_FRAME_SIZE,
+    PaneLocator, PaneModes, RenderEncoding, ServerMessage, TmuxClientIdentity, MAX_FRAME_SIZE,
+    PROTOCOL_VERSION,
 };
-use serde_json::json;
-use std::io::Cursor;
+use serde_json::{json, Value};
+use std::io::{Cursor, Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream as StdUnixStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
-use tokio::time::{timeout, Duration};
+use tokio::time::{sleep, timeout, Duration};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
+const HOST_TIMEOUT: Duration = Duration::from_secs(8);
+const CONTROL_SOCKET: &str = "gterm-control.sock";
+const FRAMES_SOCKET: &str = "gterm-frames.sock";
+const LOCAL_TOKEN: &str = "local-token";
+
+struct TestHost {
+    dir: tempfile::TempDir,
+    child: Child,
+}
+
+impl TestHost {
+    async fn spawn(extra: &[&str]) -> Self {
+        let binary = tokio::task::spawn_blocking(build_test_gterm)
+            .await
+            .expect("gterm build task");
+        let dir = tempfile::tempdir().expect("gterm socket dir");
+        let control_token = dir.path().join("gterm-control.token");
+        std::fs::write(&control_token, "control-token").expect("write control token");
+        let mut permissions = std::fs::metadata(&control_token)
+            .expect("control token metadata")
+            .permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(&control_token, permissions).expect("protect control token");
+        std::fs::write(dir.path().join("local_cli_token"), LOCAL_TOKEN).expect("write local token");
+        let child = Command::new(binary)
+            .arg("host")
+            .arg("--socket-dir")
+            .arg(dir.path())
+            .arg("--tmux-poll-interval-ms")
+            .arg("50")
+            .args(extra)
+            .env("GTERM_LOG_FILE", dir.path().join("gterm.log"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("spawn test gterm host");
+        let host = Self { dir, child };
+        wait_for_socket(&host.dir.path().join(CONTROL_SOCKET)).await;
+        wait_for_socket(&host.dir.path().join(FRAMES_SOCKET)).await;
+        host
+    }
+
+    fn frame_socket(&self) -> PathBuf {
+        self.dir.path().join(FRAMES_SOCKET)
+    }
+
+    fn socket_dir(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
+impl Drop for TestHost {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+struct TestTmux {
+    _dir: tempfile::TempDir,
+    socket: PathBuf,
+    pane_id: String,
+    server_pid: i32,
+    server_start_time: i64,
+}
+
+impl TestTmux {
+    fn start() -> Self {
+        let dir = tempfile::tempdir().expect("tmux socket dir");
+        let socket = dir.path().join("tmux.sock");
+        let status = Command::new("tmux")
+            .arg("-S")
+            .arg(&socket)
+            .args([
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-s",
+                "gclient-frame-source",
+                "-x",
+                "80",
+                "-y",
+                "24",
+                "--",
+                "/bin/sh",
+            ])
+            .status()
+            .expect("spawn test tmux");
+        assert!(status.success(), "tmux new-session failed");
+        let pane_id = tmux_output(&socket, &["display-message", "-p", "#{pane_id}"]);
+        let server_pid = tmux_output(&socket, &["display-message", "-p", "#{pid}"])
+            .parse()
+            .expect("tmux pid");
+        let server_start_time = tmux_output(&socket, &["display-message", "-p", "#{start_time}"])
+            .parse()
+            .expect("tmux start time");
+        Self {
+            _dir: dir,
+            socket,
+            pane_id,
+            server_pid,
+            server_start_time,
+        }
+    }
+
+    fn pane_locator(&self) -> PaneLocator {
+        PaneLocator {
+            socket_path: self.socket.to_string_lossy().into_owned(),
+            pane_id: self.pane_id.clone(),
+            server_pid: self.server_pid,
+            server_start_time: self.server_start_time,
+        }
+    }
+
+    fn identity(&self) -> TmuxClientIdentity {
+        TmuxClientIdentity {
+            socket_path: self.socket.to_string_lossy().into_owned(),
+            pane_id: self.pane_id.clone(),
+            server_pid: self.server_pid,
+            server_start_time: self.server_start_time,
+        }
+    }
+
+    fn send_hex(&self, bytes: &[u8]) {
+        for chunk in bytes.chunks(128) {
+            let encoded: Vec<String> = chunk.iter().map(|byte| format!("{byte:02x}")).collect();
+            let mut args = vec!["send-keys", "-H", "-t", self.pane_id.as_str()];
+            args.extend(encoded.iter().map(String::as_str));
+            let _ = tmux_output(&self.socket, &args);
+        }
+    }
+
+    fn capture(&self) -> String {
+        tmux_output(&self.socket, &["capture-pane", "-p", "-t", &self.pane_id])
+    }
+}
+
+impl Drop for TestTmux {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .arg("-S")
+            .arg(&self.socket)
+            .arg("kill-server")
+            .status();
+    }
+}
+
+fn build_test_gterm() -> PathBuf {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let binary = std::env::current_exe()
+        .expect("current test binary")
+        .parent()
+        .and_then(Path::parent)
+        .expect("target profile directory")
+        .join("gterm");
+    if binary.is_file() {
+        return binary;
+    }
+    let status = Command::new(env!("CARGO"))
+        .current_dir(&workspace)
+        .args([
+            "build",
+            "-p",
+            "gobby-terminal",
+            "--features",
+            "vt-engine",
+            "--bin",
+            "gterm",
+        ])
+        .status()
+        .expect("build test gterm");
+    assert!(status.success(), "test gterm build failed");
+    binary
+}
+
+async fn wait_for_socket(path: &Path) {
+    timeout(HOST_TIMEOUT, async {
+        loop {
+            if UnixStream::connect(path).await.is_ok() {
+                return;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {}", path.display()));
+}
+
+fn tmux_output(socket: &Path, args: &[&str]) -> String {
+    let output = Command::new("tmux")
+        .arg("-S")
+        .arg(socket)
+        .args(args)
+        .output()
+        .expect("run tmux");
+    assert!(output.status.success(), "tmux command failed: {output:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn send_control(stream: &mut StdUnixStream, value: &Value) {
+    let mut line = serde_json::to_vec(value).expect("encode control request");
+    line.push(b'\n');
+    stream.write_all(&line).expect("write control request");
+    stream.flush().expect("flush control request");
+}
+
+fn recv_control(stream: &mut StdUnixStream) -> Value {
+    stream
+        .set_read_timeout(Some(HOST_TIMEOUT))
+        .expect("control read timeout");
+    let mut line = Vec::new();
+    let mut byte = [0_u8; 1];
+    loop {
+        stream.read_exact(&mut byte).expect("read control reply");
+        if byte[0] == b'\n' {
+            break;
+        }
+        line.push(byte[0]);
+    }
+    serde_json::from_slice(&line).expect("decode control reply")
+}
+
+fn control_connection_at(host_dir: &Path) -> StdUnixStream {
+    let mut stream =
+        StdUnixStream::connect(host_dir.join(CONTROL_SOCKET)).expect("connect control");
+    send_control(
+        &mut stream,
+        &json!({
+            "method": "hello",
+            "protocol_version": 1,
+            "control_token": "control-token"
+        }),
+    );
+    let reply = recv_control(&mut stream);
+    assert_eq!(reply["ok"], true, "control hello: {reply}");
+    stream
+}
+
+fn control_epoch_at(host_dir: &Path) -> String {
+    let mut control = control_connection_at(host_dir);
+    send_control(&mut control, &json!({"method": "ping"}));
+    let reply = recv_control(&mut control);
+    assert_eq!(reply["ok"], true, "control ping: {reply}");
+    reply["host_epoch"]
+        .as_str()
+        .expect("host epoch")
+        .to_string()
+}
+
+fn spawn_native_terminal_at(host_dir: &Path) -> (String, String) {
+    let mut control = control_connection_at(host_dir);
+    send_control(&mut control, &json!({"method": "ping"}));
+    let ping = recv_control(&mut control);
+    let epoch = ping["host_epoch"].as_str().expect("host epoch").to_string();
+    send_control(
+        &mut control,
+        &json!({
+            "method": "reserve_observer",
+            "terminal_id": "gclient-real-native",
+            "reserve_key": "gclient-reserve"
+        }),
+    );
+    let reserved = recv_control(&mut control);
+    assert_eq!(reserved["ok"], true, "reserve native observer: {reserved}");
+    send_control(
+        &mut control,
+        &json!({
+            "method": "spawn",
+            "id": "spawn-1",
+            "operation_seq": 1,
+            "terminal_id": "gclient-real-native",
+            "spawn_key": "gclient-spawn",
+            "reservation_id": reserved["reservation_id"],
+            "reserve_key": "gclient-reserve",
+            "argv": ["/bin/sh", "-c", "printf 'GCLIENT-NATIVE-READY\\n'; exec cat"],
+            "cwd": host_dir.to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000
+        }),
+    );
+    let prepared = recv_control(&mut control);
+    assert_eq!(prepared["ok"], true, "prepare native terminal: {prepared}");
+    let host_terminal_id = prepared["host_terminal_id"]
+        .as_str()
+        .expect("native host terminal id")
+        .to_string();
+    send_control(
+        &mut control,
+        &json!({
+            "method": "spawn_commit",
+            "terminal_id": "gclient-real-native",
+            "spawn_key": "gclient-spawn"
+        }),
+    );
+    let committed = recv_control(&mut control);
+    assert_eq!(committed["ok"], true, "commit native terminal: {committed}");
+    (epoch, host_terminal_id)
+}
+
+fn frame_text(message: &ServerMessage) -> Option<String> {
+    let ServerMessage::Frame(frame) = message else {
+        return None;
+    };
+    let mut text = String::new();
+    for (index, cell) in frame.cells.iter().enumerate() {
+        if index > 0 && (index as u16).is_multiple_of(frame.width) {
+            text.push('\n');
+        }
+        text.push_str(&cell.symbol);
+    }
+    Some(text)
+}
+
+async fn collect_direct_until<F>(
+    source: &mut UnixSocketFrameSource,
+    mut predicate: F,
+) -> Vec<ServerMessage>
+where
+    F: FnMut(&ServerMessage) -> bool,
+{
+    timeout(HOST_TIMEOUT, async {
+        let mut messages = Vec::new();
+        loop {
+            let message = source.recv().await.expect("receive direct frame");
+            let done = predicate(&message);
+            messages.push(message);
+            if done {
+                return messages;
+            }
+        }
+    })
+    .await
+    .expect("direct frame deadline")
+}
 
 fn native_locator(socket_path: &std::path::Path, epoch: &str) -> AttachLocator {
+    native_locator_for(socket_path, epoch, "host-terminal-1")
+}
+
+fn native_locator_for(socket_path: &Path, epoch: &str, host_terminal_id: &str) -> AttachLocator {
     AttachLocator {
         backend: "native".into(),
         frame_host_epoch: epoch.into(),
-        host_terminal_id: "host-terminal-1".into(),
-        socket_path: socket_path.display().to_string(),
-        pane_id: None,
-        server_pid: None,
-        server_start_time: None,
+        host_terminal_id: host_terminal_id.into(),
+        frame_socket_path: socket_path.display().to_string(),
+        pane: None,
     }
 }
 
@@ -54,158 +398,171 @@ fn semantic_frame(symbol: &str) -> ServerMessage {
 
 #[tokio::test]
 async fn direct_frames_verify_epoch_and_render() {
-    let (client, mut socket) = UnixStream::pair().expect("frame socket pair");
-    let host = tokio::spawn(async move {
-        let hello: ClientMessage = read_message_async(&mut socket, MAX_FRAME_SIZE)
+    let host = TestHost::spawn(&[]).await;
+    let host_dir = host.socket_dir().to_path_buf();
+    let (epoch, host_terminal_id) =
+        tokio::task::spawn_blocking(move || spawn_native_terminal_at(&host_dir))
             .await
-            .expect("hello");
-        assert!(matches!(
-            hello,
-            ClientMessage::Hello {
-                local_token,
-                cols: 100,
-                rows: 30,
-                ..
-            } if local_token == "local-token"
-        ));
-        write_message_async(
-            &mut socket,
-            &ServerMessage::Welcome {
-                host_epoch: "epoch-a".into(),
-            },
-        )
-        .await
-        .expect("welcome");
-        let attach: ClientMessage = read_message_async(&mut socket, MAX_FRAME_SIZE)
-            .await
-            .expect("attach");
-        assert!(matches!(
-            attach,
-            ClientMessage::AttachTerminal {
-                host_terminal_id,
-                reservation_id: None,
-                locator: None,
-            } if host_terminal_id == "host-terminal-1"
-        ));
-        write_message_async(
-            &mut socket,
-            &ServerMessage::AttachHistory {
-                text: "ready".into(),
-                truncated: false,
-                dropped_bytes: 0,
-                total_bytes: 5,
-            },
-        )
-        .await
-        .expect("history");
-    });
+            .expect("spawn native control task");
 
-    let mut source = UnixSocketFrameSource::connect_stream(
-        client,
-        &native_locator(std::path::Path::new("socket-pair"), "epoch-a"),
-        "local-token",
-        100,
-        30,
+    let relay_dir = tempfile::tempdir().expect("epoch relay dir");
+    let relay_path = relay_dir.path().join("frames-relay.sock");
+    let relay = UnixListener::bind(&relay_path).expect("bind epoch relay");
+    let upstream_path = host.frame_socket();
+    let relay_task = tokio::spawn(async move {
+        let (mut client, _) = relay.accept().await.expect("accept epoch client");
+        let mut upstream = UnixStream::connect(upstream_path)
+            .await
+            .expect("connect real host from relay");
+        let hello: ClientMessage = read_message_async(&mut client, MAX_FRAME_SIZE)
+            .await
+            .expect("relayed hello");
+        write_message_async(&mut upstream, &hello)
+            .await
+            .expect("forward hello");
+        let welcome: ServerMessage = read_message_async(&mut upstream, MAX_FRAME_SIZE)
+            .await
+            .expect("real welcome");
+        write_message_async(&mut client, &welcome)
+            .await
+            .expect("forward welcome");
+        matches!(
+            timeout(
+                Duration::from_secs(1),
+                read_message_async::<_, ClientMessage>(&mut client, MAX_FRAME_SIZE),
+            )
+            .await,
+            Ok(Err(_))
+        )
+    });
+    let mismatch = UnixSocketFrameSource::connect(
+        &native_locator_for(&relay_path, "stale-host-epoch", &host_terminal_id),
+        LOCAL_TOKEN,
+        80,
+        24,
     )
     .await
-    .expect("connect direct source");
+    .expect_err("epoch mismatch must refuse direct attach");
+    assert!(matches!(
+        mismatch,
+        FrameError::HostEpochChanged { expected, actual }
+            if expected == "stale-host-epoch" && actual == epoch
+    ));
+    assert!(
+        relay_task.await.expect("epoch relay task"),
+        "epoch mismatch wrote AttachTerminal"
+    );
+
+    let mut source = UnixSocketFrameSource::connect(
+        &native_locator_for(&host.frame_socket(), &epoch, &host_terminal_id),
+        LOCAL_TOKEN,
+        80,
+        24,
+    )
+    .await
+    .expect("connect real direct source");
     assert_eq!(source.transport(), Transport::Direct);
     assert!(matches!(
-        timeout(IO_TIMEOUT, source.recv()).await.expect("frame timeout"),
-        Ok(ServerMessage::AttachHistory { text, .. }) if text == "ready"
+        timeout(IO_TIMEOUT, source.recv()).await.expect("attach timeout"),
+        Ok(ServerMessage::Attached { host_terminal_id: attached, .. })
+            if attached == host_terminal_id
     ));
-    host.await.expect("fake host task");
+    let messages = collect_direct_until(&mut source, |message| {
+        frame_text(message).is_some_and(|text| text.contains("GCLIENT-NATIVE-READY"))
+    })
+    .await;
+    assert!(messages.iter().any(|message| {
+        frame_text(message).is_some_and(|text| text.contains("GCLIENT-NATIVE-READY"))
+    }));
 }
 
 #[tokio::test]
 async fn tmux_pane_attaches_through_host_observer() {
+    let tmux = TestTmux::start();
+    tmux.send_hex(b"printf 'GCLIENT-TMUX-HISTORY\\n'\n");
+    timeout(HOST_TIMEOUT, async {
+        while !tmux.capture().contains("GCLIENT-TMUX-HISTORY") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("tmux initial content");
+    let host = TestHost::spawn(&[]).await;
+    let host_dir = host.socket_dir().to_path_buf();
+    let epoch = tokio::task::spawn_blocking(move || control_epoch_at(&host_dir))
+        .await
+        .expect("control epoch task");
     let locator = AttachLocator {
         backend: "tmux".into(),
-        frame_host_epoch: "tmux-epoch".into(),
-        host_terminal_id: "tmux-terminal".into(),
-        socket_path: "/tmp/tmux.sock".into(),
-        pane_id: Some("%7".into()),
-        server_pid: Some(42),
-        server_start_time: Some(99),
+        frame_host_epoch: epoch.clone(),
+        host_terminal_id: "tmux-observer".into(),
+        frame_socket_path: host.frame_socket().display().to_string(),
+        pane: Some(tmux.pane_locator()),
     };
-    let (client, mut socket) = UnixStream::pair().expect("frame socket pair");
-    let host = tokio::spawn(async move {
-        let _: ClientMessage = read_message_async(&mut socket, MAX_FRAME_SIZE)
-            .await
-            .expect("hello");
-        write_message_async(
-            &mut socket,
-            &ServerMessage::Welcome {
-                host_epoch: "tmux-epoch".into(),
-            },
-        )
+    let mut source = UnixSocketFrameSource::connect(&locator, LOCAL_TOKEN, 80, 24)
         .await
-        .expect("welcome");
-        let attach: ClientMessage = read_message_async(&mut socket, MAX_FRAME_SIZE)
+        .expect("real tmux direct source");
+    assert!(matches!(
+        timeout(IO_TIMEOUT, source.recv())
             .await
-            .expect("attach");
-        assert!(matches!(
-            attach,
-            ClientMessage::AttachTerminal {
-                host_terminal_id,
-                reservation_id: None,
-                locator: Some(pane),
-            } if host_terminal_id == "tmux-terminal"
-                && pane.socket_path == "/tmp/tmux.sock"
-                && pane.server_pid == 42
-                && pane.server_start_time == 99
-                && pane.pane_id == "%7"
-        ));
-        write_message_async(
-            &mut socket,
-            &ServerMessage::AttachHistory {
-                text: "tmux history".into(),
-                truncated: false,
-                dropped_bytes: 0,
-                total_bytes: 12,
-            },
-        )
-        .await
-        .expect("history");
-        write_message_async(&mut socket, &semantic_frame("A"))
-            .await
-            .expect("first keyframe");
-        write_message_async(&mut socket, &semantic_frame("B"))
-            .await
-            .expect("changed keyframe");
-        write_message_async(
-            &mut socket,
-            &ServerMessage::Error {
-                code: "recursive_tmux_view".into(),
-                message: Some("client is running inside target pane".into()),
-            },
-        )
-        .await
-        .expect("typed refusal");
-    });
+            .expect("tmux attach timeout"),
+        Ok(ServerMessage::Attached { created: true, .. })
+    ));
+    let initial = collect_direct_until(&mut source, |message| {
+        matches!(message, ServerMessage::AttachHistory { .. })
+    })
+    .await;
+    assert!(matches!(
+        initial.last(),
+        Some(ServerMessage::AttachHistory { text, .. }) if text.contains("GCLIENT-TMUX-HISTORY")
+    ));
+    tmux.send_hex(b"printf 'GCLIENT-TMUX-CHANGED\\n'\n");
+    let changed = collect_direct_until(&mut source, |message| {
+        frame_text(message).is_some_and(|text| text.contains("GCLIENT-TMUX-CHANGED"))
+    })
+    .await;
+    assert!(changed.iter().any(|message| {
+        frame_text(message).is_some_and(|text| text.contains("GCLIENT-TMUX-CHANGED"))
+    }));
 
-    let mut source = UnixSocketFrameSource::connect_stream(client, &locator, "token", 80, 24)
+    let mut same_pane = UnixStream::connect(host.frame_socket())
         .await
-        .expect("tmux direct source");
+        .expect("connect same-pane client");
+    write_message_async(
+        &mut same_pane,
+        &ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            encoding: RenderEncoding::SemanticFrame,
+            local_token: LOCAL_TOKEN.into(),
+            cols: 80,
+            rows: 24,
+            tmux_identity: Some(tmux.identity()),
+        },
+    )
+    .await
+    .expect("same-pane hello");
     assert!(matches!(
-        source.recv().await,
-        Ok(ServerMessage::AttachHistory { text, .. }) if text == "tmux history"
+        read_message_async::<_, ServerMessage>(&mut same_pane, MAX_FRAME_SIZE)
+            .await
+            .expect("same-pane welcome"),
+        ServerMessage::Welcome { host_epoch } if host_epoch == epoch
     ));
-    assert_eq!(
-        source.recv().await.expect("first keyframe"),
-        semantic_frame("A")
-    );
-    assert_eq!(
-        source.recv().await.expect("changed keyframe"),
-        semantic_frame("B")
-    );
+    write_message_async(
+        &mut same_pane,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: locator.host_terminal_id,
+            reservation_id: None,
+            locator: locator.pane,
+        },
+    )
+    .await
+    .expect("same-pane attach");
     assert!(matches!(
-        source.recv().await,
-        Ok(ServerMessage::Error { code, message })
-            if code == "recursive_tmux_view"
-                && message.as_deref() == Some("client is running inside target pane")
+        read_message_async::<_, ServerMessage>(&mut same_pane, MAX_FRAME_SIZE)
+            .await
+            .expect("typed same-pane refusal"),
+        ServerMessage::Error { code, .. } if code == "self_view"
     ));
-    host.await.expect("fake tmux host");
 }
 
 #[tokio::test]
@@ -953,6 +1310,66 @@ async fn drive_source<S: FrameSource>(
         .send(&ClientMessage::SetViewport { rows: 25, cols: 81 })
         .await
         .expect("source send");
+}
+
+#[tokio::test]
+async fn live_roster_prefers_direct_then_falls_back_once() {
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{
+                "terminal_id": "terminal-direct-candidate",
+                "backend": "native",
+                "state": "live",
+                "attach": {
+                    "backend": "native",
+                    "frame_host_epoch": "host-epoch",
+                    "host_socket": "/missing/test-owned-gterm-frames.sock",
+                    "host_terminal_id": "host-terminal-direct",
+                    "socket_path": null,
+                    "pane_id": null,
+                    "server_pid": null,
+                    "server_start_time": null
+                }
+            }],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 0}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("reconcile workspace");
+
+    let attaches = terminal_attach_requests(&mock);
+    assert_eq!(attaches.len(), 2, "direct failure must have one fallback");
+    assert_eq!(attaches[0]["frame_delivery"], json!("direct"));
+    assert_eq!(attaches[0]["encoding"], json!("semantic_frame"));
+    assert_eq!(attaches[1]["frame_delivery"], json!("proxy"));
+    assert_eq!(attaches[1]["encoding"], json!("semantic_frame"));
+    let detaches: Vec<_> = mock
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("type") == Some(&json!("terminal_detach")))
+        .collect();
+    assert_eq!(detaches.len(), 1);
+    assert_eq!(detaches[0]["attachment_id"], json!("attachment-1"));
+    let pane_id = workspace
+        .pane_for_terminal("terminal-direct-candidate")
+        .expect("direct candidate pane");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+    assert_eq!(workspace.pane(pane_id).attachment_id(), "attachment-2");
+    mock.shutdown().await;
 }
 
 fn terminal_attach_requests(mock: &mock_daemon::MockDaemon) -> Vec<serde_json::Value> {

@@ -12,7 +12,7 @@ use gobby_client::frame_source::{
 use gobby_client::Workspace;
 use gobby_terminal::protocol::{
     read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
-    PaneModes, ServerMessage, MAX_FRAME_SIZE,
+    PaneLocator, PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
 use serde_json::json;
 use std::fs;
@@ -164,10 +164,8 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
         backend: "native".into(),
         frame_host_epoch: "stale-epoch".into(),
         host_terminal_id: "ht-1".into(),
-        socket_path: "/tmp/gterm-frames.sock".into(),
-        pane_id: None,
-        server_pid: None,
-        server_start_time: None,
+        frame_socket_path: "/tmp/gterm-frames.sock".into(),
+        pane: None,
     };
     let err = frames.connect(&locator, 80, 24).unwrap_err();
     assert!(matches!(err, FrameError::HostEpochChanged { .. }));
@@ -179,10 +177,13 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
             backend: "tmux".into(),
             frame_host_epoch: "epoch".into(),
             host_terminal_id: "ht-1".into(),
-            socket_path: "/tmp/tmux-sock".into(),
-            pane_id: Some("%0".into()),
-            server_pid: Some(9),
-            server_start_time: Some(1),
+            frame_socket_path: "/tmp/gterm-frames.sock".into(),
+            pane: Some(PaneLocator {
+                socket_path: "/tmp/tmux-sock".into(),
+                pane_id: "%0".into(),
+                server_pid: 9,
+                server_start_time: 1,
+            }),
         })
         .1,
     )
@@ -200,10 +201,13 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
         backend: "tmux".into(),
         frame_host_epoch: "recycled".into(),
         host_terminal_id: "ht-1".into(),
-        socket_path: "/tmp/gterm-frames.sock".into(),
-        pane_id: Some("%1".into()),
-        server_pid: None,
-        server_start_time: None,
+        frame_socket_path: "/tmp/gterm-frames.sock".into(),
+        pane: Some(PaneLocator {
+            socket_path: "/tmp/tmux-sock".into(),
+            pane_id: "%1".into(),
+            server_pid: 9,
+            server_start_time: 1,
+        }),
     };
     assert!(tmux.connect(&stale, 80, 24).is_err());
     assert!(!tmux.sent_attach());
@@ -236,10 +240,8 @@ async fn direct_frame_eof_detaches_before_reattach() {
             backend: "native".into(),
             frame_host_epoch: "epoch-a".into(),
             host_terminal_id: "term-a".into(),
-            socket_path: "socket-pair".into(),
-            pane_id: None,
-            server_pid: None,
-            server_start_time: None,
+            frame_socket_path: "socket-pair".into(),
+            pane: None,
         },
         "local-token",
         80,
@@ -375,10 +377,8 @@ async fn direct_and_proxy_panes_run_together() {
             backend: "native".into(),
             frame_host_epoch: "direct-epoch".into(),
             host_terminal_id: "terminal-direct".into(),
-            socket_path: "socket-pair".into(),
-            pane_id: None,
-            server_pid: None,
-            server_start_time: None,
+            frame_socket_path: "socket-pair".into(),
+            pane: None,
         },
         "local-token",
         80,

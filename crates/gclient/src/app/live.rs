@@ -1,5 +1,5 @@
 use super::*;
-use crate::frame_source::ProxyFrameSource;
+use crate::frame_source::{ProxyFrameSource, UnixSocketFrameSource};
 
 impl Workspace<LiveDaemon> {
     pub fn live(daemon: LiveDaemon) -> Self {
@@ -82,7 +82,11 @@ impl Workspace<LiveDaemon> {
                 .get("backend")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            self.ensure_live_pane(&terminal_id, backend);
+            let pane_id = self.ensure_live_pane(&terminal_id, backend);
+            self.panes
+                .get_mut(&pane_id)
+                .expect("live pane exists")
+                .direct_available = row_has_direct_locator(&row);
             ids.push(terminal_id);
         }
         let wanted: HashSet<_> = ids.iter().cloned().collect();
@@ -107,6 +111,23 @@ impl Workspace<LiveDaemon> {
                 continue;
             }
             let terminal_id = self.panes[&pane_id].terminal_id.clone();
+            if self.panes[&pane_id].direct_available {
+                match self.request_direct_source(&terminal_id).await {
+                    Ok((reply, attachment, locator, source)) => {
+                        self.install_direct_source(pane_id, &reply, attachment, &locator, source);
+                        self.attached_generation
+                            .insert(pane_id, snapshot.generation);
+                        continue;
+                    }
+                    Err(FrameError::Finalized { .. }) => {
+                        self.retire_pane_attachment(pane_id);
+                        self.attached_generation
+                            .insert(pane_id, snapshot.generation);
+                        continue;
+                    }
+                    Err(_) => {}
+                }
+            }
             let attachment = self.request_proxy_source(&terminal_id).await;
             let (reply, attachment, source) = match attachment {
                 Ok(attachment) => attachment,
@@ -119,7 +140,7 @@ impl Workspace<LiveDaemon> {
                 Err(error) => {
                     return Err(DaemonError::Protocol {
                         detail: error.to_string(),
-                    })
+                    });
                 }
             };
             self.install_proxy_source(pane_id, &reply, attachment, source);
@@ -127,6 +148,98 @@ impl Workspace<LiveDaemon> {
                 .insert(pane_id, snapshot.generation);
         }
         Ok(())
+    }
+
+    async fn request_direct_source(
+        &self,
+        terminal_id: &str,
+    ) -> Result<(Value, String, AttachLocator, UnixSocketFrameSource), FrameError> {
+        let reply = self
+            .daemon
+            .send(json!({
+                "type": "terminal_attach",
+                "request_id": uuid::Uuid::new_v4().to_string(),
+                "terminal_id": terminal_id,
+                "frame_delivery": "direct",
+                "encoding": "semantic_frame",
+            }))
+            .await?;
+        if reply.get("success").and_then(Value::as_bool) != Some(true) {
+            return Err(FrameError::Protocol(
+                reply
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("terminal attach refused")
+                    .to_string(),
+            ));
+        }
+        let attachment = reply
+            .get("attachment_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
+            .to_string();
+        let result = self.connect_direct_reply(&reply).await;
+        match result {
+            Ok((locator, source)) => Ok((reply, attachment, locator, source)),
+            Err(error) => {
+                self.daemon
+                    .notify(json!({
+                        "type": "terminal_detach",
+                        "request_id": uuid::Uuid::new_v4().to_string(),
+                        "terminal_id": terminal_id,
+                        "attachment_id": attachment,
+                    }))
+                    .await?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn connect_direct_reply(
+        &self,
+        reply: &Value,
+    ) -> Result<(AttachLocator, UnixSocketFrameSource), FrameError> {
+        let locator = direct_reply_locator(reply)?;
+        let cols = reply
+            .get("cols")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(80);
+        let rows = reply
+            .get("rows")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(24);
+        let source = match &self.gobby_home {
+            Some(home) => {
+                UnixSocketFrameSource::from_gobby_home(home, &locator, cols, rows).await?
+            }
+            None => UnixSocketFrameSource::from_env(&locator, cols, rows).await?,
+        };
+        Ok((locator, source))
+    }
+
+    fn install_direct_source(
+        &mut self,
+        pane_id: PaneId,
+        reply: &Value,
+        attachment: String,
+        locator: &AttachLocator,
+        source: UnixSocketFrameSource,
+    ) {
+        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+        pane.attachment_id = attachment;
+        if let Some(backend) = reply.get("backend").and_then(Value::as_str) {
+            pane.backend = backend.to_string();
+        }
+        pane.expected_host_epoch = locator.frame_host_epoch.clone();
+        pane.lease_generation = reply
+            .get("lease_generation")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        pane.live = true;
+        pane.control = ControlState::Observe;
+        pane.install_frame_source(PaneFrameSource::Direct(source));
     }
 
     pub async fn recv_live_frame(&mut self, pane_id: PaneId) -> Result<ServerMessage, FrameError> {
@@ -532,4 +645,85 @@ fn is_cursor_error(error: &DaemonError) -> bool {
     };
     let detail = detail.to_ascii_lowercase();
     detail.contains("cursor_stale") || detail.contains("invalid cursor")
+}
+
+fn row_has_direct_locator(row: &TerminalRow) -> bool {
+    let Some(attach) = row.fields.get("attach").and_then(Value::as_object) else {
+        return false;
+    };
+    matches!(
+        (
+            attach.get("backend").and_then(Value::as_str),
+            attach.get("frame_host_epoch").and_then(Value::as_str),
+            attach.get("host_socket").and_then(Value::as_str),
+            attach.get("host_terminal_id").and_then(Value::as_str),
+        ),
+        (Some("native" | "tmux"), Some(epoch), Some(socket), Some(host_id))
+            if !epoch.is_empty() && !socket.is_empty() && !host_id.is_empty()
+    )
+}
+
+fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {
+    let direct = reply
+        .get("direct")
+        .and_then(Value::as_object)
+        .ok_or_else(|| FrameError::Protocol("attach result omitted direct locator".into()))?;
+    let string = |name: &str| {
+        direct
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| FrameError::Protocol(format!("direct locator omitted {name}")))
+    };
+    let pane = direct
+        .get("pane")
+        .filter(|value| !value.is_null())
+        .map(
+            |value| -> Result<gobby_terminal::protocol::PaneLocator, FrameError> {
+                let pane = value.as_object().ok_or_else(|| {
+                    FrameError::Protocol("direct pane locator is not an object".into())
+                })?;
+                let pane_string = |name: &str| {
+                    pane.get(name)
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            FrameError::Protocol(format!("direct pane locator omitted {name}"))
+                        })
+                };
+                let server_pid = pane
+                    .get("server_pid")
+                    .and_then(Value::as_i64)
+                    .and_then(|value| i32::try_from(value).ok())
+                    .ok_or_else(|| {
+                        FrameError::Protocol("direct pane locator omitted server_pid".into())
+                    })?;
+                let server_start_time = pane
+                    .get("server_start_time")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| {
+                        FrameError::Protocol("direct pane locator omitted server_start_time".into())
+                    })?;
+                Ok(gobby_terminal::protocol::PaneLocator {
+                    socket_path: pane_string("socket_path")?,
+                    pane_id: pane_string("pane_id")?,
+                    server_pid,
+                    server_start_time,
+                })
+            },
+        )
+        .transpose()?;
+    Ok(AttachLocator {
+        backend: reply
+            .get("backend")
+            .and_then(Value::as_str)
+            .unwrap_or("native")
+            .to_string(),
+        frame_host_epoch: string("host_epoch")?,
+        host_terminal_id: string("host_terminal_id")?,
+        frame_socket_path: string("frame_socket_path")?,
+        pane,
+    })
 }

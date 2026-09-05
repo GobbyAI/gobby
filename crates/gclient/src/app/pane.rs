@@ -41,6 +41,7 @@ pub struct Pane {
     pub fragment: Option<FragmentAcc>,
     pub(super) frame_source: Option<PaneFrameSource>,
     pub(super) fallback_in_flight: bool,
+    pub(super) direct_available: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -83,6 +84,7 @@ impl Pane {
             fragment: None,
             frame_source: Some(PaneFrameSource::Scripted(frame_source)),
             fallback_in_flight: false,
+            direct_available: false,
         }
     }
 
