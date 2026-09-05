@@ -6,14 +6,16 @@ from typing import Literal
 
 ActivityKind = Literal["reasoning", "message", "tool", "user_input", "other"]
 TurnEventKind = Literal["started", "completed", "aborted"]
-ProviderErrorKind = Literal["capacity", "api_error", "retry"]
+ProviderErrorKind = Literal["capacity", "api_error", "retry", "terminal"]
 
 WATCHDOG_TAIL_LIMIT = 8
 
 KNOWN_ACTIVITY_KINDS = frozenset({"reasoning", "message", "tool", "user_input", "other"})
 KNOWN_TURN_EVENT_KINDS = frozenset({"started", "completed", "aborted"})
-KNOWN_PROVIDER_ERROR_KINDS = frozenset({"capacity", "api_error", "retry"})
-KNOWN_ERROR_REASONS = frozenset({"server_overloaded", "api_error", "retrying"})
+KNOWN_PROVIDER_ERROR_KINDS = frozenset({"capacity", "api_error", "retry", "terminal"})
+KNOWN_ERROR_REASONS = frozenset(
+    {"server_overloaded", "api_error", "retrying", "usage_limit_exceeded", "provider_error"}
+)
 KNOWN_WATCHDOG_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok", "qwen"})
 
 # Readers may retain only these structural labels. Raw content never enters a model.
@@ -251,6 +253,18 @@ class WatchdogTranscriptSnapshot:
         if not started.line_num < error.line_num < completed.line_num:
             return False
         return self.last_malformed_line_num is None
+
+    @property
+    def has_conclusive_terminal_provider_error(self) -> bool:
+        error = self.provider_error_event
+        completed = self.latest_turn_event
+        return (
+            self.provider_error_kind == "terminal"
+            and error is not None
+            and completed is not None
+            and error.line_num == completed.line_num
+            and self.has_conclusive_turn_completed
+        )
 
     def to_log_dict(self) -> dict[str, object]:
         return {

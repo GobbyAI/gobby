@@ -49,6 +49,7 @@ def _agent_run_checkout_root(runner: AgentRunner, run: Any) -> str | None:
                 return str(worktree.worktree_path)
         except Exception:
             logger.debug("Failed to resolve worktree %s", worktree_id, exc_info=True)
+        return None
 
     clone_id = getattr(run, "clone_id", None)
     if isinstance(clone_id, str) and clone_id:
@@ -58,6 +59,7 @@ def _agent_run_checkout_root(runner: AgentRunner, run: Any) -> str | None:
                 return str(clone.clone_path)
         except Exception:
             logger.debug("Failed to resolve clone %s", clone_id, exc_info=True)
+        return None
 
     child_session_id = getattr(run, "child_session_id", None)
     if not isinstance(child_session_id, str) or not child_session_id:
@@ -83,27 +85,23 @@ def agent_run_task_dirty_paths(
 ) -> list[str] | None:
     """Return dirty paths attributed to the task assigned to an agent run."""
     task_id = getattr(run, "task_id", None)
-    child_session_id = getattr(run, "child_session_id", None)
-    if (
-        not isinstance(task_id, str)
-        or not task_id
-        or not isinstance(child_session_id, str)
-        or not child_session_id
-    ):
+    if not isinstance(task_id, str) or not task_id:
         return []
 
+    child_session_id = getattr(run, "child_session_id", None)
     if variables is None:
-        try:
-            variables = SessionVariableManager(runner.run_storage.db).get_variables(
-                child_session_id
-            )
-        except Exception:
-            logger.debug(
-                "Failed to read task edit attribution for agent session %s",
-                child_session_id,
-                exc_info=True,
-            )
-            return []
+        variables = {}
+        if isinstance(child_session_id, str) and child_session_id:
+            try:
+                variables = SessionVariableManager(runner.run_storage.db).get_variables(
+                    child_session_id
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to read task edit attribution for agent session %s",
+                    child_session_id,
+                    exc_info=True,
+                )
 
     checkout_root = _agent_run_checkout_root(runner, run)
     if checkout_root is None:
@@ -111,6 +109,12 @@ def agent_run_task_dirty_paths(
     attributed = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
     if not attributed:
         attributed = task_edited_file_set(variables, task_id)
+    checkout_ids = (getattr(run, "worktree_id", None), getattr(run, "clone_id", None))
+    isolated = any(
+        isinstance(checkout_id, str) and bool(checkout_id) for checkout_id in checkout_ids
+    )
+    if not attributed and isolated:
+        attributed = {"."}
     dirty = task_dirty_paths(attributed, checkout_root)
     return None if dirty is None else sorted(dirty)
 
