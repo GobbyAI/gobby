@@ -7,8 +7,46 @@ use gobby_client::theme::{
     INFO_HUE, WARNING_HUE,
 };
 use gobby_client::ui::chrome::RowState;
-use gobby_client::ui::status::{control_indicator, state_dot, state_label};
+use gobby_client::ui::status::{
+    control_indicator, render_toast_notification, state_dot, state_label, toast_cue, Toast,
+    ToastKind,
+};
+use gobby_client::ui::Chrome;
+use ratatui::backend::TestBackend;
+use ratatui::style::Color;
+use ratatui::Terminal;
 use std::collections::HashSet;
+
+const TOAST_KINDS: [ToastKind; 4] = [
+    ToastKind::Info,
+    ToastKind::Warning,
+    ToastKind::Error,
+    ToastKind::Success,
+];
+
+/// Renders one toast and returns its title row (colour stripped) plus the
+/// foreground of the first cell, where the kind cue sits.
+fn toast_title_row(kind: ThemeKind, toast_kind: ToastKind) -> (String, Color) {
+    let mut chrome = Chrome::new(Theme::new(kind));
+    chrome.toast = Some(Toast {
+        kind: toast_kind,
+        title: "term-alpha".to_string(),
+        body: None,
+        target: None,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let mut rect = None;
+    terminal
+        .draw(|frame| rect = render_toast_notification(frame, frame.area(), &chrome))
+        .unwrap();
+    let rect = rect.expect("toast drawn");
+    let buffer = terminal.backend().buffer();
+    let y = rect.y + 1;
+    let row: String = (rect.x + 1..rect.x + rect.width - 1)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect();
+    (row, buffer[(rect.x + 1, y)].fg)
+}
 
 const NEUTRAL_NAMES: &[&str] = &[
     "panel_bg",
@@ -179,6 +217,40 @@ fn tokens_match_design_contract_and_survive_monochrome() {
             control.insert((glyph, label));
         }
         assert_eq!(control.len(), 5, "control states share a cue: {control:?}");
+
+        // Toasts: every kind leads its title with a fixed cue, so the four
+        // title rows stay distinct with colour stripped, and the cue keeps AA
+        // contrast on the toast surface.
+        let mut toast_cues = HashSet::new();
+        for toast_kind in TOAST_KINDS {
+            let (row, fg) = toast_title_row(kind, toast_kind);
+            let cue = row
+                .trim()
+                .strip_suffix("term-alpha")
+                .unwrap_or_else(|| panic!("{kind:?} {toast_kind:?} title row {row:?}"))
+                .trim()
+                .to_string();
+            let (glyph, label) = toast_cue(toast_kind);
+            assert!(
+                !glyph.trim().is_empty() && !label.is_empty(),
+                "{toast_kind:?}"
+            );
+            assert_eq!(cue, format!("{glyph} {label}"), "{kind:?} {toast_kind:?}");
+            let Color::Rgb(r, g, b) = fg else {
+                panic!("{kind:?} {toast_kind:?} cue colour {fg:?}");
+            };
+            let ratio = contrast_ratio((r, g, b), theme.neutrals.panel_bg.rgb());
+            assert!(
+                ratio >= 4.5,
+                "{kind:?} {toast_kind:?} cue on panel_bg: {ratio:.2}"
+            );
+            toast_cues.insert(cue);
+        }
+        assert_eq!(
+            toast_cues.len(),
+            TOAST_KINDS.len(),
+            "{kind:?} toast kinds share a cue: {toast_cues:?}"
+        );
 
         // The map is applied through gobby_terminal's terminal_theme.
         let tt = theme.terminal_theme();

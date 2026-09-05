@@ -90,7 +90,27 @@ pub fn control_glyph_label(control: ControlState, take_back: bool) -> (&'static 
     }
 }
 
-fn toast_dot_color(kind: ToastKind, p: &Palette) -> Color {
+/// Kind cue for a toast: glyph plus label, so Info, Warning, Error, and
+/// Success stay apart with colour stripped. Gobby-specific; colour is the
+/// fourth signal after glyph, label, and title position.
+pub fn toast_cue(kind: ToastKind) -> (&'static str, &'static str) {
+    match kind {
+        ToastKind::Info => ("◇", "info"),
+        ToastKind::Warning => ("△", "warning"),
+        ToastKind::Error => ("×", "error"),
+        ToastKind::Success => ("✓", "success"),
+    }
+}
+
+/// Cells the cue occupies ahead of the title: glyph, space, label, two spaces.
+fn toast_cue_width(kind: ToastKind) -> u16 {
+    let (glyph, label) = toast_cue(kind);
+    display_width_u16(glyph)
+        .saturating_add(display_width_u16(label))
+        .saturating_add(3)
+}
+
+fn toast_cue_color(kind: ToastKind, p: &Palette) -> Color {
     match kind {
         ToastKind::Info => p.blue,
         ToastKind::Warning => p.yellow,
@@ -123,8 +143,9 @@ pub fn toast_notification_rect(area: Rect, toast: &Toast) -> Option<Rect> {
     }
     let body = toast.body.as_deref().unwrap_or("");
     let content_width = display_width_u16(&toast.title)
-        .max(display_width_u16(body))
-        .saturating_add(4);
+        .saturating_add(toast_cue_width(toast.kind))
+        .max(display_width_u16(body).saturating_add(2))
+        .saturating_add(2);
     let width = content_width.saturating_add(2).min(area.width);
     let content_height = if body.is_empty() { 1 } else { 2 };
     let height = (content_height + 2).min(area.height);
@@ -138,7 +159,8 @@ pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome)
     let toast = chrome.toast.as_ref()?;
     let toast_area = toast_notification_rect(area, toast)?;
     let p = &chrome.palette;
-    let dot_color = toast_dot_color(toast.kind, p);
+    let (glyph, label) = toast_cue(toast.kind);
+    let cue_color = toast_cue_color(toast.kind, p);
     let body = toast.body.as_deref().unwrap_or("");
 
     frame.render_widget(Clear, toast_area);
@@ -157,8 +179,10 @@ pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome)
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner);
 
     let title = Line::from(vec![
-        Span::styled("●", Style::default().fg(dot_color)),
+        Span::styled(glyph, Style::default().fg(cue_color)),
         Span::raw(" "),
+        Span::styled(label, Style::default().fg(cue_color)),
+        Span::raw("  "),
         Span::styled(
             toast.title.as_str(),
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
@@ -320,9 +344,10 @@ mod tests {
             body: None,
             target: None,
         };
+        // "◇ info  " (8 cells) leads the 10-cell title, plus padding and borders.
         assert_eq!(
             toast_notification_rect(area, &toast),
-            Some(Rect::new(64, 21, 16, 3))
+            Some(Rect::new(58, 21, 22, 3))
         );
         toast.body = Some("waiting on an answer".to_string());
         assert_eq!(
