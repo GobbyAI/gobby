@@ -8,7 +8,10 @@ from typing import Any
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import (
+    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    TaskCloseReviewStore,
+)
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.agentic_close_review import build_terminal_review_payload
 from gobby.tasks.state_semantics import is_task_closed
@@ -26,7 +29,9 @@ def terminal_review_delivery(
     if review.active:
         run = LocalAgentRunManager(db).get(run_id)
         task = LocalTaskManager(db).get_task(review.task_id)
-        if review.status == "finalizing" and task is not None and is_task_closed(task):
+        if review.status == "finalizing":
+            if task is None or not is_task_closed(task):
+                return None
             close_result = {
                 "success": True,
                 "can_close": True,
@@ -44,15 +49,17 @@ def terminal_review_delivery(
         else:
             run_status = run.status if run is not None else "missing"
             run_error = run.error if run is not None else None
-            message = (
-                f"Task-close validator run ended with status {run_status}: {run_error}"
-                if run_error
-                else f"Task-close validator run ended with status {run_status} before finalization."
-            )
+            if run_status == "success" and not run_error:
+                message = VALIDATOR_RUN_ENDED_SUCCESS_ERROR
+            elif run_error:
+                message = f"Task-close validator run ended with status {run_status}: {run_error}"
+            else:
+                message = (
+                    f"Task-close validator run ended with status {run_status} before finalization."
+                )
             payload = build_terminal_review_payload(review, status="error", message=message)
             review = (
-                store.finish(review.id, status="error", result_payload=payload, error=message)
-                or review
+                store.finish_run_ended(review.id, result_payload=payload, error=message) or review
             )
     if review.result_payload is None:
         return None

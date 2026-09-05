@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+from psycopg.errors import UniqueViolation
+
 from gobby.storage.hub.protocol import HubDatabase
 
 ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
@@ -20,12 +22,17 @@ ACTIVE_TASK_CLOSE_REVIEW_STATUSES: tuple[ActiveTaskCloseReviewStatus, ...] = (
     "running",
     "finalizing",
 )
+_ACTIVE_TASK_CLOSE_REVIEW_CONSTRAINT = "uq_task_close_reviews_active_task"
 TERMINAL_TASK_CLOSE_REVIEW_STATUSES: tuple[TerminalTaskCloseReviewStatus, ...] = (
     "closed",
     "invalid",
     "external_pending",
     "stale",
     "error",
+)
+
+VALIDATOR_RUN_ENDED_SUCCESS_ERROR = (
+    "Task-close validator run ended with status success before finalization."
 )
 
 _COLUMNS = """
@@ -294,13 +301,33 @@ class TaskCloseReviewStore:
         return _review_from_row(row) if row is not None else None
 
     def claim_finalizing(self, review_id: str, run_id: str) -> TaskCloseReview | None:
-        """Claim the single verdict-finalization transition."""
-        return self._transition(
-            review_id,
-            from_status="running",
-            to_status="finalizing",
-            run_id=run_id,
-        )
+        """Claim verdict finalization, including a late verdict from a successful run."""
+        now = datetime.now(UTC)
+        with self.db.transaction() as conn:
+            savepoint = conn.savepoint("task_close_review_claim_finalizing")
+            try:
+                row = conn.execute(
+                    f"""
+                    UPDATE task_close_reviews
+                    SET status = 'finalizing', result_payload = NULL, error = NULL,
+                        completed_at = NULL, delivered_at = NULL, updated_at = %s
+                    WHERE id = %s AND agent_run_id = %s
+                      AND (
+                          status = 'running'
+                          OR (status = 'error' AND error = %s)
+                      )
+                    RETURNING {_COLUMNS}
+                    """,  # nosec B608 - static column fragment
+                    (now, review_id, run_id, VALIDATOR_RUN_ENDED_SUCCESS_ERROR),
+                ).fetchone()
+            except UniqueViolation as exc:
+                savepoint.rollback()
+                savepoint.release()
+                if exc.diag.constraint_name == _ACTIVE_TASK_CLOSE_REVIEW_CONSTRAINT:
+                    return None
+                raise
+            savepoint.release()
+        return _review_from_row(row) if row is not None else None
 
     def restore_running(self, review_id: str, run_id: str, *, error: str) -> bool:
         """Return a malformed submission to running so the validator can correct it."""
@@ -325,6 +352,39 @@ class TaskCloseReviewStore:
         error: str | None = None,
     ) -> TaskCloseReview | None:
         """Persist a terminal payload and clear the task's active-review lock."""
+        return self._finish(
+            review_id,
+            status=status,
+            result_payload=result_payload,
+            error=error,
+            eligible_statuses=ACTIVE_TASK_CLOSE_REVIEW_STATUSES,
+        )
+
+    def finish_run_ended(
+        self,
+        review_id: str,
+        *,
+        result_payload: Mapping[str, Any],
+        error: str,
+    ) -> TaskCloseReview | None:
+        """Terminalize an abandoned run without overwriting an in-flight finalization."""
+        return self._finish(
+            review_id,
+            status="error",
+            result_payload=result_payload,
+            error=error,
+            eligible_statuses=("launching", "running"),
+        )
+
+    def _finish(
+        self,
+        review_id: str,
+        *,
+        status: TerminalTaskCloseReviewStatus,
+        result_payload: Mapping[str, Any],
+        error: str | None,
+        eligible_statuses: tuple[ActiveTaskCloseReviewStatus, ...],
+    ) -> TaskCloseReview | None:
         now = datetime.now(UTC)
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -342,7 +402,7 @@ class TaskCloseReviewStore:
                     now,
                     now,
                     review_id,
-                    list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
+                    list(eligible_statuses),
                 ),
             ).fetchone()
         return _review_from_row(row) if row is not None else self.get(review_id)
@@ -463,4 +523,5 @@ __all__ = [
     "TaskCloseReviewStatus",
     "TaskCloseReviewStore",
     "TerminalTaskCloseReviewStatus",
+    "VALIDATOR_RUN_ENDED_SUCCESS_ERROR",
 ]

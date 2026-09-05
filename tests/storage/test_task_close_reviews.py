@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.task_close_reviews import TaskCloseReviewStore
+from gobby.storage.task_close_reviews import (
+    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    TaskCloseReviewStore,
+)
 
 
 def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) -> None:
@@ -64,6 +67,105 @@ def test_review_lifecycle_preserves_arguments_payload_and_delivery(temp_db: HubD
     delivered = store.get(review.id)
     assert delivered is not None and delivered.delivered_at is not None
     assert store.list_reconcilable() == []
+
+
+def test_claim_finalizing_from_run_ended_error(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _created = store.create_or_get_active(**_intent())
+    running = store.bind_run(review.id, _RUN_ID)
+    assert running is not None
+    prior_payload = {"status": "error", "message": VALIDATOR_RUN_ENDED_SUCCESS_ERROR}
+    errored = store.finish(
+        review.id,
+        status="error",
+        result_payload=prior_payload,
+        error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    )
+    assert errored is not None
+    assert store.mark_delivered(review.id) is True
+
+    claimed = store.claim_finalizing(review.id, _RUN_ID)
+
+    assert claimed is not None
+    assert claimed.status == "finalizing"
+    assert claimed.result_payload is None
+    assert claimed.error is None
+    assert claimed.completed_at is None
+    assert claimed.delivered_at is None
+
+
+def test_claim_finalizing_does_not_reopen_other_terminal_errors(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _created = store.create_or_get_active(**_intent())
+    running = store.bind_run(review.id, _RUN_ID)
+    assert running is not None
+    errored = store.finish(
+        review.id,
+        status="error",
+        result_payload={"status": "error", "message": "boom"},
+        error="boom",
+    )
+    assert errored is not None
+
+    assert store.claim_finalizing(review.id, _RUN_ID) is None
+    current = store.get(review.id)
+    assert current is not None and current.status == "error"
+
+
+def test_late_claim_yields_to_newer_active_review(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    old_review, _created = store.create_or_get_active(**_intent())
+    assert store.bind_run(old_review.id, _RUN_ID) is not None
+    prior_payload = {"status": "error", "message": VALIDATOR_RUN_ENDED_SUCCESS_ERROR}
+    assert (
+        store.finish(
+            old_review.id,
+            status="error",
+            result_payload=prior_payload,
+            error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+        )
+        is not None
+    )
+    newer, created = store.create_or_get_active(
+        **{
+            **_intent(),
+            "review_fingerprint": "newer-review",
+            "evidence_fingerprint": "newer-evidence",
+        }
+    )
+    assert created is True
+    assert store.bind_run(newer.id, "00000000-0000-4000-8000-000000000099") is not None
+
+    assert store.claim_finalizing(old_review.id, _RUN_ID) is None
+
+    old_current = store.get(old_review.id)
+    active = store.get_active_for_task(old_review.task_id)
+    assert old_current is not None
+    assert old_current.status == "error"
+    assert old_current.result_payload == prior_payload
+    assert active is not None
+    assert active.id == newer.id
+    assert active.status == "running"
+
+
+def test_run_end_finish_does_not_overwrite_finalizing(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    review, _created = store.create_or_get_active(**_intent())
+    running = store.bind_run(review.id, _RUN_ID)
+    assert running is not None
+    finalizing = store.claim_finalizing(review.id, _RUN_ID)
+    assert finalizing is not None
+
+    unchanged = store.finish_run_ended(
+        review.id,
+        result_payload={"status": "error", "message": "run ended"},
+        error="run ended",
+    )
+
+    assert unchanged is not None
+    assert unchanged.status == "finalizing"
+    assert unchanged.result_payload is None
+    assert unchanged.error is None
 
 
 def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> None:
