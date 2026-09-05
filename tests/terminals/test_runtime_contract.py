@@ -8,8 +8,10 @@ import os
 import shutil
 import signal
 import sys
+import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack, ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,7 +53,7 @@ from tests.e2e.conftest import (
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
-    wait_for_port,
+    wait_for_daemon_websocket,
 )
 from tests.terminals.conftest import gterm_binary, require_backend
 
@@ -106,8 +108,11 @@ while True:
 
 
 def _short_dir(prefix: str) -> Path:
-    path = Path(f"/tmp/{prefix}-{os.getpid()}-{uuid.uuid4().hex[:8]}")
-    path.mkdir(parents=True, exist_ok=True)
+    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
+    path = Path(tempfile.mkdtemp(prefix=prefix[:1], dir=root)).resolve()
+    if len(os.fsencode(path / "gterm-control.sock")) >= 104:
+        path.rmdir()
+        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
     return path
 
 
@@ -195,26 +200,21 @@ class ContractHarness:
     _fifo: TmuxOutputReader | None = None
 
     async def close(self) -> None:
-        try:
+        async with AsyncExitStack() as cleanup:
+            cleanup.callback(shutil.rmtree, self.workdir, ignore_errors=True)
+            if self.host is not None:
+                cleanup.callback(shutil.rmtree, self.host.socket_dir, ignore_errors=True)
+            if self.tmux_socket is not None:
+                cleanup.callback(self.tmux_socket.unlink, missing_ok=True)
+            if self.sessions is not None and self.tmux_socket is not None:
+                cleanup.push_async_callback(self.sessions._run, "kill-server")
+            if self.host is not None:
+                cleanup.push_async_callback(self.host.stop, preserve_host=False)
+            if self.frame_client is not None:
+                cleanup.push_async_callback(self.frame_client.close)
+            cleanup.push_async_callback(self.runtime.terminate, self.terminal, 0.2)
             if self._fifo is not None:
-                await self._fifo.stop_reader("contract")
-        except Exception:
-            pass
-        try:
-            await self.runtime.terminate(self.terminal, 0.2)
-        except Exception:
-            pass
-        if self.frame_client is not None:
-            await self.frame_client.close()
-        if self.host is not None:
-            await self.host.stop(preserve_host=False)
-        if self.sessions is not None and self.tmux_socket is not None:
-            await self.sessions._run("kill-server")
-        shutil.rmtree(self.workdir, ignore_errors=True)
-        if self.host is not None:
-            shutil.rmtree(self.host.socket_dir, ignore_errors=True)
-        if self.tmux_socket is not None:
-            self.tmux_socket.unlink(missing_ok=True)
+                cleanup.push_async_callback(self._fifo.stop_reader, "contract")
 
 
 async def _open_frame_client(
@@ -241,108 +241,119 @@ async def _open_frame_client(
 
 
 async def _start_harness(backend: str) -> ContractHarness:
-    workdir = _short_dir("gobby-rt")
-    script = workdir / "probe.py"
-    script.write_text(_PROBE)
-    command = [sys.executable, "-u", str(script)]
-    terminal_id = uuid4()
-    spawn_key = derive_spawn_key(backend, str(terminal_id))
-    request = TerminalSpawnRequest(
-        terminal_id=terminal_id,
-        spawn_key=spawn_key,
-        command=command,
-        cwd=str(workdir),
-        rows=SPAWN_ROWS,
-        cols=SPAWN_COLS,
-    )
-    host: TerminalHostManager | None = None
-    sessions: TmuxSessionManager | None = None
-    tmux_socket: Path | None = None
-    frame: FrameClient | None = None
-    if backend == "tmux":
-        tmux_socket = Path(f"/tmp/gobby-rt-{os.getpid()}-{uuid.uuid4().hex[:8]}.sock")
-        sessions = TmuxSessionManager(TmuxConfig(socket_name="", socket_path=str(tmux_socket)))
-        runtime: TerminalRuntime = TmuxTerminalRuntime(sessions)
-        prepared = await runtime.prepare_spawn(request)
-        prepared.acknowledge_persist()
-        await runtime.commit_spawn(prepared)
-        terminal = _terminal_from_prepared(
-            backend=backend,
+    async with AsyncExitStack() as cleanup:
+        workdir = _short_dir("gobby-rt")
+        cleanup.callback(shutil.rmtree, workdir, ignore_errors=True)
+        script = workdir / "probe.py"
+        script.write_text(_PROBE)
+        command = [sys.executable, "-u", str(script)]
+        terminal_id = uuid4()
+        spawn_key = derive_spawn_key(backend, str(terminal_id))
+        request = TerminalSpawnRequest(
             terminal_id=terminal_id,
             spawn_key=spawn_key,
-            prepared=prepared,
+            command=command,
+            cwd=str(workdir),
             rows=SPAWN_ROWS,
             cols=SPAWN_COLS,
         )
-        fifo = TmuxOutputReader(TmuxConfig(socket_name="", socket_path=str(tmux_socket)))
-        outputs: list[str] = []
+        host: TerminalHostManager | None = None
+        sessions: TmuxSessionManager | None = None
+        tmux_socket: Path | None = None
+        frame: FrameClient | None = None
+        if backend == "tmux":
+            tmux_socket = workdir / "tmux.sock"
+            sessions = TmuxSessionManager(TmuxConfig(socket_name="", socket_path=str(tmux_socket)))
+            cleanup.push_async_callback(sessions._run, "kill-server")
+            runtime: TerminalRuntime = TmuxTerminalRuntime(sessions)
+            prepared = await runtime.prepare_spawn(request)
+            prepared.acknowledge_persist()
+            await runtime.commit_spawn(prepared)
+            terminal = _terminal_from_prepared(
+                backend=backend,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                prepared=prepared,
+                rows=SPAWN_ROWS,
+                cols=SPAWN_COLS,
+            )
+            fifo = TmuxOutputReader(TmuxConfig(socket_name="", socket_path=str(tmux_socket)))
+            outputs: list[str] = []
 
-        async def on_output(_run_id: str, data: str) -> None:
-            outputs.append(data)
+            async def on_output(_run_id: str, data: str) -> None:
+                outputs.append(data)
 
-        fifo.set_output_callback(on_output)
-        await fifo.start_reader("contract", spawn_key)
-        harness = ContractHarness(
-            backend=backend,
-            runtime=runtime,
-            terminal=terminal,
-            workdir=workdir,
-            sessions=sessions,
-            tmux_socket=tmux_socket,
-            outputs=outputs,
-            _fifo=fifo,
-        )
-    else:
-        binary = gterm_binary()
-        assert binary is not None
-        socket_dir = _short_dir("gobby-host")
-        (socket_dir / "local_cli_token").write_text("contract-frame-token\n", encoding="utf-8")
-        host = TerminalHostManager(
-            config=TerminalHostConfig(
-                enabled=True,
-                socket_dir=str(socket_dir),
-                binary_path=str(binary),
-                health_interval_seconds=3600.0,
-            ),
-            terminal_config=TerminalConfig(),
-        )
-        await host.start()
-        if not host.native_available or host.host_epoch is None:
-            await host.stop(preserve_host=False)
-            shutil.rmtree(socket_dir, ignore_errors=True)
-            pytest.fail(f"gterm host failed to start: {host.last_error}")
-        epoch = str(host.host_epoch)
-        runtime = NativeTerminalRuntime(
-            HostManagerControl(host),
-            frame_host_epoch=epoch,
-        )
-        runtime._subscribed = True
-        reservation = await runtime.reserve_observer(terminal_id)
-        request.reservation_id = reservation["reservation_id"]
-        request.reserve_key = reservation["reserve_key"]
-        prepared = await runtime.prepare_spawn(request)
-        prepared.acknowledge_persist()
-        await runtime.bind_observer(prepared, reservation["reservation_id"])
-        await runtime.commit_spawn(prepared)
-        terminal = _terminal_from_prepared(
-            backend=backend,
-            terminal_id=terminal_id,
-            spawn_key=spawn_key,
-            prepared=prepared,
-            rows=SPAWN_ROWS,
-            cols=SPAWN_COLS,
-        )
-        frame = runtime._frame_client if isinstance(runtime._frame_client, FrameClient) else None
-        harness = ContractHarness(
-            backend=backend,
-            runtime=runtime,
-            terminal=terminal,
-            workdir=workdir,
-            host=host,
-            frame_client=frame,
-        )
-    await _wait_snapshot(harness.runtime, harness.terminal, READY, description="prompt-ready")
-    return harness
+            fifo.set_output_callback(on_output)
+            cleanup.push_async_callback(fifo.stop_reader, "contract")
+            await fifo.start_reader("contract", spawn_key)
+            harness = ContractHarness(
+                backend=backend,
+                runtime=runtime,
+                terminal=terminal,
+                workdir=workdir,
+                sessions=sessions,
+                tmux_socket=tmux_socket,
+                outputs=outputs,
+                _fifo=fifo,
+            )
+        else:
+            binary = gterm_binary()
+            assert binary is not None
+            socket_dir = _short_dir("gobby-host")
+            cleanup.callback(shutil.rmtree, socket_dir, ignore_errors=True)
+            (socket_dir / "local_cli_token").write_text("contract-frame-token\n", encoding="utf-8")
+            host = TerminalHostManager(
+                config=TerminalHostConfig(
+                    enabled=True,
+                    socket_dir=str(socket_dir),
+                    binary_path=str(binary),
+                    health_interval_seconds=3600.0,
+                ),
+                terminal_config=TerminalConfig(),
+            )
+            cleanup.push_async_callback(host.stop, preserve_host=False)
+            await host.start()
+            if not host.native_available or host.host_epoch is None:
+                await host.stop(preserve_host=False)
+                shutil.rmtree(socket_dir, ignore_errors=True)
+                pytest.fail(f"gterm host failed to start: {host.last_error}")
+            epoch = str(host.host_epoch)
+            runtime = NativeTerminalRuntime(
+                HostManagerControl(host),
+                frame_host_epoch=epoch,
+            )
+            runtime._subscribed = True
+            reservation = await runtime.reserve_observer(terminal_id)
+            request.reservation_id = reservation["reservation_id"]
+            request.reserve_key = reservation["reserve_key"]
+            prepared = await runtime.prepare_spawn(request)
+            prepared.acknowledge_persist()
+            await runtime.bind_observer(prepared, reservation["reservation_id"])
+            await runtime.commit_spawn(prepared)
+            terminal = _terminal_from_prepared(
+                backend=backend,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                prepared=prepared,
+                rows=SPAWN_ROWS,
+                cols=SPAWN_COLS,
+            )
+            frame = (
+                runtime._frame_client if isinstance(runtime._frame_client, FrameClient) else None
+            )
+            if frame is not None:
+                cleanup.push_async_callback(frame.close)
+            harness = ContractHarness(
+                backend=backend,
+                runtime=runtime,
+                terminal=terminal,
+                workdir=workdir,
+                host=host,
+                frame_client=frame,
+            )
+        await _wait_snapshot(harness.runtime, harness.terminal, READY, description="prompt-ready")
+        cleanup.pop_all()  # Ownership transfers to ContractHarness.close after setup succeeds.
+        return harness
 
 
 def _frame_text(message: dict[str, Any]) -> str:
@@ -619,77 +630,83 @@ def _start_isolated_daemon(
     host and stop it with ``_stop_host``; the third element is the daemon's
     private tmux socket, killed with ``kill_tmux_server``.
     """
-    home = _short_dir("gobby-rt-home")
-    socket_dir = _short_dir("gobby-rt-host")
-    binary = gterm_binary()
-    tmux_socket = _seed_e2e_runtime_state(postgres_db, home)
-    _patch_daemon_backend(postgres_db, backend=backend, socket_dir=socket_dir, binary=binary)
-    (home / "machine_id").write_text(MACHINE_ID)
-    http_port = find_free_port()
-    ws_port = find_free_port()
-    log_dir = home / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    config_path = home / "config.yaml"
-    config_path.write_text("test_mode: true\n")
-    postgres_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
-    (home / "bootstrap.yaml").write_text(
-        "\n".join(
-            [
-                "hub_backend: postgres",
-                f"database_url: {postgres_url}",
-                f"daemon_port: {http_port}",
-                "bind_host: localhost",
-                f"websocket_port: {ws_port}",
-                f"files_home: {home / 'files'}",
-            ]
+    with ExitStack() as cleanup:
+        home = _short_dir("gobby-rt-home")
+        cleanup.callback(shutil.rmtree, home)
+        socket_dir = _short_dir("gobby-rt-host")
+        cleanup.callback(_stop_host, socket_dir)
+        binary = gterm_binary()
+        tmux_socket = _seed_e2e_runtime_state(postgres_db, home)
+        cleanup.callback(kill_tmux_server, tmux_socket)
+        _patch_daemon_backend(postgres_db, backend=backend, socket_dir=socket_dir, binary=binary)
+        (home / "machine_id").write_text(MACHINE_ID)
+        http_port = find_free_port()
+        ws_port = find_free_port()
+        log_dir = home / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        config_path = home / "config.yaml"
+        config_path.write_text("test_mode: true\n")
+        postgres_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
+        (home / "bootstrap.yaml").write_text(
+            "\n".join(
+                [
+                    "hub_backend: postgres",
+                    f"database_url: {postgres_url}",
+                    f"daemon_port: {http_port}",
+                    "bind_host: localhost",
+                    f"websocket_port: {ws_port}",
+                    f"files_home: {home / 'files'}",
+                ]
+            )
+            + "\n"
         )
-        + "\n"
-    )
-    (home / "bootstrap.yaml").chmod(0o600)
-    (home / "files").mkdir(exist_ok=True)
-    env = prepare_daemon_env(home_dir=home)
-    env["GOBBY_CONFIG"] = str(config_path)
-    env["GOBBY_HOME"] = str(home)
-    native_dir = gterm_binary()
-    if native_dir is not None:
-        env["GOBBY_NATIVE_BIN_DIR"] = str(native_dir.parent)
-    command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
-    log_file = log_dir / "daemon.log"
-    error_log_file = log_dir / "daemon_error.log"
-    with log_file.open("w") as log_f, error_log_file.open("w") as err_f:
-        process = __import__("subprocess").Popen(
-            command,
-            stdout=log_f,
-            stderr=err_f,
-            stdin=__import__("subprocess").DEVNULL,
-            cwd=str(home),
+        (home / "bootstrap.yaml").chmod(0o600)
+        (home / "files").mkdir(exist_ok=True)
+        env = prepare_daemon_env(home_dir=home)
+        env["GOBBY_CONFIG"] = str(config_path)
+        env["GOBBY_HOME"] = str(home)
+        native_dir = gterm_binary()
+        if native_dir is not None:
+            env["GOBBY_NATIVE_BIN_DIR"] = str(native_dir.parent)
+        command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+        log_file = log_dir / "daemon.log"
+        error_log_file = log_dir / "daemon_error.log"
+        with log_file.open("w") as log_f, error_log_file.open("w") as err_f:
+            process = __import__("subprocess").Popen(
+                command,
+                stdout=log_f,
+                stderr=err_f,
+                stdin=__import__("subprocess").DEVNULL,
+                cwd=str(home),
+                env=env,
+                start_new_session=True,
+            )
+        cleanup.callback(terminate_process_tree, process.pid)
+        instance = DaemonInstance(
+            process=process,
+            pid=process.pid,
+            http_port=http_port,
+            ws_port=ws_port,
+            project_dir=home,
+            gobby_dir=home / ".gobby",
+            log_file=log_file,
+            error_log_file=error_log_file,
+            db_path=home / "hub-postgres.db",
+            config_path=config_path,
+            command=command,
             env=env,
-            start_new_session=True,
         )
-    instance = DaemonInstance(
-        process=process,
-        pid=process.pid,
-        http_port=http_port,
-        ws_port=ws_port,
-        project_dir=home,
-        gobby_dir=home / ".gobby",
-        log_file=log_file,
-        error_log_file=error_log_file,
-        db_path=home / "hub-postgres.db",
-        config_path=config_path,
-        command=command,
-        env=env,
-    )
-    if not wait_for_daemon_health(http_port, timeout=30.0):
-        terminate_process_tree(process.pid)
-        pytest.fail(
-            "contract daemon failed to start\n"
-            f"{instance.read_logs()[-2000:]}\n{instance.read_error_logs()[-2000:]}"
-        )
-    if not wait_for_port(ws_port, timeout=10.0):
-        terminate_process_tree(process.pid)
-        pytest.fail("contract daemon websocket was not ready")
-    return instance, socket_dir, tmux_socket
+        if not wait_for_daemon_health(http_port, timeout=30.0):
+            terminate_process_tree(process.pid)
+            pytest.fail(
+                "contract daemon failed to start\n"
+                f"{instance.read_logs()[-2000:]}\n{instance.read_error_logs()[-2000:]}"
+            )
+        if not wait_for_daemon_websocket(ws_port, home, timeout=10.0):
+            terminate_process_tree(process.pid)
+            pytest.fail("contract daemon websocket was not ready")
+        cleanup.pop_all()
+        return instance, socket_dir, tmux_socket
 
 
 def _stop_host(socket_dir: Path) -> None:

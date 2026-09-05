@@ -11,6 +11,7 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import termios
 import threading
 import time
@@ -25,11 +26,13 @@ import websockets
 
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameClient, FrameProtocolError
+from gobby.terminals.host_protocol import read_pidfile
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     daemon_token,
+    terminate_process_tree,
 )
 
 pytestmark = pytest.mark.e2e
@@ -100,26 +103,37 @@ def _gterm_bin_dir() -> Path:
     pytest.skip("gterm binary is not available")
 
 
+def _short_socket_dir() -> Path:
+    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
+    path = Path(tempfile.mkdtemp(prefix="", dir=root)).resolve()
+    if len(os.fsencode(path / "gterm-control.sock")) >= 104:
+        path.rmdir()
+        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
+    return path
+
+
 @pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
-    socket_dir = Path(f"/tmp/gobby-host-{os.getpid()}-{uuid.uuid4().hex[:8]}")
-    socket_dir.mkdir(parents=True, exist_ok=True)
+    socket_dir = _short_socket_dir()
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
-    mutations = ConfigMutations(postgres_db)
-    mutations.patch_internal(
-        expected_revision=mutations.repository.current_revision(),
-        patch=ConfigPatch(values={"terminal_host.socket_dir": str(socket_dir)}),
-        source="e2e-external-terminal",
-    )
-    monkeypatch.setenv("GOBBY_E2E_HOST_SOCKET_DIR", str(socket_dir))
     try:
+        mutations = ConfigMutations(postgres_db)
+        mutations.patch_internal(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(values={"terminal_host.socket_dir": str(socket_dir)}),
+            source="e2e-external-terminal",
+        )
+        monkeypatch.setenv("GOBBY_E2E_HOST_SOCKET_DIR", str(socket_dir))
         yield
     finally:
+        host_pid = read_pidfile(socket_dir)
+        if host_pid is not None:
+            terminate_process_tree(host_pid)
         shutil.rmtree(socket_dir, ignore_errors=True)
 
 
@@ -179,7 +193,7 @@ class IsolatedTmux:
 
     def __init__(self, directory: Path) -> None:
         self.directory = directory
-        self.socket = Path(f"/tmp/gobby-ext-{os.getpid()}-{uuid.uuid4().hex[:8]}.sock")
+        self.socket = _short_socket_dir() / "tmux.sock"
         self.session = f"ext-{uuid.uuid4().hex[:8]}"
         self.script = directory / "cli.py"
         self.script.write_text(_CLI_SCRIPT)
@@ -285,13 +299,14 @@ class IsolatedTmux:
             self.owner = None
         _tmux(self.socket, "kill-server", check=False)
         self.socket.unlink(missing_ok=True)
+        self.socket.parent.rmdir()
 
 
 @pytest.fixture
 def isolated_tmux(tmp_path: Path) -> Iterator[IsolatedTmux]:
     server = IsolatedTmux(tmp_path)
-    server.start()
     try:
+        server.start()
         yield server
     finally:
         server.close()
