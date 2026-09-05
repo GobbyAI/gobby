@@ -1055,6 +1055,19 @@ async fn proxy_finalization_tombstones_without_followup_requests() {
         .pane_for_terminal("terminal-final")
         .expect("finalized pane");
     let attachment_id = workspace.pane(pane_id).attachment_id().to_string();
+    timeout(IO_TIMEOUT, async {
+        loop {
+            if mock.requests().iter().any(|request| {
+                request.body.as_ref().and_then(|body| body.get("type"))
+                    == Some(&json!("terminal_set_viewport"))
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("initial viewport reaches the mock before the request snapshot");
     let requests_before = mock.requests().len();
     mock.send_event_and_wait(json!({
         "type": "terminal_attachment_finalized",
@@ -1110,6 +1123,7 @@ async fn proxy_finalization_tombstones_without_followup_requests() {
     let forbidden: Vec<_> = mock
         .requests()
         .into_iter()
+        .skip(requests_before)
         .filter_map(|request| request.body)
         .filter(|body| {
             matches!(
