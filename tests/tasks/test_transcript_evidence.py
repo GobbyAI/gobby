@@ -1296,6 +1296,39 @@ async def test_codex_direct_exec_command_uses_structured_result(tmp_path: Path) 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("result", "expected_outcome", "expected_exit"),
+    [
+        ({"exit_code": 0, "output": ""}, "success", 0),
+        ({"exit_code": 1, "output": "workflow.yml: invalid context"}, "failure", 1),
+        ({"output": "lint passed"}, "unknown", None),
+    ],
+)
+async def test_codex_actionlint_evidence_preserves_authoritative_outcome(
+    tmp_path: Path,
+    result: dict[str, object],
+    expected_outcome: str,
+    expected_exit: int | None,
+) -> None:
+    transcript = tmp_path / "codex-actionlint.jsonl"
+    command = "actionlint .github/workflows/ci.yml .github/workflows/rust-ci.yml"
+    _write_jsonl(transcript, _codex_direct_exec_pair(command=command, result=result))
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        None,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [
+        (run.outcome, run.exit_code, run.categories, run.command)
+        for run in evidence.validation_runs
+    ] == [(expected_outcome, expected_exit, ("lint",), command)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "result",
     [
         pytest.param(
@@ -1861,6 +1894,7 @@ def test_validation_run_core_command_strips_exit_preserving_prefixes(command: st
         pytest.param("uv run pytest tests/x.py; echo done", "trailing echo", id="semicolon-echo"),
         pytest.param("uv run pytest tests/x.py && echo done", "trailing echo", id="and-echo"),
         pytest.param("uv run pytest tests/x.py || true", "fallback", id="fallback"),
+        pytest.param("actionlint .github/workflows/ci.yml || true", "fallback", id="actionlint"),
         pytest.param("uv run pytest tests/x.py &", "backgrounding", id="ampersand"),
         pytest.param("nohup uv run pytest tests/x.py", "nohup wrapper", id="nohup"),
         pytest.param("(uv run pytest tests/x.py)", "subshell wrapper", id="subshell"),
