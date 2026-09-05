@@ -118,6 +118,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _sandbox_launch: Any = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
+    _on_prompt_delivered: Callable[[], None] | None = field(default=None, repr=False)
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
         default=None, repr=False
     )
@@ -407,6 +408,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             return False
         self.resume_session_id = None
         self.sdk_session_id = None
+        self._on_prompt_delivered = None
         try:
             await self.start(model=selected_model)
         except Exception:

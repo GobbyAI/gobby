@@ -8,6 +8,7 @@ import os
 import shutil
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -294,12 +295,18 @@ def test_network_capabilities_are_preserved_without_a_provider(tmp_path: Path) -
     [("claude", "CLAUDE_CODE_TMPDIR"), ("codex", "TMPDIR"), ("grok", "TMPDIR")],
 )
 @pytest.mark.asyncio
+@pytest.mark.parametrize("platform_name", ["darwin", "linux"])
+@pytest.mark.parametrize("allow_run_sockets", [False, True])
 async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_writable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     provider: str,
     temp_env_name: str,
+    platform_name: str,
+    allow_run_sockets: bool,
 ) -> None:
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform=platform_name))
     gobby_home = tmp_path / "gobby-home"
     workspace = tmp_path / "workspace"
     untrusted_mcp_root = tmp_path / "untrusted-mcp-root"
@@ -376,6 +383,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
             backend="srt",
             allow_network=False,
             extra_write_paths=[str(hook_inbox)],
+            allow_unix_sockets=[str(workspace / "operator.sock")],
         ),
         provider=provider,
         workspace_path=str(workspace),
@@ -385,6 +393,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         websocket_port=60888,
         api_base=None,
         env={"PATH": str(shim_dir)},
+        allow_run_unix_sockets=allow_run_sockets,
     )
 
     policy_path = Path(launch.policy_path or "")
@@ -396,8 +405,12 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert launch.runtime_version == SRT_RELEASE.version
     assert policy_path.parent == expected_parent / "assets"
     assert violation_path.parent == expected_parent / "logs"
-    temp_path = expected_parent / "tmp"
-    assert launch.provider_env[temp_env_name] == str(temp_path)
+    temp_path = Path(launch.provider_env[temp_env_name])
+    if allow_run_sockets and platform_name == "darwin":
+        assert temp_path.parent == tmp_path.resolve()
+        assert (expected_parent / "tmp-path").read_text() == str(temp_path)
+    else:
+        assert temp_path == expected_parent / "tmp"
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
     mux_dir = gobby_home / "runtime" / "srt-sock"
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
@@ -405,7 +418,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
     assert Path(launch.provider_env["CARGO_HOME"]).is_relative_to(expected_parent / "cache")
-    for writable_name in ("tmp", "hooks", "logs", "cache"):
+    for writable_name in ("hooks", "logs", "cache"):
         writable = expected_parent / writable_name
         assert writable.is_dir()
         assert writable.stat().st_mode & 0o777 == 0o700
@@ -420,6 +433,13 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert preflight_cwd == str(workspace)
     assert preflight_env == {"PATH": str(shim_dir), **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    socket_grants = policy["network"]["allowUnixSockets"]
+    assert str((workspace / "operator.sock").resolve()) in socket_grants
+    assert (str(temp_path.resolve()) in socket_grants) == (
+        allow_run_sockets and platform_name == "darwin"
+    )
+    assert policy["network"]["allowAllUnixSockets"] is False
+    assert str(temp_path.resolve()) in policy["filesystem"]["allowWrite"]
     allowed_reads = policy["filesystem"]["allowRead"]
     allowed_writes = policy["filesystem"]["allowWrite"]
     assert str(hook_inbox.resolve()) in allowed_writes
@@ -681,6 +701,10 @@ def test_verify_srt_installation_wraps_missing_lockfile(
 def _write_valid_srt_install(root: Path) -> None:
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
     package_dir.mkdir(parents=True)
+    helper = package_dir / "vendor" / "seccomp" / "arm64" / "apply-seccomp"
+    helper.parent.mkdir(parents=True)
+    helper.write_bytes(b"executable helper")
+    helper.chmod(0o755)
     (package_dir / "package.json").write_text(
         json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
         encoding="utf-8",
@@ -728,6 +752,8 @@ def test_verify_srt_installation_accepts_release_contract(
 
     assert installation.root == root.resolve()
     assert installation.runner == (root / "runner.mjs").resolve()
+    helper = root / "node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
+    assert helper.stat().st_mode & 0o777 == 0o555
 
 
 def test_verify_srt_installation_rejects_unmanifested_package_content(
@@ -751,6 +777,7 @@ def test_verify_srt_installation_rejects_unmanifested_package_content(
         ("receipt", "receipt does not match"),
         ("version", "package identity"),
         ("runner", "runner checksum"),
+        ("helper-mode", "seccomp helper is not executable"),
     ],
 )
 def test_verify_srt_installation_rejects_corruption(
@@ -774,6 +801,11 @@ def test_verify_srt_installation_rejects_corruption(
             json.dumps({"name": SRT_RELEASE.package, "version": "0.0.65"}),
             encoding="utf-8",
         )
+    elif corruption == "helper-mode":
+        helper = (
+            root / "node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
+        )
+        helper.chmod(0o444)
     else:
         (root / "runner.mjs").chmod(0o644)
         (root / "runner.mjs").write_text("corrupted", encoding="utf-8")

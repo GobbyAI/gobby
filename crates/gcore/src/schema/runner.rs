@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use postgres::{Client, GenericClient};
+use postgres::{Client, GenericClient, Transaction};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS,
@@ -199,6 +199,8 @@ const GWIKI_TABLES: [&str; 3] = ["gwiki_chunks", "gwiki_documents", "gwiki_sourc
 
 const APPLY_LOCK_POLL: Duration = Duration::from_millis(100);
 const APPLY_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
+// Leave time for diagnostics and cleanup inside gdaemon callers' 300s timeout.
+const BASELINE_CATALOG_LOCK_TIMEOUT_MS: i64 = 30_000;
 
 /// Serialize every schema apply in the database on one session-level lock.
 ///
@@ -429,6 +431,7 @@ fn apply_baseline(
     let statements = split_sql_statements(BASELINE_SQL)?;
     let receipt_table = qualified_name(schema, "schema_migrations")?;
     let mut transaction = client.transaction()?;
+    acquire_baseline_catalog_lock(&mut transaction)?;
     for statement in statements {
         if let Some(statement) = baseline_statement_for_state(&statement, state) {
             transaction.batch_execute(&render_sql_for_schema(&statement, schema))?;
@@ -442,6 +445,31 @@ fn apply_baseline(
         &[&BASELINE_VERSION, &baseline_filename(), &BASELINE_CHECKSUM],
     )?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn acquire_baseline_catalog_lock(transaction: &mut Transaction<'_>) -> Result<(), SchemaError> {
+    // Advisory locks are database-local, but every baseline updates the same
+    // cluster-wide roles. Lock before reading them to avoid stale pg_authid
+    // tuples in concurrent bootstraps. Baseline role DDL already needs superuser.
+    let row = transaction.query_one(
+        "SELECT current_setting('lock_timeout'), setting::bigint \
+         FROM pg_catalog.pg_settings WHERE name = 'lock_timeout'",
+        &[],
+    )?;
+    let previous: String = row.get(0);
+    let previous_ms: i64 = row.get(1);
+    let timeout_ms = if previous_ms == 0 {
+        BASELINE_CATALOG_LOCK_TIMEOUT_MS
+    } else {
+        previous_ms.min(BASELINE_CATALOG_LOCK_TIMEOUT_MS)
+    };
+    transaction.query_one(
+        "SELECT set_config('lock_timeout', $1, true)",
+        &[&format!("{timeout_ms}ms")],
+    )?;
+    transaction.batch_execute("LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE")?;
+    transaction.query_one("SELECT set_config('lock_timeout', $1, true)", &[&previous])?;
     Ok(())
 }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -80,7 +81,7 @@ def test_download_verified_tarball_retries_checksum_mismatch(
     monkeypatch.setattr(
         install_setup_srt,
         "SRT_RELEASE",
-        replace(SRT_RELEASE, tarball_sha256=install_setup_srt.hashlib.sha256(expected).hexdigest()),
+        replace(SRT_RELEASE, tarball_sha256=hashlib.sha256(expected).hexdigest()),
     )
     monkeypatch.setattr(install_setup_srt, "urlopen", lambda *_args, **_kwargs: next(responses))
     destination = tmp_path / "runtime.tgz"
@@ -117,7 +118,7 @@ def test_download_verified_tarball_retries_incomplete_response(
     monkeypatch.setattr(
         install_setup_srt,
         "SRT_RELEASE",
-        replace(SRT_RELEASE, tarball_sha256=install_setup_srt.hashlib.sha256(expected).hexdigest()),
+        replace(SRT_RELEASE, tarball_sha256=hashlib.sha256(expected).hexdigest()),
     )
     monkeypatch.setattr(install_setup_srt, "urlopen", respond)
     destination = tmp_path / "runtime.tgz"
@@ -216,7 +217,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     ]
     assert not staging.exists()
     assert (target / "runner.mjs").is_file()
-    assert (target / "runner.mjs").stat().st_mode & 0o777 == 0o444
+    assert (target / "runner.mjs").stat().st_mode & 0o777 == 0o555
     assert (target / "content-manifest.json").is_file()
     assert target.stat().st_mode & 0o777 == 0o555
     receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))

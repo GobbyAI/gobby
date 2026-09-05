@@ -33,7 +33,7 @@ rules:
         variable: context_compact_block_message
         value: ""
       - type: set_variable
-        variable: gobby_plan_consider_shown
+        variable: plan_skill_directive_delivered
         value: false
       - type: set_variable
         variable: brevity_reminder_turn

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import fields
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -32,7 +33,24 @@ def test_stdio_dependencies_use_runtime_access() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stdio_daemon_config_boundary() -> None:
+@pytest.mark.parametrize(
+    ("runtime_url", "expected_port", "expected_start"),
+    [
+        (None, 61031, True),
+        ("http://127.0.0.1:31579", 31579, True),
+        ("https://daemon.example:31415", 31415, False),
+    ],
+)
+async def test_stdio_daemon_config_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_url: str | None,
+    expected_port: int,
+    expected_start: bool,
+) -> None:
+    for name in ("GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    if runtime_url:
+        monkeypatch.setenv("GOBBY_DAEMON_URL", runtime_url)
     start_calls: list[tuple[int, int]] = []
     health_calls: list[tuple[int, float, str | None]] = []
 
@@ -65,8 +83,14 @@ async def test_stdio_daemon_config_boundary() -> None:
 
     await ensure_stdio_daemon_running(deps=deps)
 
-    assert start_calls == [(61031, 61032)]
-    assert health_calls == [(61031, DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS, "http://127.0.0.1:61031")]
+    assert start_calls == ([(expected_port, 61032)] if expected_start else [])
+    assert health_calls == [
+        (
+            expected_port,
+            DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+            runtime_url or "http://127.0.0.1:61031",
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -139,7 +163,16 @@ async def test_stdio_proxy_retries_timeout_read_after_failure() -> None:
     assert all(item.kwargs["timeout"] == 30.0 for item in request.await_args_list)
 
 
-def test_stdio_server_takes_dial_port_from_bootstrap() -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_url", [None, "http://127.0.0.1:31579"])
+@pytest.mark.parametrize("with_startup_task", [False, True])
+async def test_stdio_server_takes_dial_port_from_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, runtime_url: str | None, with_startup_task: bool
+) -> None:
+    for name in ("GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    if runtime_url:
+        monkeypatch.setenv("GOBBY_DAEMON_URL", runtime_url)
     config = DaemonConfig.model_validate({"daemon_port": 61041})
     runtime_factory = MagicMock(return_value=CliRuntime(None, config))
     setup_registries = MagicMock()
@@ -156,7 +189,12 @@ def test_stdio_server_takes_dial_port_from_bootstrap() -> None:
         register_proxy_tools=MagicMock(),
     )
 
-    server = create_stdio_mcp_server(deps=server_deps)
+    startup_task = asyncio.create_task(asyncio.sleep(0)) if with_startup_task else None
+    try:
+        server = create_stdio_mcp_server(deps=server_deps, startup_task=startup_task)
+    finally:
+        if startup_task is not None:
+            await startup_task
 
     assert server is mcp_server
     runtime_factory.assert_called_once_with()
@@ -165,8 +203,14 @@ def test_stdio_server_takes_dial_port_from_bootstrap() -> None:
     assert registry_kwargs["config_resolver"]() is config
     assert registry_kwargs["session_manager"] is None
     assert registry_kwargs["memory_manager_resolver"] is None
-    # The dial port comes from bootstrap.yaml, never the DB-backed projection.
-    proxy_factory.assert_called_once_with(61031)
+    # The explicit managed URL wins when the sandbox hides bootstrap.yaml.
+    expected_url = runtime_url or "http://127.0.0.1:61031"
+    if startup_task is None:
+        proxy_factory.assert_called_once_with(61031, base_url=expected_url)
+    else:
+        proxy_factory.assert_called_once_with(
+            61031, base_url=expected_url, startup_task=startup_task
+        )
 
 
 def test_stdio_server_starts_when_hub_is_down() -> None:
@@ -194,4 +238,4 @@ def test_stdio_server_starts_when_hub_is_down() -> None:
     assert registry_kwargs["config_resolver"]() is None
     assert registry_kwargs["session_manager"] is None
     assert registry_kwargs["memory_manager_resolver"] is None
-    proxy_factory.assert_called_once_with(61031)
+    proxy_factory.assert_called_once_with(61031, base_url="http://127.0.0.1:61031")

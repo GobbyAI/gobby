@@ -105,6 +105,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             "file-history-snapshot",
             "custom-title",
             "atis-latch",
+            "cost-state",  # cumulative bookkeeping; usage comes from individual messages
         }
     )
 

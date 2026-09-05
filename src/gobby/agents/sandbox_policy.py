@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess  # nosec B404 # fixed local cp/chmod commands.
 import sys
+import tempfile
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -790,11 +791,57 @@ def _prewarm_pre_commit_store(*, workspace: Path, destination: Path) -> None:
     _schedule_pre_commit_store_spare(source)
 
 
+def registered_run_tmp(root: Path) -> Path | None:
+    """Read a daemon-owned short-temp registration without following links."""
+    registration = root / "tmp-path"
+    try:
+        entry = registration.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(entry.st_mode) or entry.st_uid != os.getuid():
+        raise OSError(f"Invalid run temp registration: {registration}")
+    path = Path(registration.read_text(encoding="utf-8"))
+    parent = Path(tempfile.gettempdir()).resolve()
+    if (
+        path.parent != parent
+        or not path.name.startswith("gobby-")
+        or len(path.name) != 14
+        or path == root
+    ):
+        raise OSError(f"Invalid registered run temp directory: {path}")
+    try:
+        entry = path.lstat()
+    except FileNotFoundError:
+        return path
+    if not stat.S_ISDIR(entry.st_mode) or entry.st_uid != os.getuid():
+        raise OSError(f"Invalid registered run temp directory: {path}")
+    return path
+
+
+def prepare_short_run_tmp(root: Path) -> Path:
+    """Keep managed socket paths short independently of GOBBY_HOME's length."""
+    existing = registered_run_tmp(root)
+    if existing is not None:
+        existing.mkdir(mode=0o700, exist_ok=True)
+        return existing
+    path = Path(tempfile.mkdtemp(prefix="gobby-")).resolve()
+    try:
+        registration = root / "tmp-path"
+        with registration.open("x", encoding="utf-8") as stream:
+            registration.chmod(0o600)
+            stream.write(str(path))
+    except BaseException:
+        path.rmdir()
+        raise
+    return path
+
+
 def prepare_sandbox_run_paths(
     run_id: str,
     env: Mapping[str, str],
     *,
     workspace: Path,
+    short_tmp: bool = False,
 ) -> SandboxRunPaths:
     """Materialize one daemon-owned run root with four writable siblings."""
     managed_root = managed_execution_root()
@@ -810,7 +857,7 @@ def prepare_sandbox_run_paths(
     paths = SandboxRunPaths(
         root=root,
         assets=root / "assets",
-        tmp=root / "tmp",
+        tmp=prepare_short_run_tmp(root) if short_tmp else root / "tmp",
         hooks=root / "hooks",
         logs=root / "logs",
         cache=root / "cache",

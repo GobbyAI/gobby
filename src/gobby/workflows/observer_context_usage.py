@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, Protocol
 
+from psycopg.errors import QueryCanceled
+
 from gobby.hooks.events import HookEvent
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE
+from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +73,17 @@ def detect_context_compact_guidance(
     config: _ContextHandoffConfig | None = None,
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
+    gate = _handoff_gate(variables)
+    skip_session_lookup = (
+        gate in {"pending", "failed"}
+        or variables.get("pending_context_reset") is True
+        or _is_plan_mode(variables)
+    )
+    # A timed-out read must leave the previous guidance and turn counters intact.
+    session = None if skip_session_lookup else _load_session(session_manager, session_id)
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
-    gate = _handoff_gate(variables)
     if gate == "pending" or variables.get("pending_context_reset") is True:
         _reset_epoch_state(variables)
         return
@@ -102,7 +112,6 @@ def detect_context_compact_guidance(
         turns_since_compact = previous_turns_since_compact + 1
     variables["turns_since_compact"] = turns_since_compact
 
-    session = _load_session(session_manager, session_id)
     used = _used_tokens_from_session(session)
     if used is None:
         _write_band(variables, "none", None, None)
@@ -315,6 +324,8 @@ def _load_session(
         return None
     try:
         return session_manager.get(session_id)
+    except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+        raise
     except Exception as exc:
         logger.debug("Failed to load session %s for context usage observer: %s", session_id, exc)
         return None

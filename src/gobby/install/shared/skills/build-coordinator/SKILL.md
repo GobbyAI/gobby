@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.2.0"
+version: "1.3.0"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -140,6 +140,23 @@ When build automation stalls or agents behave as if required startup context is 
 - Check whether SessionStart activation completed and left expected state before the first provider-neutral prompt event: session linkage, `_agent_type`, active rule and skill variables, terminal pickup metadata, baseline dirty-file capture, and any spawned-agent step workflow.
 - A first-prompt reconciliation guard can be useful as a backstop: call an idempotent `ensure_session_activation(session_id)` helper that creates only missing activation effects and preserves existing progress. Do not replay the raw SessionStart hook wholesale.
 - For cross-boundary stalls, use OpenTelemetry or equivalent correlated logs keyed by `agent_run_id` and `session_id` across spawn, tmux, SessionStart, workflow activation, auto-claim, step transitions, MCP calls, and rule blocks.
+
+## Terminal and sandbox evidence
+
+For terminal work, require the worker's OS, provider, run/session IDs, source
+checkout and commit, generated sandbox policy and canonical run temp path,
+exact commands, pass/fail/skip counts, and fixture-process sets before and after.
+Use `docs/guides/gterminal-development-guide.md` for the affected Guard groups.
+Guard H groups 2, 3, and 6 and the runtime-contract/external-attach tests may bind
+Unix sockets; skips or policy denials remain **UNVALIDATED** until the required
+platform run passes. A parent-shell run does not replace a required spawned-agent
+run.
+
+macOS managed SRT agents receive a socket grant only for their current run's
+canonical temp directory, with `allowAllUnixSockets=false`; preserve any separate
+operator grants. Linux and WSL2 retain socket restrictions while permitting run
+directory writes. Require real bind/listen/connect and boundary-denial evidence
+when changing this policy. Web-chat socket permissions are outside that grant.
 
 ## Post-Fix Daemon Restart Gate
 

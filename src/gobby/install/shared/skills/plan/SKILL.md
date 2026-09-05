@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "4.1.2"
+version: "4.2.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -12,7 +12,9 @@ metadata:
 
 # /gobby plan
 
-Both `$gobby plan` and `/gobby plan` invoke this workflow.
+Both `$gobby plan` and `/gobby plan` invoke this workflow. Interactive Plan Mode
+also loads this skill on its first submitted prompt; select depth here after
+investigating the request.
 
 ## Depth Selection and Required Elicitation
 
@@ -32,14 +34,12 @@ Both `$gobby plan` and `/gobby plan` invoke this workflow.
 3. Recommend **Full** only for those complex feature, refactor, rework, and
    migration candidates. Recommend **Lightweight** for every bug fix, maintenance
    change, localized feature or refactor, configuration change, and documentation
-   change. Strong signals determine whether Gobby planning is offered; they do not
-   promote bug fixes or maintenance to Full. Security or destructive risk,
+   change. Breadth and risk do not promote bug fixes or maintenance to Full. Security or destructive risk,
    unresolved product decisions, multi-agent coordination, durable handoff, and a
    desire for lifecycle automation or adversarial review increase rigor within
    the chosen depth.
    Ask the user to choose between the two depths. If the user already selected a
-   depth in response to the Plan Mode Consider prompt, honor that choice without
-   asking again.
+   depth, honor that choice without asking again.
 4. Load `restraint` and `elicit` for every Gobby plan:
 
 ```text

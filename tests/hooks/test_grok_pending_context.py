@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.adapters.grok import GrokAdapter
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import get_processed_envelope_dir, mark_envelope_processed
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
@@ -19,6 +21,14 @@ from gobby.hooks.event_handlers._session_start.in_place_compact import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
+    apply_acknowledged_receipt,
+    record_worker_staging,
+    take_worker_staging,
+    worker_staging_scope,
+)
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage import workspace_machine_scope
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -531,3 +541,116 @@ def test_grok_pending_context_imports_before_the_event_handler_package() -> None
 
     assert result.returncode == 0, result.stderr
     assert "circular import" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "event_type,hook_type",
+    [(HookEventType.BEFORE_TOOL, "pre_tool_use"), (HookEventType.STOP, "stop")],
+)
+def test_later_directive_receipt_follows_retryable_synthetic_gate(
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    grok_session_id: str,
+    event_type: HookEventType,
+    hook_type: str,
+) -> None:
+    variables = _configure_manager(manager_with_mocks, session_manager)
+    staged = {
+        "session_id": grok_session_id,
+        "session_variables": {"plan_skill_directive_delivered": True},
+    }
+    with worker_staging_scope():
+        record_worker_staging(staged)
+        passive = manager_with_mocks._complete_response(
+            _event(HookEventType.BEFORE_AGENT, grok_session_id, envelope_id="later-prompt"),
+            HookResponse(context="Load plan now.", metadata={STAGED_EFFECTS_FIELD: staged}),
+            workflow_context=None,
+        )
+        assert take_worker_staging() == {}
+    assert STAGED_EFFECTS_FIELD not in passive.metadata
+    assert passive.context is None
+    assert variables.get_variables(grok_session_id).get("plan_skill_directive_delivered") is None
+
+    inbox = get_gobby_home() / "hooks" / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    failed_path = inbox / "failed-gate.json"
+    failed_path.write_text("{}", encoding="utf-8")
+    for envelope_id in ("failed-gate", "retry-gate"):
+        with worker_staging_scope():
+            response = manager_with_mocks._complete_response(
+                _event(event_type, grok_session_id, envelope_id=envelope_id),
+                HookResponse(decision="allow"),
+                workflow_context=None,
+            )
+            assert take_worker_staging() == staged
+        wire = GrokAdapter().translate_from_hook_response(response, hook_type=hook_type)
+        assert "Load plan now." in json.dumps(wire)
+        assert response.metadata[STAGED_EFFECTS_FIELD] == staged
+        assert (
+            variables.get_variables(grok_session_id).get("plan_skill_directive_delivered") is None
+        )
+
+    assert not failed_path.exists()
+    apply_acknowledged_receipt(
+        SimpleNamespace(session_id=grok_session_id, staged_payload=staged),
+        variable_manager=variables,
+    )
+    assert variables.get_variables(grok_session_id)["plan_skill_directive_delivered"] is True
+
+
+@pytest.mark.parametrize(
+    "plan_mode,delivered,count", [(False, False, 0), (True, False, 1), (True, True, 0)]
+)
+@pytest.mark.parametrize("other_context", ["Keep this context.", ""])
+def test_queued_plan_directives_follow_current_mode_without_losing_other_receipts(
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    grok_session_id: str,
+    plan_mode: bool,
+    delivered: bool,
+    count: int,
+    other_context: str,
+) -> None:
+    variables = _configure_manager(manager_with_mocks, session_manager)
+    variables.merge_variables(
+        grok_session_id,
+        {"plan_mode": plan_mode, "plan_skill_directive_delivered": delivered},
+    )
+    directive = skill_fetch_directive("plan")
+    for index in range(2):
+        staged = {
+            "session_id": grok_session_id,
+            "session_variables": {"plan_skill_directive_delivered": True, f"other_{index}": True},
+        }
+        with worker_staging_scope():
+            manager_with_mocks._complete_response(
+                _event(HookEventType.BEFORE_AGENT, grok_session_id, envelope_id=f"prompt-{index}"),
+                HookResponse(
+                    context=f"{directive}\n\n{other_context}",
+                    metadata={STAGED_EFFECTS_FIELD: staged},
+                ),
+                workflow_context=None,
+            )
+    with worker_staging_scope():
+        response = manager_with_mocks._complete_response(
+            _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="mode-filter-gate"),
+            HookResponse(decision="allow"),
+            workflow_context=None,
+        )
+    wire = json.dumps(
+        GrokAdapter().translate_from_hook_response(response, hook_type="pre_tool_use")
+    )
+    assert wire.count(json.dumps(directive)[1:-1]) == count
+    if other_context:
+        assert other_context in wire
+    elif not count:
+        assert response.decision == "allow"
+    apply_acknowledged_receipt(
+        SimpleNamespace(
+            session_id=grok_session_id, staged_payload=response.metadata[STAGED_EFFECTS_FIELD]
+        ),
+        variable_manager=variables,
+    )
+    final = variables.get_variables(grok_session_id)
+    assert final["other_0"] is True and final["other_1"] is True
+    assert final["plan_skill_directive_delivered"] is (delivered or bool(count))

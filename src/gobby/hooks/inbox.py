@@ -215,10 +215,10 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
     writes acks back into the inbox, but the periodic drain (60s) is too slow
     for a busy session: by the time it runs, the ack's generation is stale and
     the CAS records a no-op, so the receipt re-prepares forever. Sweeping acks
-    synchronously before the re-prepare lets an in-flight ack land while its
-    generation is still current. Only files whose parsed body is a well-formed
-    delivery receipt are touched; every other file is left for the drain and
-    its quarantine rules.
+    before the re-prepare lets an in-flight ack land while its generation is
+    still current. Async callers must await this blocking sweep in a worker.
+    Only files whose parsed body is a well-formed delivery receipt are touched;
+    every other file is left for the drain and its quarantine rules.
     """
     pending_dir = inbox_dir or get_hook_inbox_dir()
     if not pending_dir.exists():

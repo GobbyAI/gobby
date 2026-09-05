@@ -25,6 +25,7 @@ from gobby.mcp_proxy.stdio_results import (
     DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
     DAEMON_HEALTH_RETRY_DELAY_SECONDS,
 )
+from gobby.utils.daemon_url import resolve_daemon_url
 
 
 class CheckDaemonHealth(Protocol):
@@ -88,7 +89,7 @@ async def ensure_daemon_running(
     bootstrap = effective_deps.bootstrap
     dial_url, port, is_local_dial_target = _resolved_dial_target(
         bootstrap.daemon_port,
-        bootstrap.daemon_url,
+        resolve_daemon_url(bootstrap=bootstrap),
     )
     ws_port = bootstrap.websocket_port
 

@@ -41,6 +41,7 @@ class ChatSessionProtocol(Protocol):
 
     # Lifecycle callbacks
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_prompt_delivered: Callable[[], None] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_post_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_pre_compact: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None

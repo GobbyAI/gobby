@@ -26,6 +26,7 @@ def resolve_daemon_url(
     bootstrap_path: str | Path | None = None,
     *,
     env: Mapping[str, str] | None = None,
+    bootstrap: BootstrapConfig | None = None,
 ) -> str:
     """Resolve the daemon dial URL from env overrides and bootstrap.yaml.
 
@@ -38,11 +39,11 @@ def resolve_daemon_url(
     if url := _env_port_override(environ):
         return url
 
-    path = _resolve_bootstrap_path(bootstrap_path)
-    if not path.exists():
-        return DEFAULT_DAEMON_DIAL_URL
-
-    bootstrap = load_bootstrap(str(path))
+    if bootstrap is None:
+        path = _resolve_bootstrap_path(bootstrap_path)
+        if not path.exists():
+            return DEFAULT_DAEMON_DIAL_URL
+        bootstrap = load_bootstrap(str(path))
     if bootstrap.daemon_url is not None:
         return validate_daemon_url(bootstrap.daemon_url, source="bootstrap daemon_url")
     return endpoint_to_url(bootstrap)

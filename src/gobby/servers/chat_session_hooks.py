@@ -43,6 +43,7 @@ class ChatSessionHooksMixin:
     _session_manager_ref: Any | None
     _transcript_path_captured: bool
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_prompt_delivered: Callable[[], None] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_post_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _on_pre_compact: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
@@ -156,6 +157,11 @@ class ChatSessionHooksMixin:
                                 ),
                             )
 
+                if output.get("decision") != "block":
+                    acknowledge = getattr(self, "_on_prompt_delivered", None)
+                    if acknowledge is not None:
+                        self._on_prompt_delivered = None
+                        acknowledge()
                 return output
 
             hooks["UserPromptSubmit"] = [HookMatcher(matcher=None, hooks=[_prompt_hook])]

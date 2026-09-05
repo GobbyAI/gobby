@@ -15,6 +15,10 @@ import tokenize
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
+from psycopg.errors import QueryCanceled
+
+from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
+
 __all__ = [
     "ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS",
     "ASSISTANT_RESPONSE_SCAN_LIMIT",
@@ -161,6 +165,8 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         try:
             tree = ast.parse(self._normalize_expr(expr), mode="eval")
             return bool(self.visit(tree.body))
+        except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+            raise
         except Exception as e:
             raise ValueError(f"Invalid expression: {e}") from e
 
@@ -169,6 +175,8 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         try:
             tree = ast.parse(self._normalize_expr(expr), mode="eval")
             return self.visit(tree.body)
+        except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+            raise
         except Exception as e:
             raise ValueError(f"Invalid expression: {e}") from e
 

@@ -57,6 +57,8 @@ class CodexTurnSession(Protocol):
 
     def _reset_before_tool_state(self) -> None: ...
 
+    def _acknowledge_prompt_delivery(self) -> None: ...
+
     async def _dispatch_before_tool_once(
         self,
         dedup_key: str | None,
@@ -231,6 +233,7 @@ async def stream_codex_turn(
             **turn_parameters,
         )
         session._turn_id = turn.id or session._turn_id
+        session._acknowledge_prompt_delivery()
         turn_deadline = asyncio.get_running_loop().time() + _CODEX_TURN_TIMEOUT_SECONDS
 
         while not turn_completed.is_set():

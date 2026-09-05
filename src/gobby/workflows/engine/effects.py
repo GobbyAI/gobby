@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from psycopg.errors import QueryCanceled
+
 from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
@@ -25,6 +27,7 @@ from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.skills.materialization import SkillScriptMaterializer
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.command_matching import command_patterns_match
@@ -858,6 +861,8 @@ class EffectsMixin(DeliveryFormattingMixin):
                     allowed_funcs=self._build_allowed_funcs(eval_context),
                 )
                 value = evaluator.evaluate_value(value)
+            except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+                raise
             except Exception as e:
                 logger.warning(
                     "Failed to evaluate set_variable expression '%s': %s", effect.value, e

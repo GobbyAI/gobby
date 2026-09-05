@@ -264,3 +264,79 @@ async def test_reaper_does_not_follow_symlinks_outside_run_root(tmp_path: Path) 
     assert not run_root.exists()
     assert not linked_root.is_symlink()
     assert external_file.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("startup", [False, True])
+async def test_reaper_removes_registered_short_tmp_and_preserves_other_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup: bool
+) -> None:
+    from gobby.agents.sandbox_policy import prepare_short_run_tmp
+
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    gobby_home = tmp_path / "long-gobby-home"
+    root = _create_root(_managed_root(gobby_home, "finished-run"))
+    active = _create_root(_managed_root(gobby_home, "active-run"))
+    run_tmp = prepare_short_run_tmp(root)
+    other_tmp = prepare_short_run_tmp(active)
+    assert prepare_short_run_tmp(root) == run_tmp
+    assert run_tmp != other_tmp
+    assert run_tmp.stat().st_mode & 0o777 == 0o700
+    nested = run_tmp / "nested"
+    nested.mkdir()
+    payload_size = 100_000
+    (nested / "data").write_bytes(b"x" * payload_size)
+    (nested / "escape").symlink_to(other_tmp, target_is_directory=True)
+    # The writable temp directory cannot register another deletion target.
+    (run_tmp / "tmp-path").write_text(str(other_tmp))
+    (other_tmp / "keep").write_text("other run")
+    _set_age(root, 7_200)
+    _set_age(active, 7_200)
+
+    if startup:
+        result = await sweep_sandbox_run_roots({"active-run"}, gobby_home=gobby_home, now=_NOW)
+    else:
+        result = await reap_sandbox_run_roots("finished-run", gobby_home=gobby_home)
+
+    assert result.removed_roots == 1
+    assert result.skipped_roots == 0
+    assert not root.exists()
+    assert not run_tmp.exists()
+    assert result.removed_bytes >= payload_size
+    assert (other_tmp / "keep").read_text() == "other run"
+    assert active.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("escape", ["directory-link", "registration-link", "outside-path"])
+async def test_short_tmp_registration_rejects_escapes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, escape: str
+) -> None:
+    from gobby.agents.sandbox_policy import prepare_short_run_tmp
+
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    gobby_home = tmp_path / "gobby-home"
+    root = _create_root(_managed_root(gobby_home, "finished-run"))
+    run_tmp = prepare_short_run_tmp(root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("keep")
+    registration = root / "tmp-path"
+    if escape == "directory-link":
+        run_tmp.rmdir()
+        run_tmp.symlink_to(outside, target_is_directory=True)
+    elif escape == "registration-link":
+        target = outside / "registration"
+        target.write_text(str(run_tmp))
+        registration.unlink()
+        registration.symlink_to(target)
+    else:
+        registration.write_text(str(outside))
+
+    with pytest.raises(OSError, match="Invalid"):
+        prepare_short_run_tmp(root)
+    result = await reap_sandbox_run_roots("finished-run", gobby_home=gobby_home)
+
+    assert result.skipped_roots == 1
+    assert root.exists()
+    assert (outside / "keep").read_text() == "keep"

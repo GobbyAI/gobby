@@ -20,7 +20,7 @@ from gobby.hooks.receipt_effects import (
     take_worker_staging,
     worker_staging_scope,
 )
-from gobby.workflows.hooks import WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -165,5 +165,5 @@ async def _renew_envelope_lease(envelope_id: str, owner_token: str) -> None:
     interval = ENVELOPE_PROCESSING_LEASE_TTL_SECONDS / 3
     while True:
         await asyncio.sleep(interval)
-        if not renew_envelope_processing_lease(envelope_id, owner_token):
+        if not await asyncio.to_thread(renew_envelope_processing_lease, envelope_id, owner_token):
             return

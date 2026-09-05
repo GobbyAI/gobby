@@ -124,8 +124,9 @@ def _write_codex_lifecycle_transcript(
     age_seconds: int = 120,
     malformed_tail: bool = False,
     task_complete_error: dict[str, str] | None = None,
+    event_timestamp: datetime | None = None,
 ) -> None:
-    timestamp = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
+    timestamp = (event_timestamp or datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
     lines: list[str] = []
     if response_payload_type is not None:
         lines.append(
@@ -623,22 +624,16 @@ async def test_fresh_task_complete_waits_for_base_timeout_before_any_recovery(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("before_start_persist", [False, True])
 async def test_fresh_task_complete_usage_limit_promptly_fails_run(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
+    before_start_persist: bool,
 ) -> None:
     transcript_path = tmp_path / "codex-usage-limit.jsonl"
-    _write_codex_lifecycle_transcript(
-        transcript_path,
-        age_seconds=1,
-        task_complete_error={
-            "message": "You've hit your usage limit. Account-specific reset details.",
-            "codex_error_info": "usage_limit_exceeded",
-        },
-    )
     monitor, run = _make_idle_monitor_run(
         temp_db=temp_db,
         session_manager=session_manager,
@@ -647,6 +642,20 @@ async def test_fresh_task_complete_usage_limit_promptly_fails_run(
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1017",
         transcript_path=transcript_path,
         session_age_seconds=1,
+    )
+    assert run.started_at is not None
+    event_timestamp = (
+        run.created_at + (run.started_at - run.created_at) / 2
+        if before_start_persist
+        else datetime.now(UTC)
+    )
+    _write_codex_lifecycle_transcript(
+        transcript_path,
+        event_timestamp=event_timestamp,
+        task_complete_error={
+            "message": "You've hit your usage limit. Account-specific reset details.",
+            "codex_error_info": "usage_limit_exceeded",
+        },
     )
 
     with _pane_text(monitor, "❯\n"):
@@ -658,6 +667,82 @@ async def test_fresh_task_complete_usage_limit_promptly_fails_run(
     assert updated_run.status == "error"
     assert updated_run.terminal_reason == "provider_quota_exhausted"
     assert updated_run.error == "Codex provider error: usage_limit_exceeded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("predecessor_age_seconds", [1, 3600])
+@pytest.mark.parametrize(
+    ("error_info", "terminal_reason"),
+    [
+        ("usage_limit_exceeded", "provider_quota_exhausted"),
+        ("internal_server_error", "provider_error"),
+    ],
+)
+async def test_resumed_codex_run_ignores_predecessor_terminal_error(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    predecessor_age_seconds: int,
+    error_info: str,
+    terminal_reason: str,
+) -> None:
+    transcript_path = tmp_path / "codex-resumed-after-usage-limit.jsonl"
+    _write_codex_lifecycle_transcript(
+        transcript_path,
+        age_seconds=predecessor_age_seconds,
+        task_complete_error={
+            "message": "Account-specific provider failure details.",
+            "codex_error_info": error_info,
+        },
+    )
+    # Native `codex resume` appends to the existing rollout without writing
+    # session_meta. The successor has not submitted its first turn yet.
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2184",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+    )
+
+    with _pane_text(monitor, "❯\n"):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 0
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "running"
+    assert updated_run.terminal_reason is None
+    assert updated_run.error is None
+
+    # The same incremental reader must still fail on a newly appended error,
+    # including a startup failure before the successor emits task_started.
+    with transcript_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "error": {"codex_error_info": error_info},
+                    },
+                }
+            )
+            + "\n"
+        )
+    with _pane_text(monitor, "❯\n"):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    failed_run = agent_run_manager.get(run.id)
+    assert failed_run is not None
+    assert failed_run.status == "error"
+    assert failed_run.terminal_reason == terminal_reason
 
 
 @pytest.mark.asyncio
@@ -676,14 +761,6 @@ async def test_terminal_provider_error_keeps_closed_task_success_precedence(
     )
     task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
     transcript_path = tmp_path / "codex-usage-limit-after-close.jsonl"
-    _write_codex_lifecycle_transcript(
-        transcript_path,
-        age_seconds=1,
-        task_complete_error={
-            "message": "You've hit your usage limit. Account-specific reset details.",
-            "codex_error_info": "usage_limit_exceeded",
-        },
-    )
     monitor, run = _make_idle_monitor_run(
         temp_db=temp_db,
         session_manager=session_manager,
@@ -694,6 +771,14 @@ async def test_terminal_provider_error_keeps_closed_task_success_precedence(
         session_age_seconds=1,
         task_manager=task_manager,
         task_id=task.id,
+    )
+    _write_codex_lifecycle_transcript(
+        transcript_path,
+        age_seconds=0,
+        task_complete_error={
+            "message": "You've hit your usage limit. Account-specific reset details.",
+            "codex_error_info": "usage_limit_exceeded",
+        },
     )
 
     with _pane_text(monitor, "❯\n"):

@@ -9,6 +9,7 @@ import logging
 import os
 import shlex
 import shutil
+import sys
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -187,7 +188,8 @@ def make_srt_installation_immutable(root: Path) -> None:
     for path in paths:
         if path.is_symlink():
             continue
-        path.chmod(0o555 if path.is_dir() else 0o444)
+        executable = path.is_dir() or bool(path.stat().st_mode & 0o111)
+        path.chmod(0o555 if executable else 0o444)
     root.chmod(0o555)
 
 
@@ -211,6 +213,10 @@ def _verify_srt_content(root: Path, manifest: dict[str, str]) -> None:
             raise SrtRuntimeError("managed SRT content manifest mismatch") from exc
         if mode & 0o222:
             raise SrtRuntimeError(f"managed SRT content is writable: {path.relative_to(root)}")
+        if path.name == "apply-seccomp" and not mode & 0o111:
+            raise SrtRuntimeError(
+                "managed SRT seccomp helper is not executable; rerun `gobby install`"
+            )
 
 
 @contextmanager
@@ -457,6 +463,7 @@ async def prepare_sandbox_launch(
     websocket_port: int,
     api_base: str | None,
     env: Mapping[str, str],
+    allow_run_unix_sockets: bool = False,
     phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> SandboxLaunch:
     """Resolve and preflight the explicit backend without any fallback."""
@@ -499,6 +506,9 @@ async def prepare_sandbox_launch(
             run_id,
             env,
             workspace=Path(workspace_path),
+            short_tmp=(
+                config.backend == "srt" and allow_run_unix_sockets and sys.platform == "darwin"
+            ),
         )
     finally:
         finish_spawn_phase(
@@ -541,6 +551,10 @@ async def prepare_sandbox_launch(
     finally:
         finish_spawn_phase(phase_timings_ms, "compute_sandbox_paths", compute_paths_started)
     paths.read_paths.append(str(run_paths.assets.resolve()))
+    if config.backend == "srt" and sys.platform == "linux":
+        # bwrap masks denied temp roots before executing SRT's seccomp helper.
+        # Re-expose the pinned runtime when isolated GOBBY_HOME lives under one.
+        paths.read_paths.append(str(srt_install_root().resolve()))
     assert_sensitive_path_contract(paths.read_paths, paths.write_paths)
     if config.backend == "provider-native":
         assert resolver is not None
@@ -555,6 +569,11 @@ async def prepare_sandbox_launch(
             provider_env={**run_environment, **provider_env},
         )
 
+    if allow_run_unix_sockets and sys.platform == "darwin":
+        # Derive this capability from the current run, including on resume.
+        run_socket_root = str(run_paths.tmp.resolve())
+        if run_socket_root not in paths.allow_unix_sockets:
+            paths.allow_unix_sockets.append(run_socket_root)
     settings = render_srt_settings(paths)
     policy_bytes = json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
     policy_hash = hashlib.sha256(policy_bytes).hexdigest()

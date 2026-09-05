@@ -523,10 +523,20 @@ def _fresh_terminal_output(before: str, after: str) -> str:
     return ""
 
 
+async def shutdown_compact_continuations() -> None:
+    """Stop this daemon loop's prompt senders and readiness watchers before DB close."""
+    loop = asyncio.get_running_loop()
+    tasks = [task for task in _HANDOFF_COMPACT_CONTINUATION_TASKS if task.get_loop() is loop]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
     try:
         running_loop = asyncio.get_running_loop()
-        # Fire-and-forget: the coroutine logs its own failures and must not block startup.
+        # Retain ownership until completion so shutdown can stop DB-backed watchers.
         task = running_loop.create_task(coro)
         _HANDOFF_COMPACT_CONTINUATION_TASKS.add(task)
         task.add_done_callback(_HANDOFF_COMPACT_CONTINUATION_TASKS.discard)
@@ -542,7 +552,9 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
 
         if loop_is_usable:
             try:
-                asyncio.run_coroutine_threadsafe(coro, loop)
+                # Create and retain the task on its owner loop, including calls
+                # dispatched from synchronous MCP/tool workers.
+                loop.call_soon_threadsafe(_schedule_coroutine, coro)
                 return True
             except Exception:
                 logger.debug(

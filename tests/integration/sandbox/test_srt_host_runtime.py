@@ -10,12 +10,15 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_reaper import reap_sandbox_run_roots
 from gobby.agents.srt_runtime import SandboxLaunch, prepare_sandbox_launch
 from gobby.cli.install_setup_srt import install_srt_runtime
 
@@ -28,7 +31,7 @@ pytestmark = [
 ]
 
 
-def _prepare_launch(workspace: Path, run_id: str):
+def _prepare_launch(workspace: Path, run_id: str) -> SandboxLaunch:
     install_srt_runtime()
     return asyncio.run(
         prepare_sandbox_launch(
@@ -43,6 +46,114 @@ def _prepare_launch(workspace: Path, run_id: str):
             env=os.environ,
         )
     )
+
+
+def test_srt_managed_run_socket_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise real OS policy: run-local sockets on macOS, none on Linux/WSL."""
+    # Keep sockaddr_un paths short without assuming /tmp is writable in a parent sandbox.
+    with tempfile.TemporaryDirectory(prefix="") as temporary, ExitStack() as cleanup:
+        root = Path(temporary).resolve()
+        monkeypatch.setenv("GOBBY_HOME", str(root))
+        cleanup.callback(lambda: asyncio.run(reap_sandbox_run_roots("a", gobby_home=root)))
+        # The policy probe executes Python, so provider executable discovery
+        # should not require a separately installed/authenticated Codex CLI.
+        provider_bin = root / "bin"
+        provider_bin.mkdir()
+        (provider_bin / "codex").symlink_to(sys.executable)
+        monkeypatch.setenv("PATH", f"{provider_bin}{os.pathsep}{os.environ['PATH']}")
+        workspace = root / "w"
+        workspace.mkdir()
+        other_run = root / "run" / "sandbox" / "b" / "tmp"
+        other_run.mkdir(parents=True)
+        install_srt_runtime()
+        launch = asyncio.run(
+            prepare_sandbox_launch(
+                config=SandboxConfig(
+                    enabled=True,
+                    backend="srt",
+                    allow_network=False,
+                    extra_write_paths=[str(other_run)],
+                ),
+                provider="codex",
+                workspace_path=str(workspace),
+                run_id="a",
+                resolver=None,
+                daemon_port=60887,
+                websocket_port=60888,
+                api_base=None,
+                env=os.environ,
+                allow_run_unix_sockets=True,
+            )
+        )
+        current_tmp = Path(launch.provider_env["TMPDIR"])
+        (current_tmp / "escape").symlink_to(workspace, target_is_directory=True)
+        paths = [
+            current_tmp / "n" / "s",
+            other_run / "s",
+            workspace / "s",
+            current_tmp / "escape" / "s",
+        ]
+        assert max(len(os.fsencode(path)) for path in paths) < 104
+        script = workspace / "probe.py"
+        script.write_text(
+            """import errno, json, socket, sys
+from pathlib import Path
+root, other, outside, escape = map(Path, sys.argv[1:])
+(root / 'n' / 'nested').mkdir(parents=True)
+(root / 'n' / 'nested' / 'written').write_text('ok')
+(other / 'written').write_text('ok')
+(outside / 'written').write_text('ok')
+results = {}
+for label, path in [('current', root / 'n' / 's'), ('other_run', other / 's'),
+                    ('outside', outside / 's'), ('symlink_escape', escape / 's')]:
+    try:
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(path))
+            listener.listen(1)
+            with socket.socket(socket.AF_UNIX) as client:
+                client.settimeout(2)
+                client.connect(str(path))
+                connection, _ = listener.accept()
+                with connection:
+                    client.sendall(b'ping')
+                    assert connection.recv(4) == b'ping'
+            results[label] = 'allowed'
+    except OSError as error:
+        assert error.errno in (errno.EPERM, errno.EACCES), (label, error)
+        results[label] = 'denied'
+    finally:
+        path.unlink(missing_ok=True)
+print(json.dumps(results))
+""",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            _runner_argv(
+                launch,
+                [
+                    sys.executable,
+                    str(script),
+                    str(current_tmp),
+                    str(other_run),
+                    str(workspace),
+                    str(current_tmp / "escape"),
+                ],
+            ),
+            cwd=workspace,
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "current": "allowed" if sys.platform == "darwin" else "denied",
+            "other_run": "denied",
+            "outside": "denied",
+            "symlink_escape": "denied",
+        }
+        assert (current_tmp / "n" / "nested" / "written").read_text() == "ok"
 
 
 def _runner_argv(launch: SandboxLaunch, command: list[str]) -> list[str]:

@@ -1180,6 +1180,133 @@ fn lock_and_recovery_tests_database_apply_lock_serializes_schemas() -> anyhow::R
     Ok(())
 }
 
+fn wait_for_schema_lock(client: &mut Client, pid: i32) -> anyhow::Result<(String, String)> {
+    let deadline = std::time::Instant::now() + StdDuration::from_secs(5);
+    loop {
+        let row = client.query_one(
+            "SELECT wait_event_type, wait_event, query FROM pg_stat_activity WHERE pid = $1",
+            &[&pid],
+        )?;
+        if row.get::<_, Option<String>>(0).as_deref() == Some("Lock") {
+            return Ok((row.get(1), row.get(2)));
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "schema worker did not reach its catalog lock"
+        );
+        std::thread::sleep(StdDuration::from_millis(10));
+    }
+}
+
+#[test]
+fn baseline_catalog_lock_serializes_role_bootstrap_across_databases() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((first_database, mut first)) = scratch_database()? else {
+        return Ok(());
+    };
+    let Some((_second_database, mut second)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut first)?;
+    let mut observer = first_database.connect()?;
+    second.batch_execute("SET statement_timeout = '15s'; SET lock_timeout = '45s'")?;
+    let pid: i32 = second.query_one("SELECT pg_backend_pid()", &[])?.get(0);
+    let mut held = first.transaction()?;
+    // Even an unchanged ALTER writes the shared pg_authid tuple. The old
+    // per-database advisory locks let the second baseline read that stale row.
+    held.batch_execute("ALTER ROLE gobby_agent_issuer NOLOGIN")?;
+    let (wait, outcome) = std::thread::scope(|scope| -> anyhow::Result<_> {
+        let worker = scope.spawn(move || {
+            SchemaRunner::new(&mut second, "cross_database_baseline")
+                .and_then(|mut runner| runner.apply())
+                .map_err(|error| format!("{error:?}"))?;
+            let timeout: String = second
+                .query_one("SHOW lock_timeout", &[])
+                .map_err(|error| error.to_string())?
+                .get(0);
+            Ok::<_, String>(timeout)
+        });
+        let wait = wait_for_schema_lock(&mut observer, pid);
+        held.commit()?;
+        let outcome = worker.join().expect("schema worker must not panic");
+        Ok((wait?, outcome))
+    })?;
+    assert_eq!(outcome.map_err(anyhow::Error::msg)?, "45s");
+    assert_eq!(wait.0, "relation");
+    assert!(wait.1.contains("LOCK TABLE pg_catalog.pg_authid"));
+    Ok(())
+}
+
+#[test]
+fn baseline_catalog_lock_respects_shorter_timeout_and_recovers() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_first_database, mut first)) = scratch_database()? else {
+        return Ok(());
+    };
+    let Some((_second_database, mut second)) = scratch_database()? else {
+        return Ok(());
+    };
+    second.batch_execute("SET statement_timeout = '5s'; SET lock_timeout = '100ms'")?;
+    let mut held = first.transaction()?;
+    held.batch_execute("LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE")?;
+    let started = std::time::Instant::now();
+    let outcome = SchemaRunner::new(&mut second, "timed_out_baseline")?.apply();
+    held.rollback()?;
+    let error = outcome.expect_err("the caller's shorter catalog lock timeout must be retained");
+    assert!(
+        matches!(error, SchemaError::Postgres(ref error) if error.code() == Some(&SqlState::LOCK_NOT_AVAILABLE))
+    );
+    assert!(started.elapsed() < StdDuration::from_secs(2));
+    let timeout: String = second.query_one("SHOW lock_timeout", &[])?.get(0);
+    assert_eq!(timeout, "100ms");
+    let report = SchemaRunner::new(&mut second, "timed_out_baseline")?.apply()?;
+    assert!(report.baseline_applied);
+    let timeout: String = second.query_one("SHOW lock_timeout", &[])?.get(0);
+    assert_eq!(timeout, "100ms");
+    Ok(())
+}
+
+#[test]
+fn baseline_catalog_lock_releases_after_baseline_failure() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_first_database, mut first)) = scratch_database()? else {
+        return Ok(());
+    };
+    let Some((_second_database, mut second)) = scratch_database()? else {
+        return Ok(());
+    };
+    first.batch_execute(
+        "CREATE FUNCTION public.fail_baseline_table() RETURNS event_trigger LANGUAGE plpgsql AS $$ \
+         BEGIN RAISE EXCEPTION 'baseline rollback probe'; END $$; \
+         CREATE EVENT TRIGGER fail_baseline_table ON ddl_command_start \
+         WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION public.fail_baseline_table()",
+    )?;
+    let error = SchemaRunner::new(&mut first, "failed_baseline")?
+        .apply()
+        .expect_err("the controlled table DDL failure must abort the baseline");
+    assert!(
+        matches!(error, SchemaError::Postgres(ref error) if error.code() == Some(&SqlState::RAISE_EXCEPTION))
+    );
+    let mut probe = second.transaction()?;
+    probe.batch_execute("LOCK TABLE pg_catalog.pg_authid IN SHARE ROW EXCLUSIVE MODE NOWAIT")?;
+    probe.rollback()?;
+    first.batch_execute(
+        "DROP EVENT TRIGGER fail_baseline_table; DROP FUNCTION public.fail_baseline_table()",
+    )?;
+    assert!(
+        SchemaRunner::new(&mut first, "failed_baseline")?
+            .apply()?
+            .baseline_applied
+    );
+    Ok(())
+}
+
 #[test]
 fn lock_and_recovery_tests_failed_apply_releases_database_apply_lock() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK

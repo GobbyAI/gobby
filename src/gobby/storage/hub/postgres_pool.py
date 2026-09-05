@@ -10,7 +10,13 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractContextManager,
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from datetime import date, datetime
 from typing import Any, Protocol, cast
 
@@ -21,6 +27,8 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.storage.hub._ambient import TransactionOpener, enter_transaction
+from gobby.storage.hub.async_ops import IndeterminateCommitError
+from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
     BuildDryRunMutation,
@@ -50,6 +58,7 @@ from gobby.storage.hub.protocol import (
     Transaction,
     WebChatSessionBootstrap,
 )
+from gobby.storage.hub.transaction_deadline import TransactionDeadline
 from gobby.telemetry.instruments import observe_histogram
 from gobby.utils.datetime import to_aware_utc, to_json_safe
 
@@ -106,20 +115,37 @@ class _TransactionContext(Protocol):
 def pool_connection(
     pool: ConnectionPool[Any],
     pool_stats: Callable[[], dict[str, Any]],
+    *,
+    acquire_timeout_seconds: float | None = None,
 ) -> Iterator[psycopg.Connection[Any]]:
-    """Acquire a pooled connection, retrying with backoff after a timeout.
+    """Acquire a pooled connection within its caller's ownership policy.
 
-    Dead connections linger after a hub restart, so each retry first asks the
-    pool to check (and recycle) its connections, then waits with exponential
-    backoff plus jitter before the next acquisition attempt.
+    Ordinary callers retry with backoff because dead connections can linger
+    after a hub restart. Deadline-owned callers make one bounded attempt so a
+    cancelled workflow cannot leave the retry chain occupying its worker.
     """
     started = time.monotonic()
     with ExitStack() as stack:
         try:
-            try:
-                conn = stack.enter_context(pool.connection())
-            except PoolTimeout:
-                conn = _acquire_with_backoff(stack, pool, pool_stats)
+            deadline = current_database_operation_deadline()
+            if deadline is None:
+                try:
+                    conn = stack.enter_context(pool.connection())
+                except PoolTimeout:
+                    conn = _acquire_with_backoff(stack, pool, pool_stats)
+            else:
+                timeout = deadline.remaining_seconds(
+                    maximum_seconds=acquire_timeout_seconds,
+                )
+                try:
+                    conn = stack.enter_context(pool.connection(timeout=timeout))
+                except PoolTimeout:
+                    logger.debug(
+                        "PostgreSQL hub pool acquisition reached its owning operation "
+                        "bound; skipping retries: pool_stats=%s",
+                        pool_stats(),
+                    )
+                    raise
         except BaseException:
             observe_histogram(
                 "database_pool_acquire_wait_seconds",
@@ -244,16 +270,41 @@ def transaction_context(
 ) -> Iterator[Transaction]:
     """Own a pooled connection and run callbacks after its transaction commits."""
     open_pool()
-    with connection() as conn, conn.transaction():
+    with connection() as conn:
         txn = _PostgresTransaction(
             conn,
             is_immediate=is_immediate,
             initial_lock=initial_lock,
         )
-        if initial_lock is not None:
-            txn._acquire_lock_target(initial_lock)
+        commit_submitted = False
         try:
-            yield txn
+            with conn.transaction():
+                if initial_lock is not None:
+                    txn._acquire_lock_target(initial_lock)
+                yield txn
+                txn._deadline.prepare()
+                commit_submitted = True
+        except BaseException as exc:
+            server_rejected = isinstance(exc, psycopg.Error) and (
+                exc.diag.severity_nonlocalized == "ERROR"
+                or (exc.sqlstate is not None and exc.sqlstate[:2] in {"23", "40"})
+            )
+            # Preserve definite server rejection, including deferred constraints.
+            # Cancellation and an explicitly unknown outcome retain the existing
+            # conservative contract even when they carry a server diagnostic.
+            uncertain_error = isinstance(
+                exc,
+                (
+                    psycopg.errors.QueryCanceled,
+                    psycopg.errors.LockNotAvailable,
+                    psycopg.errors.StatementCompletionUnknown,
+                ),
+            )
+            if commit_submitted and (not server_rejected or uncertain_error):
+                raise IndeterminateCommitError(
+                    "PostgreSQL COMMIT outcome was not observed"
+                ) from exc
+            raise
         finally:
             txn.closed = True
 
@@ -277,16 +328,30 @@ class _PostgresTransaction:
         self.closed = False
         self._locks = [initial_lock] if initial_lock is not None else []
         self._after_commit_callbacks: list[Callable[[], Any]] = []
+        self._deadline = TransactionDeadline(conn)
 
     def execute(
         self,
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Cursor:
-        result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
+        self._deadline.prepare()
+        # Extended protocol rejects a batch before executing any statement.
+        # A pipeline forces it even with prepare_threshold=None and no params;
+        # exiting synchronizes the result/error before this operation returns.
+        with self._conn.pipeline() if self._deadline.active else nullcontext():
+            result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
         return PostgresCursor(result)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
+        if self._deadline.active:
+            # Driver pipelining gives every row the same stale server bound.
+            rowcount = 0
+            for row in rows:
+                rowcount += self.execute(sql, tuple(row)).rowcount
+            self._deadline.prepare()
+            return PostgresCursor(None, rowcount=rowcount)
+        self._deadline.prepare()
         materialized = [tuple(row) for row in rows]
         if not materialized:
             return PostgresCursor(None, rowcount=0)
@@ -300,8 +365,8 @@ class _PostgresTransaction:
 
     def savepoint(self, name: str) -> Savepoint:
         quoted_name = _quote_identifier(name)
-        self._conn.execute(f"SAVEPOINT {quoted_name}")
-        return _PostgresSavepoint(self._conn, quoted_name)
+        self.execute(f"SAVEPOINT {quoted_name}")
+        return _PostgresSavepoint(self, quoted_name)
 
     def after_commit(self, callback: Callable[[], None]) -> None:
         if self.closed:
@@ -392,15 +457,18 @@ class PostgresCursor:
 
 
 class _PostgresSavepoint:
-    def __init__(self, conn: psycopg.Connection[Any], quoted_name: str) -> None:
-        self._conn = conn
+    def __init__(self, txn: _PostgresTransaction, quoted_name: str) -> None:
+        self._txn = txn
         self._quoted_name = quoted_name
+        self._deadline_state = txn._deadline.savepoint_state()
 
     def release(self) -> None:
-        self._conn.execute(f"RELEASE SAVEPOINT {self._quoted_name}")
+        self._txn.execute(f"RELEASE SAVEPOINT {self._quoted_name}")
 
     def rollback(self) -> None:
-        self._conn.execute(f"ROLLBACK TO SAVEPOINT {self._quoted_name}")
+        # Recovery must remain possible after a server-side statement timeout.
+        self._txn._conn.execute(f"ROLLBACK TO SAVEPOINT {self._quoted_name}")
+        self._txn._deadline.restore_savepoint_state(self._deadline_state)
 
 
 def _normalize_row(row: Row | None) -> Row | None:

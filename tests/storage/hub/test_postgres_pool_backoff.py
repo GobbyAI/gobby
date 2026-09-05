@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 import time
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from types import ModuleType
 from typing import Any, cast
 
+import psycopg
 import pytest
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.config.postgres_pool import PostgresPoolConfig, postgres_pool_config_from_mapping
 from gobby.storage.hub import postgres_pool
+from gobby.storage.hub.async_ops import IndeterminateCommitError
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 
 pytestmark = pytest.mark.unit
 
@@ -39,9 +46,11 @@ class _FakePool:
         self.failures_remaining = failures
         self.connection_calls = 0
         self.check_calls = 0
+        self.connection_timeouts: list[float | None] = []
 
-    def connection(self) -> Any:
+    def connection(self, timeout: float | None = None) -> Any:
         self.connection_calls += 1
+        self.connection_timeouts.append(timeout)
         if self.failures_remaining > 0:
             self.failures_remaining -= 1
             return _TimeoutContext()
@@ -131,6 +140,152 @@ def test_pool_connection_checks_pool_before_each_retry(
         pass
 
     assert events == ["connection", "check", "connection"]
+
+
+def test_pool_connection_honors_operation_deadline_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = _FakePool(failures=1)
+    release_check = threading.Event()
+
+    def blocking_check() -> None:
+        pool.check_calls += 1
+        release_check.wait(timeout=1.0)
+
+    monkeypatch.setattr(pool, "check", blocking_check)
+
+    def acquire() -> None:
+        with database_operation_deadline(timeout_seconds=0.03):
+            with postgres_pool.pool_connection(
+                cast(ConnectionPool[Any], pool),
+                _pool_stats,
+            ):
+                pass
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(acquire)
+        try:
+            with pytest.raises(PoolTimeout):
+                pending.result(timeout=0.08)
+        finally:
+            release_check.set()
+
+    assert pool.connection_calls == 1
+    assert pool.check_calls == 0
+    assert len(pool.connection_timeouts) == 1
+    timeout = pool.connection_timeouts[0]
+    assert timeout is not None
+    assert 0 < timeout <= 0.03
+
+
+class _TransactionConnection:
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, tuple[str, ...]]] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        yield
+
+    def execute(self, sql: str, params: tuple[str, ...] = ()) -> _TransactionConnection:
+        self.statements.append((sql, params))
+        return self
+
+    def fetchone(self) -> dict[str, str]:
+        return {"statement_timeout": "0", "lock_timeout": "0"}
+
+
+def test_transaction_context_applies_operation_deadline_as_local_bounds() -> None:
+    conn = _TransactionConnection()
+
+    @contextmanager
+    def connection() -> Iterator[Any]:
+        yield conn
+
+    with database_operation_deadline(timeout_seconds=0.25):
+        with postgres_pool.transaction_context(
+            lambda: None,
+            connection,
+            is_immediate=False,
+        ):
+            pass
+
+    assert len(conn.statements) == 3
+    sql, params = conn.statements[2]
+    assert params == ()
+    statement, lock = sql.split("; ")
+    assert statement.startswith("SET LOCAL statement_timeout = '")
+    assert lock.startswith("SET LOCAL lock_timeout = '")
+    for setting in (statement, lock):
+        value = setting.split("'")[1]
+        assert 0 < int(value.removesuffix("ms")) <= 250
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("commit outcome unavailable"),
+        psycopg.OperationalError("connection lost"),
+        psycopg.errors.QueryCanceled("commit cancelled"),
+        psycopg.errors.LockNotAvailable("commit lock timed out"),
+        psycopg.errors.StatementCompletionUnknown("commit outcome unknown"),
+    ],
+)
+def test_transaction_context_reports_unobserved_commit_as_indeterminate(
+    error: BaseException,
+) -> None:
+    class CommitFailureConnection(_TransactionConnection):
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+            raise error
+
+    conn = CommitFailureConnection()
+
+    @contextmanager
+    def connection() -> Iterator[Any]:
+        yield conn
+
+    with pytest.raises(IndeterminateCommitError) as raised:
+        with postgres_pool.transaction_context(
+            lambda: None,
+            connection,
+            is_immediate=False,
+        ):
+            pass
+
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        psycopg.errors.UniqueViolation("deferred uniqueness violation"),
+        psycopg.errors.SerializationFailure("serialization rejected"),
+        psycopg.errors.DeadlockDetected("deadlock rejected"),
+        psycopg.errors.RaiseException(
+            "deferred trigger rejected commit",
+            info={psycopg.pq.DiagnosticField.SEVERITY_NONLOCALIZED: b"ERROR"},
+        ),
+    ],
+)
+def test_transaction_context_preserves_definite_commit_rejections(error: psycopg.Error) -> None:
+    class CommitFailureConnection(_TransactionConnection):
+        @contextmanager
+        def transaction(self) -> Iterator[None]:
+            yield
+            raise error
+
+    conn = CommitFailureConnection()
+
+    @contextmanager
+    def connection() -> Iterator[Any]:
+        yield conn
+
+    with pytest.raises(type(error)) as raised:
+        with postgres_pool.transaction_context(lambda: None, connection, is_immediate=False):
+            pass
+
+    assert raised.value is error
 
 
 def _postgres_module() -> ModuleType:

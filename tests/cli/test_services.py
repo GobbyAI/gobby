@@ -126,7 +126,8 @@ class TestIsFalkorDBHealthy:
             host="127.0.0.1",
             port=16379,
             password="secret",
-            socket_timeout=5,
+            socket_connect_timeout=5.0,
+            socket_timeout=5.0,
         )
         assert client.closed is True
 
@@ -232,7 +233,7 @@ class TestGetFalkorDBStatus:
         with patch("gobby.cli.services.is_falkordb_healthy", return_value=True) as healthy:
             status = await get_falkordb_status(db=hub_db)
 
-        healthy.assert_called_once_with("127.0.0.1", 16379, "secret")
+        healthy.assert_called_once_with("127.0.0.1", 16379, "secret", timeout=5.0)
         assert status == {
             "installed": True,
             "healthy": True,

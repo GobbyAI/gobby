@@ -120,6 +120,8 @@ class ACPManagedChatSession(
                         "source": self._web_chat_source(),
                     }
                 )
+                if resp and resp.get("decision") in {"block", "deny"}:
+                    raise RuntimeError(resp.get("reason") or "Prompt blocked by workflow")
                 if resp and resp.get("context"):
                     context_parts.append(str(resp["context"]))
 

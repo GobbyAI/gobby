@@ -52,6 +52,13 @@ class _SessionMetadataUpdateMixin:
                 "UPDATE sessions SET chat_mode = %s, updated_at = %s WHERE id = %s",
                 (chat_mode, now, session_id),
             )
+            if chat_mode != "plan":
+                from gobby.workflows.state_manager import SessionVariableManager
+
+                # UI mode changes can leave and re-enter Plan Mode between prompts.
+                SessionVariableManager(self.db).merge_variables(
+                    session_id, {"plan_skill_directive_delivered": False}
+                )
 
     def update_approved_tools(self: _ManagerState, session_id: str, tools: set[str]) -> None:
         """Persist the set of user-approved tools as JSON."""

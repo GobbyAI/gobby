@@ -18,14 +18,18 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -579,6 +583,111 @@ class TestLegitimateWaitConditions:
 class TestRequireStepCompletion:
     """Verify spawned-agent step completion gates only apply to active step workflows."""
 
+    @pytest.fixture
+    def close_review_wait(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[str, str, LocalAgentRunManager]:
+        """Persist the parent/run relationship used by close-review orchestration."""
+        machine_id = "21000000-0000-4000-8000-000000000001"
+        patch_local_machine_id(monkeypatch, machine_id)
+        caller = session_manager.register(
+            external_id="step-completion-review-caller",
+            machine_id=machine_id,
+            source="claude",
+            project_id=str(sample_project["id"]),
+        )
+        runs = LocalAgentRunManager(db)
+        review = runs.create(
+            parent_session_id=caller.id,
+            provider="claude",
+            prompt="Review the caller's committed task criteria.",
+            agent_name="task-close-validator",
+        )
+        return caller.id, review.id, runs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+    @pytest.mark.parametrize("review_status", ["pending", "running"])
+    async def test_close_review_wait_yields_without_completing_step_and_rearms_after_verdict(
+        self,
+        db: HubDatabase,
+        close_review_wait: tuple[str, str, LocalAgentRunManager],
+        event_type: HookEventType,
+        review_status: str,
+    ) -> None:
+        _sync_bundled(db)
+        caller_id, review_run_id, runs = close_review_wait
+        if review_status == "running":
+            assert runs.start(review_run_id) is not None
+        subscribers = CompletionSubscriberManager(db)
+        subscribers.add_completion_subscriber(review_run_id, caller_id)
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+            "_memory_initial_stop_checked": True,
+        }
+        event = _make_event(event_type)
+        event.session_id = caller_id
+
+        parked = await engine.evaluate(event, caller_id, variables)
+
+        assert parked.decision == "allow"
+        assert variables["current_step"] == "implement"
+        assert variables["step_workflow_complete"] is False
+        assert variables["stop_attempts"] == 0
+
+        assert runs.complete(review_run_id, result="Close-review verdict delivered.") is not None
+        # A terminal validator must rearm the gate even before subscription cleanup.
+        assert subscribers.get_completion_subscribers(review_run_id) == [caller_id]
+        resumed = await engine.evaluate(event, caller_id, variables)
+
+        assert resumed.decision == "block"
+        assert "Step workflow not complete" in (resumed.reason or "")
+        assert variables["current_step"] == "implement"
+        assert variables["step_workflow_complete"] is False
+        assert variables["stop_attempts"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wait_state", ["missing", "foreign", "orphan"])
+    async def test_incomplete_step_blocks_without_an_owned_active_completion_wait(
+        self,
+        db: HubDatabase,
+        close_review_wait: tuple[str, str, LocalAgentRunManager],
+        wait_state: str,
+    ) -> None:
+        _sync_bundled(db)
+        caller_id, review_run_id, _runs = close_review_wait
+        subscribers = CompletionSubscriberManager(db)
+        if wait_state == "foreign":
+            caller_id = SESSION_ID
+            subscribers.add_completion_subscriber(review_run_id, caller_id)
+        elif wait_state == "orphan":
+            subscribers.add_completion_subscriber("22222222-2222-4222-8222-222222222222", caller_id)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+            "_memory_initial_stop_checked": True,
+        }
+        event = _make_event(HookEventType.STOP)
+        event.session_id = caller_id
+
+        response = await RuleEngine(db).evaluate(event, caller_id, variables)
+
+        assert response.decision == "block"
+        assert "Step workflow not complete" in (response.reason or "")
+        assert variables["current_step"] == "implement"
+        assert variables["step_workflow_complete"] is False
+        assert variables["stop_attempts"] == 1
+
     def test_blocks_on_turn_end(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
@@ -641,7 +750,13 @@ class TestRequireStepCompletion:
         }
         evaluator = SafeExpressionEvaluator(
             context={"variables": variables},
-            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
+            allowed_funcs={
+                "len": len,
+                "str": str,
+                "int": int,
+                "bool": bool,
+                "has_active_agent_wait": lambda: False,
+            },
         )
         assert body.when is not None
         assert evaluator.evaluate(body.when)
