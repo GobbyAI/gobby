@@ -497,6 +497,8 @@ class TestFireLifecycleMessagePiggyback:
         assert result is not None
         assert "[Pending P2P messages from other sessions]:" in result["context"]
         assert "Urgent update from coordinator" in result["context"]
+        mgr.mark_delivered.assert_not_called()
+        host._chat_sessions["conv-1"]._on_prompt_delivered()
         mgr.mark_delivered.assert_called_once_with("msg-agent-1", SESSION_ID)
 
     @pytest.mark.asyncio
@@ -562,7 +564,7 @@ class TestFireLifecycleMessagePiggyback:
 
     @pytest.mark.asyncio
     async def test_lifecycle_failure_leaves_piggyback_message_pending(
-        self, host: ChatMixinHost
+        self, host: ChatMixinHost, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Messages remain pending when lifecycle processing fails after injection."""
         host._chat_sessions["conv-1"] = _make_session()
@@ -578,8 +580,10 @@ class TestFireLifecycleMessagePiggyback:
         mgr = MagicMock()
         mgr.get_undelivered_messages.return_value = [msg]
         host.inter_session_msg_manager = mgr
-        host._dispatch_non_blocking_webhooks = AsyncMock(
-            side_effect=RuntimeError("dispatch failed")
+        monkeypatch.setattr(
+            host,
+            "_dispatch_non_blocking_webhooks",
+            AsyncMock(side_effect=RuntimeError("dispatch failed")),
         )
 
         result = await host._fire_lifecycle(

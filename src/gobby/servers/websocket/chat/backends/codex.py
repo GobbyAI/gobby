@@ -170,37 +170,39 @@ class CodexManagedChatSession(
         if not self._connected:
             await self.start(model=self._model)
 
-        prompt = _extract_text(content)
-        context_parts: list[str] = []
-        if self.system_prompt_override:
-            context_parts.append(self.system_prompt_override)
-
-        session_ref = (
-            f"#{self.seq_num}" if self.seq_num else (self.db_session_id or self.conversation_id)
-        )
-        context_parts.append(
-            build_compaction_context(
-                session_ref=session_ref,
-                project_id=self.project_id,
-                cwd=self.project_path,
-                source="codex_web_chat",
-            )
-        )
-        plan_ctx = self._pop_plan_mode_context()
-        if plan_ctx:
-            context_parts.append(plan_ctx)
-        deferred_context = self._consume_deferred_context()
-        if deferred_context:
-            context_parts.append(deferred_context)
-
-        if self._on_before_agent:
-            resp = await self._on_before_agent({"prompt": prompt, "source": "codex_web_chat"})
-            if resp and resp.get("context"):
-                context_parts.append(str(resp["context"]))
-
-        context_prefix = "\n\n".join(part for part in context_parts if part)
-
         async with self._lock:
+            prompt = _extract_text(content)
+            context_parts: list[str] = []
+            if self.system_prompt_override:
+                context_parts.append(self.system_prompt_override)
+
+            session_ref = (
+                f"#{self.seq_num}" if self.seq_num else (self.db_session_id or self.conversation_id)
+            )
+            context_parts.append(
+                build_compaction_context(
+                    session_ref=session_ref,
+                    project_id=self.project_id,
+                    cwd=self.project_path,
+                    source="codex_web_chat",
+                )
+            )
+            plan_ctx = self._pop_plan_mode_context()
+            if plan_ctx:
+                context_parts.append(plan_ctx)
+            deferred_context = self._consume_deferred_context()
+            if deferred_context:
+                context_parts.append(deferred_context)
+
+            if self._on_before_agent:
+                resp = await self._on_before_agent({"prompt": prompt, "source": "codex_web_chat"})
+                if resp and resp.get("decision") in {"block", "deny"}:
+                    raise RuntimeError(resp.get("reason") or "Prompt blocked by workflow")
+                if resp and resp.get("context"):
+                    context_parts.append(str(resp["context"]))
+
+            context_prefix = "\n\n".join(part for part in context_parts if part)
+
             self.last_activity = datetime.now(UTC)
             self.message_index += 1
             saw_text_output = False

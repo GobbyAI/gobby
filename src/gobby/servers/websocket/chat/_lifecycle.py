@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from contextlib import nullcontext
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.events import (
     HookEvent,
@@ -16,6 +18,11 @@ from gobby.hooks.events import (
     parse_session_source,
 )
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
+from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
+    apply_acknowledged_receipt,
+    worker_staging_scope,
+)
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
 
@@ -131,6 +138,22 @@ class ChatLifecycleMixin:
         # Use the database session ID (not the external conversation_id) so that
         # workflow actions can look up the session via session_manager.get(session_id).
         session = self._chat_sessions.get(conversation_id)
+
+        def pending_prompt_delivery() -> None:
+            """Reserve this attempt until evaluation finishes; no receipt exists yet."""
+
+        if event_type is HookEventType.BEFORE_AGENT and session is not None:
+            # Mode changes/context reset clear this reservation while we await rules.
+            session._on_prompt_delivered = pending_prompt_delivery
+        elif session is not None and (
+            event_type is HookEventType.PRE_COMPACT
+            or (
+                event_type is HookEventType.SESSION_START
+                and data.get("source") in {"clear", "compact", "startup"}
+            )
+        ):
+            # A receipt from the discarded context must not consume the new period.
+            session._on_prompt_delivered = None
         db_session_id = getattr(session, "db_session_id", None) or conversation_id
         project_path = getattr(session, "project_path", None)
         project_id = getattr(session, "project_id", None)
@@ -180,8 +203,18 @@ class ChatLifecycleMixin:
                 event_type.name,
                 redacted_event_data,
             )
+
             # WorkflowHookHandler.evaluate is sync (bridges to async internally)
-            response: HookResponse = await run_db(self, workflow_handler.evaluate, event)
+            def evaluate() -> HookResponse:
+                staging = (
+                    worker_staging_scope()
+                    if event_type is HookEventType.BEFORE_AGENT
+                    else nullcontext()
+                )
+                with staging:
+                    return cast(HookResponse, workflow_handler.evaluate(event))
+
+            response: HookResponse = await run_db(self, evaluate)
             logger.debug(
                 "_fire_lifecycle: %s → decision=%s, context_len=%s",
                 event_type.name,
@@ -333,7 +366,20 @@ class ChatLifecycleMixin:
             # --- Non-blocking webhook dispatch (parity with hook_manager.py:442-446) ---
             await self._dispatch_non_blocking_webhooks(event)
 
-            self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
+            if event_type is HookEventType.BEFORE_AGENT and session is not None:
+                payload = response.metadata.get(STAGED_EFFECTS_FIELD)
+
+                def acknowledge_prompt() -> None:
+                    apply_acknowledged_receipt(
+                        SimpleNamespace(session_id=db_session_id, staged_payload=payload),
+                        variable_manager=workflow_handler._session_var_manager,
+                    )
+                    self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
+
+                if session._on_prompt_delivered is pending_prompt_delivery:
+                    session._on_prompt_delivered = acknowledge_prompt
+            else:
+                self._mark_pending_messages_delivered(pending_message_ids, db_session_id)
 
             return result
         except Exception as e:
