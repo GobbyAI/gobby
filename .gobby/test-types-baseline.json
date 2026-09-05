@@ -1651,26 +1651,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/test_worktrees_cli.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 38,
-      "message": "Argument \"created_at\" to \"Worktree\" has incompatible type \"str\"; expected \"datetime\"",
-      "occurrences": 2,
-      "path": "tests/cli/test_worktrees_cli.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_cli.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 48,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 9,
-      "path": "tests/cli/test_worktrees_cli.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/test_worktrees_coverage.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 45,
@@ -4971,26 +4951,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_worktrees_lifecycle.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 31,
-      "message": "Argument \"created_at\" to \"Worktree\" has incompatible type \"str\"; expected \"datetime\"",
-      "occurrences": 94,
-      "path": "tests/mcp_proxy/tools/test_worktrees_lifecycle.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_worktrees_lifecycle.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 37,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 61,
-      "path": "tests/mcp_proxy/tools/test_worktrees_lifecycle.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_worktrees_session_resolution.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 25,
@@ -6637,36 +6597,6 @@
       "message": "Item \"None\" of \"_Call | None\" has no attribute \"args\"",
       "occurrences": 2,
       "path": "tests/servers/routes/test_skills_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_source_control_routes.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 100,
-      "message": "\"_validate_git_ref\" does not return a value (it only ever returns None)",
-      "occurrences": 5,
-      "path": "tests/servers/routes/test_source_control_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_source_control_routes.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 54,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 84,
-      "path": "tests/servers/routes/test_source_control_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_source_control_routes.py::::mypy:var-annotated",
-      "issue_code": "mypy:var-annotated",
-      "line": 1529,
-      "message": "Need type annotation for \"pr_data\"",
-      "occurrences": 1,
-      "path": "tests/servers/routes/test_source_control_routes.py",
       "severity": "high",
       "test_name": ""
     },

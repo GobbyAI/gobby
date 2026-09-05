@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import click
@@ -55,8 +57,8 @@ MOCK_WORKTREE = Worktree(
     worktree_path="/tmp/wt-123",
     base_branch="main",
     status="active",
-    created_at="2023-01-01T00:00:00Z",
-    updated_at="2023-01-01T00:00:00Z",
+    created_at=datetime(2023, 1, 1, tzinfo=UTC),
+    updated_at=datetime(2023, 1, 1, tzinfo=UTC),
     project_id="proj-123",
     agent_session_id=None,
     task_id=None,
@@ -65,18 +67,18 @@ MOCK_WORKTREE = Worktree(
 
 
 @pytest.fixture
-def mock_worktree_manager():
+def mock_worktree_manager() -> Iterator[MagicMock]:
     with patch("gobby.cli.worktrees.get_worktree_manager") as mock:
         yield mock.return_value
 
 
 @pytest.fixture
-def mock_httpx():
+def mock_httpx() -> Iterator[MagicMock]:
     with patch("gobby.cli.worktrees.httpx.post") as mock:
         yield mock
 
 
-def test_list_worktrees_empty(mock_worktree_manager) -> None:
+def test_list_worktrees_empty(mock_worktree_manager: MagicMock) -> None:
     """Test 'worktrees list' with no worktrees."""
     mock_worktree_manager.list_worktrees.return_value = []
 
@@ -87,7 +89,7 @@ def test_list_worktrees_empty(mock_worktree_manager) -> None:
     assert "No worktrees found" in result.output
 
 
-def test_list_worktrees_populated(mock_worktree_manager) -> None:
+def test_list_worktrees_populated(mock_worktree_manager: MagicMock) -> None:
     """Test 'worktrees list' with active worktrees."""
     mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
 
@@ -100,7 +102,7 @@ def test_list_worktrees_populated(mock_worktree_manager) -> None:
     assert "active" in result.output
 
 
-def test_create_worktree_success(mock_httpx) -> None:
+def test_create_worktree_success(mock_httpx: MagicMock) -> None:
     """Test 'worktrees create' success via Daemon API."""
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -121,7 +123,7 @@ def test_create_worktree_success(mock_httpx) -> None:
     assert "headers" in mock_httpx.call_args.kwargs
 
 
-def test_create_worktree_failure(mock_httpx) -> None:
+def test_create_worktree_failure(mock_httpx: MagicMock) -> None:
     """Test 'worktrees create' failure."""
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -135,7 +137,7 @@ def test_create_worktree_failure(mock_httpx) -> None:
     assert "Branch exists" in result.output
 
 
-def test_create_worktree_timeout_fails_without_traceback(mock_httpx) -> None:
+def test_create_worktree_timeout_fails_without_traceback(mock_httpx: MagicMock) -> None:
     """Test 'worktrees create' timeout maps to a clean nonzero CLI error."""
     mock_httpx.side_effect = httpx.ReadTimeout("slow daemon")
 
@@ -148,7 +150,9 @@ def test_create_worktree_timeout_fails_without_traceback(mock_httpx) -> None:
 
 
 @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
-def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) -> None:
+def test_delete_worktree_success(
+    mock_url: MagicMock, mock_worktree_manager: MagicMock, mock_httpx: MagicMock
+) -> None:
     """Test 'worktrees delete' success via Daemon API."""
     mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
     mock_worktree_manager.get.return_value = MOCK_WORKTREE
@@ -180,7 +184,7 @@ def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) ->
 
 @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
 def test_delete_worktree_failure_reports_service_reason(
-    mock_url, mock_worktree_manager, mock_httpx
+    mock_url: MagicMock, mock_worktree_manager: MagicMock, mock_httpx: MagicMock
 ) -> None:
     """Test 'worktrees delete' failure uses the daemon's reason and exits nonzero."""
     mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
