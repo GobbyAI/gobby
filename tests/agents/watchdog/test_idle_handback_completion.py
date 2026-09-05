@@ -11,6 +11,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -154,3 +155,46 @@ async def test_max_idle_reprompts_complete_run_whose_task_was_handed_back(
     assert updated_run.status == "success"
     assert not any("idle after max reprompt attempts" in r.getMessage() for r in caplog.records)
     assert any("handed back" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_watchdog_completion_persists_final_closed_task_details(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    monitor, run, task_manager = _task_bound_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1518",
+        transcript_path=None,
+    )
+    assert run.task_id is not None
+    task_manager.close_task(run.task_id, reason="done", closed_commit_sha="abc123")
+    closed_task = task_manager.get_task(run.task_id)
+    assert closed_task.closed_at is not None
+    recovery = monitor._idle_check_handler._recovery
+
+    with (
+        patch.object(recovery._terminal_services, "terminal_for", return_value=None),
+        patch.object(monitor._cleanup_handler, "post_terminal_cleanup", new_callable=AsyncMock),
+    ):
+        handled = await recovery._complete_if_work_finished(run)
+
+    completed = agent_run_manager.get(run.id)
+    suffix = (
+        "Task completion: "
+        f"task=#{closed_task.seq_num}; closed_at={closed_task.closed_at.isoformat()}; "
+        "commit_sha=abc123"
+    )
+    assert handled is True
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.error is None
+    assert completed.result == (
+        f"Agent completed by watchdog: task {run.task_id} was closed "
+        f"but the agent never called end_agent_run\n\n{suffix}"
+    )

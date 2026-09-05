@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -377,6 +379,38 @@ def test_repair_call_result_rewrites_text_and_structured_and_attaches_deviations
     assert len(repaired.content) == 1
 
 
+def test_repair_call_result_serializes_matching_structured_and_text_payload_once() -> None:
+    index = build_schema_index(_SPEC)
+    payload = {"data": [{"id": "1", "count": "2"}]}
+    encoded = json.dumps(payload)
+    result = CallToolResult(
+        content=[
+            TextContent(type="text", text=encoded),
+            TextContent(type="text", text=encoded),
+        ],
+        structuredContent=copy.deepcopy(payload),
+    )
+    original_dumps = json.dumps
+
+    with patch("gobby.mcp_proxy.services.output_repair.json.dumps", wraps=original_dumps) as dumps:
+        repaired, deviations = repair_call_result(
+            result,
+            index.tools["ListSales"],
+            index,
+            null_policy="drop",
+        )
+
+    assert dumps.call_count == 1
+    expected = {"data": [{"id": "1", "count": 2}]}
+    assert [
+        json.loads(item.text) for item in repaired.content if isinstance(item, TextContent)
+    ] == [
+        expected,
+        expected,
+    ]
+    assert repaired.structured_content == {**expected, DEVIATIONS_KEY: deviations}
+
+
 def test_repair_call_result_returns_same_object_without_deviations() -> None:
     index = build_schema_index(_SPEC)
     result = _sales_result({"data": [{"id": "1"}]})
@@ -547,6 +581,129 @@ async def test_maybe_repair_output_honours_empty_null_policy(tmp_path: Path) -> 
     assert isinstance(repaired, CallToolResult)
     assert repaired.structured_content is not None
     assert repaired.structured_content["data"] == [{"id": ""}]
+
+
+@pytest.mark.asyncio
+async def test_large_repair_keeps_heartbeat_running_and_preserves_payload(tmp_path: Path) -> None:
+    spec_file = _write_spec(tmp_path)
+    service = _service_with(_openapi_config(spec_file, output_validation="repair"))
+    payload = {
+        "data": [
+            {"id": position, "count": str(position), "tags": [None]} for position in range(100_000)
+        ]
+    }
+    result = _sales_result(payload)
+    assert await get_schema_index(str(spec_file)) is not None
+    heartbeat_ticks = 0
+    heartbeat_running = True
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_ticks
+        while heartbeat_running:
+            await asyncio.sleep(0)
+            heartbeat_ticks += 1
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)
+    ticks_before = heartbeat_ticks
+    try:
+        repaired = await maybe_repair_output(
+            service=service,
+            server_name="lightspeed",
+            tool_name="ListSales",
+            result=result,
+            project_id=_PROJECT_ID,
+        )
+        ticks_during_repair = heartbeat_ticks - ticks_before
+    finally:
+        heartbeat_running = False
+        await heartbeat_task
+
+    assert isinstance(repaired, CallToolResult)
+    assert isinstance(repaired.structured_content, dict)
+    repaired_data = repaired.structured_content["data"]
+    assert repaired_data[0] == {"id": "0", "count": 0, "tags": []}
+    assert repaired_data[-1] == {"id": "99999", "count": 99999, "tags": []}
+    assert len(repaired.structured_content[DEVIATIONS_KEY]) == MAX_DEVIATIONS
+    assert repaired.structured_content[DEVIATIONS_TRUNCATED_KEY] == 299_950
+    first_content = repaired.content[0]
+    assert isinstance(first_content, TextContent)
+    repaired_text = json.loads(first_content.text)
+    assert repaired_text["data"][0] == repaired_data[0]
+    assert repaired_text["data"][-1] == repaired_data[-1]
+    assert ticks_during_repair > 0
+
+
+@pytest.mark.asyncio
+async def test_large_structured_key_dispatches_repair_to_worker(tmp_path: Path) -> None:
+    spec_file = _write_spec(tmp_path)
+    service = _service_with(_openapi_config(spec_file, output_validation="repair"))
+    result = CallToolResult(
+        content=[TextContent(type="text", text="{}")],
+        structuredContent={"x" * output_repair._PROCESS_THRESHOLD_CHARS: 1},
+    )
+    large_repair = AsyncMock(return_value=(result, []))
+
+    with (
+        patch.object(output_repair, "_repair_large_result", new=large_repair),
+        patch.object(output_repair, "repair_call_result") as inline_repair,
+    ):
+        repaired = await maybe_repair_output(
+            service=service,
+            server_name="lightspeed",
+            tool_name="ListSales",
+            result=result,
+            project_id=_PROJECT_ID,
+        )
+
+    assert repaired is result
+    large_repair.assert_awaited_once()
+    inline_repair.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_large_repair_holds_worker_slot_until_dispatch_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _sales_result({"data": []})
+    output = output_repair.ToolOutputSchema(schema=_sales_schema(), wrapped=False)
+    index = output_repair.ResponseSchemaIndex(tools={}, document={})
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    second_entered = threading.Event()
+    dispatch_count = 0
+
+    def blocking_dispatch(*args: object) -> tuple[CallToolResult, list[dict[str, str]]]:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        if dispatch_count == 1:
+            first_entered.set()
+            assert first_release.wait(timeout=5)
+        else:
+            second_entered.set()
+        return result, []
+
+    monkeypatch.setattr(output_repair, "_dispatch_isolated_repair", blocking_dispatch)
+    first = asyncio.create_task(
+        output_repair._repair_large_result(result, output, index, output_repair.NULL_POLICY_DROP)
+    )
+    assert await asyncio.to_thread(first_entered.wait, 2)
+
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    second = asyncio.create_task(
+        output_repair._repair_large_result(result, output, index, output_repair.NULL_POLICY_DROP)
+    )
+    await asyncio.sleep(0)
+    assert not second_entered.is_set()
+
+    first_release.set()
+    repaired, deviations = await asyncio.wait_for(second, timeout=2)
+    assert repaired is result
+    assert deviations == []
+    assert second_entered.is_set()
 
 
 @pytest.mark.asyncio

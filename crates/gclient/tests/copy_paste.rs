@@ -26,8 +26,9 @@ fn scrollback_copy_is_lease_independent() {
     ws.push_frame(a, "new-output");
     assert!(ws.pane(a).has_new_output());
     assert!(ws.daemon().pty_mutation_count() == 0);
-    assert!(!ws.frames().sent_host_input());
-    assert!(!ws.frames().sent_resize());
+    let source = ws.pane(a).scripted_source().expect("scripted source");
+    assert!(!source.sent_host_input());
+    assert!(!source.sent_resize());
 
     let joiner = ws.open_terminal("term-join", "tmux", "epoch-a").unwrap();
     ws.seed_attach_history(joiner, "later joiner history");
@@ -42,7 +43,10 @@ fn native_set_scroll_offset_and_tmux_wrap_history() {
     ws.attach_frames(native).unwrap();
     ws.set_scroll_offset(native, 8).unwrap();
     assert!(matches!(
-        ws.frames().last_client_message(),
+        ws.pane(native)
+            .scripted_source()
+            .expect("scripted source")
+            .last_client_message(),
         Some(ClientMessage::SetScrollOffset {
             rows_from_live_edge: 8
         })
@@ -60,9 +64,10 @@ fn native_set_scroll_offset_and_tmux_wrap_history() {
     assert_eq!(ws.pane(native).scroll_offset(), 8);
     ws.jump_to_bottom(native).unwrap();
     assert_eq!(ws.pane(native).scroll_offset(), 0);
-    assert!(!ws.frames().sent_host_input());
-    assert!(!ws.frames().sent_mouse_report());
-    assert!(!ws.frames().sent_tiocswinsz());
+    let source = ws.pane(native).scripted_source().expect("scripted source");
+    assert!(!source.sent_host_input());
+    assert!(!source.sent_mouse_report());
+    assert!(!source.sent_tiocswinsz());
 
     let tmux = ws.open_terminal("tm", "tmux", "epoch-t").unwrap();
     ws.seed_attach_history(tmux, "wide 👩‍💻 continues\u{23CE}on wrap\nhard line\n");

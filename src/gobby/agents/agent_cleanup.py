@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents import terminal_delivery
 from gobby.agents.completion_stats import resolve_completion_stats
+from gobby.agents.run_completion import closed_task_run_completion_result
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.agents.terminal_cleanup import TerminalResourceCleaner
 from gobby.sessions.transcript_reader import TranscriptReader
@@ -251,6 +252,12 @@ class AgentCleanupHandler:
         if current is None:
             logger.debug("Successful terminalization no-op for missing run %s", run_id)
             return False
+        completion_result = await self._run_db(
+            closed_task_run_completion_result,
+            self._db,
+            current,
+            completion_result,
+        )
 
         transitioned_here = False
 
@@ -504,10 +511,16 @@ class AgentCleanupHandler:
         if run.status in ("pending", "running"):
             tool_calls_count, turns_used = await self._completion_stats_for_run(run)
             if is_success:
+                completion_result = await self._run_db(
+                    closed_task_run_completion_result,
+                    self._db,
+                    run,
+                    terminal_payload,
+                )
                 updated = await self._run_db(
                     self._agent_run_manager.complete,
                     run.id,
-                    result=terminal_payload,
+                    result=completion_result,
                     tool_calls_count=tool_calls_count,
                     turns_used=turns_used,
                 )

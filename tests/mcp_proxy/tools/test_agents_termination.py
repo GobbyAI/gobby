@@ -13,13 +13,16 @@ import pytest
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runner import AgentRunner
 from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.mcp_proxy.tools.agents_termination import (
     _cleanup_terminal_artifacts,
     _complete_self_terminated_run,
 )
-from gobby.storage.agents import AgentRunTerminalReason
+from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 
 def _create_sandbox_roots(gobby_home: Path, run_id: str) -> tuple[Path, Path]:
@@ -195,6 +198,121 @@ async def test_terminal_cleanup_reap_failure_warns_once_and_preserves_result(
     warnings = [record for record in caplog.records if warning in record.getMessage()]
     assert len(warnings) == 1
     assert warnings[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_cooperative_completion_persists_final_closed_task_details(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    session_manager = SessionManager(temp_db)
+    parent = session_manager.register(
+        external_id="cooperative-close-parent",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Complete cooperatively",
+        validation_criteria="The final close details are persisted.",
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="Complete the bound task",
+        task_id=task.id,
+    )
+    assert run_manager.start(run.id) is not None
+    stale_result = "close_task was refused; the task is not definitively closed."
+    seeded = run_manager.record_termination_intent(
+        run.id,
+        action="complete",
+        result_prefix=stale_result,
+    )
+    assert seeded is not None
+    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    closed_task = task_manager.get_task(task.id)
+    assert closed_task.closed_at is not None
+
+    runner = MagicMock()
+    runner.run_storage = run_manager
+    runner._run_storage = run_manager
+    runner._session_manager = session_manager
+    runner.get_run.side_effect = run_manager.get
+
+    def complete_run(
+        run_id: str,
+        result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
+    ) -> bool:
+        return AgentRunner.complete_run(
+            runner,
+            run_id,
+            result=result,
+            terminal_reason=terminal_reason,
+        )
+
+    runner.complete_run.side_effect = complete_run
+    notifications: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def wake_parent(
+        session_id: str,
+        message: str,
+        result: dict[str, Any],
+    ) -> dict[str, bool]:
+        notifications.append((session_id, message, result))
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake_parent)
+    registry.register(run.id, [parent.id])
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+            new_callable=AsyncMock,
+        ),
+    ):
+        termination = await _complete_self_terminated_run(
+            runner=runner,
+            run=seeded,
+            kill_db=temp_db,
+            completion_registry=registry,
+            session_manager=session_manager,
+        )
+
+    completed = run_manager.get(run.id)
+    suffix = (
+        "Task completion: "
+        f"task=#{closed_task.seq_num}; closed_at={closed_task.closed_at.isoformat()}; "
+        "commit_sha=abc123"
+    )
+    assert termination["success"] is True
+    assert termination["status"] == "success"
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.error is None
+    assert completed.result == f"{stale_result}\n\n{suffix}"
+    assert completed.result.count(suffix) == 1
+    assert notifications == [
+        (
+            parent.id,
+            f"Agent {run.id} completed; dirty_paths=[]",
+            {
+                "status": "success",
+                "run_id": run.id,
+                "dirty_paths": [],
+                "completion_id": run.id,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

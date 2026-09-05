@@ -19,7 +19,7 @@ from gobby.agents.terminal_delivery import (
     reset_terminal_delivery_offload as reset_terminal_delivery_offload,
 )
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -123,6 +123,52 @@ class TaskCompletionState(TypedDict):
     is_escalated: bool
     escalation_reason: str | None
     linked_commits: list[str]
+
+
+def closed_task_completion_result(task: Task, result: str | None = None) -> str | None:
+    """Append authoritative close metadata to a task-bound agent result."""
+    if task.closed_at is None:
+        return None
+    task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
+    suffix = (
+        "Task completion: "
+        f"task={task_ref}; closed_at={task.closed_at.isoformat()}; "
+        f"commit_sha={task.closed_commit_sha or '<none>'}"
+    )
+    base_result = result.rstrip() if result else ""
+    if base_result.endswith(suffix):
+        return base_result
+    return f"{base_result}\n\n{suffix}" if base_result else suffix
+
+
+def closed_task_run_completion_result(
+    db: HubDatabase,
+    run: Any,
+    result: str | None = None,
+) -> str | None:
+    """Add authoritative close metadata when a successful run's task is closed."""
+    task_id = getattr(run, "task_id", None)
+    if not isinstance(task_id, str) or not task_id:
+        return result
+
+    try:
+        task = LocalTaskManager(db).get_task(task_id)
+    except Exception:
+        logger.warning(
+            "Failed to read task %s while completing agent run %s",
+            task_id,
+            getattr(run, "id", "unknown"),
+            exc_info=True,
+        )
+        return result
+    if task.closed_at is None:
+        return result
+
+    base_result = result if result is not None else getattr(run, "result", None)
+    return closed_task_completion_result(
+        task,
+        base_result if isinstance(base_result, str) else None,
+    )
 
 
 def _task_completion_state(db: HubDatabase, task_id: str | None) -> TaskCompletionState:

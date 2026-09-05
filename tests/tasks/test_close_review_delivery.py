@@ -52,6 +52,21 @@ def test_interrupted_finalization_recovers_closed_task(
     assert store.finished_status == "closed"
 
 
+def test_run_end_leaves_finalizing_review_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review("finalizing"))
+    run = SimpleNamespace(status="success", error=None)
+    task = SimpleNamespace(id="task", commits=[], closed_at=None)
+    _install(monkeypatch, store=store, run=run, task=task)
+
+    resolved = delivery.terminal_review_delivery(cast(Any, object()), "run")
+
+    assert resolved is None
+    assert store.finished_status is None
+    assert store.review.status == "finalizing"
+
+
 class _Store:
     def __init__(self, review: TaskCloseReview) -> None:
         self.review = review
@@ -68,6 +83,9 @@ class _Store:
             result_payload=dict(kwargs["result_payload"]),
         )
         return self.review
+
+    def finish_run_ended(self, _review_id: str, **kwargs: Any) -> TaskCloseReview:
+        return self.finish(_review_id, status="error", **kwargs)
 
 
 def _install(
