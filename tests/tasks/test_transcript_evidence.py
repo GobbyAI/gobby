@@ -6,6 +6,8 @@ import asyncio
 import gzip
 import json
 import logging
+import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime, timedelta
@@ -95,6 +97,84 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert result == 16
     assert transcript_evidence_pool._pool is None
     assert fake.shutdown_args == (False, True)
+
+
+class _RecordingExecutor:
+    def __init__(self, events: list[str], *, block_on_wait: threading.Event | None = None) -> None:
+        self._events = events
+        self._block_on_wait = block_on_wait
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        self._events.append(f"shutdown:wait={wait}:cancel={cancel_futures}")
+        if wait and self._block_on_wait is not None:
+            self._block_on_wait.wait(5)
+
+
+def test_shutdown_waits_for_worker_exit_then_stops_tracker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    fake = _RecordingExecutor(events)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
+    monkeypatch.setattr(
+        transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
+    )
+
+    transcript_evidence_pool.shutdown_transcript_evidence_pool()
+
+    assert events == ["shutdown:wait=True:cancel=True", "tracker"]
+    assert transcript_evidence_pool._pool is None
+
+
+def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    release = threading.Event()
+    fake = _RecordingExecutor(events, block_on_wait=release)
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
+    monkeypatch.setattr(
+        transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
+    )
+
+    started = time.monotonic()
+    transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert events == ["shutdown:wait=True:cancel=True"]
+    assert transcript_evidence_pool._pool is None
+    release.set()
+
+
+def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(transcript_evidence_pool, "_pool", None)
+    monkeypatch.setattr(
+        transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
+    )
+
+    transcript_evidence_pool.shutdown_transcript_evidence_pool()
+
+    assert events == []
+
+
+def _resource_tracker_pid() -> int | None:
+    from multiprocessing import resource_tracker
+
+    return cast(int | None, getattr(resource_tracker._resource_tracker, "_pid", None))
+
+
+def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
+    pool = transcript_evidence_pool._get_pool()
+    try:
+        assert pool.submit(pow, 2, 5).result(timeout=60) == 32
+        assert _resource_tracker_pid() is not None
+
+        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+
+        assert _resource_tracker_pid() is None
+        assert transcript_evidence_pool._pool is None
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.fixture(autouse=True)
