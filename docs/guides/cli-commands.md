@@ -285,20 +285,20 @@ management surfaces.
 
 ### `gobby cutover`
 
-Build and activate one coherent set of the four schema-aware Rust binaries from
+Build and activate one coherent set of the three schema-aware Rust binaries from
 a Gobby source checkout:
 
 ```bash
 gobby cutover [--path PATH]
 ```
 
-The command runs one locked release build for `gcode`, `gdaemon`, `ghook`, and
-`gwiki`, then promotes all four through the shared workspace installer. That
+The command runs one locked release build for `gcode`, `gdaemon`, and `ghook`,
+then promotes all three through the shared workspace installer. That
 path signs staged binaries when required, installs through new inodes, writes
 version and install sidecars, and writes the installed schema identity pin only
-after all four binaries promote. Before restart, cutover verifies that the exact
+after all three binaries promote. Before restart, cutover verifies that the exact
 `gdaemon` resolved for daemon startup matches the installed pin; a mismatch
-fails closed with the all-four rebuild remedy. Promotion failures name the
+fails closed with the three-binary rebuild remedy. Promotion failures name the
 members already promoted and those still unpromoted. Cutover does not claim to
 restore binaries after a partial promotion.
 
