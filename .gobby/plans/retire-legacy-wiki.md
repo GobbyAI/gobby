@@ -162,6 +162,11 @@ before the scoped backup, restore rehearsal, and writer shutdown. Historical
 core migrations, canonical summaries AND revisions, grant reservations, gcode
 facts, external source files, and unrelated shared state remain preserved.
 
+Rust removal precedes Python removal because their target sets are disjoint, and
+removing the Rust package first allows an early focused build check. This changes
+only execution order within the approved scope. Project-aware read-only validation
+passed with zero warnings and 688 resolved targets before manifest emission.
+
 ## P1: Preserve independent behavior and prepare retirement contracts
 `kind: framing`
 
@@ -201,14 +206,14 @@ redaction, agent failures, attachment operations, and upstream stream cleanup.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/catalog.manifest.json`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: update the complete generated or declarative contract carrier
 - `crates/gcore/assets/schema/migrations/426_retire_legacy_wiki.sql`
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `crates/gcore/src/grant/tests.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `crates/gcore/src/schema/assets.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
-- `src/gobby/storage/schema_expected_identity.json`
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: update the complete generated or declarative contract carrier
 - `tests/storage/test_wiki_schema_retirement.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 
 Existing task #21778 owns migration 426 and the identity carriers. A single
@@ -230,8 +235,8 @@ application is owned by 8.2 after backup and shutdown, never by this preparation
 
 Targets:
 - `docs/contracts/plan-coverage.md`
-- `src/gobby/install/bundled_content_manifest.json`
-- `src/gobby/install/shared/workflows/agents/task-close-validator.yaml`
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: update the complete generated or declarative contract carrier
+- `src/gobby/install/shared/workflows/agents/task-close-validator.yaml::*` — scope-reason: update the complete generated or declarative contract carrier
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_orchestration.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/plans/semantic_lint.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/tasks/agentic_close_review.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
@@ -254,11 +259,11 @@ agent template. Focused task-review and semantic-lint tests cover both boundarie
 ## P2: Remove active implementation and public surfaces
 `kind: framing`
 
-### 7.1 Remove Python wiki services and session mirrors [category: code] (depends: 6.3)
+### 7.1 Remove Python wiki services and session mirrors [category: code] (depends: 7.2)
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/config/runtime_config_contract.json`
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: update the complete generated or declarative contract carrier
 - `src/gobby/agents/sandbox_policy.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/ai/_tool_chat_contracts.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/ai/_tool_chat_tools.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
@@ -273,9 +278,9 @@ Targets:
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/hooks/event_handlers/_session_start/materialize.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
-- `src/gobby/install/bundled_content_manifest.json`
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: update the complete generated or declarative contract carrier
 - `src/gobby/install/shared/workflows/rules/context-handoff/inject-wiki-overview.yaml::*` — operation: delete — scope-reason: retire the entire legacy wiki file
-- `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml`
+- `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml::*` — scope-reason: update the complete generated or declarative contract carrier
 - `src/gobby/mcp_proxy/registries.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/mcp_proxy/tools/wiki.py::*` — operation: delete — scope-reason: retire the entire legacy wiki file
 - `src/gobby/mcp_proxy/wait_tools.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
@@ -321,7 +326,6 @@ Targets:
 - `src/gobby/wiki/sync_container.py::*` — operation: delete — scope-reason: retire the entire legacy wiki file
 - `src/gobby/wiki/update_coordinator.py::*` — operation: delete — scope-reason: retire the entire legacy wiki file
 - `src/gobby/wiki/watcher.py::*` — operation: delete — scope-reason: retire the entire legacy wiki file
-- `src/gobby/workflows/engine/effects.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `tests/ai/test_tool_chat_service.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `tests/ai/test_tool_chat_tools.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `tests/cli/test_files_migrate.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
@@ -374,6 +378,22 @@ Targets:
 - `tests/wiki/test_wiki_status.py::*` — operation: delete — scope-reason: retire the entire legacy wiki file
 - `tests/workflows/test_context_handoff_fencing.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `tests/workflows/test_retired_bundled_definitions.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
+- `src/gobby/config/registry_key_encoding.py`
+- `src/gobby/runner_init/project_purge.py`
+- `src/gobby/runner_shutdown_storage.py`
+- `src/gobby/runner_startup_code_index.py`
+- `src/gobby/storage/cron_schedule.py`
+- `src/gobby/config/_loading.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/config/values.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/servers/routes/configuration_generation_endpoints.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/storage/config_store.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/code_index/nightly_repair.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/scheduler/scheduler.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/config/test_runtime_loop_consumers.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/runner_init/test_config_runtime_startup.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/scheduler/test_cron_integration.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/storage/definitions/test_revisions.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/test_bm25_startup.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
 
 Remove the dedicated wiki gateways, watchers, cron handlers, route/MCP registries,
 config, authorization entries, and project-purge drain dependencies. Remove overview
@@ -388,19 +408,54 @@ Existing exact retired-job protection may remain until 8.2 deletes inventoried r
 no retired job may become dispatchable during cutover. No blanket shared-state reset.
 Use isolated unit/API tests, source lint/types and config contract verification.
 
+Current production sizes: registry.py 887, orchestration.py 891,
+runner_lifecycle_shutdown.py 930, runner_lifecycle_subsystems.py 930, and cron.py 895.
+Use direct, behavior-preserving extraction with existing focused characterization
+checks and migrate all callers atomically; retain one owner for mutable state.
+
+Move the dynamic key-segment encoding/decoding and its codec error from
+`src/gobby/config/registry.py` into `src/gobby/config/registry_key_encoding.py`.
+The registry and configuration consumers depend on that stateless codec.
+
+Move project purge construction and datastore cleaner resolution from
+`src/gobby/runner_init/orchestration.py` into `src/gobby/runner_init/project_purge.py`.
+Orchestration calls the initializer; the initializer depends on project purge APIs.
+
+Move executor and database concurrency shutdown from
+`src/gobby/runner_lifecycle_shutdown.py` into `src/gobby/runner_shutdown_storage.py`.
+Pass required shutdown policy explicitly, retaining cancellation-safe ordering.
+
+Move code-index BM25 repair and task startup from
+`src/gobby/runner_lifecycle_subsystems.py` into `src/gobby/runner_startup_code_index.py`.
+The lifecycle coordinator invokes these code-index startup operations directly.
+
+Move next-run computation from `src/gobby/storage/cron.py` into
+`src/gobby/storage/cron_schedule.py`; storage and scheduler depend on this schedule
+policy module, which depends only on cron models and time/cron libraries.
+
+Consumer evidence: `gcode grep -l 'encode_dynamic_segment|decode_dynamic_segment|RegistryError'
+src/ tests/ -m 100` found config/_loading.py, config/registry.py, config/values.py,
+servers/routes/configuration_generation_endpoints.py, storage/config_store.py and
+tests/config/test_config_registry.py. The corresponding literal sweep for
+`_resolve_project_vector_cleaner|_resolve_project_graph_cleaner|_shutdown_database_executor|_shutdown_database_concurrency|_repair_code_index_bm25|_start_code_index_tasks|compute_next_run`
+found code_index/nightly_repair.py, runner_init/orchestration.py,
+runner_lifecycle_shutdown.py, runner_lifecycle_subsystems.py, scheduler/scheduler.py,
+storage/cron.py, wiki/scheduled_jobs.py, and the targeted runtime/startup/scheduler/
+revision/BM25/lifecycle/shutdown test files. All surviving consumers are Targets.
+
 **Acceptance:**
 
 - 7.1.1 - Startup and discovery expose no wiki services, tools, routes or config. test: `tests/test_wiki_retirement_contract.py`.
 - 7.1.2 - Canonical summaries/revisions and transcript archives operate without wiki mirrors. file: `src/gobby/sessions/transcript_processing.py`.
 - 7.1.3 - Project cleanup and memory dreams operate without wiki storage. file: `src/gobby/projects/purge.py`.
 
-### 7.2 Remove gwiki crate and wiki-owned Rust contracts [category: code] (depends: 7.1)
+### 7.2 Remove gwiki crate and wiki-owned Rust contracts [category: code] (depends: 6.3)
 `kind: deliverable`
 
 Targets:
 - `Cargo.lock`
 - `Cargo.toml`
-- `crates/gcode/security/managed_postgres_privileges.json`
+- `crates/gcode/security/managed_postgres_privileges.json::*` — scope-reason: update the complete generated or declarative contract carrier
 - `crates/gcode/src/commands/graph/view/render.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `crates/gcode/src/commands/graph/view/render_tests.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `crates/gcode/src/index/walker/hidden.rs::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
@@ -837,7 +892,7 @@ contracts; cargo build, fmt and clippy on affected packages. No installation her
 - 7.2.2 - gcode graph rendering retains shared Mermaid behavior. file: `crates/gcore/src/mermaid.rs`.
 - 7.2.3 - Code indexing/search/graphs retain existing behavior and shared data. test: `crates/gcode/tests/contract.rs`.
 
-### 7.3 Remove wiki UI and restore normal saved-tab behavior [category: code] (depends: 7.2)
+### 7.3 Remove wiki UI and restore normal saved-tab behavior [category: code] (depends: 7.1)
 `kind: deliverable`
 
 Targets:
@@ -922,7 +977,7 @@ Targets:
 - `src/gobby/cli/installers/git_hooks.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/cli/installers/wiki_branch_setup.py::*` — operation: delete — scope-reason: retire the entire legacy wiki file
 - `src/gobby/install/bin_set_coherence.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
-- `src/gobby/install/bundled_content_manifest.json`
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: update the complete generated or declarative contract carrier
 - `src/gobby/install/distribution.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `src/gobby/install/shared/skills/code-index/SKILL.md`
 - `src/gobby/install/shared/skills/impeccable/SKILL.md`
@@ -951,6 +1006,15 @@ Targets:
 - `tests/utils/test_deps.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `tests/utils/test_utils_status.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
 - `tests/utils/test_utils_status_1.py::*` — scope-reason: update wiki-related declarations, imports, behavior and contract assertions throughout this file
+- `src/gobby/cli/install_release.py`
+- `src/gobby/cli/install_setup_gclient.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/cli/install_setup_gcode.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/cli/install_setup_gdaemon.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/cli/install_setup_ghook.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/cli/install_setup_gterm.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `src/gobby/cli/install_setup_rtk.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/cli/test_install_ghook.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
+- `tests/cli/test_install_setup_rtk.py::*` — scope-reason: migrate shared capability imports and characterization assertions during retirement
 
 Remove gwiki build/release/install/version/coherence wiring and wiki-specific CLI
 setup/hook commands, retaining other managed binaries and git hooks. Update roadmap
@@ -959,6 +1023,20 @@ changelogs, commits and completed task evidence remain. Regenerate the bundled
 manifest from source. Installed binaries, rules and state are inventoried and handled
 by 8.2 after landing. Focused installation/CLI/Rust workflow tests and manifest checks
 must pass without gwiki available; do not start a daemon from the worktree.
+
+Current install_setup.py size is 905 lines. Move release discovery, archive
+extraction, checksum verification and binary download from
+`src/gobby/cli/install_setup.py` into `src/gobby/cli/install_release.py`.
+Surviving native-binary installers call this release transport module directly;
+retain the existing authentication, checksum and new-inode installation behavior.
+Use focused installer tests as characterization before and after the extraction.
+
+Consumer evidence: `gcode grep -l '_build_release_download_url|_download_release_binary|_fetch_release_checksum|_verify_release_artifact|_extract_binary_from_release_archive|_resolve_latest_release_tag'
+src/ tests/ -m 100` found install_setup.py, install_setup_gclient.py,
+install_setup_gcode.py, install_setup_gdaemon.py, install_setup_ghook.py,
+install_setup_gterm.py, install_setup_gwiki.py, install_setup_rtk.py, and
+CLI tests test_install_ghook.py, test_install_setup.py, test_install_setup_gterm.py,
+and test_install_setup_rtk.py. All consumers are targeted or deleted.
 
 **Acceptance:**
 
@@ -1050,3 +1128,162 @@ The explicit whole-file deletion validator prerequisite is complete. Run full
 project-aware plan validation after the final target refinement, then emit the
 approved manifest. Implementation and live retirement remain incomplete until
 all listed acceptance is verified. Never run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Relocate shared diagnostics and file forwarding
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '6.1.1: Independent agent diagnostics use shared redaction.
+    file: `src/gobby/utils/terminal_output.py`.
+
+    6.1.2: Chat attachment forwarding is independent of wiki and preserves transport
+    behavior. file: `src/gobby/files_home_proxy.py`.'
+  labels:
+  - covers:retire-legacy-wiki:6.1:6.1.1
+  - covers:retire-legacy-wiki:6.1:6.1.2
+  tdd: false
+  source_section: '6.1'
+  assigned_agent: backend-developer
+- title: Prepare exact wiki schema retirement
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: Migration 426 removes only the five owned projection
+    tables. file: `crates/gcore/assets/schema/migrations/426_retire_legacy_wiki.sql`.
+
+    6.2.2: Identity carriers agree and isolated preservation/refusal tests pass. test:
+    `tests/storage/test_wiki_schema_retirement.py`.'
+  labels:
+  - covers:retire-legacy-wiki:6.2:6.2.1
+  - covers:retire-legacy-wiki:6.2:6.2.2
+  tdd: false
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Correct retirement review prerequisites
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: No-work reviews receive the canonical closure reason.
+    file: `src/gobby/tasks/agentic_close_review.py`.
+
+    6.3.2: Whole-file deletion passes size lint while partial edits stay guarded.
+    test: `tests/plans/test_semantic_lint.py`.'
+  labels:
+  - covers:retire-legacy-wiki:6.3:6.3.1
+  - covers:retire-legacy-wiki:6.3:6.3.2
+  tdd: false
+  source_section: '6.3'
+  implementation_domain: backend
+- title: Remove Python wiki services and session mirrors
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: '7.1.1: Startup and discovery expose no wiki services, tools,
+    routes or config. test: `tests/test_wiki_retirement_contract.py`.
+
+    7.1.2: Canonical summaries/revisions and transcript archives operate without wiki
+    mirrors. file: `src/gobby/sessions/transcript_processing.py`.
+
+    7.1.3: Project cleanup and memory dreams operate without wiki storage. file: `src/gobby/projects/purge.py`.'
+  labels:
+  - covers:retire-legacy-wiki:7.1:7.1.1
+  - covers:retire-legacy-wiki:7.1:7.1.2
+  - covers:retire-legacy-wiki:7.1:7.1.3
+  tdd: false
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Remove gwiki crate and wiki-owned Rust contracts
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.3'
+  validation_criteria: '7.2.1: The workspace has no gwiki package or wiki schema creator.
+    file: `Cargo.toml`.
+
+    7.2.2: gcode graph rendering retains shared Mermaid behavior. file: `crates/gcore/src/mermaid.rs`.
+
+    7.2.3: Code indexing/search/graphs retain existing behavior and shared data. test:
+    `crates/gcode/tests/contract.rs`.'
+  labels:
+  - covers:retire-legacy-wiki:7.2:7.2.1
+  - covers:retire-legacy-wiki:7.2:7.2.2
+  - covers:retire-legacy-wiki:7.2:7.2.3
+  tdd: false
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Remove wiki UI and restore normal saved-tab behavior
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.3.1: Navigation/settings expose no wiki and saved wiki selections
+    choose the normal default. test: `web/src/components/activity/__tests__/WikiRetirement.test.tsx`.
+
+    7.3.2: Shared rendering and remaining activity views work after deletion. file:
+    `web/src/components/activity/ActivityPanel.tsx`.'
+  labels:
+  - covers:retire-legacy-wiki:7.3:7.3.1
+  - covers:retire-legacy-wiki:7.3:7.3.2
+  tdd: false
+  source_section: '7.3'
+  implementation_domain: frontend
+- title: Remove installation wiring and active wiki guidance
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.3'
+  validation_criteria: '7.4.1: Installation, cutover and status succeed without gwiki.
+    file: `src/gobby/cli/install_setup.py`.
+
+    7.4.2: Active roadmap and bundled guidance no longer dispatch or recommend the
+    legacy wiki. file: `ROADMAP.md`.'
+  labels:
+  - covers:retire-legacy-wiki:7.4:7.4.1
+  - covers:retire-legacy-wiki:7.4:7.4.2
+  tdd: false
+  source_section: '7.4'
+  implementation_domain: backend
+- title: Implement bounded inventory, backup and retirement procedure
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.4'
+  validation_criteria: '8.1.1: Inventory is the safe default and apply consumes only
+    explicit validated targets. file: `scripts/retire_legacy_wiki.py`.
+
+    8.1.2: Backup/restore and interrupted retries preserve unrelated files and records.
+    test: `tests/cli/test_wiki_retirement.py`.'
+  labels:
+  - covers:retire-legacy-wiki:8.1:8.1.1
+  - covers:retire-legacy-wiki:8.1:8.1.2
+  tdd: false
+  source_section: '8.1'
+  implementation_domain: backend
+- title: Land retirement, purge inventoried state and close obsolete backlog
+  category: test
+  task_type: feature
+  depends_on:
+  - '8.1'
+  validation_criteria: '8.2.1: All inventoried wiki state is removed and recovery
+    has been demonstrated. file: `.gobby/plans/retire-legacy-wiki.receipt.md`.
+
+    8.2.2: All 38 old tasks and old plan are retired while shared obligations and
+    grant reservations survive. file: `.gobby/plans/retire-legacy-wiki.receipt.md`.
+
+    8.2.3: Main runtime/fresh sessions expose no wiki and retained services pass focused
+    validation. file: `.gobby/plans/retire-legacy-wiki.receipt.md`.'
+  labels:
+  - covers:retire-legacy-wiki:8.2:8.2.1
+  - covers:retire-legacy-wiki:8.2:8.2.2
+  - covers:retire-legacy-wiki:8.2:8.2.3
+  tdd: false
+  source_section: '8.2'
+  assigned_agent: backend-developer
+```
