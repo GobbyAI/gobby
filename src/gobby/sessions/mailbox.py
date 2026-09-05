@@ -42,6 +42,7 @@ DELIVERABLE_SESSION_STATUSES = ("active", "paused")
 MESSAGE_TARGETS = ("session", "agent", "project", "build", "all")
 AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
 AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
+MAILBOX_WAKE_TIMEOUT_SECONDS = 2.0
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,14 @@ class MailboxService:
 
         wake_results: list[dict[str, Any]] = []
         if include_wakeup:
-            wake_results = list(await asyncio.gather(*(self.wake(rid) for rid in recipient_ids)))
+            # Persistence is complete. Live wake is optional and all recipients
+            # share one budget, including time waiting for their dispatch locks.
+            deadline = asyncio.get_running_loop().time() + MAILBOX_WAKE_TIMEOUT_SECONDS
+            async with asyncio.TaskGroup() as group:
+                wakes = [
+                    group.create_task(self.wake(rid, deadline=deadline)) for rid in recipient_ids
+                ]
+            wake_results = [wake.result() for wake in wakes]
 
         return MailboxSendResult(
             messages=messages,
@@ -854,12 +862,21 @@ class MailboxService:
             return result
         return {"session_id": session_id, "delivered": False, "method": None}
 
-    async def wake(self, session_id: str) -> dict[str, Any]:
-        """Wake a session and normalize dispatcher failures."""
-        result = (
-            await asyncio.gather(
-                self._wake(session_id),
-                return_exceptions=True,
-            )
-        )[0]
+    async def wake(self, session_id: str, *, deadline: float | None = None) -> dict[str, Any]:
+        """Bound a live wake by an absolute loop deadline and normalize failures."""
+        if deadline is None:
+            deadline = asyncio.get_running_loop().time() + MAILBOX_WAKE_TIMEOUT_SECONDS
+        try:
+            async with asyncio.timeout_at(deadline):
+                result = await self._wake(session_id)
+        except TimeoutError:
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": None,
+                "indeterminate": True,
+                "error": "wake_timeout",
+                "error_code": "wake_timeout",
+                "error_message": "Live wake timed out before delivery could be confirmed.",
+            }
         return self._normalize_wake_result(session_id, result)

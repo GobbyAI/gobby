@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import replace
@@ -47,6 +48,31 @@ class FakeWakeDispatcher:
 class FailingWakeDispatcher:
     async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
         raise RuntimeError(f"wake failed for {session_id}")
+
+
+class StalledWakeDispatcher:
+    def __init__(self, recipients: list[str], *, fast_recipient: str | None = None) -> None:
+        self.recipients = recipients
+        self.fast_recipient = fast_recipient
+        self.calls: list[str] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.finished: set[str] = set()
+        self.tasks: list[asyncio.Task[Any]] = []
+
+    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(session_id)
+        task = asyncio.current_task()
+        assert task is not None
+        self.tasks.append(task)
+        if len(self.calls) == len(self.recipients):
+            self.started.set()
+        try:
+            if session_id != self.fast_recipient:
+                await self.release.wait()
+            return {"session_id": session_id, "delivered": True, "method": "fake"}
+        finally:
+            self.finished.add(session_id)
 
 
 def _register_session(
@@ -203,6 +229,133 @@ async def _send_project_broadcast(
 
 
 class TestMailboxDirectSend:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fanout", [False, True])
+    async def test_stalled_wake_returns_persisted_ids_within_one_budget(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        fanout: bool,
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        recipients = [
+            _register_session(session_manager, sample_project["id"], f"recipient-{index}").id
+            for index in range(3 if fanout else 1)
+        ]
+        fast_recipient = recipients[0] if fanout else None
+        dispatcher = StalledWakeDispatcher(recipients, fast_recipient=fast_recipient)
+        send_task = asyncio.create_task(
+            _mailbox(temp_db, session_manager, dispatcher).send(
+                from_session_id=sender.id,
+                target="all" if fanout else "session",
+                target_id=None if fanout else recipients[0],
+                content="Durable urgent notice",
+                include_wakeup=True,
+            )
+        )
+        try:
+            await asyncio.wait_for(dispatcher.started.wait(), timeout=3)
+            rows = temp_db.fetchall(
+                "SELECT id, to_session, content FROM inter_session_messages WHERE from_session = %s",
+                (sender.id,),
+            )
+            assert {row["to_session"] for row in rows} == set(recipients)
+            assert all(row["content"] == "Durable urgent notice" for row in rows)
+            result = await asyncio.wait_for(send_task, timeout=3)
+        finally:
+            send_task.cancel()
+            await asyncio.gather(send_task, return_exceptions=True)
+
+        assert result.success is True
+        assert set(result.message_ids) == {row["id"] for row in rows}
+        assert len(result.message_ids) == len(recipients)
+        assert [item["session_id"] for item in result.wake_results] == result.recipient_session_ids
+        for wake in result.wake_results:
+            if wake["session_id"] == fast_recipient:
+                assert wake == {
+                    "session_id": fast_recipient,
+                    "delivered": True,
+                    "method": "fake",
+                }
+            else:
+                assert wake["delivered"] is False
+                assert wake["error_code"] == "wake_timeout"
+                assert "timed out" in wake["error_message"]
+        assert dispatcher.finished == set(recipients)
+        assert all(task.done() for task in dispatcher.tasks)
+        persisted = temp_db.fetchall(
+            "SELECT id FROM inter_session_messages WHERE from_session = %s", (sender.id,)
+        )
+        assert {row["id"] for row in persisted} == set(result.message_ids)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_urgent_send_preserves_messages_and_drains_wakes(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        recipients = [
+            _register_session(session_manager, sample_project["id"], f"recipient-{index}").id
+            for index in range(2)
+        ]
+        dispatcher = StalledWakeDispatcher(recipients)
+        send_task = asyncio.create_task(
+            _mailbox(temp_db, session_manager, dispatcher).send(
+                from_session_id=sender.id,
+                target="all",
+                content="Persist before cancelled wake",
+                include_wakeup=True,
+            )
+        )
+        try:
+            await asyncio.wait_for(dispatcher.started.wait(), timeout=3)
+            send_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await send_task
+        finally:
+            send_task.cancel()
+            await asyncio.gather(send_task, return_exceptions=True)
+
+        assert dispatcher.finished == set(recipients)
+        assert all(task.done() for task in dispatcher.tasks)
+        rows = temp_db.fetchall(
+            "SELECT to_session, content FROM inter_session_messages WHERE from_session = %s",
+            (sender.id,),
+        )
+        assert len(rows) == len(recipients)
+        assert {row["to_session"] for row in rows} == set(recipients)
+        assert all(row["content"] == "Persist before cancelled wake" for row in rows)
+
+    @pytest.mark.asyncio
+    async def test_nonurgent_send_does_not_wait_for_dispatcher(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        recipient = _register_session(session_manager, sample_project["id"], "recipient")
+        dispatcher = StalledWakeDispatcher([recipient.id])
+
+        result = await _mailbox(temp_db, session_manager, dispatcher).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="Routine notice",
+        )
+
+        assert result.success is True
+        assert result.wake_results == []
+        assert dispatcher.calls == []
+        row = temp_db.fetchone(
+            "SELECT content FROM inter_session_messages WHERE id = %s", (result.message_ids[0],)
+        )
+        assert row is not None
+        assert row["content"] == "Routine notice"
+
     def test_clear_take_retargets_agent_runs(
         self,
         temp_db: HubDatabase,
