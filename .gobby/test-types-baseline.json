@@ -761,16 +761,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/watchdog/test_codex_reader.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 46,
-      "message": "Argument 2 to \"_write\" has incompatible type \"list[dict[str, object]]\"; expected \"list[dict[str, object] | str]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_codex_reader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/watchdog/test_droid_reader.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 155,
@@ -1707,26 +1697,6 @@
       "message": "Function is missing a return type annotation",
       "occurrences": 9,
       "path": "tests/clones/test_git_extended.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/code_index/test_bm25_health.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 110,
-      "message": "Module \"gobby.code_index.bm25_health\" does not explicitly export attribute \"psycopg\"",
-      "occurrences": 3,
-      "path": "tests/code_index/test_bm25_health.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/code_index/test_bm25_health.py::::mypy:override",
-      "issue_code": "mypy:override",
-      "line": 81,
-      "message": "Cannot override writeable attribute with read-only property",
-      "occurrences": 1,
-      "path": "tests/code_index/test_bm25_health.py",
       "severity": "high",
       "test_name": ""
     },
@@ -6387,36 +6357,6 @@
       "message": "Function is missing a return type annotation",
       "occurrences": 2,
       "path": "tests/servers/routes/mcp_endpoints/test_registry_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 708,
-      "message": "Argument 1 to \"_request_runner_shutdown\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 2,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 939,
-      "message": "\"append\" of \"list\" does not return a value (it only ever returns None)",
-      "occurrences": 1,
-      "path": "tests/servers/routes/test_admin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_admin.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 59,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 47,
-      "path": "tests/servers/routes/test_admin.py",
       "severity": "high",
       "test_name": ""
     },
@@ -11227,56 +11167,6 @@
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 4,
       "path": "tests/workflows/test_hook_evaluation_serialization.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 277,
-      "message": "Argument \"logger\" to \"WorkflowRuleEvaluator\" has incompatible type \"RecordingLogger\"; expected \"Logger\"",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:assignment",
-      "issue_code": "mypy:assignment",
-      "line": 84,
-      "message": "Incompatible types in assignment (expression has type \"def blocking_evaluation(_event: HookEvent, *, blocking_deadline: BlockingEffectDeadline | None = ...) -> Coroutine[Any, Any, HookResponse]\", variable has type \"def _evaluate_rules(self, event: HookEvent, *, blocking_deadline: BlockingEffectDeadline | None = ...) -> Coroutine[Any, Any, HookResponse]\")",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 15,
-      "message": "Module \"gobby.servers.routes.mcp.hooks\" does not explicitly export attribute \"_run_adapter_hook\"",
-      "occurrences": 3,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 84,
-      "message": "Cannot assign to a method",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hook_evaluation_timeout.py::::mypy:return",
-      "issue_code": "mypy:return",
-      "line": 115,
-      "message": "Missing return statement",
-      "occurrences": 1,
-      "path": "tests/workflows/test_hook_evaluation_timeout.py",
       "severity": "high",
       "test_name": ""
     },

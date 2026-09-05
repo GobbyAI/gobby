@@ -20,5 +20,5 @@ rules:
         variable: qwen_gcode_plan_hint_shown
         value: false
       - type: set_variable
-        variable: gobby_plan_consider_shown
+        variable: plan_skill_directive_delivered
         value: false

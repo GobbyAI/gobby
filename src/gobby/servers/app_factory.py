@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 import httpx as httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from starlette.applications import Starlette
 from starlette.routing import Route
 
@@ -35,6 +34,7 @@ from gobby.servers._app_ui import (
     _requested_websocket_subprotocols,
 )
 from gobby.servers.exception_handlers import register_exception_handlers
+from gobby.servers.middleware.gzip import EventLoopGZipMiddleware
 from gobby.utils.version import get_version
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
     # Innermost middleware: large JSON payloads (graph exports compress
     # ~10x) are gzipped right after the route; SSE responses are excluded by
     # starlette via DEFAULT_EXCLUDED_CONTENT_TYPES.
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    app.add_middleware(EventLoopGZipMiddleware, minimum_size=1024)
 
     from gobby.telemetry.middleware import TelemetryMiddleware
 

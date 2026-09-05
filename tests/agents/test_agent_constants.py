@@ -73,6 +73,7 @@ class TestEnvironmentVariableConstants:
     def test_all_terminal_env_vars_complete(self) -> None:
         """ALL_TERMINAL_ENV_VARS contains all constants."""
         expected = {
+            "GOBBY_DAEMON_URL",
             GOBBY_SESSION_ID,
             GOBBY_PARENT_SESSION_ID,
             GOBBY_AGENT_RUN_ID,

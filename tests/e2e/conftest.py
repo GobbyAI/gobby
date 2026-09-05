@@ -20,7 +20,6 @@ import sys
 import tempfile
 import threading
 import time
-import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,7 +30,10 @@ import httpx
 import pytest
 import pytest_asyncio
 import yaml
+from websockets.exceptions import WebSocketException
+from websockets.sync.client import connect as connect_websocket
 
+from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
 # Mark all tests in this directory as e2e tests
@@ -243,7 +245,7 @@ class DaemonInstance:
                 f"Daemon failed to restart within timeout.\n"
                 f"Logs:\n{self.read_logs()}\nError logs:\n{self.read_error_logs()}"
             )
-        if not wait_for_port(self.ws_port, timeout=30.0):
+        if not wait_for_daemon_websocket(self.ws_port, self.gobby_home, timeout=30.0):
             terminate_process_tree(process.pid)
             pytest.fail(
                 f"Daemon WebSocket port {self.ws_port} did not become ready within timeout.\n"
@@ -290,7 +292,13 @@ def prepare_daemon_env(
     env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
-    env.pop("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None)
+    for name in (
+        *ALL_TERMINAL_ENV_VARS,
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+        "GOBBY_MACHINE_ID",
+        "GOBBY_DAEMON_PORT",
+    ):
+        env.pop(name, None)
 
     # Disable any LLM providers to avoid external calls. The memory-helper
     # live smoke is explicitly opt-in and needs the real provider credentials.
@@ -355,18 +363,28 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
 
 
+def reserve_tmux_socket() -> Path:
+    """Reserve a short unique socket name under the permitted temp root."""
+    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
+    with tempfile.NamedTemporaryFile(prefix="t", dir=root) as reserved:
+        socket_path = Path(reserved.name).resolve()
+    if len(os.fsencode(socket_path)) >= 104:
+        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
+    return socket_path
+
+
 def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
     """Seed PostgreSQL-owned runtime config and the synthetic E2E project.
 
     Returns the daemon's private tmux socket path. Without ``tmux.socket_path``
     the daemon shares the user's ``tmux -L gobby`` server, and every agent it
     spawns outlives the SIGKILL that tears the daemon down (#21175). The path
-    lives in ``/tmp`` because pytest's ``tmp_path`` exceeds the unix socket
-    path limit; the owner kills the server with :func:`kill_tmux_server`.
+    lives under the permitted temp root with a short unique name; the owner
+    kills the server and removes the socket with :func:`kill_tmux_server`.
     """
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
-    tmux_socket = Path(f"/tmp/gobby-tmux-{os.getpid()}-{uuid.uuid4().hex[:8]}.sock")
+    tmux_socket = reserve_tmux_socket()
     mutations = ConfigMutations(postgres_db)
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
@@ -452,6 +470,25 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
         # Sleep on every non-ready iteration so polling does not steal cycles
         # from the daemon we are waiting on.
         time.sleep(0.5)
+    return False
+
+
+def wait_for_daemon_websocket(port: int, home: Path, timeout: float = 10.0) -> bool:
+    """Probe readiness with a complete authenticated handshake and clean close."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            token = (home / "local_cli_token").read_text().strip()
+            with connect_websocket(
+                f"ws://localhost:{port}",
+                additional_headers={"Authorization": f"Bearer {token}"},
+                open_timeout=1.0,
+                close_timeout=1.0,
+                proxy=None,
+            ):
+                return True
+        except (OSError, TimeoutError, WebSocketException):
+            time.sleep(0.1)
     return False
 
 
@@ -789,11 +826,11 @@ def daemon_instance(
             f"Logs:\n{logs}\nError logs:\n{error_logs}"
         )
 
-    # HTTP health check passes as soon as /api/admin/status responds, but the
+    # HTTP health check passes as soon as /api/auth/status responds, but the
     # WebSocket server comes up on a separate port and can lag by a few hundred
     # ms. Tests like test_daemon_listens_on_configured_ports race against that
     # gap — probe the WS port explicitly so it's listening before yield.
-    if not wait_for_port(ws_port, timeout=10.0):
+    if not wait_for_daemon_websocket(ws_port, gobby_home, timeout=10.0):
         logs = instance.read_logs()
         error_logs = instance.read_error_logs()
         terminate_process_tree(process.pid)

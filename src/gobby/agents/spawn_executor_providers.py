@@ -141,6 +141,7 @@ async def _prepare_provider_sandbox(
             api_base=request.api_base,
             env=env,
             phase_timings_ms=request.phase_timings_ms,
+            allow_run_unix_sockets=True,
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
         exception_name = type(exc).__name__

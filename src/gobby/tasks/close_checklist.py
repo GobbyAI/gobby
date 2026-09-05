@@ -90,24 +90,6 @@ def evaluate_validation_commands(
     category = (task_category or "").strip().casefold()
     details = _validation_details(evidence)
 
-    if not has_attributed_edits:
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="skipped",
-            message="Validation command requirement skipped because the task has no attributed edits.",
-            details={**details, "skip_reason": "no-edit"},
-        )
-
-    if category in _AUTO_PASS_CATEGORIES:
-        return CloseGateResult(
-            item=9,
-            name="validation_commands",
-            status="skipped",
-            message=f"Validation command requirement skipped for task category '{category}'.",
-            details={**details, "skip_reason": "category"},
-        )
-
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
@@ -115,9 +97,8 @@ def evaluate_validation_commands(
     latest_by_category = _latest_definitive_by_category(attributed)
     latest_by_command: dict[str, TranscriptValidationRun] = {}
     for run in sorted(definitive, key=lambda item: (item.order, item.completed_at)):
-        if run.categories:
-            command_key = run.core_command if run.core_command is not None else run.command
-            latest_by_command[command_key] = run
+        command_key = run.core_command if run.core_command is not None else run.command
+        latest_by_command[command_key] = run
     unresolved = {
         run_category: run
         for run_category, run in latest_by_category.items()
@@ -139,7 +120,7 @@ def evaluate_validation_commands(
         },
         "latest_runs": [
             {
-                "category": run.categories[0],
+                "category": run.categories[0] if run.categories else None,
                 "command": run.command,
                 "core_command": run.core_command,
                 "wrapped": run.wrapped,
@@ -155,6 +136,25 @@ def evaluate_validation_commands(
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
     }
+
+    # Exempt tasks still need the command record for their explicit criteria review.
+    if not has_attributed_edits:
+        return CloseGateResult(
+            item=9,
+            name="validation_commands",
+            status="skipped",
+            message="Validation command requirement skipped because the task has no attributed edits.",
+            details={**details, "skip_reason": "no-edit"},
+        )
+
+    if category in _AUTO_PASS_CATEGORIES:
+        return CloseGateResult(
+            item=9,
+            name="validation_commands",
+            status="skipped",
+            message=f"Validation command requirement skipped for task category '{category}'.",
+            details={**details, "skip_reason": "category"},
+        )
 
     if unresolved:
         blockers = [
@@ -216,10 +216,11 @@ def evaluate_validation_commands(
 
 
 def _fresh_runs(evidence: TranscriptEvidence) -> list[TranscriptValidationRun]:
+    runs = [*evidence.validation_runs, *evidence.command_runs]
     if not evidence.edits:
-        return list(evidence.validation_runs)
+        return runs
     last_edit_order = max(edit.order for edit in evidence.edits)
-    return [run for run in evidence.validation_runs if run.order > last_edit_order]
+    return [run for run in runs if run.order > last_edit_order]
 
 
 def _latest_definitive_by_category(
@@ -288,10 +289,13 @@ def _attribute_compound_failures(
 
 def _validation_details(evidence: TranscriptEvidence) -> dict[str, Any]:
     last_edit_order = max((edit.order for edit in evidence.edits), default=None)
-    unknown_count = sum(run.outcome == "unknown" for run in evidence.validation_runs)
+    unknown_count = sum(
+        run.outcome == "unknown" for run in (*evidence.validation_runs, *evidence.command_runs)
+    )
     return {
         "sessions": list(evidence.sessions),
         "validation_run_count": len(evidence.validation_runs),
+        "command_run_count": len(evidence.command_runs),
         "unknown_outcome_count": unknown_count,
         "uncredited_runs": _uncredited_runs(evidence, last_edit_order),
         "last_task_edit_order": last_edit_order,
@@ -304,7 +308,10 @@ def _uncredited_runs(
     last_edit_order: int | None,
 ) -> list[dict[str, object]]:
     uncredited: list[dict[str, object]] = []
-    for run in sorted(evidence.validation_runs, key=lambda item: (item.order, item.completed_at)):
+    for run in sorted(
+        (*evidence.validation_runs, *evidence.command_runs),
+        key=lambda item: (item.order, item.completed_at),
+    ):
         if last_edit_order is not None and run.order <= last_edit_order:
             uncredited.append({"command": run.command, "reason": "stale after a later task edit"})
         elif run.wrapped:

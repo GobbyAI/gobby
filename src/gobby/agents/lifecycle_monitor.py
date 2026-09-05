@@ -25,6 +25,7 @@ from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.run_completion import closed_task_completion_result
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
@@ -690,12 +691,13 @@ class AgentLifecycleMonitor:
         run: AgentRun,
         result: StuckDetectionResult,
     ) -> bool:
-        """Defer fatal progress stagnation while the pane keeps changing.
+        """Defer fatal progress stagnation for one fixed live-pane grace window.
 
         Two live shapes qualify: draft input being typed at the prompt, and the
         provider's in-flight turn spinner, whose elapsed-time counter advances
-        through thinking phases that emit no progress events. A frozen pane keeps
-        one fingerprint, so the grace window still expires on a hung CLI.
+        through thinking phases that emit no progress events. Once either shape
+        starts the grace period, transient pane changes cannot renew or cancel its
+        original deadline.
         """
         if result.layer != "progress_stagnation" or result.suggested_action not in {
             "stop",
@@ -703,6 +705,12 @@ class AgentLifecycleMonitor:
         }:
             self._draft_grace_observations.pop(run.id, None)
             return False
+
+        now = time.monotonic()
+        grace_seconds = self._idle_check_handler._idle_reprompt_delay_seconds_for_run(run)
+        observation = self._draft_grace_observations.get(run.id)
+        if observation is not None:
+            return now - observation[1] < grace_seconds
 
         services = self._terminal_services
         if services is None or services.terminal_for(run) is None:
@@ -731,19 +739,14 @@ class AgentLifecycleMonitor:
             self._draft_grace_observations.pop(run.id, None)
             return False
 
-        now = time.monotonic()
-        grace_seconds = self._idle_check_handler._idle_reprompt_delay_seconds_for_run(run)
-        observation = self._draft_grace_observations.get(run.id)
-        if observation is None or observation[0] != draft_fingerprint:
-            self._draft_grace_observations[run.id] = (draft_fingerprint, now)
-            logger.info(
-                "Deferring autonomous progress stagnation for run %s by %s seconds: "
-                "the pane shows live input or a turn in flight",
-                run.id,
-                grace_seconds,
-            )
-            return True
-        return now - observation[1] < grace_seconds
+        self._draft_grace_observations[run.id] = (draft_fingerprint, now)
+        logger.info(
+            "Deferring autonomous progress stagnation for run %s by %s seconds: "
+            "the pane shows live input or a turn in flight",
+            run.id,
+            grace_seconds,
+        )
+        return True
 
     async def check_completed_task_agents(self) -> int:
         """Complete active task-bound runs whose authoritative task is closed."""
@@ -778,6 +781,7 @@ class AgentLifecycleMonitor:
                     "task_id": run.task_id,
                 },
                 message=f"Agent {run.id} completed bound task {task_ref}",
+                completion_result=closed_task_completion_result(task, run.result),
                 terminal_reason="task_completed",
             )
             if completed:

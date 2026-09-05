@@ -11,15 +11,17 @@ import secrets
 import shutil
 import subprocess  # nosec B404 # subprocess needed for docker, pg_isready, dpkg
 import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlparse
 
 import click
 import psycopg
 import yaml
+from psycopg.conninfo import conninfo_to_dict
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.code_index.bm25_health import (
@@ -34,6 +36,9 @@ from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 from .compose_env import ComposeEnvironmentError, ComposeRuntime, resolve_compose_runtime
 from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -266,14 +271,23 @@ async def get_postgres_status(
     dsn: str | None = None,
     readiness_timeout: float = 10.0,
     connect_timeout: int = 5,
+    database: HubDatabase | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
     """Return the stable PostgreSQL status payload used by runbooks.
 
-    Every step of the payload blocks: bootstrap.yaml parsing with ``realpath``
-    checks, a ``pg_isready`` fork, a fresh psycopg connection, and five round
-    trips. The /health dashboard route awaits this, so on the loop it stalled
-    the whole daemon for seconds at a time (#20845).
+    The daemon supplies its hub database and managed offload so the rich dashboard
+    inherits the request's operation deadline. Standalone CLI callers retain the
+    bootstrap, ``pg_isready``, and fresh-connection path.
     """
+    if database is not None:
+        if run_db is None:
+            raise ValueError("run_db is required with database")
+        return cast(
+            dict[str, Any],
+            await run_db(_postgres_status_from_database, database),
+        )
+
     return await asyncio.to_thread(
         _postgres_status_payload,
         gobby_home=gobby_home,
@@ -281,6 +295,28 @@ async def get_postgres_status(
         readiness_timeout=readiness_timeout,
         connect_timeout=connect_timeout,
     )
+
+
+def _postgres_status_from_database(database: HubDatabase) -> dict[str, Any]:
+    """Collect dashboard details through the daemon's deadline-aware hub transaction."""
+    parsed = conninfo_to_dict(database.conninfo)
+    payload: dict[str, Any] = {
+        "dsn_host": parsed.get("host"),
+        "dsn_db": parsed.get("dbname"),
+        "healthy": False,
+        "extensions": dict.fromkeys(BASELINE_POSTGRES_EXTENSIONS, False),
+        "preload_libraries": [],
+        "code_index": unavailable_bm25_status("PostgreSQL status connection unavailable"),
+    }
+    with database.transaction() as conn:
+        payload["extensions"] = {
+            extension: _extension_present(conn, extension)
+            for extension in BASELINE_POSTGRES_EXTENSIONS
+        }
+        payload["preload_libraries"] = _preload_libraries(conn)
+        payload["code_index"] = verify_bm25_indexes(conn)
+    payload["healthy"] = True
+    return payload
 
 
 def _postgres_status_payload(
@@ -575,9 +611,10 @@ def _preload_libraries(conn: Any) -> list[str]:
     row = conn.execute(
         "SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries'"
     ).fetchone()
-    if not row or not row[0]:
+    value = row.get("setting") if isinstance(row, Mapping) else row[0] if row else None
+    if not value:
         return []
-    return [item.strip() for item in str(row[0]).split(",") if item.strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def _commit_if_supported(conn: Any) -> None:

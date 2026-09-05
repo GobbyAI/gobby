@@ -112,7 +112,7 @@ class TranscriptValidationSegment:
 
 @dataclass(frozen=True)
 class TranscriptValidationRun:
-    """One transcript-backed validation command outcome."""
+    """One shell outcome, with empty categories for review-only commands."""
 
     session_id: str
     source: str
@@ -160,6 +160,7 @@ class TranscriptEvidence:
     """Validation runs and task edits derived from one or more sessions."""
 
     validation_runs: tuple[TranscriptValidationRun, ...] = ()
+    command_runs: tuple[TranscriptValidationRun, ...] = ()
     edits: tuple[TranscriptEdit, ...] = ()
     attempted_paths: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
@@ -177,6 +178,7 @@ class TranscriptEvidence:
         return {
             "sessions": list(self.sessions),
             "validation_run_count": len(self.validation_runs),
+            "command_run_count": len(self.command_runs),
             "outcomes": outcome_counts,
             "successful_categories": category_successes,
             "task_edit_count": len(self.edits),
@@ -468,7 +470,7 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
     streams: list[list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]]] = []
     for evidence in evidence_sets:
         items: list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]] = [
-            (run.completed_at, run) for run in evidence.validation_runs
+            (run.completed_at, run) for run in (*evidence.validation_runs, *evidence.command_runs)
         ]
         items.extend((edit.timestamp, edit) for edit in evidence.edits)
         items.sort(key=lambda item: item[1].order)
@@ -497,7 +499,8 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
             edits.append(replace(item, order=position))
 
     return TranscriptEvidence(
-        validation_runs=tuple(runs),
+        validation_runs=tuple(run for run in runs if run.categories),
+        command_runs=tuple(run for run in runs if not run.categories),
         edits=tuple(edits),
         attempted_paths=tuple(
             dict.fromkeys(path for evidence in evidence_sets for path in evidence.attempted_paths)
@@ -651,7 +654,8 @@ def _derive_transcript_path_evidence(
 
     return (
         TranscriptEvidence(
-            validation_runs=tuple(state.runs),
+            validation_runs=tuple(run for run in state.runs if run.categories),
+            command_runs=tuple(run for run in state.runs if not run.categories),
             edits=tuple(state.edits),
             attempted_paths=tuple(attempted_paths),
             sessions=(session.id,),
@@ -770,15 +774,19 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     direct_pending = pending is not None and _tool_basename(pending.name) != "exec"
     order = state.next_order()
     matches = classify_validation_segments(outcome.command, state.detection_config)
-    if not matches:
+    if not outcome.command.strip():
         return
-    match = matches[0]
+    match = matches[0] if matches else None
     segments = _validation_segments(matches)
     output, output_truncated = _extract_output(outcome.result)
     status, exit_code, unknown_reason = _extract_outcome(
         outcome.result,
         output,
-        aggregate_status_is_trustworthy=not match.is_compound,
+        aggregate_status_is_trustworthy=(
+            not match.is_compound
+            if match
+            else not classify_validation_command_equivalence(outcome.command).wrapped
+        ),
     )
     provenance = outcome.result.get("outcome_provenance")
     if provenance == "codex.functions_exec.wrapper" and state.runs:
@@ -787,6 +795,14 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         if (
             prior.source == "codex"
             and prior.exit_code is not None
+            and (
+                segments
+                or (
+                    prior.core_command is not None
+                    and prior.core_command
+                    == classify_validation_command_equivalence(outcome.command).core_command
+                )
+            )
             and prior.validation_segments == segments
             and prior.output == output
             and 0 <= elapsed <= 1
@@ -803,7 +819,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         state.pending.pop(outcome.outer_call_id, None)
     if status == "unknown":
         state.degraded.append(
-            f"codex could not recover a definitive outcome for {match.label}: "
+            f"codex could not recover a definitive outcome for {match.label if match else 'command'}: "
             f"{unknown_reason or 'unknown result'}"
         )
     state.runs.append(
@@ -812,8 +828,8 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             source=state.session.source,
             command=outcome.command,
             categories=_segment_categories(segments),
-            matcher_id=match.matcher_id,
-            label=match.label,
+            matcher_id=match.matcher_id if match else "shell-command",
+            label=match.label if match else "Shell command",
             outcome=status,
             started_at=completed_at,
             completed_at=completed_at,
@@ -859,19 +875,23 @@ def _record_validation_run(
         return
     command = _extract_command(pending.arguments)
     matches = classify_validation_segments(command, state.detection_config)
-    if not matches:
+    if not command.strip():
         return
-    match = matches[0]
+    match = matches[0] if matches else None
     segments = _validation_segments(matches)
     output, output_truncated = _extract_output(result)
     outcome, exit_code, unknown_reason = _extract_outcome(
         result,
         output,
-        aggregate_status_is_trustworthy=not match.is_compound,
+        aggregate_status_is_trustworthy=(
+            not match.is_compound
+            if match
+            else not classify_validation_command_equivalence(command).wrapped
+        ),
     )
     if outcome == "unknown":
         state.degraded.append(
-            f"{source_label} lacks a definitive exit outcome for {match.label}; "
+            f"{source_label} lacks a definitive exit outcome for {match.label if match else 'command'}; "
             "re-run the command in a supported shell tool"
         )
     state.runs.append(
@@ -880,8 +900,8 @@ def _record_validation_run(
             source=state.session.source,
             command=command,
             categories=_segment_categories(segments),
-            matcher_id=match.matcher_id,
-            label=match.label,
+            matcher_id=match.matcher_id if match else "shell-command",
+            label=match.label if match else "Shell command",
             outcome=outcome,
             started_at=pending.timestamp,
             completed_at=completed_at,

@@ -9,10 +9,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 
+from gobby.runner import GobbyRunner
+from gobby.runner_lifecycle_shutdown import _settle_finalizers_under_cancellation
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -174,6 +177,57 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
 
     assert tmux.sent_keys[-1] == ("%12", "Enter", False)
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("from_worker", [False, True], ids=["event-loop", "mcp-worker"])
+async def test_shutdown_stops_readiness_watcher_and_preserves_pending_marker(
+    session_db: HubDatabase, from_worker: bool
+) -> None:
+    snapshot_started = asyncio.Event()
+    snapshot_cancelled = asyncio.Event()
+
+    class WaitingTmux(_FakeTmux):
+        async def snapshot_lines(self, pane_id: str, lines: int = 5) -> str | None:
+            snapshot_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                snapshot_cancelled.set()
+            return None
+
+    tmux = WaitingTmux()
+    session = SimpleNamespace(id=SESSION_ID, terminal_context={"tmux_pane": "%12"})
+    assert mark_handoff_compact_continuation_pending(session_db, SESSION_ID)
+    loop = asyncio.get_running_loop()
+
+    def schedule() -> bool:
+        return schedule_codex_handoff_compact_continuation_readiness(
+            session_db,
+            pending_session_id=SESSION_ID,
+            target_session=session,
+            before_command="Compacting conversation",
+            loop=loop,
+        )
+
+    with patch(
+        "gobby.sessions.compact_continuation.manager_for_terminal_context", return_value=tmux
+    ):
+        scheduled = await asyncio.to_thread(schedule) if from_worker else schedule()
+        assert scheduled
+        await asyncio.wait_for(snapshot_started.wait(), timeout=2)
+        # Exercise the daemon's cancellation-resistant finalizer, which runs
+        # before its database pool closes even when graceful shutdown is cancelled.
+        cancellation = asyncio.CancelledError()
+        result = await _settle_finalizers_under_cancellation(
+            cast(GobbyRunner, SimpleNamespace()), cancellation
+        )
+
+    assert result is cancellation
+    assert snapshot_cancelled.is_set()
+    assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
+    assert tmux.sent_keys == []
+    assert consume_handoff_compact_continuation_pending(session_db, SESSION_ID) is not None
 
 
 @pytest.mark.asyncio

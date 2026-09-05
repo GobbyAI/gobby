@@ -288,6 +288,8 @@ class ACPWebChatBackend:
             reasoning_effort=session.reasoning_effort,
             pre_tool_callback=_apply_pre_tool,
         ):
+            if event.event_type in {"content_delta", "tool_call", "tool_result", "result"}:
+                session._acknowledge_prompt_delivery()
             yield event
 
     async def interrupt(self, session: ACPManagedChatSession) -> None:

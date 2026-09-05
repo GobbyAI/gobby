@@ -398,6 +398,9 @@ async def _settle_terminal_delivery_barrier() -> None:
 
 async def _run_terminal_delivery_finalizers(runner: GobbyRunner) -> None:
     """Settle delivery scopes and revoke/join their owned executor."""
+    from gobby.sessions.compact_continuation import shutdown_compact_continuations
+
+    await shutdown_compact_continuations()
     await _settle_terminal_delivery_barrier()
     await _shutdown_database_concurrency(runner)
     reset_terminal_delivery_offload()

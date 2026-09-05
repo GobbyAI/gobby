@@ -150,6 +150,7 @@ class ManagedChatSessionBase:
     _message_manager: Any | None = field(default=None, repr=False)
     _config: Any | None = field(default=None, repr=False)
     _deferred_contexts: list[str] = field(default_factory=list, repr=False)
+    _on_prompt_delivered: Callable[[], None] | None = field(default=None, repr=False)
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
         default=None, repr=False
     )
@@ -189,6 +190,7 @@ class ManagedChatSessionBase:
 
     def _reset_continuation_state(self) -> None:
         """Drop per-provider continuation/resume identifiers before a fresh start."""
+        self._on_prompt_delivered = None
         self.resume_session_id = None
         self.sdk_session_id = None
         for attr in ("_thread_id", "_turn_id", "_transcript_path"):
@@ -238,6 +240,8 @@ class ManagedChatSessionBase:
 
     def set_chat_mode(self, mode: str) -> None:
         self.chat_mode = mode
+        if mode != "plan":
+            self._on_prompt_delivered = None
         if self._on_mode_persist:
             try:
                 self._on_mode_persist(mode)
@@ -284,6 +288,11 @@ class ManagedChatSessionBase:
         context = response.get("context")
         if isinstance(context, str) and context.strip():
             self._deferred_contexts.append(context.strip())
+
+    def _acknowledge_prompt_delivery(self) -> None:
+        callback, self._on_prompt_delivered = self._on_prompt_delivered, None
+        if callback is not None:
+            callback()
 
     def _consume_deferred_context(self) -> str | None:
         """Return and clear queued lifecycle context fragments."""

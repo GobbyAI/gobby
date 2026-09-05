@@ -67,7 +67,7 @@ def test_set_handoff_interrupt_warning_is_shared_by_skills(
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "4.1.2"' in body
+    assert 'version: "4.2.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -90,8 +90,7 @@ def test_plan_investigates_before_recommending_depth(body: str) -> None:
         "broad migration or architecture/security-model rework",
         "Bug fixes and maintenance always recommend **Lightweight**",
         "regardless of breadth, risk, affected subsystems",
-        "Strong signals determine whether Gobby planning is offered",
-        "do not promote bug fixes or maintenance to Full",
+        "Breadth and risk do not promote bug fixes or maintenance to Full",
     ):
         assert signal in section
     assert "honor that choice without asking again" in section
@@ -128,6 +127,11 @@ def test_lightweight_is_conversational_and_skips_artifact_workflow(body: str) ->
 
 def test_explicit_commands_are_both_documented(body: str) -> None:
     assert "Both `$gobby plan` and `/gobby plan` invoke this workflow." in body
+    assert (
+        "Interactive Plan Mode also loads this skill on its first submitted prompt; "
+        "select depth here after investigating the request."
+    ) in _normalize_prose(body)
+    assert "Plan Mode Consider prompt" not in body
 
 
 def test_plan_is_artifact_first_and_taskless(body: str) -> None:

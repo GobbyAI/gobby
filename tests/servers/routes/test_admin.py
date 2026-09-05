@@ -1,5 +1,8 @@
+import asyncio
 import logging
 import sys
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -56,7 +59,7 @@ class MinimalRunnerFallbackStub:
 
 class TestAdminRoutes:
     @pytest.fixture(autouse=True)
-    def reset_restart_state(self):
+    def reset_restart_state(self) -> Iterator[None]:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
         lifecycle._restart_lock = None
@@ -64,7 +67,7 @@ class TestAdminRoutes:
         lifecycle._restart_lock = None
 
     @pytest.fixture
-    def mock_server(self):
+    def mock_server(self) -> MagicMock:
         server = MagicMock()
         server._start_time = 1234567890.0
         server._running = True
@@ -104,7 +107,7 @@ class TestAdminRoutes:
         server.services = SimpleNamespace(
             config=SimpleNamespace(
                 databases=DatabasesConfig(),
-                hub_backend="postgres",
+                hub_backend=None,
             ),
             database=MagicMock(),
             db_executor_stats=lambda: None,
@@ -113,7 +116,7 @@ class TestAdminRoutes:
         )
         server.config = server.services.config
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db[**P, T](func: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
             return func(*args, **kwargs)
 
         server.run_db = AsyncMock(side_effect=run_db)
@@ -124,7 +127,7 @@ class TestAdminRoutes:
         return server
 
     @pytest.fixture
-    def client(self, mock_server):
+    def client(self, mock_server: MagicMock) -> TestClient:
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -132,7 +135,9 @@ class TestAdminRoutes:
         app.include_router(router)
         return TestClient(app)
 
-    def test_status_endpoint_includes_generation_endpoint_health(self, client, mock_server) -> None:
+    def test_status_endpoint_includes_generation_endpoint_health(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         response = client.get("/api/admin/status")
         assert response.status_code == 200
         assert response.json()["generation_endpoints"] == []
@@ -168,7 +173,9 @@ class TestAdminRoutes:
         mock_probe.assert_not_awaited()
 
     @patch("gobby.servers.routes.admin._health.psutil")
-    def test_status_endpoint(self, mock_psutil, client, mock_server) -> None:
+    def test_status_endpoint(
+        self, mock_psutil: MagicMock, client: TestClient, mock_server: MagicMock
+    ) -> None:
         # Mock psutil
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -339,11 +346,13 @@ class TestAdminRoutes:
             response = client.get("/api/admin/status")
 
         assert response.status_code == 200
+        assert response.json()["status"] == "degraded"
         assert response.json()["agents"]["running"] == 0
+        assert response.json()["status_collection"]["failed"] == {"agents": "RuntimeError"}
         record = next(
             record
             for record in caplog.records
-            if record.message == "Could not collect running agent count"
+            if record.message == "Status collector agents failed: RuntimeError"
         )
         assert record.exc_info is not None
 
@@ -373,14 +382,108 @@ class TestAdminRoutes:
         )
         assert record.exc_info is not None
 
+    def test_status_endpoint_bounds_slow_dependency_and_later_probe_progresses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        client: TestClient,
+        mock_server: MagicMock,
+    ) -> None:
+        import gobby.servers.routes.admin._health as health_route
+
+        monkeypatch.setattr(
+            health_route,
+            "_STATUS_COLLECTION_BUDGET_SECONDS",
+            0.1,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            health_route,
+            "_STATUS_DEPENDENCY_TIMEOUT_SECONDS",
+            0.02,
+        )
+        vector_store = MagicMock()
+        vector_store._url = "http://localhost:6333"
+        mock_server.memory_manager._vector_store = vector_store
+
+        calls = 0
+        active = 0
+        stalled = asyncio.Event()
+
+        async def qdrant_health(_url: str, *, timeout: float = 5.0) -> bool:
+            nonlocal active, calls
+            calls += 1
+            if calls == 1:
+                active += 1
+                try:
+                    await stalled.wait()
+                finally:
+                    active -= 1
+            return True
+
+        process = MagicMock()
+        process.memory_info.return_value = MagicMock(rss=1024, vms=2048)
+        process.cpu_percent.return_value = 0.0
+        process.num_threads.return_value = 1
+
+        with (
+            patch(
+                "gobby.servers.routes.admin._health.psutil.Process",
+                return_value=process,
+            ),
+            patch.object(
+                health_route,
+                "is_qdrant_healthy",
+                new=AsyncMock(side_effect=qdrant_health),
+            ),
+            patch.object(
+                health_route,
+                "_get_falkordb_memory_status",
+                new=AsyncMock(return_value=health_route._unavailable_falkordb_memory_status()),
+            ),
+            patch.object(
+                health_route,
+                "_get_postgres_dashboard_status",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            started = time.monotonic()
+            first = client.get("/api/admin/status")
+            first_elapsed = time.monotonic() - started
+
+            assert first.status_code == 200
+            assert first_elapsed < 0.5
+            assert first.json()["status"] == "degraded"
+            assert first.json()["status_collection"] == {
+                "complete": False,
+                "budget_seconds": 0.1,
+                "timed_out": ["qdrant"],
+                "failed": {},
+            }
+            assert active == 0
+
+            started = time.monotonic()
+            second = client.get("/api/admin/status")
+            second_elapsed = time.monotonic() - started
+
+        assert second.status_code == 200
+        assert second_elapsed < 0.5
+        assert second.json()["status_collection"]["complete"] is True
+        assert second.json()["memory"]["qdrant"]["healthy"] is True
+        assert calls == 2
+        assert mock_server.memory_manager.get_stats.await_count == 2
+        assert all(
+            awaited.kwargs == {"include_vector_count": False}
+            for awaited in mock_server.memory_manager.get_stats.await_args_list
+        )
+
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_uses_qdrant_service_health_when_url_configured(
         self,
-        mock_psutil,
-        mock_is_qdrant_healthy,
-        client,
-        mock_server,
+        mock_psutil: MagicMock,
+        mock_is_qdrant_healthy: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -401,16 +504,19 @@ class TestAdminRoutes:
 
         data = response.json()
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
-        mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
+        mock_is_qdrant_healthy.assert_awaited_once_with(
+            "http://localhost:6333",
+            timeout=2.0,
+        )
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_reports_qdrant_dimension_rebuild_state(
         self,
-        mock_psutil,
-        mock_is_qdrant_healthy,
-        client,
-        mock_server,
+        mock_psutil: MagicMock,
+        mock_is_qdrant_healthy: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
@@ -448,10 +554,10 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_reports_falkordb_not_neo4j(
         self,
-        mock_psutil,
-        mock_get_falkordb_status,
-        client,
-        mock_server,
+        mock_psutil: MagicMock,
+        mock_get_falkordb_status: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -487,16 +593,18 @@ class TestAdminRoutes:
             host="127.0.0.1",
             port=16379,
             password="Valid-123",
+            run_db=mock_server.run_db,
+            health_timeout=2.0,
         )
 
     @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_always_includes_falkordb_payload(
         self,
-        mock_psutil,
-        mock_get_falkordb_status,
-        client,
-        mock_server,
+        mock_psutil: MagicMock,
+        mock_get_falkordb_status: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -526,10 +634,10 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_includes_postgres_hub_status(
         self,
-        mock_psutil,
-        mock_get_postgres_status,
-        client,
-        mock_server,
+        mock_psutil: MagicMock,
+        mock_get_postgres_status: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -555,18 +663,18 @@ class TestAdminRoutes:
         assert "mode" not in data["postgres"]
         assert data["postgres"]["healthy"] is True
         mock_get_postgres_status.assert_awaited_once_with(
-            readiness_timeout=1.5,
-            connect_timeout=1,
+            database=mock_server.services.database,
+            run_db=mock_server.run_db,
         )
 
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint_degrades_for_damaged_bm25_index(
         self,
-        mock_psutil,
-        mock_get_postgres_status,
-        client,
-        mock_server,
+        mock_psutil: MagicMock,
+        mock_get_postgres_status: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -604,7 +712,13 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._health.get_all_metrics")
     @patch("gobby.servers.routes.admin._health.generate_latest")
     @patch("gobby.servers.routes.admin._health.psutil")
-    def test_metrics_endpoint(self, mock_psutil, mock_generate, mock_get_all, client) -> None:
+    def test_metrics_endpoint(
+        self,
+        mock_psutil: MagicMock,
+        mock_generate: MagicMock,
+        mock_get_all: MagicMock,
+        client: TestClient,
+    ) -> None:
         mock_generate.return_value = b"metric_name 1.0\n"
         mock_get_all.return_value = {"counters": {}, "gauges": {}, "histograms": {}}
 
@@ -646,7 +760,7 @@ class TestAdminRoutes:
         assert 'automation_events_total{component="cron",outcome="fired"} 1.0' in response.text
 
     @patch("gobby.servers.routes.admin._config.get_version")
-    def test_config_endpoint(self, mock_get_version, client) -> None:
+    def test_config_endpoint(self, mock_get_version: MagicMock, client: TestClient) -> None:
         mock_get_version.return_value = "1.0.0"
 
         response = client.get("/api/admin/config")
@@ -657,7 +771,7 @@ class TestAdminRoutes:
         assert data["config"]["server"]["version"] == "1.0.0"
         assert data["config"]["features"]["session_manager"] is True
 
-    def test_shutdown_endpoint(self, client, mock_server) -> None:
+    def test_shutdown_endpoint(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
             response = client.post("/api/admin/shutdown")
         assert response.status_code == 200
@@ -675,7 +789,7 @@ class TestAdminRoutes:
         assert mock_server._background_tasks == set()
 
     def test_shutdown_endpoint_without_runner_schedules_process_shutdown(
-        self, client, mock_server
+        self, client: TestClient, mock_server: MagicMock
     ) -> None:
         mock_server._runner = None
 
@@ -687,7 +801,7 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
         mock_server._process_shutdown.assert_called_once()
 
-    def test_shutdown_endpoint_returns_500_when_shutdown_fails(self, client) -> None:
+    def test_shutdown_endpoint_returns_500_when_shutdown_fails(self, client: TestClient) -> None:
         with patch(
             "gobby.runner_maintenance.write_shutdown_source",
             side_effect=RuntimeError("write failed"),
@@ -701,11 +815,14 @@ class TestAdminRoutes:
         }
 
     def test_request_runner_shutdown_rejects_runner_without_shutdown_api(self) -> None:
+        from gobby.servers.http import HTTPServer
         from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
 
         runner = MinimalRunnerFallbackStub()
+        server = MagicMock(spec=HTTPServer)
+        server._runner = runner
         requested = _request_runner_shutdown(
-            SimpleNamespace(_runner=runner),
+            server,
             ShutdownIntent.RESTART,
         )
 
@@ -721,11 +838,11 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
     def test_restart_endpoint_uses_direct_helper(
         self,
-        mock_popen,
-        _mock_service_mode,
-        _mock_getpid,
-        client,
-        mock_server,
+        mock_popen: MagicMock,
+        _mock_service_mode: MagicMock,
+        _mock_getpid: MagicMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
@@ -760,10 +877,10 @@ class TestAdminRoutes:
     )
     def test_restart_endpoint_refuses_active_protected_runs(
         self,
-        mock_to_thread,
-        mock_spawn,
-        client,
-        mock_server,
+        mock_to_thread: AsyncMock,
+        mock_spawn: MagicMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         protected_runs = [
             {
@@ -799,10 +916,10 @@ class TestAdminRoutes:
     )
     def test_restart_endpoint_force_bypasses_active_protected_runs(
         self,
-        _mock_to_thread,
-        mock_spawn,
-        client,
-        mock_server,
+        _mock_to_thread: AsyncMock,
+        mock_spawn: MagicMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         scheduler = SimpleNamespace(
             list_protected_runs=MagicMock(
@@ -834,11 +951,11 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
     def test_restart_endpoint_uses_service_helper(
         self,
-        mock_popen,
-        _mock_service_mode,
-        _mock_getpid,
-        client,
-        mock_server,
+        mock_popen: MagicMock,
+        _mock_service_mode: MagicMock,
+        _mock_getpid: MagicMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
@@ -876,11 +993,11 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
     def test_restart_endpoint_without_runner_schedules_process_shutdown(
         self,
-        mock_popen,
-        _mock_service_mode,
-        _mock_getpid,
-        client,
-        mock_server,
+        mock_popen: MagicMock,
+        _mock_service_mode: MagicMock,
+        _mock_getpid: MagicMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         mock_server._runner = None
 
@@ -902,10 +1019,10 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager")
     def test_restart_endpoint_offloads_service_manager_probe(
         self,
-        mock_service_mode,
-        mock_to_thread,
-        _mock_spawn,
-        client,
+        mock_service_mode: MagicMock,
+        mock_to_thread: AsyncMock,
+        _mock_spawn: MagicMock,
+        client: TestClient,
     ) -> None:
         with patch("gobby.runner_maintenance.write_shutdown_source"):
             response = client.post("/api/admin/restart")
@@ -924,10 +1041,14 @@ class TestAdminRoutes:
     )
     def test_restart_endpoint_starts_shutdown_before_spawning_helper(
         self,
-        _mock_to_thread,
-        client,
+        _mock_to_thread: AsyncMock,
+        client: TestClient,
     ) -> None:
         events: list[str] = []
+
+        def request_shutdown(_server: object, _intent: ShutdownIntent) -> bool:
+            events.append("request_runner_shutdown")
+            return True
 
         with (
             patch(
@@ -936,7 +1057,7 @@ class TestAdminRoutes:
             ),
             patch(
                 "gobby.servers.routes.admin._lifecycle._request_runner_shutdown",
-                side_effect=lambda *_args: events.append("request_runner_shutdown") or True,
+                side_effect=request_shutdown,
             ),
             patch(
                 "gobby.servers.routes.admin._lifecycle._spawn_restart_helper",
@@ -960,9 +1081,9 @@ class TestAdminRoutes:
     )
     def test_restart_endpoint_releases_lock_when_shutdown_not_initiated(
         self,
-        _mock_to_thread,
-        mock_spawn,
-        client,
+        _mock_to_thread: AsyncMock,
+        mock_spawn: MagicMock,
+        client: TestClient,
     ) -> None:
         with (
             patch("gobby.runner_maintenance.write_shutdown_source"),
@@ -985,10 +1106,10 @@ class TestAdminRoutes:
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
     def test_restart_endpoint_double_restart_guard(
         self,
-        mock_popen,
-        _mock_service_mode,
-        client,
-        mock_server,
+        mock_popen: MagicMock,
+        _mock_service_mode: MagicMock,
+        client: TestClient,
+        mock_server: MagicMock,
     ) -> None:
         # First restart should succeed
         with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
@@ -1009,10 +1130,10 @@ class TestAdminRestartHelpers:
     @patch("gobby.servers.routes.admin._lifecycle._wait_for_process_exit", return_value=True)
     def test_service_restart_helper_invokes_service_restart_when_needed(
         self,
-        _mock_wait_for_exit,
-        mock_wait_for_health,
-        mock_service_restart,
-        mock_log,
+        _mock_wait_for_exit: MagicMock,
+        mock_wait_for_health: MagicMock,
+        mock_service_restart: MagicMock,
+        mock_log: MagicMock,
     ) -> None:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
@@ -1034,13 +1155,13 @@ class TestHealthEndpoint:
     """Tests for GET /admin/health."""
 
     @pytest.fixture
-    def mock_server(self):
+    def mock_server(self) -> MagicMock:
         server = MagicMock()
         server.test_mode = False
         return server
 
     @pytest.fixture
-    def client(self, mock_server):
+    def client(self, mock_server: MagicMock) -> TestClient:
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -1085,17 +1206,21 @@ class TestHealthEndpoint:
         client: TestClient,
         mock_server: MagicMock,
     ) -> None:
+        from gobby.runner import GobbyRunner
         from gobby.runner_init.services import _init_llm_service
 
-        runner = SimpleNamespace(config=SimpleNamespace())
+        runner = MagicMock(spec=GobbyRunner)
+        runner.startup_config = MagicMock()
+        runner.degraded_services = set()
         mock_server.get_runner.return_value = runner
 
         with patch(
             "gobby.runner_init.services.build_daemon_text_generation_service",
             side_effect=RuntimeError("forced init failure"),
-        ):
+        ) as build_service:
             _init_llm_service(runner)
 
+        build_service.assert_called_once_with(runner.startup_config)
         response = client.get("/api/health")
 
         assert response.status_code == 200
@@ -1115,7 +1240,7 @@ class TestWorkflowsReloadEndpoint:
     """Tests for POST /admin/workflows/reload."""
 
     @pytest.fixture
-    def mock_server(self):
+    def mock_server(self) -> MagicMock:
         server = MagicMock()
         server.test_mode = False
         server._background_tasks = set()
@@ -1131,7 +1256,7 @@ class TestWorkflowsReloadEndpoint:
         return server
 
     @pytest.fixture
-    def client(self, mock_server):
+    def client(self, mock_server: MagicMock) -> TestClient:
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -1139,7 +1264,7 @@ class TestWorkflowsReloadEndpoint:
         app.include_router(router)
         return TestClient(app)
 
-    def test_reload_workflows_success(self, client) -> None:
+    def test_reload_workflows_success(self, client: TestClient) -> None:
         response = client.post("/api/admin/workflows/reload")
         assert response.status_code == 200
         data = response.json()
@@ -1149,7 +1274,9 @@ class TestWorkflowsReloadEndpoint:
         assert data["details"] == {"reloaded": 5}
         assert "response_time_ms" in data
 
-    def test_reload_workflows_forwards_project_scope(self, client, mock_server) -> None:
+    def test_reload_workflows_forwards_project_scope(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         registry = mock_server._internal_manager.get_all_registries.return_value[0]
 
         response = client.post(
@@ -1163,7 +1290,7 @@ class TestWorkflowsReloadEndpoint:
             {"project_path": "/tmp/project", "project_id": "project-id"},
         )
 
-    def test_reload_workflows_no_registry(self, client, mock_server) -> None:
+    def test_reload_workflows_no_registry(self, client: TestClient, mock_server: MagicMock) -> None:
         # Return registries that don't include gobby-workflows
         other_registry = MagicMock()
         other_registry.name = "gobby-tasks"
@@ -1176,7 +1303,9 @@ class TestWorkflowsReloadEndpoint:
         assert data["status"] == "error"
         assert data["message"] == "Workflow registry not available"
 
-    def test_reload_workflows_no_internal_manager(self, client, mock_server) -> None:
+    def test_reload_workflows_no_internal_manager(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         mock_server._internal_manager = None
 
         response = client.post("/api/admin/workflows/reload")
@@ -1186,7 +1315,9 @@ class TestWorkflowsReloadEndpoint:
         assert data["status"] == "error"
         assert data["message"] == "Workflow registry not available"
 
-    def test_reload_workflows_tool_not_found(self, client, mock_server) -> None:
+    def test_reload_workflows_tool_not_found(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         registry = mock_server._internal_manager.get_all_registries.return_value[0]
         registry.call = AsyncMock(side_effect=ValueError("Tool not found"))
 
@@ -1197,7 +1328,9 @@ class TestWorkflowsReloadEndpoint:
         assert data["status"] == "error"
         assert data["message"] == "reload_cache tool not found"
 
-    def test_reload_workflows_call_exception(self, client, mock_server) -> None:
+    def test_reload_workflows_call_exception(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         registry = mock_server._internal_manager.get_all_registries.return_value[0]
         registry.call = AsyncMock(side_effect=RuntimeError("Cache corrupted"))
 
@@ -1237,7 +1370,7 @@ class TestTestEndpoints:
     """Tests for /admin/test/* endpoints (E2E test-mode only)."""
 
     @pytest.fixture
-    def mock_server(self):
+    def mock_server(self) -> MagicMock:
         server = MagicMock()
         server.test_mode = True
         server._background_tasks = set()
@@ -1250,7 +1383,7 @@ class TestTestEndpoints:
         return server
 
     @pytest.fixture
-    def client(self, mock_server):
+    def client(self, mock_server: MagicMock) -> TestClient:
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -1261,7 +1394,9 @@ class TestTestEndpoints:
     # --- register-project ---
 
     @patch("gobby.storage.projects.LocalProjectManager")
-    def test_register_project_success(self, mock_pm_cls, client, mock_server) -> None:
+    def test_register_project_success(
+        self, mock_pm_cls: MagicMock, client: TestClient, mock_server: MagicMock
+    ) -> None:
         mock_server.session_manager.db.execute.return_value.fetchone.return_value = {"id": "proj-1"}
 
         response = client.post(
@@ -1281,7 +1416,9 @@ class TestTestEndpoints:
         mock_pm_cls.return_value.get.assert_not_called()
 
     @patch("gobby.storage.projects.LocalProjectManager")
-    def test_register_project_already_exists(self, mock_pm_cls, client, mock_server) -> None:
+    def test_register_project_already_exists(
+        self, mock_pm_cls: MagicMock, client: TestClient, mock_server: MagicMock
+    ) -> None:
         existing = MagicMock()
         existing.id = "proj-1"
         existing.name = "Existing"
@@ -1303,7 +1440,7 @@ class TestTestEndpoints:
         assert data["name"] == "Existing"
         mock_pm.get.assert_called_once_with("proj-1")
 
-    def test_register_project_forbidden_when_not_test_mode(self, mock_server) -> None:
+    def test_register_project_forbidden_when_not_test_mode(self, mock_server: MagicMock) -> None:
         mock_server.test_mode = False
 
         from fastapi import FastAPI
@@ -1321,7 +1458,9 @@ class TestTestEndpoints:
         assert "test mode" in response.json()["detail"].lower()
 
     @patch("gobby.storage.projects.LocalProjectManager")
-    def test_register_project_no_session_manager(self, mock_pm_cls, client, mock_server) -> None:
+    def test_register_project_no_session_manager(
+        self, mock_pm_cls: MagicMock, client: TestClient, mock_server: MagicMock
+    ) -> None:
         mock_server.session_manager = None
 
         response = client.post(
@@ -1368,7 +1507,7 @@ class TestTestEndpoints:
         mock_arm.create.assert_called_once()
         mock_arm.start.assert_called_once_with("run-1")
 
-    def test_register_agent_forbidden_when_not_test_mode(self, mock_server) -> None:
+    def test_register_agent_forbidden_when_not_test_mode(self, mock_server: MagicMock) -> None:
         mock_server.test_mode = False
 
         from fastapi import FastAPI
@@ -1430,7 +1569,7 @@ class TestTestEndpoints:
 
         assert data["status"] == "not_found"
 
-    def test_unregister_agent_forbidden_when_not_test_mode(self, mock_server) -> None:
+    def test_unregister_agent_forbidden_when_not_test_mode(self, mock_server: MagicMock) -> None:
         mock_server.test_mode = False
 
         from fastapi import FastAPI
@@ -1445,7 +1584,7 @@ class TestTestEndpoints:
 
     # --- set-session-usage ---
 
-    def test_set_session_usage_success(self, client, mock_server) -> None:
+    def test_set_session_usage_success(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_server.session_manager.update_usage.return_value = True
 
         response = client.post(
@@ -1474,7 +1613,7 @@ class TestTestEndpoints:
             cache_read_tokens=100,
         )
 
-    def test_set_session_usage_not_found(self, client, mock_server) -> None:
+    def test_set_session_usage_not_found(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_server.session_manager.update_usage.return_value = False
 
         response = client.post(

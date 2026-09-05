@@ -21,6 +21,7 @@ clear itself. The second POST here is that gate clearing itself.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from fastapi.testclient import TestClient
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.app_context import ServiceContainer
+from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.envelope_dedupe import ENVELOPE_ID_HEADER
 from gobby.hooks.hook_manager import HookManager
@@ -113,7 +115,11 @@ def hook_client(receipts_db: HubDatabase) -> Iterator[TestClient]:
     )
     # Preconfigured managers are reused by the lifespan instead of being rebuilt,
     # which is what keeps this HookManager pointed at the test hub.
-    manager = HookManager(database=receipts_db, session_manager=sessions)
+    manager = HookManager(
+        database=receipts_db,
+        session_manager=sessions,
+        config=DaemonConfig(),
+    )
     server.app.state.hook_manager = manager
     try:
         with TestClient(server.app) as client:
@@ -273,12 +279,23 @@ def test_delivered_gate_clears_itself_once_its_receipt_is_acknowledged(
 
     inbox = tmp_path / "inbox"
     _write_ack(inbox, receipt)
-    assert consume_pending_delivery_receipts(hook_client.app, inbox) == 1
-    assert variables.get_variables(session_id).get(ACK_VARIABLE) is True
+    assert hook_client.portal is not None
+    http_thread = hook_client.portal.call(threading.get_ident)
+
+    def sweep(app: Any) -> int:
+        # The real file/DB sweep must finish before the next hook evaluates,
+        # without occupying the HTTP event loop while it does that work.
+        assert threading.get_ident() != http_thread
+        return consume_pending_delivery_receipts(app, inbox)
 
     # A second real delivery of the same hook: the gate is satisfied and no
     # longer fires. This is the behavior the fix restores.
-    second = _post_set_handoff(hook_client, session_id, f"n-{uuid4()}")
+    with patch(
+        "gobby.servers.routes.mcp.hooks.consume_pending_delivery_receipts", side_effect=sweep
+    ) as consume:
+        second = _post_set_handoff(hook_client, session_id, f"n-{uuid4()}")
+    consume.assert_called_once()
+    assert variables.get_variables(session_id).get(ACK_VARIABLE) is True
     assert not _blocked(second), second
 
     # And it stages the acknowledge_variable only once. The first delivery's

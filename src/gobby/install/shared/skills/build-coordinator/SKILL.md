@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.2.0"
+version: "1.3.1"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -140,6 +140,12 @@ When build automation stalls or agents behave as if required startup context is 
 - Check whether SessionStart activation completed and left expected state before the first provider-neutral prompt event: session linkage, `_agent_type`, active rule and skill variables, terminal pickup metadata, baseline dirty-file capture, and any spawned-agent step workflow.
 - A first-prompt reconciliation guard can be useful as a backstop: call an idempotent `ensure_session_activation(session_id)` helper that creates only missing activation effects and preserves existing progress. Do not replay the raw SessionStart hook wholesale.
 - For cross-boundary stalls, use OpenTelemetry or equivalent correlated logs keyed by `agent_run_id` and `session_id` across spawn, tmux, SessionStart, workflow activation, auto-claim, step transitions, MCP calls, and rule blocks.
+
+## Terminal and sandbox evidence
+
+When coordinating terminal work or changes to managed-agent sandbox policy, call
+`get_skill_file(name="build-coordinator", path="references/terminal-sandbox-evidence.md")`
+and read it to completion before accepting validation evidence.
 
 ## Post-Fix Daemon Restart Gate
 

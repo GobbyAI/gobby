@@ -248,9 +248,12 @@ async def _load_transcript_commit_shas(session: Any) -> tuple[str, ...]:
     turns = (
         window.turns
         if parser_source == "claude"
-        else analyzer_turns_from_transcript(parser, window.turns)
+        else await asyncio.to_thread(analyzer_turns_from_transcript, parser, window.turns)
     )
-    context = TranscriptAnalyzer(parser).extract_handoff_context(turns)
+    context = await asyncio.to_thread(
+        TranscriptAnalyzer(parser).extract_handoff_context,
+        turns,
+    )
     return _ordered_unique(
         commit["hash"]
         for commit in context.git_commits

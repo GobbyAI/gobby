@@ -200,6 +200,8 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                 response = await self._on_before_agent(
                     {"prompt": prompt, "source": self._web_chat_source()}
                 )
+                if response and response.get("decision") in {"block", "deny"}:
+                    raise RuntimeError(response.get("reason") or "Prompt blocked by workflow")
                 if response and response.get("context"):
                     context_parts.append(str(response["context"]))
 
@@ -615,6 +617,7 @@ class DroidWebChatBackend:
                 {"text": prompt},
             )
 
+        session._acknowledge_prompt_delivery()
         async for event in self._read_until_terminal(handle, session):
             if event.event_type == "error" and event.data.get("code") in {"eof", "timeout"}:
                 await self.detach_session(session)

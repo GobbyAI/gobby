@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,7 +30,7 @@ def _record(
     }
 
 
-def _write(path: Path, records: list[dict[str, object] | str]) -> None:
+def _write(path: Path, records: Sequence[dict[str, object] | str]) -> None:
     lines = [record if isinstance(record, str) else json.dumps(record) for record in records]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -160,6 +161,92 @@ async def test_codex_reader_confirms_capacity_with_blank_lines_interleaved(
     assert snapshot.provider_error_event.line_num == 3
     assert snapshot.provider_error_reason == "server_overloaded"
     assert CODEX_MODEL_CAPACITY_MESSAGE not in json.dumps(snapshot.to_log_dict())
+
+
+@pytest.mark.asyncio
+async def test_codex_reader_classifies_task_complete_usage_limit_as_terminal_error(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "usage-limit.jsonl"
+    private_message = "You've hit your usage limit. Account-specific reset details."
+    _write(
+        path,
+        [
+            _record("event_msg", "task_started"),
+            _record(
+                "event_msg",
+                "task_complete",
+                error={
+                    "message": private_message,
+                    "codex_error_info": "usage_limit_exceeded",
+                },
+            ),
+        ],
+    )
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.has_conclusive_terminal_provider_error is True
+    assert snapshot.provider_error_event == snapshot.latest_turn_event
+    assert snapshot.provider_error_kind == "terminal"
+    assert snapshot.provider_error_reason == "usage_limit_exceeded"
+    assert private_message not in json.dumps(snapshot.to_log_dict())
+
+
+@pytest.mark.asyncio
+async def test_codex_reader_keeps_server_overload_task_complete_recoverable(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "server-overloaded.jsonl"
+    _write(
+        path,
+        [
+            _record("event_msg", "task_started"),
+            _record(
+                "event_msg",
+                "task_complete",
+                error={
+                    "message": CODEX_MODEL_CAPACITY_MESSAGE,
+                    "codex_error_info": "server_overloaded",
+                },
+            ),
+        ],
+    )
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.has_conclusive_terminal_provider_error is False
+    assert snapshot.has_conclusive_turn_completed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param({}, id="empty"),
+        pytest.param(
+            {"message": "", "codex_error_info": None},
+            id="empty-fields",
+        ),
+    ],
+)
+async def test_codex_reader_ignores_empty_task_complete_error(
+    tmp_path: Path,
+    error: dict[str, object],
+) -> None:
+    path = tmp_path / "empty-error.jsonl"
+    _write(
+        path,
+        [
+            _record("event_msg", "task_started"),
+            _record("event_msg", "task_complete", error=error),
+        ],
+    )
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.has_conclusive_terminal_provider_error is False
+    assert snapshot.has_conclusive_turn_completed is True
 
 
 @pytest.mark.asyncio

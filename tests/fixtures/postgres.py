@@ -1,7 +1,7 @@
-"""Schema-per-worker pytest fixtures for PostgresHubDatabase tests.
+"""Database-per-worker pytest fixtures for PostgresHubDatabase tests.
 
 Per-worker isolation without per-session container churn: each xdist worker
-gets its own Postgres schema inside the shared test container; per-test
+gets its own Postgres database inside the shared test container; per-test
 isolation is achieved by resetting mutable rows back to the canonical seed
 captured once when the worker's schema was first migrated.
 
@@ -21,11 +21,12 @@ import time
 import uuid
 from collections.abc import Iterator
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
 from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.types.json import Jsonb
 
 from gobby.runner_maintenance.storage_hygiene import sweep_orphaned_test_schemas
@@ -173,8 +174,30 @@ def _require_test_database_url() -> str:
 
 
 @pytest.fixture(scope="session")
-def postgres_database_url() -> str:
-    return _require_test_database_url()
+def postgres_database_url() -> Iterator[str]:
+    # The active-daemon advisory lock is database-wide, so schemas alone
+    # cannot isolate parallel workers or a test launched by a managed agent.
+    with isolated_test_database(_require_test_database_url()) as url:
+        yield url
+
+
+@contextlib.contextmanager
+def isolated_test_database(url: str) -> Iterator[str]:
+    """Own one throwaway database, including its daemon lease and cleanup."""
+    database_name = f"gobby_test_{os.getpid()}_{uuid.uuid4().hex[:12]}"
+    maintenance_url = make_conninfo(url, dbname="postgres")
+    isolated_url = urlunsplit(urlsplit(url)._replace(path=f"/{database_name}"))
+    with psycopg.connect(maintenance_url, autocommit=True) as connection:
+        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+    try:
+        with psycopg.connect(isolated_url, autocommit=True) as connection:
+            connection.execute("CREATE EXTENSION pg_search")
+        yield isolated_url
+    finally:
+        with psycopg.connect(maintenance_url, autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
+            )
 
 
 def _cleanup_orphaned_schemas(url: str, age_hours: int = 1) -> None:

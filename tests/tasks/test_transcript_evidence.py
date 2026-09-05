@@ -164,7 +164,10 @@ def _resource_tracker_pid() -> int | None:
 
 
 def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
-    pool = transcript_evidence_pool._get_pool()
+    try:
+        pool = transcript_evidence_pool._get_pool()
+    except OSError as exc:
+        pytest.skip(f"process pool unavailable: {exc}")
     try:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
@@ -422,6 +425,46 @@ def _codex_direct_exec_pair(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["npm ci", "unrecognized-check"])
+@pytest.mark.parametrize(
+    "source,exit_code,outcome",
+    [
+        ("claude", 0, "success"),
+        ("claude", 1, "failure"),
+        ("codex", 0, "success"),
+        ("codex", 1, "failure"),
+        ("codex", None, "unknown"),
+    ],
+)
+async def test_shell_commands_without_validation_categories_remain_review_evidence(
+    tmp_path: Path, source: str, command: str, exit_code: int | None, outcome: str
+) -> None:
+    result: dict[str, Any] = {"output": "command output"}
+    if exit_code is not None:
+        result["exit_code"] = exit_code
+    records = (
+        _codex_direct_exec_pair(command=command, result=result)
+        if source == "codex"
+        else _claude_tool_pair(command=command, call_id="run", start=BASE_TIME, result=result)
+    )
+    transcript = tmp_path / f"{source}-commands.jsonl"
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session(source, transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+    merged = merge_transcript_evidence(evidence)
+    assert merged.validation_runs == ()
+    assert [(run.command, run.outcome, run.exit_code) for run in merged.command_runs] == [
+        (command, outcome, exit_code)
+    ]
+    assert bool(merged.degraded_capabilities) is (outcome == "unknown")
+
+
+@pytest.mark.asyncio
 async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path: Path) -> None:
     transcript = tmp_path / "codex.jsonl"
     patch = "*** Begin Patch\n*** Update File: src/changed.py\n@@\n-old\n+new\n*** End Patch\n"
@@ -547,12 +590,22 @@ async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,rewritten",
+    [
+        (
+            "uv run pytest tests/tasks/test_example.py::test_behavior -q",
+            "uv run rtk pytest tests/tasks/test_example.py::test_behavior -q",
+        ),
+        ("npm ci", "rtk npm ci"),
+    ],
+)
 async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
     tmp_path: Path,
+    command: str,
+    rewritten: str,
 ) -> None:
     transcript = tmp_path / "codex-wrapper.jsonl"
-    command = "uv run pytest tests/tasks/test_example.py::test_behavior -q"
-    rewritten = "uv run rtk pytest tests/tasks/test_example.py::test_behavior -q"
     failed_output = "FAILED test_behavior - AssertionError"
     _write_jsonl(
         transcript,
@@ -609,7 +662,8 @@ async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
         str(tmp_path),
     )
 
-    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+    runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
+    assert [(run.command, run.outcome, run.exit_code) for run in runs] == [
         (rewritten, "failure", 1)
     ]
 
@@ -1126,13 +1180,17 @@ async def test_codex_compound_timeout_preserves_completed_segment_outcomes(
     ("exit_code", "expected_outcome"),
     [(0, "success"), (1, "failure")],
 )
+@pytest.mark.parametrize(
+    "command",
+    ["GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q", "npm ci"],
+)
 async def test_codex_ingests_json_style_functions_exec_evidence(
     tmp_path: Path,
     exit_code: int,
     expected_outcome: str,
+    command: str,
 ) -> None:
     transcript = tmp_path / "codex-functions-exec.jsonl"
-    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"
     _write_jsonl(
         transcript,
         [
@@ -1183,9 +1241,12 @@ async def test_codex_ingests_json_style_functions_exec_evidence(
         str(tmp_path),
     )
 
-    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+    runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
+    assert [(run.command, run.outcome, run.exit_code) for run in runs] == [
         (command, expected_outcome, exit_code)
     ]
+    if command == "npm ci":
+        assert evidence.validation_runs == ()
 
 
 @pytest.mark.asyncio
@@ -1193,13 +1254,17 @@ async def test_codex_ingests_json_style_functions_exec_evidence(
     ("exit_code", "expected_outcome"),
     [(0, "success"), (7, "failure")],
 )
+@pytest.mark.parametrize(
+    "command",
+    ["GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q", "npm ci"],
+)
 async def test_codex_direct_exec_command_accepts_native_terminal_envelope(
     tmp_path: Path,
     exit_code: int,
     expected_outcome: str,
+    command: str,
 ) -> None:
     transcript = tmp_path / "codex-direct-native.jsonl"
-    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"
     envelope = (
         "Chunk ID: 1d32cc\n"
         "Wall time: 2.9618 seconds\n"
@@ -1221,9 +1286,12 @@ async def test_codex_direct_exec_command_accepts_native_terminal_envelope(
         str(tmp_path),
     )
 
-    assert [(run.outcome, run.exit_code, run.command) for run in evidence.validation_runs] == [
+    runs = evidence.command_runs if command == "npm ci" else evidence.validation_runs
+    assert [(run.outcome, run.exit_code, run.command) for run in runs] == [
         (expected_outcome, exit_code, command)
     ]
+    if command == "npm ci":
+        assert evidence.validation_runs == ()
     assert not evidence.degraded_capabilities
 
 
@@ -2370,6 +2438,36 @@ async def test_codex_uncompounded_passing_run_is_still_a_success(tmp_path: Path)
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
+
+
+@pytest.mark.asyncio
+async def test_codex_passing_test_types_suppression_ratchet_is_recorded(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "codex-suppressions.jsonl"
+    command = (
+        "uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json"
+    )
+    _write_jsonl(
+        transcript,
+        _codex_nested_exec_pair(
+            command=command,
+            result={"exit_code": 0, "output": "New: 0\nStale: 0"},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [
+        (run.command, run.categories, run.outcome, run.exit_code)
+        for run in evidence.validation_runs
+    ] == [(command, ("type_check",), "success", 0)]
 
 
 def _timestamped(stamp: str) -> str:

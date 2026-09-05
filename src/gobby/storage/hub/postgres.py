@@ -109,6 +109,7 @@ class PostgresHubDatabase:
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
+        self._pool_acquire_timeout_seconds = pool_config.acquire_timeout_seconds
         self._pool_open_timeout = pool_config.open_timeout_seconds
         _OPEN_DATABASES.add(self)
 
@@ -233,7 +234,11 @@ class PostgresHubDatabase:
 
     @contextmanager
     def _pool_connection(self) -> Iterator[psycopg.Connection[Any]]:
-        with _postgres_pool.pool_connection(self._pool, self.pool_stats) as conn:
+        with _postgres_pool.pool_connection(
+            self._pool,
+            self.pool_stats,
+            acquire_timeout_seconds=self._pool_acquire_timeout_seconds,
+        ) as conn:
             yield conn
 
     @contextmanager
@@ -261,33 +266,9 @@ class PostgresHubDatabase:
         with self.transaction() as txn:
             if repeatable_read_read_only:
                 txn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            settings = txn.execute(
-                "SELECT current_setting('statement_timeout') AS statement_timeout, "
-                "current_setting('lock_timeout') AS lock_timeout"
-            ).fetchone()
-            if settings is None:
-                raise RuntimeError("Could not read transaction timeout settings")
-            statement_timeout = str(settings["statement_timeout"])
-            lock_timeout = str(settings["lock_timeout"])
-            txn.execute(
-                "SELECT set_config('statement_timeout', %s, true)",
-                (f"{statement_timeout_ms}ms",),
-            )
-            txn.execute(
-                "SELECT set_config('lock_timeout', %s, true)",
-                (f"{lock_timeout_ms}ms",),
-            )
-            try:
+            native = cast(_postgres_pool._PostgresTransaction, txn)
+            with native._deadline.bounds(statement_timeout_ms, lock_timeout_ms):
                 yield txn
-            finally:
-                txn.execute(
-                    "SELECT set_config('statement_timeout', %s, true)",
-                    (statement_timeout,),
-                )
-                txn.execute(
-                    "SELECT set_config('lock_timeout', %s, true)",
-                    (lock_timeout,),
-                )
 
     @contextmanager
     def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:

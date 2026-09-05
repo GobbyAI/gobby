@@ -17,6 +17,7 @@ from gobby.agents.sandbox_policy import (
     PRE_COMMIT_STORE_SPARE_NAME,
     PRE_COMMIT_STORE_SPARE_TEMP_NAME,
     SRT_VIOLATIONS_RELATIVE_PATH,
+    registered_run_tmp,
 )
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.paths import get_gobby_home
@@ -113,7 +114,7 @@ def _retain_violation_log(source: Path, run_id: str, gobby_home: Path) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def _remove_root(path: Path) -> bool:
+def _remove_root(path: Path, *, remove_registered_tmp: bool = True) -> bool:
     root_stat = _lstat(path)
     if root_stat is None:
         return False
@@ -123,6 +124,12 @@ def _remove_root(path: Path) -> bool:
         except OSError:
             return False
         return True
+
+    if remove_registered_tmp:
+        run_tmp = registered_run_tmp(path)
+        if run_tmp is not None and run_tmp.exists():
+            if not _remove_root(run_tmp, remove_registered_tmp=False):
+                return False
 
     root = Path(os.path.abspath(path))
     failed_paths: list[Path] = []
@@ -212,6 +219,14 @@ def _reap_roots(run_id: str, roots: Iterable[Path], gobby_home: Path) -> Sandbox
             continue
         try:
             root_bytes = _root_size(root)
+            root_stat = _lstat(root)
+            run_tmp = (
+                registered_run_tmp(root)
+                if root_stat is not None and stat.S_ISDIR(root_stat.st_mode)
+                else None
+            )
+            if run_tmp is not None:
+                root_bytes += _root_size(run_tmp)
             removed = _remove_root(root)
         except OSError:
             removed = False

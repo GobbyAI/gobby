@@ -9,6 +9,8 @@ import threading
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+from gobby.hooks.events import HookEventType
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WORKFLOW_BLOCKING_WORKERS = 8
@@ -16,6 +18,29 @@ _SHUTDOWN_JOIN_TIMEOUT_SECONDS = 1.0
 _TASK_CANCELLATION_TIMEOUT_SECONDS = 0.1
 
 T = TypeVar("T")
+
+
+class WorkflowEvaluationTimeout(TimeoutError):
+    """Raised when one workflow evaluation exceeds its internal budget."""
+
+    def __init__(
+        self,
+        *,
+        event_type: HookEventType | str,
+        session_id: str,
+        timeout_seconds: float,
+    ) -> None:
+        self.event_type = (
+            event_type.value if isinstance(event_type, HookEventType) else str(event_type)
+        )
+        self.session_id = session_id
+        self.timeout_seconds = timeout_seconds
+        self.queue_duration_seconds: float | None = None
+        self.execution_duration_seconds: float | None = None
+        super().__init__(
+            "Workflow evaluation timed out "
+            f"after {timeout_seconds:g}s for event={self.event_type} session={session_id or '<none>'}"
+        )
 
 
 class WorkflowEvaluationRuntime:

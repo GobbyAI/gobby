@@ -203,10 +203,12 @@ async def build_summary_source_context(
     if parser_source == "claude":
         turns = window.turns
     else:
-        turns = analyzer_turns_from_transcript(parser, window.turns)
+        turns = await asyncio.to_thread(analyzer_turns_from_transcript, parser, window.turns)
 
-    handoff_ctx = TranscriptAnalyzer(parser).extract_handoff_context(
-        turns, initial_goal=initial_goal
+    handoff_ctx = await asyncio.to_thread(
+        TranscriptAnalyzer(parser).extract_handoff_context,
+        turns,
+        initial_goal=initial_goal,
     )
     cwd = resolve_session_workspace(session, transcript_path)
     await _enrich_git_context(handoff_ctx, cwd)

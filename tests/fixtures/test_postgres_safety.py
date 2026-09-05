@@ -15,6 +15,7 @@ from _pytest.outcomes import Failed, Skipped
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
+from gobby.daemon_lease import ActiveDaemonLease
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.maintenance_epoch import abort_maintenance_epoch, open_maintenance_epoch
 from tests.fixtures.postgres import (
@@ -24,11 +25,43 @@ from tests.fixtures.postgres import (
     _enforce_safe_test_schema,
     _require_test_database_url,
     _schema_looks_test_only,
+    isolated_test_database,
     isolated_test_schema,
     pytest_configure,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.integration
+def test_worker_databases_isolate_daemon_lease_and_are_dropped(postgres_database_url: str) -> None:
+    with isolated_test_database(postgres_database_url) as first_url:
+        with isolated_test_database(postgres_database_url) as second_url:
+            with (
+                psycopg.connect(first_url, autocommit=True) as first,
+                psycopg.connect(first_url, autocommit=True) as duplicate,
+                psycopg.connect(second_url, autocommit=True) as second,
+            ):
+                names = [first.info.dbname, second.info.dbname]
+                assert names[0] != names[1]
+                first_keys = ActiveDaemonLease._resolve_keys(first)
+                second_keys = ActiveDaemonLease._resolve_keys(second)
+                assert first.execute(
+                    "SELECT pg_try_advisory_lock(%s, %s)", first_keys
+                ).fetchone() == (True,)
+                assert duplicate.execute(
+                    "SELECT pg_try_advisory_lock(%s, %s)", first_keys
+                ).fetchone() == (False,)
+                assert second.execute(
+                    "SELECT pg_try_advisory_lock(%s, %s)", second_keys
+                ).fetchone() == (True,)
+    with psycopg.connect(postgres_database_url) as connection:
+        assert (
+            connection.execute(
+                "SELECT datname FROM pg_database WHERE datname = ANY(%s)", (names,)
+            ).fetchall()
+            == []
+        )
 
 
 @pytest.fixture
@@ -71,7 +104,10 @@ def test_enforce_safe_test_schema_allows_test_schema_under_test_protect(
 ) -> None:
     monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
 
-    assert _enforce_safe_test_schema("gobby_test_12345_1_master_abcd") is None
+    _enforce_safe_test_schema("gobby_test_12345_1_master_abcd")
+    # Accepting the fixture namespace must leave protection active.
+    with pytest.raises(pytest.fail.Exception, match="outside a gobby_test_"):
+        _enforce_safe_test_schema("public")
 
 
 def _stub_bootstrap_hub(monkeypatch: pytest.MonkeyPatch, database_url: str | None) -> None:
@@ -196,6 +232,7 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
 
     events: list[str] = []
     lock_params: list[object] = []
+    dropped_schemas: list[str] = []
     connection = MagicMock()
     connection.__enter__.return_value = connection
     connection.info.backend_pid = 12345
@@ -215,6 +252,8 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
             result.fetchone.return_value = (1,)
         elif "DROP SCHEMA" in rendered:
             events.append("drop")
+            assert isinstance(query, sql.Composable)
+            dropped_schemas.append(query.as_string())
         return result
 
     connection.execute.side_effect = execute
@@ -227,7 +266,13 @@ def test_isolated_test_schema_holds_schema_lease_for_fixture_lifetime(
         assert connection.__exit__.call_count == 0
         assert lock_params == [(schema,)]
 
-    assert events == ["lease", "create", "drop", "unlock"]
+    from gobby.storage.managed_credential_types import auth_schema_for
+
+    assert events == ["lease", "create", "drop", "drop", "unlock"]
+    assert dropped_schemas == [
+        f'DROP SCHEMA "{schema}" CASCADE',
+        f'DROP SCHEMA "{auth_schema_for(schema)}" CASCADE',
+    ]
     assert connection.__exit__.call_count == 1
     assert connect.call_count == 1
     assert connect.call_args.kwargs["application_name"].startswith(

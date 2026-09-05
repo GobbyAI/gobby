@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
+import psycopg
 import pytest
 
-from gobby.storage.hub import postgres
+from gobby.storage.hub import postgres, postgres_pool
 
 pytestmark = pytest.mark.unit
 
@@ -29,12 +30,12 @@ class _SettingsTransaction:
 
     def execute(self, sql: str, params: tuple[str, ...] = ()) -> _Result:
         self.statements.append((sql, params))
-        if "current_setting" in sql:
+        if sql.startswith("SHOW "):
             return _Result(dict(self.settings))
-        if "set_config('statement_timeout'" in sql:
-            self.settings["statement_timeout"] = params[0]
-        elif "set_config('lock_timeout'" in sql:
-            self.settings["lock_timeout"] = params[0]
+        if sql.startswith("SET LOCAL "):
+            for statement in sql.split("; "):
+                name, value = statement.removeprefix("SET LOCAL ").split(" = ")
+                self.settings[name] = value.strip("'")
         else:
             raise AssertionError(f"unexpected query: {sql}")
         return _Result()
@@ -47,8 +48,8 @@ def _database_with_transaction(
     database = object.__new__(postgres.PostgresHubDatabase)
 
     @contextmanager
-    def transaction_context() -> Iterator[_SettingsTransaction]:
-        yield transaction
+    def transaction_context() -> Iterator[postgres_pool._PostgresTransaction]:
+        yield postgres_pool._PostgresTransaction(cast(psycopg.Connection[Any], transaction))
 
     monkeypatch.setattr(database, "transaction", transaction_context)
     return database

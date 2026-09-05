@@ -3,7 +3,7 @@
 use crate::frame_source::AttachLocator;
 use crate::theme::{Theme, ThemeKind};
 use crate::Workspace;
-use gobby_terminal::protocol::{ClientMessage, PaneLocator, RenderEncoding, PROTOCOL_VERSION};
+use gobby_terminal::protocol::{ClientMessage, RenderEncoding, PROTOCOL_VERSION};
 
 /// Handshake + user attach used by the live workspace and by Unix frame connect.
 pub fn observe_tmux_pane(locator: &AttachLocator) -> (ClientMessage, ClientMessage) {
@@ -16,23 +16,10 @@ pub fn observe_tmux_pane(locator: &AttachLocator) -> (ClientMessage, ClientMessa
         rows: 24,
         tmux_identity,
     };
-    let pane = match (
-        locator.pane_id.clone(),
-        locator.server_pid,
-        locator.server_start_time,
-    ) {
-        (Some(pane_id), Some(server_pid), Some(server_start_time)) => Some(PaneLocator {
-            socket_path: locator.socket_path.clone(),
-            server_pid,
-            server_start_time,
-            pane_id,
-        }),
-        _ => None,
-    };
     let attach = ClientMessage::AttachTerminal {
         host_terminal_id: locator.host_terminal_id.clone(),
         reservation_id: None,
-        locator: pane,
+        locator: locator.pane.clone(),
     };
     (hello, attach)
 }

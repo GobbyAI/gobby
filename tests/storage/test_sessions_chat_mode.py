@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -27,6 +28,28 @@ def sm(session_manager: SessionManager) -> SessionManager:
 
 class TestChatModePersistence:
     """Verify chat_mode column in sessions table."""
+
+    @pytest.mark.parametrize("mode", ["normal", "accept_edits", "bypass"])
+    def test_leaving_plan_rearms_directive_without_prompt(
+        self, sm: SessionManager, mode: str
+    ) -> None:
+        session = sm.register(
+            external_id="plan-period",
+            machine_id=LOCAL_MACHINE_ID,
+            source="test",
+            project_id=PROJECT_ID,
+        )
+        variables = SessionVariableManager(sm.db)
+        variables.merge_variables(
+            session.id, {"plan_skill_directive_delivered": True, "unrelated": "preserved"}
+        )
+        sm.update_chat_mode(session.id, "plan")
+        assert variables.get_variables(session.id)["plan_skill_directive_delivered"] is True
+        sm.update_chat_mode(session.id, mode)
+        sm.update_chat_mode(session.id, "plan")
+        state = variables.get_variables(session.id)
+        assert state["plan_skill_directive_delivered"] is False
+        assert state["unrelated"] == "preserved"
 
     def test_default_value_on_create(self, sm: SessionManager) -> None:
         """New sessions should default to chat_mode='plan'."""

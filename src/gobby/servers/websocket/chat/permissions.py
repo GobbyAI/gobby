@@ -75,6 +75,7 @@ class ManagedWebChatPermissionsMixin:
     plan_auto_switch: bool = False
 
     conversation_id: str
+    _on_prompt_delivered: Callable[[], None] | None
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
@@ -122,6 +123,8 @@ class ManagedWebChatPermissionsMixin:
 
     def set_chat_mode(self, mode: str) -> None:
         self.chat_mode = mode
+        if mode != "plan":
+            self._on_prompt_delivered = None
         if mode == "plan":
             self._plan_approved = False
             self._plan_feedback = None

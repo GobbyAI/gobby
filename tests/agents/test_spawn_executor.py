@@ -329,7 +329,7 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
         parent_session_id="parent",
         project_id="proj",
         agent_run_id="original-run",
-        session_manager=session_manager,
+        session_manager=cast("ChildSessionManager", session_manager),
         extra_env={UV_CACHE_DIR: "/request/uv", "REQUEST_ONLY": "request"},
         resume_metadata_json={
             "provider": "codex",
@@ -700,7 +700,7 @@ class TestExecuteSpawn:
         assert run_manager.update_runtime.call_args.kwargs["pid"] == _FAKE_PANE_PID
 
     @pytest.mark.asyncio
-    async def test_spawn_failure_propagates_error(self):
+    async def test_spawn_failure_propagates_error(self) -> None:
         """Test that spawn failure returns error in result."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -747,7 +747,7 @@ class TestExecuteSpawn:
             assert "Terminal not found" in (result.error or result.message or "")
 
     @pytest.mark.asyncio
-    async def test_spawn_passes_workflow_to_spawner(self):
+    async def test_spawn_passes_workflow_to_spawner(self) -> None:
         """Test that workflow is passed to prepare_terminal_spawn."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -794,7 +794,7 @@ class TestExecuteSpawn:
             assert request.prepared_spawn is not None
 
     @pytest.mark.asyncio
-    async def test_qwen_terminal_calls_prepare_terminal_spawn(self):
+    async def test_qwen_terminal_calls_prepare_terminal_spawn(self) -> None:
         """Qwen direct spawn passes GOBBY_SESSION_ID env vars to the terminal."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -883,7 +883,7 @@ class TestExecuteSpawn:
         assert _runtime_of(request).create_calls == 1
 
     @pytest.mark.asyncio
-    async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery):
+    async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery: MagicMock) -> None:
         """Codex spawns directly (no preflight); command is `codex ...`, never `codex resume ...`."""
         mock_session_manager = MagicMock()
         run_manager = MagicMock()
@@ -915,9 +915,12 @@ class TestExecuteSpawn:
             },
         )
         request.prepared_spawn = spawn_context
-        mock_prepare = MagicMock(
-            side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context
-        )
+
+        def fake_prepare(**_kwargs: object) -> MagicMock:
+            call_order.append("prepare")
+            return spawn_context
+
+        mock_prepare = MagicMock(side_effect=fake_prepare)
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -1000,7 +1003,9 @@ class TestExecuteSpawn:
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
     @pytest.mark.asyncio
-    async def test_codex_agent_prompt_precedes_task_prompt(self, mock_codex_prompt_delivery):
+    async def test_codex_agent_prompt_precedes_task_prompt(
+        self, mock_codex_prompt_delivery: MagicMock
+    ) -> None:
         """The agent preamble rides ahead of the composer prompt and the
         first-turn injection is suppressed (#20451)."""
         mock_session_manager = MagicMock()
@@ -1137,9 +1142,20 @@ class TestExecuteSpawn:
         )
         request.prepared_spawn = spawn_context
         mock_spawner = MagicMock()
-        mock_spawner.spawn.side_effect = lambda **_kwargs: call_order.append("spawn") or MagicMock(
-            success=True, pid=12345, terminal_type="tmux"
-        )
+
+        def fake_spawn(**_kwargs: object) -> MagicMock:
+            call_order.append("spawn")
+            return MagicMock(success=True, pid=12345, terminal_type="tmux")
+
+        mock_spawner.spawn.side_effect = fake_spawn
+
+        def fake_prepare(**_kwargs: object) -> MagicMock:
+            call_order.append("prepare")
+            return spawn_context
+
+        def fake_build_command(**_kwargs: object) -> tuple[list[str], dict[str, str]]:
+            call_order.append("command")
+            return ["codex", "Test"], {}
 
         def fake_apply_extra_env(_env: dict[str, str], _request: SpawnRequest) -> None:
             call_order.append("env")
@@ -1147,12 +1163,11 @@ class TestExecuteSpawn:
         with (
             patch(
                 "gobby.agents.spawn.prepare_terminal_spawn",
-                side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context,
+                side_effect=fake_prepare,
             ),
             patch(
                 "gobby.agents.spawn_executor_providers.build_cli_command",
-                side_effect=lambda **_kwargs: call_order.append("command")
-                or (["codex", "Test"], {}),
+                side_effect=fake_build_command,
             ),
             patch(
                 "gobby.agents.spawn_executor_providers._apply_extra_env",
@@ -1222,7 +1237,7 @@ class TestExecuteSpawn:
         assert "codex cannot prove the sensitive-root contract" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_claude_terminal_requires_session_manager(self):
+    async def test_claude_terminal_requires_session_manager(self) -> None:
         """Test that Claude spawn requires session_manager."""
         request = SpawnRequest(
             prompt="Test",
@@ -1243,7 +1258,7 @@ class TestExecuteSpawn:
         assert "session_manager is required" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_unknown_terminal_spawn_is_rejected(self):
+    async def test_unknown_terminal_spawn_is_rejected(self) -> None:
         """Unsupported providers must not fall through to Claude."""
         request = SpawnRequest(
             prompt="Test",
@@ -1264,7 +1279,7 @@ class TestExecuteSpawn:
         assert "Unsupported spawn provider: unknown" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_qwen_terminal_spawn_failure_propagates_error(self):
+    async def test_qwen_terminal_spawn_failure_propagates_error(self) -> None:
         """Qwen spawn failure is properly propagated to SpawnResult."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -1317,7 +1332,7 @@ class TestExecuteSpawn:
             assert "Terminal not found" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_grok_terminal_spawn_constructs_headless_command(self):
+    async def test_grok_terminal_spawn_constructs_headless_command(self) -> None:
         """Grok spawn uses the documented single-shot command and hook env linkage."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -1382,7 +1397,7 @@ class TestExecuteSpawn:
         assert result.child_session_id == "gobby-sess-123"
 
     @pytest.mark.asyncio
-    async def test_grok_terminal_spawn_applies_sandbox_config(self):
+    async def test_grok_terminal_spawn_applies_sandbox_config(self) -> None:
         """Grok spawn passes built-in sandbox profile flags."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -1604,7 +1619,7 @@ class TestExecuteSpawn:
             patch(
                 "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
                 AsyncMock(return_value=launch),
-            ),
+            ) as prepare_sandbox,
             patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
         ):
             result = await execute_spawn(request)
@@ -1612,6 +1627,8 @@ class TestExecuteSpawn:
         assert result.success is True
         command = _spawn_kwargs(request)["command"]
         assert "--sandbox=false" in command
+        assert prepare_sandbox.await_args is not None
+        assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
 
     @pytest.mark.asyncio
     async def test_agy_spawned_session_dispatches_source_agy_hooks_and_add_dir(
@@ -2573,7 +2590,9 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
 
     from gobby.agents.constants import get_terminal_env_vars
     from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
+    from gobby.config.bootstrap import load_bootstrap
     from gobby.mcp_proxy.stdio_proxy import DaemonProxy
+    from gobby.utils.daemon_url import resolve_daemon_url
     from gobby.utils.local_token import local_token_path
 
     child_session_id = "11111111-2222-3333-4444-555555555555"
@@ -2582,6 +2601,11 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
 
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     local_token_path().write_text("operator-token\n")
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    bootstrap_path.write_text(f"daemon_port: 31579\nfiles_home: {tmp_path / 'files'}\n")
+    bootstrap_path.chmod(0o600)
+    for name in ("GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
+        monkeypatch.delenv(name, raising=False)
     parent_env = get_terminal_env_vars(
         session_id=child_session_id,
         parent_session_id=parent_session_id,
@@ -2589,6 +2613,8 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
         project_id="project-uuid",
         operator_token="operator-token",
     )
+    parent_env["GOBBY_HOME"] = str(tmp_path)
+    parent_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(tmp_path / "grant.json")
 
     overrides = _codex_mcp_config_overrides("/main/repo", managed_identity_env=parent_env)
 
@@ -2609,6 +2635,9 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     # never the parent (see _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS).
     assert "GOBBY_PARENT_SESSION_ID" not in child_env
     assert child_env["GOBBY_SESSION_ID"] == child_session_id
+    assert child_env["GOBBY_HOME"] == str(tmp_path)
+    assert child_env["GOBBY_DAEMON_URL"] == "http://127.0.0.1:31579"
+    assert child_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(tmp_path / "grant.json")
     capability = child_env["GOBBY_AGENT_API_TOKEN"]
 
     for variable in parent_env:
@@ -2624,13 +2653,21 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     deps = MagicMock()
     deps.read_project_id.side_effect = lambda: os.environ.get("GOBBY_PROJECT_ID")
     deps.http_client_factory.return_value = client
-    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+    # The sandbox makes the operator bootstrap invisible to the child.
+    bootstrap_path.unlink()
+    bootstrap = load_bootstrap()
+    proxy = DaemonProxy(
+        bootstrap.daemon_port,
+        deps_factory=lambda: deps,
+        base_url=resolve_daemon_url(bootstrap=bootstrap),
+    )
 
     await proxy.get_tool_schema("gobby-tasks", "list_tasks")
     await proxy.call_tool("gobby-tasks", "list_tasks", {}, preflight_enabled=False)
 
     assert client.request.await_count == 2
     for request_call in client.request.await_args_list:
+        assert request_call.args[1].startswith("http://127.0.0.1:31579/api/mcp/")
         headers = request_call.kwargs["headers"]
         assert headers["X-Gobby-Session-Id"] == child_session_id
         assert headers["X-Gobby-Agent-Run-Id"] == run_id

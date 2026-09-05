@@ -52,3 +52,22 @@ def test_blank_gobby_home_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     _ensure_isolated_bootstrap()
 
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("dsn_env", ["DATABASE_URL", "GOBBY_POSTGRES_TEST_DSN"])
+def test_test_dsn_is_not_published_as_a_live_daemon_hub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dsn_env: str
+) -> None:
+    from gobby.config.bootstrap import load_bootstrap
+    from tests.fixtures.postgres import _live_hub_identity
+
+    isolated = tmp_path / "isolated"
+    monkeypatch.setenv("GOBBY_HOME", str(isolated))
+    monkeypatch.setenv(dsn_env, "postgresql://gobby_test:gobby_test@localhost:60892/gobby_test")
+
+    _ensure_isolated_bootstrap()
+
+    bootstrap = load_bootstrap()
+    assert bootstrap.files_home == str(isolated / "files")
+    assert bootstrap.database_url is None
+    assert _live_hub_identity() is None

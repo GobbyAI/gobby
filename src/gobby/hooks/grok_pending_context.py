@@ -8,13 +8,21 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import envelope_terminal_response
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.pending_messages import render_pending_messages
+from gobby.hooks.receipt_effects import (
+    STAGED_EFFECTS_FIELD,
+    merge_staged_payloads,
+    peek_worker_staging,
+    record_worker_staging,
+    take_worker_staging,
+)
 from gobby.hooks.session_types import HookSessionManager, has_prior_session_activity
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -40,6 +48,7 @@ class PendingContextComponent(TypedDict):
     id: str
     text: str
     message_ids: list[str]
+    staged_effects: NotRequired[dict[str, Any]]
 
 
 class PendingContextHandler(Protocol):
@@ -61,6 +70,7 @@ class _FlushPlan:
     kind: Literal["pretool_new", "pretool_gate", "stop_briefing", "stop_turn", "drop"]
     briefing: str | None = None
     turn_context: str | None = None
+    staged_effects: dict[str, Any] | None = None
 
 
 def _platform_session_id(event: HookEvent) -> str | None:
@@ -105,6 +115,9 @@ def _components(value: object) -> list[PendingContextComponent]:
                 "message_ids": list(raw_message_ids),
             }
         )
+        staged = item.get("staged_effects")
+        if isinstance(staged, dict) and staged:
+            result[-1]["staged_effects"] = staged
     return result
 
 
@@ -211,15 +224,25 @@ def stash_response(
         return
 
     variable_manager = SessionVariableManager(handler._session_manager.db)
+    staged = response.metadata.get(STAGED_EFFECTS_FIELD)
+    staged = merge_staged_payloads(
+        staged if isinstance(staged, dict) else {}, peek_worker_staging()
+    )
     is_briefing = bool(
         event.event_type == HookEventType.SESSION_START
         or event.metadata.get("_session_just_materialized")
         or event.metadata.get("_grok_briefing_turn")
+        or staged
     )
 
     def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
         variable = BRIEFING_VARIABLE if is_briefing else TURN_CONTEXT_VARIABLE
         components = _components(variables.get(variable))
+        if staged and any(
+            component.get("staged_effects") == staged and component["text"] == text
+            for component in components
+        ):
+            return None, False
         if is_briefing:
             component_id = _briefing_component_id(event, session_id)
         else:
@@ -235,6 +258,8 @@ def stash_response(
             "text": text,
             "message_ids": [],
         }
+        if staged:
+            component["staged_effects"] = staged
         if is_briefing:
             if len(components) >= BRIEFING_MAX_COMPONENTS:
                 logger.error(
@@ -267,6 +292,10 @@ def stash_response(
         return None, True
 
     variable_manager._mutate_variables(session_id, mutate)
+    # Passive-hook stdout is discarded by Grok. Move the effects with its text
+    # so the prompt receipt cannot acknowledge an undelivered directive.
+    response.metadata.pop(STAGED_EFFECTS_FIELD, None)
+    take_worker_staging()
     response.context = None
     response.system_message = None
 
@@ -396,10 +425,51 @@ def _flush_plan(
 
     briefing = _components(variables.get(BRIEFING_VARIABLE))
     turn_context = _components(variables.get(TURN_CONTEXT_VARIABLE))
+    # Passive prompts can wait across a mode change or queue before the first
+    # receipt. Deliver the canonical directive once for the current period,
+    # preserving the other text and receipt effects in each mixed component.
+    directive = skill_fetch_directive("plan")
+    needs_plan = bool(variables.get("plan_mode")) and not variables.get(
+        "plan_skill_directive_delivered"
+    )
+    for component in briefing:
+        effects = component.get("staged_effects", {})
+        updates = effects.get("session_variables", {})
+        if not isinstance(updates, dict) or not updates.get("plan_skill_directive_delivered"):
+            continue
+        if directive not in component["text"]:
+            continue
+        before, _, after = component["text"].partition(directive)
+        component["text"] = (
+            before + (directive if needs_plan else "") + after.replace(directive, "")
+        )
+        if not needs_plan:
+            updates = dict(updates)
+            updates.pop("plan_skill_directive_delivered")
+            component["staged_effects"] = {**effects, "session_variables": updates}
+        needs_plan = False
+    remaining = [
+        component
+        for component in briefing
+        if component["text"].strip()
+        or component["message_ids"]
+        or any(
+            value
+            for key, value in component.get("staged_effects", {}).items()
+            if key != "session_id"
+        )
+    ]
+    changed = remaining != _components(variables.get(BRIEFING_VARIABLE))
+    if changed:
+        variables[BRIEFING_VARIABLE] = remaining
+    briefing = remaining
+    staged: dict[str, Any] = {}
+    for component in briefing:
+        staged = merge_staged_payloads(staged, component.get("staged_effects", {}))
     is_pretool = event.event_type == HookEventType.BEFORE_TOOL
     is_stop = event.event_type in {HookEventType.STOP, HookEventType.SUBAGENT_STOP}
     if not is_pretool and not is_stop:
-        return None, False
+        return None, changed
 
     # Grok reads only the top-level decision; a bare permission_decision is not a gate.
     real_gate = response.decision in {"block", "deny"}
@@ -408,9 +478,9 @@ def _flush_plan(
 
     if is_pretool:
         if not briefing and not (real_gate and turn_context):
-            return None, False
+            return None, changed
         if not marker_absent or envelope_id is None:
-            return None, False
+            return None, changed
         if briefing:
             variables[DELIVERY_VARIABLE] = {
                 "envelope_id": envelope_id,
@@ -424,14 +494,17 @@ def _flush_plan(
                     "pretool_gate",
                     briefing=_component_text(briefing),
                     turn_context=_component_text(turn_context),
+                    staged_effects=staged,
                 ),
                 True,
             )
-        return _FlushPlan("pretool_new", briefing=_component_text(briefing)), True
+        return _FlushPlan(
+            "pretool_new", briefing=_component_text(briefing), staged_effects=staged
+        ), True
 
     if briefing:
         if not marker_absent or envelope_id is None:
-            return None, False
+            return None, changed
         variables[DELIVERY_VARIABLE] = {
             "envelope_id": envelope_id,
             "components": briefing,
@@ -443,12 +516,13 @@ def _flush_plan(
                 "stop_briefing",
                 briefing=_component_text(briefing),
                 turn_context=_component_text(turn_context),
+                staged_effects=staged,
             ),
             True,
         )
 
     if not turn_context:
-        return None, False
+        return None, changed
     variables[TURN_CONTEXT_VARIABLE] = []
     if real_gate:
         return _FlushPlan("stop_turn", turn_context=_component_text(turn_context)), True
@@ -475,9 +549,17 @@ def flush_response(
             logger.debug("Dropping Grok turn-context on allowing Stop: session=%s", session_id)
         return
 
+    if plan.staged_effects:
+        existing = response.metadata.get(STAGED_EFFECTS_FIELD)
+        response.metadata[STAGED_EFFECTS_FIELD] = merge_staged_payloads(
+            existing if isinstance(existing, dict) else {}, plan.staged_effects
+        )
+        record_worker_staging(plan.staged_effects)
+
     if plan.kind == "pretool_new":
-        response.decision = "deny"
-        response.reason = f"{plan.briefing}\n\nRetry the same tool call."
+        if plan.briefing:
+            response.decision = "deny"
+            response.reason = f"{plan.briefing}\n\nRetry the same tool call."
         return
     if plan.kind == "pretool_gate":
         response.reason = "\n\n".join(

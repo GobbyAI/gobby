@@ -94,6 +94,7 @@ class ChatSessionPermissionsMixin:
     interrupt: Callable[[], Awaitable[None]]
     _plan_broadcast_sent: bool
     _on_mode_persist: Callable[[str], None] | None
+    _on_prompt_delivered: Callable[[], None] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None
     project_path: str | None
     _pending_approvals: dict[str, PendingApproval]
@@ -443,6 +444,7 @@ class ChatSessionPermissionsMixin:
             self._pending_post_plan_mode = None
             self._plan_broadcast_sent = False
         elif mode != "plan":
+            self._on_prompt_delivered = None
             # Leaving plan mode — clear plan state
             self._plan_approved = False
             self._plan_feedback = None
@@ -644,8 +646,8 @@ class ChatSessionPermissionsMixin:
             "3. Implementation order",
             "4. Verification steps",
             "",
-            "When your plan is complete, write it to a .gobby/plans/<name>.md file.",
-            "Then call ExitPlanMode to submit it for user approval. ExitPlanMode will block until the user approves or requests changes.",
+            "Follow the loaded plan skill to select depth. Lightweight planning needs no file or task.",
+            "When your plan is complete, call ExitPlanMode with the plan text to submit it for user approval. ExitPlanMode will block until the user approves or requests changes.",
         ]
 
         if self._plan_feedback:

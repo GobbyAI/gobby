@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -156,3 +158,121 @@ async def test_complete_and_notify_settles_delivery_before_cancellation() -> Non
         run_completion.reset_terminal_delivery_offload()
 
     completion_registry.notify.assert_awaited_once()
+
+
+def _dirty_git_checkout(path: Path) -> None:
+    path.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=path,
+        check=True,
+        timeout=10,
+    )
+    tracked = path / "tracked.py"
+    tracked.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.py"], cwd=path, check=True, timeout=10)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Gobby Tests",
+            "-c",
+            "user.email=gobby-tests@example.com",
+            "commit",
+            "--no-gpg-sign",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=path,
+        check=True,
+        timeout=10,
+    )
+    tracked.write_text("after\n", encoding="utf-8")
+    (path / "untracked.py").write_text("new\n", encoding="utf-8")
+
+
+def _runner() -> MagicMock:
+    runner = MagicMock()
+    runner.run_storage.db = MagicMock()
+    return runner
+
+
+def test_failed_isolated_run_reports_checkout_dirt_when_attribution_read_fails(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "task-worktree"
+    _dirty_git_checkout(checkout)
+    runner = _runner()
+    run = SimpleNamespace(
+        task_id="task-id",
+        child_session_id="session-id",
+        worktree_id="worktree-id",
+        clone_id=None,
+        status="error",
+    )
+    variable_reads: list[str] = []
+    worktree_reads: list[str] = []
+
+    def get_variables(session_id: str) -> dict[str, object]:
+        variable_reads.append(session_id)
+        raise RuntimeError("session attribution unavailable after restart")
+
+    def get_worktree(worktree_id: str) -> SimpleNamespace:
+        worktree_reads.append(worktree_id)
+        return SimpleNamespace(worktree_path=str(checkout))
+
+    variable_manager = SimpleNamespace(get_variables=get_variables)
+    worktree_manager = SimpleNamespace(get=get_worktree)
+
+    with (
+        patch.object(
+            run_completion,
+            "SessionVariableManager",
+            return_value=variable_manager,
+        ),
+        patch.object(
+            run_completion,
+            "LocalWorktreeManager",
+            return_value=worktree_manager,
+        ),
+    ):
+        dirty_paths = run_completion.agent_run_task_dirty_paths(runner, run)
+
+    assert dirty_paths == ["tracked.py", "untracked.py"]
+    assert variable_reads == ["session-id"]
+    assert worktree_reads == ["worktree-id"]
+
+
+def test_shared_checkout_without_attribution_does_not_claim_all_dirty_paths(
+    tmp_path: Path,
+) -> None:
+    checkout = tmp_path / "shared-checkout"
+    _dirty_git_checkout(checkout)
+    runner = _runner()
+    runner._session_manager.get.return_value = object()
+    run = SimpleNamespace(
+        task_id="task-id",
+        child_session_id="session-id",
+        worktree_id=None,
+        clone_id=None,
+        status="error",
+    )
+    variable_manager = MagicMock()
+    variable_manager.get_variables.return_value = {}
+
+    with (
+        patch.object(
+            run_completion,
+            "SessionVariableManager",
+            return_value=variable_manager,
+        ),
+        patch.object(
+            run_completion,
+            "resolve_session_checkout_root",
+            return_value=checkout,
+        ),
+    ):
+        dirty_paths = run_completion.agent_run_task_dirty_paths(runner, run)
+
+    assert dirty_paths == []

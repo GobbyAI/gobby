@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -487,6 +488,9 @@ class _FakeConnection:
 
     def cursor(self) -> _FakeCursor:
         return self.cursor_obj
+
+    def transaction(self) -> nullcontext[None]:
+        return nullcontext()
 
     def execute(self, sql: str, params: object | None = None) -> _FakeCursor:
         return self.cursor_obj.execute(sql, params)

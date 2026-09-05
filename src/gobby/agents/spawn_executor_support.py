@@ -466,6 +466,19 @@ def _codex_mcp_config_overrides(
         "mcp_servers.gobby.startup_timeout_sec=120",
         f"mcp_servers.gobby.tool_timeout_sec={_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}",
     ]
+    overrides.extend(_codex_runtime_config_overrides(sandbox_temp_dir, managed_identity_env))
+    # Re-seed the proxy approvals for the isolated MCP server table.
+    for tool_name in _CODEX_PREAPPROVED_GOBBY_TOOLS:
+        overrides.append(f'mcp_servers.gobby.tools.{tool_name}.approval_mode="approve"')
+    return overrides
+
+
+def _codex_runtime_config_overrides(
+    sandbox_temp_dir: str | None,
+    managed_identity_env: Mapping[str, str] | None,
+) -> list[str]:
+    """Build fresh run-local environment overrides for spawn and resume."""
+    overrides: list[str] = []
     # Codex rebuilds its shell and stdio MCP subprocess environments, so the
     # sandbox TMPDIR set on the provider process does not reach either one.
     # Both must land in the per-run scratchpad the policy actually allows.
@@ -473,6 +486,19 @@ def _codex_mcp_config_overrides(
         overrides.append(f"shell_environment_policy.set.TMPDIR={json.dumps(sandbox_temp_dir)}")
         overrides.append(f"mcp_servers.gobby.env.TMPDIR={json.dumps(sandbox_temp_dir)}")
     if managed_identity_env:
+        from gobby.paths import get_gobby_home
+
+        # The capability belongs to this daemon. Codex's MCP env scrub must
+        # not send it to the default daemon or drop its scoped database grant.
+        runtime_env = {
+            "GOBBY_HOME": managed_identity_env.get("GOBBY_HOME", str(get_gobby_home())),
+        }
+        for name in ("GOBBY_DAEMON_URL", "GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "GOBBY_MACHINE_ID"):
+            if value := managed_identity_env.get(name):
+                runtime_env[name] = value
+        for name, value in runtime_env.items():
+            overrides.append(f"mcp_servers.gobby.env.{name}={json.dumps(value)}")
+            overrides.append(f"shell_environment_policy.set.{name}={json.dumps(value)}")
         for variable_name in _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS:
             if value := managed_identity_env.get(variable_name):
                 overrides.append(f"mcp_servers.gobby.env.{variable_name}={json.dumps(value)}")
@@ -490,10 +516,4 @@ def _codex_mcp_config_overrides(
         ]
         if forwarded_secrets:
             overrides.append(f"mcp_servers.gobby.env_vars={json.dumps(forwarded_secrets)}")
-    # Dotted -c overrides replace enough of the spawned server table that Codex
-    # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy
-    # tools required by worker contracts so unattended builds do not stop on MCP
-    # permission prompts.
-    for tool_name in _CODEX_PREAPPROVED_GOBBY_TOOLS:
-        overrides.append(f'mcp_servers.gobby.tools.{tool_name}.approval_mode="approve"')
     return overrides

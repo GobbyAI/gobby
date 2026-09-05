@@ -276,8 +276,51 @@ class IdleCheckHandler:
             await self._recovery.fail_provider_quota_agent(run, quota)
             return 1
         capacity_candidate = self._recovery._pane_has_capacity_message(pane_output, reader)
-
         status = idle_detector.detect(pane_output)
+
+        transcript_snapshot: WatchdogTranscriptSnapshot | None = None
+        transcript_path: str | None = None
+        if (
+            reader is not None
+            and session is not None
+            and is_local_machine_owner(session.machine_id, get_machine_id())
+            and (
+                session_stale
+                or capacity_candidate
+                or reader.provider_id == "codex"
+                and status != "active"
+            )
+        ):
+            transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
+        if reader is not None and transcript_path is not None:
+            try:
+                transcript_snapshot = await reader.read(transcript_path)
+            except OSError:
+                logger.warning(
+                    "Failed to read %s transcript for idle recovery on run %s",
+                    reader.provider_id,
+                    run.id,
+                )
+        if (
+            transcript_snapshot is not None
+            and transcript_snapshot.has_conclusive_terminal_provider_error
+        ):
+            error = transcript_snapshot.provider_error_event
+            created_at = parse_stored_datetime(run.created_at)
+            # Native resume appends to the predecessor's rollout. The new run
+            # exists before launch; started_at is persisted afterward and could
+            # exclude a current process's immediate startup failure.
+            if (
+                error is not None
+                and error.timestamp is not None
+                and created_at is not None
+                and error.timestamp >= created_at
+            ):
+                if await self._recovery._complete_if_work_finished(run):
+                    return 1
+                await self._recovery.fail_terminal_provider_agent(run, transcript_snapshot)
+                return 1
+
         if status == "unknown":
             idle_detector.reset_idle(run.id)
             return 0
@@ -303,25 +346,6 @@ class IdleCheckHandler:
             ):
                 idle_detector.reset_idle(run.id)
                 return 0
-
-        transcript_snapshot: WatchdogTranscriptSnapshot | None = None
-        transcript_path: str | None = None
-        if (
-            reader is not None
-            and session is not None
-            and is_local_machine_owner(session.machine_id, get_machine_id())
-            and (session_stale or capacity_candidate)
-        ):
-            transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
-        if reader is not None and transcript_path is not None:
-            try:
-                transcript_snapshot = await reader.read(transcript_path)
-            except OSError:
-                logger.warning(
-                    "Failed to read %s transcript for idle recovery on run %s",
-                    reader.provider_id,
-                    run.id,
-                )
 
         if idle_detector.has_unsubmitted_input(pane_output):
             # Managed runs are autonomous: nobody returns to submit draft composer

@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::{LENGTH_PREFIX_BYTES, PROTOCOL_VERSION};
 
@@ -102,6 +103,8 @@ pub enum FramingError {
     Io(io::Error),
     /// Bincode serialization or deserialization failed.
     Bincode(String),
+    /// The connection closed cleanly between frames.
+    Eof,
     /// The connection was closed before a complete frame could be read.
     UnexpectedEof,
 }
@@ -114,6 +117,7 @@ impl std::fmt::Display for FramingError {
             }
             FramingError::Io(e) => write!(f, "I/O error: {e}"),
             FramingError::Bincode(e) => write!(f, "bincode error: {e}"),
+            FramingError::Eof => write!(f, "end of stream"),
             FramingError::UnexpectedEof => write!(f, "unexpected end of stream"),
         }
     }
@@ -145,20 +149,27 @@ impl From<io::Error> for FramingError {
 /// Returns `FramingError::Bincode` if the payload length exceeds `u32::MAX`
 /// (would be truncated by the length prefix cast).
 pub fn write_message<W: Write, M: Serialize>(writer: &mut W, msg: &M) -> Result<(), FramingError> {
-    let payload = bincode::serde::encode_to_vec(msg, bincode::config::standard())
-        .map_err(|e| FramingError::Bincode(e.to_string()))?;
-
-    let len = payload.len();
-    if len > u32::MAX as usize {
-        return Err(FramingError::Bincode(format!(
-            "payload length {len} exceeds u32::MAX ({}), would be truncated by length prefix",
-            u32::MAX
-        )));
-    }
-
-    writer.write_all(&(len as u32).to_le_bytes())?;
+    let payload = encode_message(msg)?;
+    writer.write_all(&(payload.len() as u32).to_le_bytes())?;
     writer.write_all(&payload)?;
     writer.flush()?;
+    Ok(())
+}
+
+/// Write one length-prefixed bincode message to an async stream.
+///
+/// This operation is cancellation-unsafe. Callers that cancel it must retire
+/// the underlying connection rather than attempting to resume the frame.
+pub async fn write_message_async<W: AsyncWrite + Unpin, M: Serialize>(
+    writer: &mut W,
+    msg: &M,
+) -> Result<(), FramingError> {
+    let payload = encode_message(msg)?;
+    writer
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .await?;
+    writer.write_all(&payload).await?;
+    writer.flush().await?;
     Ok(())
 }
 
@@ -173,47 +184,109 @@ pub fn read_message<R: Read, M: for<'de> Deserialize<'de>>(
 ) -> Result<M, FramingError> {
     // Read the 4-byte length prefix, reassembling partial reads.
     let mut len_buf = [0u8; LENGTH_PREFIX_BYTES];
-    read_exact_or_eof(reader, &mut len_buf)?;
-    let claimed_len = u32::from_le_bytes(len_buf) as usize;
-
-    if claimed_len > max_frame_size {
-        return Err(FramingError::Oversized {
-            claimed: claimed_len,
-            max: max_frame_size,
-        });
-    }
+    read_exact_or_eof(reader, &mut len_buf, true)?;
+    let claimed_len = validate_frame_size(u32::from_le_bytes(len_buf) as usize, max_frame_size)?;
 
     // Read the payload, reassembling partial reads.
     let mut payload = vec![0u8; claimed_len];
-    read_exact_or_eof(reader, &mut payload)?;
+    read_exact_or_eof(reader, &mut payload, false)?;
 
-    let (msg, consumed) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+    decode_message(&payload)
+}
+
+/// Read one length-prefixed bincode message from an async stream.
+///
+/// This operation is cancellation-unsafe. Callers that cancel it must retire
+/// the underlying connection rather than attempting to resume the frame.
+pub async fn read_message_async<R: AsyncRead + Unpin, M: for<'de> Deserialize<'de>>(
+    reader: &mut R,
+    max_frame_size: usize,
+) -> Result<M, FramingError> {
+    let mut len_buf = [0u8; LENGTH_PREFIX_BYTES];
+    read_exact_or_eof_async(reader, &mut len_buf, true).await?;
+    let claimed_len = validate_frame_size(u32::from_le_bytes(len_buf) as usize, max_frame_size)?;
+
+    let mut payload = vec![0u8; claimed_len];
+    read_exact_or_eof_async(reader, &mut payload, false).await?;
+    decode_message(&payload)
+}
+
+fn validate_frame_size(claimed: usize, max: usize) -> Result<usize, FramingError> {
+    if claimed > max {
+        return Err(FramingError::Oversized { claimed, max });
+    }
+    Ok(claimed)
+}
+
+fn encode_message<M: Serialize>(msg: &M) -> Result<Vec<u8>, FramingError> {
+    let payload = bincode::serde::encode_to_vec(msg, bincode::config::standard())
         .map_err(|e| FramingError::Bincode(e.to_string()))?;
-
-    // Enforce that the decoder consumed the full payload.
-    // Trailing bytes after the decoded message indicate a protocol violation
-    // (e.g., a corrupted length prefix or concatenated payloads).
-    if consumed != claimed_len {
+    let len = payload.len();
+    if len > u32::MAX as usize {
         return Err(FramingError::Bincode(format!(
-            "decoded {} bytes but payload length was {claimed_len}; trailing bytes are not allowed",
-            consumed
+            "payload length {len} exceeds u32::MAX ({}), would be truncated by length prefix",
+            u32::MAX
         )));
     }
+    Ok(payload)
+}
 
-    Ok(msg)
+fn decode_message<M: for<'de> Deserialize<'de>>(payload: &[u8]) -> Result<M, FramingError> {
+    let (message, consumed) =
+        bincode::serde::decode_from_slice(payload, bincode::config::standard())
+            .map_err(|e| FramingError::Bincode(e.to_string()))?;
+    if consumed != payload.len() {
+        return Err(FramingError::Bincode(format!(
+            "decoded {consumed} bytes but payload length was {}; trailing bytes are not allowed",
+            payload.len()
+        )));
+    }
+    Ok(message)
 }
 
 /// Like `Read::read_exact`, but returns `FramingError::UnexpectedEof`
 /// when the reader hits end-of-stream before filling the buffer, instead
 /// of the generic `io::ErrorKind::UnexpectedEof`.
-fn read_exact_or_eof<R: Read>(reader: &mut R, buf: &mut [u8]) -> Result<(), FramingError> {
-    reader.read_exact(buf).map_err(|e| {
-        if e.kind() == io::ErrorKind::UnexpectedEof {
-            FramingError::UnexpectedEof
-        } else {
-            FramingError::Io(e)
+fn read_exact_or_eof<R: Read>(
+    reader: &mut R,
+    buf: &mut [u8],
+    eof_at_boundary: bool,
+) -> Result<(), FramingError> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) if filled == 0 && eof_at_boundary => return Err(FramingError::Eof),
+            Ok(0) => return Err(FramingError::UnexpectedEof),
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(FramingError::UnexpectedEof);
+            }
+            Err(error) => return Err(FramingError::Io(error)),
         }
-    })
+    }
+    Ok(())
+}
+
+async fn read_exact_or_eof_async<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    buf: &mut [u8],
+    eof_at_boundary: bool,
+) -> Result<(), FramingError> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]).await {
+            Ok(0) if filled == 0 && eof_at_boundary => return Err(FramingError::Eof),
+            Ok(0) => return Err(FramingError::UnexpectedEof),
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(FramingError::UnexpectedEof);
+            }
+            Err(error) => return Err(FramingError::Io(error)),
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

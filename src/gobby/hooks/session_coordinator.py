@@ -24,6 +24,7 @@ from weakref import WeakValueDictionary
 
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
+from gobby.agents.run_completion import closed_task_completion_result
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
@@ -731,11 +732,9 @@ class SessionCoordinator:
                         exc_info=True,
                     )
 
-            task_close_result = self._closed_task_result(agent_run)
+            task_close_result = self._closed_task_result(agent_run, result)
             if task_close_result is not None:
-                result = (
-                    f"{result.rstrip()}\n\n{task_close_result}" if result else task_close_result
-                )
+                result = task_close_result
             else:
                 incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
                 if incomplete_workflow_error:
@@ -804,8 +803,8 @@ class SessionCoordinator:
         except Exception as e:
             self.logger.error("Failed to complete agent run %s: %s", agent_run_id, e)
 
-    def _closed_task_result(self, agent_run: Any) -> str | None:
-        """Return a canonical result suffix when the run's bound task is closed."""
+    def _closed_task_result(self, agent_run: Any, result: str | None = None) -> str | None:
+        """Add canonical close metadata when the run's bound task is closed."""
         task_id = getattr(agent_run, "task_id", None)
         if self._task_manager is None or not isinstance(task_id, str) or not task_id:
             return None
@@ -819,14 +818,7 @@ class SessionCoordinator:
                 e,
             )
             return None
-        if task.closed_at is None:
-            return None
-        task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
-        return (
-            "Task completion: "
-            f"task={task_ref}; closed_at={task.closed_at.isoformat()}; "
-            f"commit_sha={task.closed_commit_sha or '<none>'}"
-        )
+        return closed_task_completion_result(task, result)
 
     def _agent_run_notification_status(
         self,

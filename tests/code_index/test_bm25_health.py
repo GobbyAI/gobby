@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from typing import Any
 
 import psycopg
+import pytest
+from psycopg.errors import QueryCanceled, lookup
 
 from gobby.code_index import bm25_health
+from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.storage.hub.protocol import Cursor, HubDatabase
 
 
 class FakeResult:
@@ -76,14 +81,8 @@ class FakeConnection:
         raise AssertionError(f"unexpected SQL: {query_text}")
 
 
-class CorruptionError(psycopg.Error):
-    @property
-    def sqlstate(self) -> str:
-        return "XX000"
-
-
 def test_verify_preserves_corruption_error() -> None:
-    conn = FakeConnection(verify_error=CorruptionError("invalid chunk style tag: 254"))
+    conn = FakeConnection(verify_error=lookup("XX000")("invalid chunk style tag: 254"))
 
     status = bm25_health.verify_bm25_indexes(conn)
 
@@ -104,10 +103,31 @@ def test_verify_uses_connection_schema() -> None:
     }
 
 
+def test_verification_propagates_cancellation_owned_by_request_deadline() -> None:
+    error = QueryCanceled("statement timeout")
+    conn = FakeConnection(verify_error=error)
+
+    with database_operation_deadline(timeout_seconds=2):
+        with pytest.raises(QueryCanceled) as raised:
+            bm25_health.verify_bm25_indexes(conn)
+
+    assert raised.value is error
+
+
+def test_native_verification_retains_unowned_query_error_diagnostics() -> None:
+    conn = FakeConnection(verify_error=QueryCanceled("standalone statement timeout"))
+
+    status = bm25_health.verify_bm25_indexes(conn)
+
+    assert status["healthy"] is False
+    assert all(item["state"] == "error" for item in status["indexes"])
+    assert all("standalone statement timeout" in item["error"] for item in status["indexes"])
+
+
 def test_repair_reindexes_only_damaged_index(monkeypatch: Any) -> None:
     damaged = bm25_health.BM25_INDEXES[0]
     conn = FakeConnection(damaged={damaged})
-    monkeypatch.setattr(bm25_health.psycopg, "connect", lambda *_args, **_kwargs: conn)
+    monkeypatch.setattr(psycopg, "connect", lambda *_args, **_kwargs: conn)
 
     status = bm25_health.repair_bm25_indexes("postgresql://test", timeout_seconds=1)
 
@@ -123,7 +143,7 @@ def test_repair_reindexes_only_damaged_index(monkeypatch: Any) -> None:
 def test_repair_does_not_create_missing_index(monkeypatch: Any) -> None:
     missing = bm25_health.BM25_INDEXES[0]
     conn = FakeConnection(missing={missing})
-    monkeypatch.setattr(bm25_health.psycopg, "connect", lambda *_args, **_kwargs: conn)
+    monkeypatch.setattr(psycopg, "connect", lambda *_args, **_kwargs: conn)
 
     status = bm25_health.repair_bm25_indexes("postgresql://test", timeout_seconds=1)
 
@@ -136,10 +156,38 @@ def test_repair_does_not_create_missing_index(monkeypatch: Any) -> None:
 def test_repair_lock_timeout_remains_degraded(monkeypatch: Any) -> None:
     damaged = bm25_health.BM25_INDEXES[0]
     conn = FakeConnection(damaged={damaged}, lock_available=False)
-    monkeypatch.setattr(bm25_health.psycopg, "connect", lambda *_args, **_kwargs: conn)
+    monkeypatch.setattr(psycopg, "connect", lambda *_args, **_kwargs: conn)
 
     status = bm25_health.repair_bm25_indexes("postgresql://test", timeout_seconds=0)
 
     assert status["healthy"] is False
     assert conn.reindexed == []
     assert "timed out waiting for BM25 repair lock" in status["indexes"][0]["error"]
+
+
+@pytest.mark.integration
+def test_hub_verification_sql_error_does_not_abort_later_checks(
+    postgres_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with database_operation_deadline(timeout_seconds=2):
+        with postgres_db.transaction() as transaction:
+            execute = transaction.execute
+
+            def fail_verification(
+                query: str, params: Sequence[Any] | Mapping[str, Any] = ()
+            ) -> Cursor:
+                if "FROM pdb.verify_index" in query:
+                    return execute("SELECT 1 / 0")
+                return execute(query, params)
+
+            monkeypatch.setattr(transaction, "execute", fail_verification)
+            first = bm25_health._verify_index(transaction, "pg_catalog.pg_class_oid_index")
+            second = bm25_health._verify_index(transaction, "pg_catalog.qa_absent_bm25_index")
+
+            assert first["state"] == "error"
+            assert "division by zero" in first["error"]
+            assert second["state"] == "missing"
+            row = transaction.execute("SELECT 1 AS value").fetchone()
+            assert row is not None and row["value"] == 1
+
+    assert postgres_db.fetchone("SELECT 1 AS value") == {"value": 1}
