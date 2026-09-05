@@ -112,6 +112,42 @@ def test_claim_finalizing_does_not_reopen_other_terminal_errors(temp_db: HubData
     assert current is not None and current.status == "error"
 
 
+def test_late_claim_yields_to_newer_active_review(temp_db: HubDatabase) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    old_review, _created = store.create_or_get_active(**_intent())
+    assert store.bind_run(old_review.id, _RUN_ID) is not None
+    prior_payload = {"status": "error", "message": VALIDATOR_RUN_ENDED_SUCCESS_ERROR}
+    assert (
+        store.finish(
+            old_review.id,
+            status="error",
+            result_payload=prior_payload,
+            error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+        )
+        is not None
+    )
+    newer, created = store.create_or_get_active(
+        **{
+            **_intent(),
+            "review_fingerprint": "newer-review",
+            "evidence_fingerprint": "newer-evidence",
+        }
+    )
+    assert created is True
+    assert store.bind_run(newer.id, "00000000-0000-4000-8000-000000000099") is not None
+
+    assert store.claim_finalizing(old_review.id, _RUN_ID) is None
+
+    old_current = store.get(old_review.id)
+    active = store.get_active_for_task(old_review.task_id)
+    assert old_current is not None
+    assert old_current.status == "error"
+    assert old_current.result_payload == prior_payload
+    assert active is not None
+    assert active.id == newer.id
+    assert active.status == "running"
+
+
 def test_run_end_finish_does_not_overwrite_finalizing(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
     review, _created = store.create_or_get_active(**_intent())

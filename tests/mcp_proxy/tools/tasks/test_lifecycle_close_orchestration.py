@@ -3,31 +3,53 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import pty
+import select
+import subprocess
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
+import uvicorn
+from fastapi import FastAPI
 
+import gobby.mcp_proxy.tools.tasks._lifecycle_close as close_module
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
 from gobby.config.tasks import TaskValidationConfig
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     launch_close_review,
     submit_close_review,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
+from gobby.servers.routes.dependencies import get_metrics_manager, get_server
+from gobby.servers.routes.mcp.tools import create_mcp_router
+from gobby.sessions.transcript_reader import TranscriptReader
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import (
+    VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
     TaskCloseReview,
     TaskCloseReviewStatus,
     TaskCloseReviewStore,
 )
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import agentic_close_review as agentic_close_review_module
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +58,8 @@ _PERSISTED_SESSION_ID = "00000000-0000-4000-8000-000000002609"
 _FIRST_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002610"
 _SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
 _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response receipt."
+_OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
+_SUBMIT_DEADLINE_SECONDS = 10.0
 
 
 @pytest.mark.asyncio
@@ -446,37 +470,157 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_submit_close_review_claims_before_heavy_work(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    store = _Store(_review(status="running", run_id="run"))
-    _authenticate(monkeypatch, store.review)
-    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
-    evaluation_started = asyncio.Event()
-    release_evaluation = asyncio.Event()
+    session_manager = SessionManager(temp_db)
+    caller_transcript = tmp_path / "caller.jsonl"
+    await asyncio.to_thread(_write_oversized_codex_transcript, caller_transcript)
+    caller = session_manager.register(
+        external_id=str(uuid4()),
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+        transcript_path=str(caller_transcript),
+        is_local=True,
+        workspace_path=str(tmp_path),
+    )
+    validator = session_manager.register(
+        external_id=str(uuid4()),
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+        transcript_path=str(tmp_path / "validator.jsonl"),
+        parent_session_id=caller.id,
+        is_local=True,
+        workspace_path=str(tmp_path),
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id=caller.id,
+        provider="codex",
+        prompt="Validate the task close.",
+        agent_name=agentic_close_review_module.TASK_CLOSE_VALIDATOR_AGENT,
+        child_session_id=validator.id,
+        run_id=str(uuid4()),
+    )
+    assert run_manager.start(run.id) is not None
 
-    async def evaluate(*_args: object, **_kwargs: object) -> CloseEvaluation:
-        assert store.review.status == "finalizing"
-        evaluation_started.set()
-        await release_evaluation.wait()
-        return _evaluation()
+    store = TaskCloseReviewStore(temp_db)
+    review, created = store.create_or_get_active(
+        **{
+            **_persisted_review_intent(),
+            "caller_session_id": caller.id,
+            "review_fingerprint": "oversized-transcript-review",
+            "evidence_fingerprint": "oversized-transcript-evidence",
+        }
+    )
+    assert created is True
+    assert store.bind_run(review.id, run.id) is not None
+    transcript_reader = TranscriptReader(session_manager)
+    observed_finalizing: list[str] = []
 
-    async with asyncio.TaskGroup() as task_group:
-        submission = task_group.create_task(
-            submit_close_review(
-                _ctx(),
-                review_id="review",
-                verdict=_verdict("invalid"),
-                evaluate_close=evaluate,
-                commit_close=AsyncMock(),
-            )
+    async def evaluate_close(_ctx: RegistryContext, **kwargs: Any) -> CloseEvaluation:
+        persisted = await asyncio.to_thread(store.get, review.id)
+        assert persisted is not None
+        assert persisted.status == "finalizing"
+        observed_finalizing.append(persisted.status)
+        assert caller_transcript.stat().st_size > _OVERSIZED_TRANSCRIPT_BYTES
+        messages = await transcript_reader.get_messages(kwargs["closing_session_id"], limit=1)
+        assert messages
+        submitted = kwargs["submitted_review"]
+        assert isinstance(submitted, SubmittedCloseReview)
+        evaluation = CloseEvaluation("#42")
+        evaluation.task_id = review.task_id
+        evaluation.error = "validation_failed"
+        evaluation.message = "The close evidence is incomplete."
+        evaluation.validation_status = "invalid"
+        evaluation.verdict = dict(submitted.verdict)
+        return evaluation
+
+    monkeypatch.setattr(close_module, "_evaluate_close", evaluate_close)
+    internal_manager = InternalRegistryManager()
+    internal_manager.add_registry(
+        create_task_registry(LocalTaskManager(temp_db), project_id=sample_project["id"])
+    )
+
+    async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(function, *args, **kwargs)
+
+    http_server = SimpleNamespace(
+        _internal_manager=internal_manager,
+        tool_proxy=None,
+        mcp_manager=None,
+        session_manager=session_manager,
+        services=SimpleNamespace(database=temp_db),
+        config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=10.0)),
+        run_db=run_db,
+    )
+    async with _live_mcp_http_server(http_server) as port:
+        gobby_home = tmp_path / "gobby-home"
+        _write_test_bootstrap(gobby_home, temp_db.conninfo, port)
+        environment = os.environ.copy()
+        environment.pop("GOBBY_CONFIG_FILE", None)
+        environment.update(
+            {
+                "GOBBY_HOME": str(gobby_home),
+                "GOBBY_AGENT_RUN_ID": run.id,
+                "GOBBY_SESSION_ID": validator.id,
+                "GOBBY_PROJECT_ID": sample_project["id"],
+            }
         )
-        await asyncio.wait_for(evaluation_started.wait(), timeout=1)
-        assert store.review.status == "finalizing"
-        release_evaluation.set()
+        master_fd, slave_fd = pty.openpty()
+        process = subprocess.Popen(
+            [
+                "uv",
+                "run",
+                "--project",
+                str(Path(__file__).resolve().parents[4]),
+                "gobby",
+                "mcp-server",
+            ],
+            cwd=tmp_path,
+            env=environment,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            start_new_session=True,
+        )
+        os.close(slave_fd)
+        try:
+            _write_pty_json(master_fd, _initialize_request())
+            initialize = await asyncio.to_thread(_read_pty_response, master_fd, 1, 20.0)
+            assert "result" in initialize
+            _write_pty_json(
+                master_fd,
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            )
+            submit_request = _submit_review_request(review.id, sample_project["id"])
+            encoded_submit = _encode_pty_json(submit_request)
+            assert len(encoded_submit) < 1024
+            started = time.monotonic()
+            await asyncio.to_thread(_write_pty_bytes, master_fd, encoded_submit)
+            response = await asyncio.to_thread(
+                _read_pty_response,
+                master_fd,
+                2,
+                _SUBMIT_DEADLINE_SECONDS,
+            )
+            elapsed = time.monotonic() - started
+        finally:
+            await asyncio.to_thread(_stop_stdio_process, process, master_fd)
 
-    result = submission.result()
-    assert result["review_status"] == "stale"
+    assert "result" in response
+    assert elapsed < _SUBMIT_DEADLINE_SECONDS
+    assert observed_finalizing == ["finalizing"]
+    finished = store.get(review.id)
+    assert finished is not None
+    assert finished.status == "invalid"
+    assert finished.result_payload is not None
 
 
 @pytest.mark.asyncio
@@ -516,6 +660,66 @@ async def test_late_verdict_after_run_end_is_applied(
     assert result["review_status"] == "closed"
     assert result["terminal_payload"]["status"] == "closed"
     assert result["terminal_payload"] != prior_payload
+
+
+@pytest.mark.asyncio
+async def test_late_submission_yields_to_newer_active_review(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    old_review, _created = store.create_or_get_active(**_persisted_review_intent())
+    assert store.bind_run(old_review.id, _FIRST_REVIEW_RUN_ID) is not None
+    prior_payload = {
+        "event": "task_close_review_completed",
+        "status": "error",
+        "message": VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    }
+    assert (
+        store.finish(
+            old_review.id,
+            status="error",
+            result_payload=prior_payload,
+            error=VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+        )
+        is not None
+    )
+    newer, created = store.create_or_get_active(
+        **{
+            **_persisted_review_intent(),
+            "review_fingerprint": "newer-review",
+            "evidence_fingerprint": "newer-evidence",
+        }
+    )
+    assert created is True
+    assert store.bind_run(newer.id, _SECOND_REVIEW_RUN_ID) is not None
+    monkeypatch.setattr(orchestration, "_authenticate_submission", lambda _ctx, _review: None)
+    evaluate_close = AsyncMock(side_effect=AssertionError("newer review owns the active slot"))
+    ctx = cast(
+        RegistryContext,
+        SimpleNamespace(task_manager=SimpleNamespace(db=temp_db)),
+    )
+
+    result = await submit_close_review(
+        ctx,
+        review_id=old_review.id,
+        verdict=_verdict("invalid"),
+        evaluate_close=evaluate_close,
+        commit_close=AsyncMock(),
+    )
+
+    assert result == {
+        "success": True,
+        "review_id": old_review.id,
+        "review_status": "error",
+        "closed": False,
+        "terminal_payload": prior_payload,
+    }
+    evaluate_close.assert_not_awaited()
+    active = store.get_active_for_task(old_review.task_id)
+    assert active is not None
+    assert active.id == newer.id
+    assert active.status == "running"
 
 
 @pytest.mark.asyncio
@@ -766,6 +970,20 @@ def _arguments() -> dict[str, Any]:
     }
 
 
+def _persisted_review_intent() -> dict[str, Any]:
+    return {
+        "task_id": _PERSISTED_TASK_ID,
+        "task_ref": "#42",
+        "caller_session_id": _PERSISTED_SESSION_ID,
+        "close_arguments": _arguments(),
+        "review_fingerprint": "review",
+        "evidence_fingerprint": "evidence",
+        "diff_sha": "a" * 64,
+        "test_bodies_sha": "b" * 64,
+        "stable_facts": {},
+    }
+
+
 def _authenticate(monkeypatch: pytest.MonkeyPatch, review: TaskCloseReview) -> None:
     run = SimpleNamespace(
         agent_name="task-close-validator",
@@ -788,3 +1006,176 @@ def _verdict(status: str) -> dict[str, object]:
         "criteria": [{"index": 1, "satisfied": status == "valid", "gap": None}],
         "feedback": status,
     }
+
+
+def _write_oversized_codex_transcript(path: Path) -> None:
+    record = (
+        json.dumps(
+            {
+                "timestamp": "2026-09-05T04:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "x" * 4000}],
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+    with path.open("wb") as transcript:
+        while transcript.tell() <= _OVERSIZED_TRANSCRIPT_BYTES:
+            transcript.write(record)
+
+
+def _write_test_bootstrap(gobby_home: Path, database_url: str, port: int) -> None:
+    files_home = gobby_home / "files"
+    files_home.mkdir(parents=True)
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text(
+        "".join(
+            (
+                "datastore_mode: local\n",
+                f"database_url: {json.dumps(database_url)}\n",
+                f"daemon_port: {port}\n",
+                "bind_host: 127.0.0.1\n",
+                f"files_home: {json.dumps(str(files_home))}\n",
+            )
+        ),
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+
+
+@asynccontextmanager
+async def _live_mcp_http_server(server: Any) -> AsyncIterator[int]:
+    app = FastAPI()
+    app.include_router(create_mcp_router())
+
+    async def override_server() -> Any:
+        return server
+
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.dependency_overrides[get_server] = override_server
+    app.dependency_overrides[get_metrics_manager] = lambda: None
+    app.add_api_route("/api/health", health, methods=["GET"])
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=0,
+        log_level="warning",
+        access_log=False,
+        lifespan="off",
+        log_config=None,
+        ws="none",
+    )
+    http = uvicorn.Server(config)
+    task = asyncio.create_task(http.serve())
+    try:
+        while not http.started:
+            if task.done():
+                await task
+            await asyncio.sleep(0)
+        sockets = http.servers[0].sockets
+        assert sockets is not None
+        yield int(sockets[0].getsockname()[1])
+    finally:
+        http.should_exit = True
+        await asyncio.wait_for(task, timeout=5)
+
+
+def _initialize_request() -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "close-review-boundary-test", "version": "1"},
+        },
+    }
+
+
+def _submit_review_request(review_id: str, project_id: str) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "call_tool",
+            "arguments": {
+                "server_name": "gobby-tasks",
+                "tool_name": "submit_close_review",
+                "arguments": {"review_id": review_id, "verdict": _verdict("invalid")},
+                "project_id": project_id,
+                "preflight_enabled": False,
+            },
+        },
+    }
+
+
+def _encode_pty_json(payload: dict[str, object]) -> bytes:
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
+def _write_pty_json(master_fd: int, payload: dict[str, object]) -> None:
+    _write_pty_bytes(master_fd, _encode_pty_json(payload))
+
+
+def _write_pty_bytes(master_fd: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    while view:
+        view = view[os.write(master_fd, view) :]
+
+
+def _read_pty_response(master_fd: int, request_id: int, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    buffered = b""
+    observed = bytearray()
+    while time.monotonic() < deadline:
+        remaining = max(0.0, deadline - time.monotonic())
+        readable, _, _ = select.select([master_fd], [], [], remaining)
+        if not readable:
+            break
+        try:
+            chunk = os.read(master_fd, 65_536)
+        except OSError as exc:
+            raise AssertionError(
+                f"stdio MCP process ended before response {request_id}: "
+                f"{observed[-4000:].decode(errors='replace')!r}"
+            ) from exc
+        if not chunk:
+            break
+        observed.extend(chunk)
+        buffered += chunk
+        while b"\n" in buffered:
+            raw_line, buffered = buffered.split(b"\n", 1)
+            try:
+                message = json.loads(raw_line.rstrip(b"\r"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if (
+                isinstance(message, dict)
+                and message.get("id") == request_id
+                and ("result" in message or "error" in message)
+            ):
+                return cast(dict[str, Any], message)
+    raise TimeoutError(
+        f"stdio MCP response {request_id} exceeded {timeout:g}s; "
+        f"output={observed[-4000:].decode(errors='replace')!r}"
+    )
+
+
+def _stop_stdio_process(process: subprocess.Popen[bytes], master_fd: int) -> None:
+    os.close(master_fd)
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)

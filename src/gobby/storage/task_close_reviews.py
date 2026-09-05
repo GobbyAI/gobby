@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+from psycopg.errors import UniqueViolation
+
 from gobby.storage.hub.protocol import HubDatabase
 
 ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
@@ -20,6 +22,7 @@ ACTIVE_TASK_CLOSE_REVIEW_STATUSES: tuple[ActiveTaskCloseReviewStatus, ...] = (
     "running",
     "finalizing",
 )
+_ACTIVE_TASK_CLOSE_REVIEW_CONSTRAINT = "uq_task_close_reviews_active_task"
 TERMINAL_TASK_CLOSE_REVIEW_STATUSES: tuple[TerminalTaskCloseReviewStatus, ...] = (
     "closed",
     "invalid",
@@ -301,20 +304,29 @@ class TaskCloseReviewStore:
         """Claim verdict finalization, including a late verdict from a successful run."""
         now = datetime.now(UTC)
         with self.db.transaction() as conn:
-            row = conn.execute(
-                f"""
-                UPDATE task_close_reviews
-                SET status = 'finalizing', result_payload = NULL, error = NULL,
-                    completed_at = NULL, delivered_at = NULL, updated_at = %s
-                WHERE id = %s AND agent_run_id = %s
-                  AND (
-                      status = 'running'
-                      OR (status = 'error' AND error = %s)
-                  )
-                RETURNING {_COLUMNS}
-                """,  # nosec B608 - static column fragment
-                (now, review_id, run_id, VALIDATOR_RUN_ENDED_SUCCESS_ERROR),
-            ).fetchone()
+            savepoint = conn.savepoint("task_close_review_claim_finalizing")
+            try:
+                row = conn.execute(
+                    f"""
+                    UPDATE task_close_reviews
+                    SET status = 'finalizing', result_payload = NULL, error = NULL,
+                        completed_at = NULL, delivered_at = NULL, updated_at = %s
+                    WHERE id = %s AND agent_run_id = %s
+                      AND (
+                          status = 'running'
+                          OR (status = 'error' AND error = %s)
+                      )
+                    RETURNING {_COLUMNS}
+                    """,  # nosec B608 - static column fragment
+                    (now, review_id, run_id, VALIDATOR_RUN_ENDED_SUCCESS_ERROR),
+                ).fetchone()
+            except UniqueViolation as exc:
+                savepoint.rollback()
+                savepoint.release()
+                if exc.diag.constraint_name == _ACTIVE_TASK_CLOSE_REVIEW_CONSTRAINT:
+                    return None
+                raise
+            savepoint.release()
         return _review_from_row(row) if row is not None else None
 
     def restore_running(self, review_id: str, run_id: str, *, error: str) -> bool:
