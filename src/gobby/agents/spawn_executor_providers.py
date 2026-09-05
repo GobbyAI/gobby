@@ -111,18 +111,25 @@ async def _prepare_provider_sandbox(
     provider: str,
     env: dict[str, str],
 ) -> SandboxLaunch | SpawnResult:
-    config = _sandbox_config_for_spawn(request.sandbox_config, env)
-    if config is None:
-        launch = SandboxLaunch(backend="provider-native", enforced=False)
-        await asyncio.to_thread(_record_actual_sandbox_enforcement, request, spawn_context, launch)
-        return launch
-    resolver = None
-    if config.enabled and config.backend == "provider-native":
-        resolver = get_sandbox_resolver(provider)
-    daemon_port = int(getattr(request.daemon_config, "daemon_port", 60887))
-    websocket = getattr(request.daemon_config, "websocket", None)
-    websocket_port = int(getattr(websocket, "port", 60888))
     try:
+        config = _sandbox_config_for_spawn(
+            request.sandbox_config,
+            env,
+            project_path=request.project_path,
+            resume_metadata_json=request.resume_metadata_json,
+        )
+        if config is None:
+            launch = SandboxLaunch(backend="provider-native", enforced=False)
+            await asyncio.to_thread(
+                _record_actual_sandbox_enforcement, request, spawn_context, launch
+            )
+            return launch
+        resolver = None
+        if config.enabled and config.backend == "provider-native":
+            resolver = get_sandbox_resolver(provider)
+        daemon_port = int(getattr(request.daemon_config, "daemon_port", 60887))
+        websocket = getattr(request.daemon_config, "websocket", None)
+        websocket_port = int(getattr(websocket, "port", 60888))
         launch = await prepare_sandbox_launch(
             config=config,
             provider=provider,

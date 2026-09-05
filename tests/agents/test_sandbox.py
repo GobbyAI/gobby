@@ -25,7 +25,11 @@ from gobby.agents.sandbox import (
     daemon_owned_sandbox_policy_hash,
     web_chat_sandbox_policy_hash,
 )
-from gobby.agents.sandbox_policy import default_write_paths, tmux_socket_roots
+from gobby.agents.sandbox_policy import (
+    assert_sensitive_path_contract,
+    default_write_paths,
+    tmux_socket_roots,
+)
 from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
@@ -1484,6 +1488,55 @@ class TestSandboxCacheProvisioning:
         assert config.allow_package_registries is True
         assert {"crates.io", "index.crates.io", "static.crates.io"} <= set(paths.allowed_domains)
         assert "github.com" not in paths.allowed_domains
+
+    def test_project_paths_merge_into_policy_and_resume_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        project_root = tmp_path / "project"
+        workspace = tmp_path / "worktree"
+        daemon_path = tmp_path / "daemon-cache"
+        declared_path = project_root / "var"
+        (project_root / ".gobby").mkdir(parents=True)
+        workspace.mkdir()
+        (project_root / ".gobby" / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": "sandbox-project",
+                    "sandbox": {
+                        "extra_write_paths": ["var", str(declared_path)],
+                    },
+                }
+            )
+        )
+        env_vars = {GOBBY_SESSION_ID: "project-policy-session", "PATH": ""}
+        resume_metadata: dict[str, object] = {"sandbox_config": {}}
+
+        config = sandbox_config_for_spawn(
+            SandboxConfig(
+                enabled=True,
+                backend="srt",
+                extra_write_paths=[str(daemon_path)],
+            ),
+            env_vars,
+            project_path=str(project_root),
+            resume_metadata_json=resume_metadata,
+        )
+
+        assert config is not None
+        assert config.extra_write_paths[:2] == [str(daemon_path), str(declared_path.resolve())]
+        assert config.extra_write_paths.count(str(declared_path.resolve())) == 1
+        paths = compute_sandbox_paths(
+            config=config,
+            workspace_path=str(workspace),
+            provider="codex",
+            env=env_vars,
+        )
+        assert str(declared_path.resolve()) in paths.read_paths
+        assert str(declared_path.resolve()) in paths.write_paths
+        assert_sensitive_path_contract(paths.read_paths, paths.write_paths)
+        persisted_config = SandboxConfig.model_validate(resume_metadata["sandbox_config"])
+        assert persisted_config.extra_write_paths == config.extra_write_paths
 
     def test_disabled_sandbox_skips_toolchain_cache_redirects(self) -> None:
         env_vars = {GOBBY_SESSION_ID: "provision-test-session", "PATH": ""}

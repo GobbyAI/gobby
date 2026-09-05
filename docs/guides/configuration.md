@@ -26,7 +26,7 @@ committed when local live activation fails and reports the failed-live keys.
 | Bundled MCP templates (`mcp/templates/*.yaml`) synced to `mcp_server_templates` | Hub | Template catalog; nothing is instantiated by `gobby install` |
 | `.gobby/mcp/servers/*.yaml` / `~/.gobby/mcp/servers/*.yaml` | Project / machine | Instance YAML synced into `mcp_servers` |
 | `secrets` table (`project_id` scoped) | Project then machine | MCP template secrets referenced as `$secret:<name>` |
-| `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
+| `.gobby/project.json` | Project | Project identity, verification commands, sandbox write roots, and project hook settings |
 | `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
 | `<project>/.gobby/build.yaml` | Project | Build lifecycle defaults for one repository |
 
@@ -604,7 +604,7 @@ convenient.
 ## Project Configuration
 
 `.gobby/project.json` binds a repository to a Gobby project and stores
-repository-local verification and hook settings:
+repository-local verification, sandbox, and hook settings:
 
 ```json
 {
@@ -622,6 +622,9 @@ repository-local verification and hook settings:
     "custom": {
       "frontend_tests": "cd web && npm test"
     }
+  },
+  "sandbox": {
+    "extra_write_paths": ["var", "data/generated"]
   },
   "hooks": {
     "pre-commit": {
@@ -654,6 +657,7 @@ The committed schema contains only repository-portable fields:
 | `created_at` | Project creation timestamp |
 | `verification` | Named repository verification commands |
 | `validation_detection` | Optional custom validation-command matchers |
+| `sandbox` | Optional project-contained writable roots for spawned-agent sandboxes |
 | `hooks` | Repository hook policy |
 
 Commit `.gobby/project.json`. Gobby strips `linear_team_id`,

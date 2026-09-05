@@ -42,6 +42,11 @@
       }
     ]
   },
+  "sandbox": {
+    "extra_write_paths": [
+      ".gobby/tmp"
+    ]
+  },
   "hooks": {
     "pre-commit": {
       "run": [],

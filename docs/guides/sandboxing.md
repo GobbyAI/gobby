@@ -99,6 +99,30 @@ workspace paths resolve to their real target, and linked-worktree Git metadata
 from `git rev-parse --git-dir --git-common-dir` is added deliberately so local
 commits work.
 
+## Project-level Write Paths
+
+A repository can add writable roots for its spawned agents in
+`.gobby/project.json`:
+
+```json
+{
+  "sandbox": {
+    "extra_write_paths": ["var", "data/generated"]
+  }
+}
+```
+
+Relative entries resolve from the project's main checkout; absolute entries are
+accepted only when they remain inside that checkout. Gobby resolves the project
+root and each entry, including symlinks, before spawn. The root itself, `..`
+escapes, symlink escapes, and absolute paths outside the root are rejected because
+every entry must resolve to a strict descendant of the project root. A malformed
+section or unsafe entry fails spawn closed and reports the entry, project root,
+and violated rule.
+
+Project paths are appended after daemon-level `agent_sandbox.extra_write_paths`
+and before per-run cache paths, with stable-order deduplication.
+
 ## Default Filesystem Policy
 
 SRT read access is broad unless denied, so Gobby uses SRT's deny-then-allow
