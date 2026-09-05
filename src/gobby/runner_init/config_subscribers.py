@@ -217,6 +217,7 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "auth": _route("authentication routes", "request ConfigRuntime.capture"),
     "bin_freshness": _route("binary freshness loop", "iteration ConfigRuntime.capture"),
     "chat_history": _route("chat history", "request ConfigRuntime.capture"),
+    "context_handoff": _route("context pressure observers", "operation ConfigRuntime.capture"),
     "clones_dir": _route("clone operations", "operation ConfigRuntime.capture"),
     "communications": _route("communications tools", "operation ConfigRuntime.capture"),
     "context_window_overrides": _route("session routes", "request ConfigRuntime.capture"),

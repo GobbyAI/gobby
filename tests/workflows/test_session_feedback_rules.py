@@ -29,7 +29,6 @@ INBOX_PATH = "docs/research/gobby-feedback/inbox"
 SURVEY_RULES = (
     "reset-gobby-session-feedback-on-context-reset",
     "mark-gobby-session-feedback-submitted",
-    "review-gobby-session-feedback-before-handoff",
     "review-gobby-session-feedback-on-stop",
 )
 
@@ -225,22 +224,13 @@ class TestSessionFeedbackRules:
         stop_body = RuleDefinitionBody.model_validate(stop.definition_json)
         stop_reason = stop_body.resolved_effects[0].reason or ""
         assert "gobby-sessions:feedback" in stop_reason
+        assert "set_handoff(gobby_feedback=...)" in stop_reason
         assert "missing-affordance" in stop_reason
         assert "kind_other_label" in stop_reason
+        assert "gobby-<server>:<tool>" in stop_reason
+        assert "src/gobby/" in stop_reason
         assert INBOX_PATH not in stop_reason
         assert "#21128" not in stop_reason
-
-        handoff = manager.get_by_name("review-gobby-session-feedback-before-handoff")
-        assert handoff is not None
-        assert handoff.priority == 2
-        handoff_body = RuleDefinitionBody.model_validate(handoff.definition_json)
-        handoff_reason = handoff_body.resolved_effects[0].reason or ""
-        assert "gobby-sessions:feedback" in handoff_reason
-        assert "missing-affordance" in handoff_reason
-        assert "kind_other_label" in handoff_reason
-        assert INBOX_PATH not in handoff_reason
-        assert "set_handoff" in (handoff_body.when or "")
-        assert "compact_self" not in (handoff_body.when or "")
 
         # Task closure is not a context boundary: closing N tasks in one epoch
         # must not re-arm the survey N times.
@@ -281,128 +271,55 @@ class TestSessionFeedbackRules:
         assert second.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_set_handoff_blocks_once_and_get_handoff_never_blocks(
-        self, db: HubDatabase
-    ) -> None:
+    async def test_off_suppresses_stop_gate(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        _enable_rules(db, "review-gobby-session-feedback-before-handoff")
-        variables: dict[str, Any] = {
-            "project": _project(),
-            "task_claimed": True,
-            "session_task": "#42",
-        }
-        engine = _engine(db)
-
-        first = await engine.evaluate(_sessions_tool_event("set_handoff"), SESSION_ID, variables)
-        retry = await engine.evaluate(_sessions_tool_event("set_handoff"), SESSION_ID, variables)
-        get_handoff = await engine.evaluate(
-            _sessions_tool_event("get_handoff"), SESSION_ID, variables
-        )
-
-        assert first.decision == "block"
-        assert "gobby-sessions:feedback" in (first.reason or "")
-        assert INBOX_PATH not in (first.reason or "")
-        assert variables["_gobby_feedback_epoch_reviewed"] is True
-        assert retry.decision == "allow"
-        assert get_handoff.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_set_handoff_skips_unclaimed_session_task(self, db: HubDatabase) -> None:
-        _sync_bundled(db)
-        _enable_rules(db, "review-gobby-session-feedback-before-handoff")
-        variables: dict[str, Any] = {
-            "project": _project(),
-            "task_claimed": False,
-            "session_task": "#42",
-        }
-
-        result = await _engine(db).evaluate(
-            _sessions_tool_event("set_handoff"), SESSION_ID, variables
-        )
-
-        assert result.decision == "allow"
-        assert "_gobby_feedback_epoch_reviewed" not in variables
-
-    @pytest.mark.asyncio
-    async def test_off_suppresses_stop_and_set_handoff_gates(self, db: HubDatabase) -> None:
-        _sync_bundled(db)
-        _enable_rules(
-            db,
-            "review-gobby-session-feedback-on-stop",
-            "review-gobby-session-feedback-before-handoff",
-        )
+        _enable_rules(db, "review-gobby-session-feedback-on-stop")
         variables: dict[str, Any] = {
             "project": _project(),
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
-            "task_claimed": True,
         }
         engine = _engine(db, survey="off")
 
         stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
-        handoff = await engine.evaluate(_sessions_tool_event("set_handoff"), SESSION_ID, variables)
 
         assert stop.decision == "allow"
-        assert handoff.decision == "allow"
         assert variables[SURVEY_ACTIVE_VARIABLE] is False
 
     @pytest.mark.asyncio
     async def test_gobby_scope_skips_other_project_names(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        _enable_rules(
-            db,
-            "review-gobby-session-feedback-on-stop",
-            "review-gobby-session-feedback-before-handoff",
-        )
+        _enable_rules(db, "review-gobby-session-feedback-on-stop")
         engine = _engine(db, survey="gobby")
         foreign: dict[str, Any] = {
             "project": _project("game-goblins"),
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
-            "task_claimed": True,
         }
         owner: dict[str, Any] = {
             "project": _project("gobby"),
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
-            "task_claimed": True,
         }
 
         foreign_stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, foreign)
-        foreign_handoff = await engine.evaluate(
-            _sessions_tool_event("set_handoff"), SESSION_ID, foreign
-        )
         owner_stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, owner)
 
         assert foreign_stop.decision == "allow"
-        assert foreign_handoff.decision == "allow"
         assert owner_stop.decision == "block"
         assert owner[SURVEY_ACTIVE_VARIABLE] is True
 
     @pytest.mark.asyncio
     async def test_all_scope_gates_other_project_names(self, db: HubDatabase) -> None:
         _sync_bundled(db)
-        _enable_rules(
-            db,
-            "review-gobby-session-feedback-on-stop",
-            "review-gobby-session-feedback-before-handoff",
-        )
+        _enable_rules(db, "review-gobby-session-feedback-on-stop")
         engine = _engine(db, survey="all")
         stop_variables: dict[str, Any] = {
             "project": _project("game-goblins"),
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
         }
-        handoff_variables: dict[str, Any] = {
-            "project": _project("game-goblins"),
-            "task_claimed": True,
-        }
 
         stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, stop_variables)
-        handoff = await engine.evaluate(
-            _sessions_tool_event("set_handoff"), SESSION_ID, handoff_variables
-        )
 
         assert stop.decision == "block"
-        assert handoff.decision == "block"
         assert stop_variables[SURVEY_ACTIVE_VARIABLE] is True
-        assert handoff_variables[SURVEY_ACTIVE_VARIABLE] is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

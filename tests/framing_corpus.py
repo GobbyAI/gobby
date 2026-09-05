@@ -129,8 +129,9 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-uv-add",
         "no-wget-upload",
         "no-yarn-add",
+        "require-handoff-at-context-limit",
+        "retry-terminal-handoff-after-delivery-failure",
         "review-closed-task-memories-before-handoff",
-        "review-gobby-session-feedback-before-handoff",
     }
 )
 

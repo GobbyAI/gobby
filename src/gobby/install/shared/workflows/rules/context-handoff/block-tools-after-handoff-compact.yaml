@@ -1,6 +1,47 @@
 tags: [context-handoff, handoff, compact, enforcement, gobby, default]
 
 rules:
+  require-handoff-at-context-limit:
+    description: "Restrict tool use to handoff prerequisites at the configured context limit"
+    event: before_tool
+    enabled: true
+    priority: 1
+    when: >-
+      event.metadata.get('session_type') != 'web_chat'
+      and source != 'pipeline'
+      and variables.get('context_compact_mid_turn_pressure_band') == 'block'
+      and variables.get('context_compact_block_message')
+      and not variables.get('plan_mode')
+      and variables.get('mode_level', 2) != 0
+      and not variables.get('context_compact_handoff_unavailable')
+      and not (
+        event.data.get('mcp_server') == 'gobby-sessions'
+        and event.data.get('mcp_tool') in ('set_handoff', 'feedback', 'get_handoff')
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-memory'
+        and event.data.get('mcp_tool') == 'review_task_memories'
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-agents'
+        and event.data.get('mcp_tool') == 'end_agent_run'
+      )
+      and event.data.get('mcp_tool') not in ('get_tool_schema', 'list_tools')
+      and event.data.get('tool_name') not in (
+        'get_tool_schema',
+        'mcp__gobby__get_tool_schema',
+        'list_tools',
+        'mcp__gobby__list_tools'
+      )
+    effects:
+      - type: block
+        reason: >-
+          {{ variables.get('context_compact_block_message') or
+          'Context limit reached. Call get_tool_schema(server_name="gobby-sessions",
+          tool_name="set_handoff"), then gobby-sessions:set_handoff with
+          gobby_feedback=[] when there is nothing to report. The block lifts after
+          the handoff compacts the session.' }}
+
   block-tools-after-handoff-compact:
     description: "End terminal turns promptly after set_handoff stages terminal delivery"
     event: before_tool

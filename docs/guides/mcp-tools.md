@@ -512,7 +512,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `get_session_commits` | Git commits made during a session timeframe. |
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
 | `feedback` | Write Gobby-experience survey observations into `session_feedback` (enum `kind`/`frequency`/`disposition`; `kind` `other` requires `kind_other_label`). Empty `observations` is valid. |
-| `set_handoff` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
+| `set_handoff` | Persist a structured handoff and compact or clear the current session. Accepts optional `gobby_feedback`; surveyed sessions must supply it once per context epoch, and `[]` means nothing to report. |
 | `get_handoff` | Read handoff context from a session. |
 | `get_handoff` | Wait for a session's `summary_markdown` to become available. |
 | `mark_loop_complete` | Mark the autonomous loop as complete to prevent session chaining. |
@@ -1108,4 +1108,4 @@ lease, so callers can correct and retry without an extra schema round-trip.
 - [orchestration.md](./orchestration.md) — Dispatch and automation model
 - [code-index.md](./code-index.md) — `gcode` for code search and retrieval
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-09-04_

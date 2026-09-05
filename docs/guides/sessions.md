@@ -255,8 +255,9 @@ call_tool("gobby-sessions", "get_session_commits", {
 
 `set_handoff` operates on the current session context. It requires a nonblank
 current state and at least one nonblank next step. Optional entries reject blanks;
-references are deduplicated in their original order. Feedback is captured only through
-the dedicated `gobby-sessions:feedback` tool and is not part of `set_handoff`.
+references are deduplicated in their original order. Feedback can be captured through
+the dedicated `gobby-sessions:feedback` tool or the `gobby_feedback` field on
+`set_handoff`. Both paths use the same validation and storage contract.
 
 Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or
@@ -264,6 +265,11 @@ Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `escalated`, or `noted`. Use `other` only when no listed kind fits — it requires
 `kind_other_label`, which is rejected when it restates a listed kind. Recurring
 labels are candidates for promotion into the enum by the nightly review loop.
+Each observation's `source` must name a Gobby surface as
+`gobby-<server>:<tool>`; `<surface>:<name>` where surface is `rule`, `hook`,
+`skill`, `workflow`, `agent`, `pipeline`, `prompt`, `cli`, `binary`, `daemon`,
+`ui`, `docs`, or `config`; or a repository path starting with `src/gobby/`,
+`crates/`, `web/src/`, or `docs/`.
 
 For an actionable Gobby defect, dispositions map to the Found Work ladder:
 `fixed` includes the `#N` task this session claimed and closed or still has claimed
@@ -289,9 +295,25 @@ call_tool("gobby-sessions", "set_handoff", {
     "problems_encountered": ["Delivery state was previously implicit"],
     "what_didnt_work": ["Treating mutable Markdown as proof of delivery"],
     "references": ["#21140"],
-    "clear_session": False
+    "clear_session": False,
+    "gobby_feedback": []
 })
 ```
+
+When the session-feedback survey applies and this epoch has no response,
+`set_handoff` requires `gobby_feedback`; `[]` records a completed survey with
+nothing to report. Validation and persistence happen before handoff staging, so
+a staging retry does not duplicate feedback. The retired before-tool survey gate
+is no longer part of this path.
+
+Context pressure is configured under `context_handoff`. Windows below
+`small_window_tokens` use the ratio thresholds; larger and unknown windows use
+the absolute thresholds. Warnings repeat every turn start and every
+`warn_every_tool_calls` calls. At the block threshold, only `set_handoff`,
+`feedback`, `get_handoff`, `review_task_memories`, `end_agent_run`, and MCP schema
+discovery remain callable. Plan mode, pipelines, and web-chat sessions skip this
+enforcement. A non-retryable inability to compact downgrades the epoch to warning
+pressure; background delivery failures stay gated for a `set_handoff` retry.
 
 ```python
 call_tool("gobby-sessions", "get_handoff", {})
@@ -367,7 +389,8 @@ sequenceDiagram
     participant Provider
     participant Continuation
 
-    Session->>Gobby: set_handoff(structured fields, clear_session)
+    Session->>Gobby: set_handoff(structured fields, clear_session, gobby_feedback)
+    Gobby->>Gobby: validate/store survey and mark epoch reviewed
     Gobby->>Gobby: atomically stage structured content, Markdown, and marker
     Gobby-->>Session: staged success (delivery_pending)
     Session->>Hook: normalized tool completion
@@ -484,4 +507,4 @@ stop or turn-end event does not release the agent run.
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-04_

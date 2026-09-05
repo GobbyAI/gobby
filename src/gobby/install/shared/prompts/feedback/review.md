@@ -19,6 +19,11 @@ kind), `evidence`, `impact`, `frequency` (once | repeated | always), and optiona
 `suggestion` and `disposition` (worked-around | filed-task | fixed | escalated |
 noted).
 
+`source` must name a Gobby surface: `gobby-<server>:<tool>`; `<surface>:<name>`
+where surface is `rule`, `hook`, `skill`, `workflow`, `agent`, `pipeline`,
+`prompt`, `cli`, `binary`, `daemon`, `ui`, `docs`, or `config`; or a repository
+path starting with `src/gobby/`, `crates/`, `web/src/`, or `docs/`.
+
 For an actionable Gobby defect, read dispositions through the found-work ladder:
 `fixed` includes a #N task claimed or closed by the observer or by one of the
 observer's spawned descendant sessions; `escalated` includes the active owner session

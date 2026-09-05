@@ -45,6 +45,7 @@ from gobby.config.hooks import HOOK_TRANSPORT_WINDOW_SECONDS, HookTimeoutConfig
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
+    ContextHandoffConfig,
     FeedbackReviewConfig,
     MessageTrackingConfig,
     SessionFeedbackConfig,
@@ -416,6 +417,53 @@ class TestSessionFeedbackConfig:
             SessionFeedbackConfig(survey="nope")
         with pytest.raises(ValidationError):
             DaemonConfig(session_feedback={"survey": "nope"})
+
+
+class TestContextHandoffConfig:
+    """Tests for context-pressure thresholds and DaemonConfig wiring."""
+
+    def test_defaults(self) -> None:
+        config = ContextHandoffConfig()
+        assert config.warn_tokens == 128_000
+        assert config.block_tokens == 256_000
+        assert config.small_window_tokens == 256_000
+        assert config.small_window_warn_ratio == 0.40
+        assert config.small_window_block_ratio == 0.80
+        assert config.warn_every_tool_calls == 5
+        assert DaemonConfig().context_handoff == config
+        assert all(field.description for field in ContextHandoffConfig.model_fields.values())
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("warn_tokens", 0),
+            ("block_tokens", 0),
+            ("small_window_tokens", 0),
+            ("small_window_warn_ratio", 0),
+            ("small_window_warn_ratio", 1.01),
+            ("small_window_block_ratio", 0),
+            ("small_window_block_ratio", 1.01),
+            ("warn_every_tool_calls", 0),
+        ],
+    )
+    def test_rejects_field_bound_violations(self, field: str, value: int | float) -> None:
+        with pytest.raises(ValidationError):
+            ContextHandoffConfig(**{field: value})
+
+    def test_rejects_absolute_block_below_warn(self) -> None:
+        with pytest.raises(ValidationError, match="block_tokens"):
+            ContextHandoffConfig(warn_tokens=200, block_tokens=199)
+
+    @pytest.mark.parametrize("block_ratio", [0.39, 0.40])
+    def test_rejects_small_window_block_ratio_not_above_warn(
+        self,
+        block_ratio: float,
+    ) -> None:
+        with pytest.raises(ValidationError, match="small_window_block_ratio"):
+            ContextHandoffConfig(
+                small_window_warn_ratio=0.40,
+                small_window_block_ratio=block_ratio,
+            )
 
 
 class TestFeedbackReviewConfig:

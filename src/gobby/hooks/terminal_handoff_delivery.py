@@ -16,8 +16,10 @@ from gobby.agents.terminal_delivery import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
-from gobby.mcp_proxy.tools.sessions._terminal import deliver_staged_compact_handoff
 from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
+from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
+    deliver_staged_compact_handoff,
+)
 from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,

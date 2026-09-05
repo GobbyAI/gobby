@@ -10,6 +10,7 @@ from gobby.sessions.handoff import (
     FEEDBACK_DISPOSITIONS,
     FEEDBACK_FREQUENCIES,
     FEEDBACK_KINDS,
+    FEEDBACK_SOURCE_SURFACES,
     consume_pending_handoff,
     normalize_feedback_observations,
     write_feedback_batch,
@@ -32,7 +33,14 @@ class _FeedbackTaskResolver:
 FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "source": {"type": "string"},
+        "source": {
+            "type": "string",
+            "description": (
+                "Name a Gobby surface as gobby-<server>:<tool>, <surface>:<name> where "
+                f"surface is one of {', '.join(FEEDBACK_SOURCE_SURFACES)}, or a repository "
+                "path starting with src/gobby/, crates/, web/src/, or docs/."
+            ),
+        },
         "kind": {
             "type": "string",
             "enum": list(FEEDBACK_KINDS),

@@ -1,21 +1,23 @@
-"""Context-pressure thresholds, epoch deduplication, and the handoff gate."""
+"""Configurable context-pressure thresholds, cadence, and handoff state."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.workflows.observer_context_usage import (
-    FALLBACK_SOFT_CONTEXT_TOKENS,
-    FALLBACK_STRONG_CONTEXT_TOKENS,
+    BLOCK_MESSAGE_VARIABLE,
     HANDOFF_RESULT_VARIABLE,
-    HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE,
+    HANDOFF_UNAVAILABLE_VARIABLE,
     PRESSURE_BAND_VARIABLE,
-    _thresholds_from_session,
+    TOOL_CALLS_SINCE_NUDGE_VARIABLE,
+    UNKNOWN_ANNOUNCED_VARIABLE,
+    _thresholds,
     detect_context_compact_guidance,
     detect_mid_turn_context_compact_guidance,
 )
@@ -23,13 +25,6 @@ from gobby.workflows.observer_context_usage import (
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "session-1"
-SOFT_100K = (
-    "Context is 100k tokens. Consider gobby-sessions:set_handoff with a concise structured "
-    "handoff at the next pause."
-)
-STRONG_150K = (
-    "Context is 150k tokens. Call gobby-sessions:set_handoff now, before any other tool call."
-)
 
 
 @dataclass
@@ -53,11 +48,11 @@ def _tool_event(data: dict[str, Any] | None = None) -> HookEvent:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {"tool_name": "Read", "tool_input": {"file_path": "/repo/a.py"}},
-        metadata={},
+        metadata={"_platform_session_id": SESSION_ID},
     )
 
 
-def _set_handoff_event(tool_output: Any, *, clear_session: bool = False) -> HookEvent:
+def _set_handoff_event(tool_output: Any) -> HookEvent:
     return _tool_event(
         {
             "tool_name": "mcp__gobby__call_tool",
@@ -66,11 +61,7 @@ def _set_handoff_event(tool_output: Any, *, clear_session: bool = False) -> Hook
             "tool_input": {
                 "server_name": "gobby-sessions",
                 "tool_name": "set_handoff",
-                "arguments": {
-                    "current_state": "x",
-                    "next_steps": ["y"],
-                    "clear_session": clear_session,
-                },
+                "arguments": {"current_state": "x", "next_steps": ["y"]},
             },
             "tool_output": tool_output,
             "tool_outcome": {"status": "succeeded"},
@@ -78,7 +69,7 @@ def _set_handoff_event(tool_output: Any, *, clear_session: bool = False) -> Hook
     )
 
 
-def _get_handoff_event(tool_output: Any) -> HookEvent:
+def _get_handoff_event() -> HookEvent:
     return _tool_event(
         {
             "tool_name": "mcp__gobby__call_tool",
@@ -89,7 +80,8 @@ def _get_handoff_event(tool_output: Any) -> HookEvent:
                 "tool_name": "get_handoff",
                 "arguments": {},
             },
-            "tool_output": tool_output,
+            "tool_output": {"success": True, "result": {"found": True}},
+            "tool_outcome": {"status": "succeeded"},
         }
     )
 
@@ -100,261 +92,251 @@ def _variables(**overrides: Any) -> dict[str, Any]:
     return variables
 
 
-def _turn_start(variables: dict[str, Any], manager: _SessionManager) -> str:
-    detect_context_compact_guidance(variables, SESSION_ID, manager)
+def _turn_start(
+    variables: dict[str, Any],
+    manager: _SessionManager,
+    config: Any | None = None,
+) -> str:
+    detect_context_compact_guidance(variables, SESSION_ID, manager, config=config)
     return str(variables["context_compact_guidance_message"])
-
-
-def _next_turn(variables: dict[str, Any], manager: _SessionManager) -> str:
-    variables["parent_turn_seq"] = int(variables["parent_turn_seq"]) + 1
-    return _turn_start(variables, manager)
 
 
 def _after_tool(
     variables: dict[str, Any],
     manager: _SessionManager,
     event: HookEvent | None = None,
+    config: Any | None = None,
 ) -> str:
-    detect_mid_turn_context_compact_guidance(event or _tool_event(), variables, SESSION_ID, manager)
+    detect_mid_turn_context_compact_guidance(
+        event or _tool_event(), variables, SESSION_ID, manager, config=config
+    )
     return str(variables["context_compact_guidance_message"])
 
 
 @pytest.mark.parametrize(
     ("window", "expected"),
     [
-        pytest.param(
-            None,
-            (FALLBACK_SOFT_CONTEXT_TOKENS, FALLBACK_STRONG_CONTEXT_TOKENS),
-            id="unknown-window",
-        ),
-        pytest.param(
-            0,
-            (FALLBACK_SOFT_CONTEXT_TOKENS, FALLBACK_STRONG_CONTEXT_TOKENS),
-            id="zero",
-        ),
-        pytest.param(200_000, (80_000, 140_000), id="standard-model"),
-        pytest.param(1_000_000, (200_000, 400_000), id="large-model"),
+        (None, (128_000, 256_000, 5)),
+        (1_000_000, (128_000, 256_000, 5)),
+        (256_000, (128_000, 256_000, 5)),
+        (200_000, (80_000, 160_000, 5)),
+        (128_000, (51_200, 102_400, 5)),
     ],
 )
-def test_thresholds_use_model_window_with_absolute_fallback(
+def test_threshold_matrix_uses_window_classes(
     window: int | None,
-    expected: tuple[int, int],
+    expected: tuple[int, int, int],
 ) -> None:
-    assert _thresholds_from_session(_Session(0, window)) == expected
+    assert _thresholds(None, window) == expected
+
+
+def test_threshold_overrides_reconfigure_every_field_and_boundary() -> None:
+    config = SimpleNamespace(
+        warn_tokens=90_000,
+        block_tokens=180_000,
+        small_window_tokens=300_000,
+        small_window_warn_ratio=0.25,
+        small_window_block_ratio=0.75,
+        warn_every_tool_calls=3,
+    )
+    assert _thresholds(config, None) == (90_000, 180_000, 3)
+    assert _thresholds(config, 256_000) == (64_000, 192_000, 3)
 
 
 @pytest.mark.parametrize(
-    ("used", "window", "expected_kind"),
-    [
-        pytest.param(79_999, 200_000, "", id="below-window-soft"),
-        pytest.param(80_000, 200_000, "soft", id="window-soft"),
-        pytest.param(140_000, 200_000, "strong", id="window-strong"),
-        pytest.param(250_000, 1_000_000, "soft", id="large-window-soft-cap"),
-        pytest.param(400_000, 1_000_000, "strong", id="large-window-strong"),
-        pytest.param(128_000, None, "soft", id="fallback-soft"),
-        pytest.param(256_000, None, "strong", id="fallback-strong"),
-    ],
+    ("used", "expected_band"),
+    [(130_000, "warn"), (260_000, "block")],
 )
-def test_turn_start_uses_selected_thresholds(
+def test_turn_start_repeats_guidance_and_writes_block_message_only_in_block(
     used: int,
-    window: int | None,
-    expected_kind: str,
+    expected_band: str,
 ) -> None:
     variables = _variables()
+    manager = _SessionManager(used, 1_000_000)
 
-    _turn_start(variables, _SessionManager(used, window))
+    first = _turn_start(variables, manager)
+    variables["parent_turn_seq"] = 1
+    second = _turn_start(variables, manager)
 
-    assert variables["context_compact_guidance_kind"] == expected_kind
+    assert first
+    assert second
+    assert variables[PRESSURE_BAND_VARIABLE] == expected_band
+    assert bool(variables[BLOCK_MESSAGE_VARIABLE]) is (expected_band == "block")
+    if expected_band == "block":
+        assert 'get_tool_schema(server_name="gobby-sessions"' in second
+        assert "gobby_feedback=[]" in second
 
 
-def test_large_window_uses_capped_soft_threshold_mid_turn() -> None:
+def test_after_tool_warns_on_crossing_then_every_configured_calls() -> None:
     variables = _variables()
-    manager = _SessionManager(250_000, 1_000_000)
+    manager = _SessionManager(130_000, 1_000_000)
 
-    _after_tool(variables, manager)
-    assert variables["context_compact_guidance_kind"] == "soft"
+    assert _after_tool(variables, manager)
+    assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
+    for expected_counter in range(1, 5):
+        assert _after_tool(variables, manager) == ""
+        assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == expected_counter
+    assert _after_tool(variables, manager)
+    assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
 
-    manager.session.context_used_tokens = 400_000
-    _after_tool(variables, manager)
-    assert variables["context_compact_guidance_kind"] == "strong"
 
-
-def test_guidance_fires_once_per_increasing_threshold_in_an_epoch() -> None:
+def test_after_tool_block_band_announces_every_call() -> None:
     variables = _variables()
-    manager = _SessionManager(100_000, 200_000)
+    manager = _SessionManager(260_000, 1_000_000)
 
-    assert _turn_start(variables, manager) == SOFT_100K
-    assert _next_turn(variables, manager) == ""
-    assert _after_tool(variables, manager) == ""
-
-    manager.session.context_used_tokens = 150_000
-    assert _after_tool(variables, manager) == STRONG_150K
-    assert _after_tool(variables, manager) == ""
-    assert _next_turn(variables, manager) == ""
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "strong"
-
-
-def test_dropping_below_a_threshold_does_not_reannounce_it_in_the_same_epoch() -> None:
-    variables = _variables()
-    manager = _SessionManager(100_000, 200_000)
-    assert _turn_start(variables, manager) == SOFT_100K
-
-    manager.session.context_used_tokens = 50_000
-    assert _after_tool(variables, manager) == ""
-    assert variables[PRESSURE_BAND_VARIABLE] == "none"
-
-    manager.session.context_used_tokens = 100_000
-    assert _after_tool(variables, manager) == ""
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "soft"
-
-
-@pytest.mark.parametrize(
-    "tool_output",
-    [
-        {"success": True, "result": {"compacted": True, "session_id": SESSION_ID}},
-        {"compacted": True, "session_id": SESSION_ID},
-    ],
-    ids=["proxy-envelope", "flat-result"],
-)
-def test_compacted_handoff_suppresses_until_successor_turn_start(tool_output: Any) -> None:
-    variables = _variables()
-    manager = _SessionManager(150_000, 200_000)
-
-    assert _after_tool(variables, manager, _set_handoff_event(tool_output)) == ""
-    assert variables[HANDOFF_RESULT_VARIABLE] == {"compacted": True, "reason": None}
-    assert [_after_tool(variables, manager) for _ in range(3)] == ["", "", ""]
-
-    assert _next_turn(variables, manager) == STRONG_150K
-    assert variables[HANDOFF_RESULT_VARIABLE] is None
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "strong"
-
-
-def test_get_handoff_consumption_starts_a_new_threshold_epoch() -> None:
-    variables = _variables(
-        **{
-            HANDOFF_RESULT_VARIABLE: {"compacted": True, "reason": None},
-            HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE: "strong",
-        }
-    )
-    manager = _SessionManager(150_000, 200_000)
-
-    message = _after_tool(
-        variables,
-        manager,
-        _get_handoff_event({"success": True, "result": {"found": True}}),
-    )
-
-    assert message == STRONG_150K
-    assert variables[HANDOFF_RESULT_VARIABLE] is None
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "strong"
-
-
-@pytest.mark.parametrize(
-    "tool_output",
-    [
-        {
-            "success": False,
-            "error": "timed out waiting for clear-session acknowledgment",
-            "attempt_pending": True,
-        },
-        {"success": True, "handoff_staged": True, "command_sent": True},
-        {"queued": True, "handoff_staged": True},
-    ],
-    ids=["timeout-pending", "acknowledged", "web-chat-queued"],
-)
-def test_pending_clear_session_attempt_suppresses_guidance(tool_output: Any) -> None:
-    variables = _variables()
-    manager = _SessionManager(150_000, 200_000)
-
-    assert (
-        _after_tool(
-            variables,
-            manager,
-            _set_handoff_event(tool_output, clear_session=True),
-        )
-        == ""
-    )
-    assert variables[HANDOFF_RESULT_VARIABLE]["attempt_pending"] is True
-    assert _after_tool(variables, manager) == ""
-
-
-@pytest.mark.parametrize(
-    ("tool_output", "expected"),
-    [
-        pytest.param(
-            {"success": True, "result": {"compacted": False, "reason": "no pane"}},
-            "set_handoff could not compact (no pane)",
-            id="compaction-failed",
-        ),
-        pytest.param(
-            {"success": False, "error": "validation failed"},
-            "Call gobby-sessions:set_handoff now",
-            id="tool-error",
-        ),
-    ],
-)
-def test_failed_handoff_leaves_guidance_enabled(tool_output: Any, expected: str) -> None:
-    variables = _variables()
-    manager = _SessionManager(150_000, 200_000)
-
-    message = _after_tool(variables, manager, _set_handoff_event(tool_output))
-
-    assert expected in message
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "strong"
-    assert _after_tool(variables, manager) == ""
-
-
-def test_background_delivery_failure_surfaces_retry_guidance_on_next_turn() -> None:
-    variables = _variables(
-        **{
-            HANDOFF_RESULT_VARIABLE: {
-                "compacted": False,
-                "delivery_failed": True,
-                "retry_guidance": "Retry gobby-sessions:set_handoff now.",
-            }
-        }
-    )
-
-    message = _turn_start(variables, _SessionManager(10_000, 200_000))
-
-    assert message == "Retry gobby-sessions:set_handoff now."
-    assert variables[HANDOFF_RESULT_VARIABLE] is None
-
-
-def test_unknown_guidance_is_emitted_once_per_epoch() -> None:
-    variables = _variables(parent_turn_seq=9, turns_since_compact=9)
-    manager = _SessionManager(None)
-
-    _turn_start(variables, manager)
-    assert variables["context_compact_guidance_kind"] == "unknown"
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "unknown"
-    assert _next_turn(variables, manager) == ""
-
-
-def test_plan_mode_returns_before_turn_accounting() -> None:
-    variables = _variables(parent_turn_seq=8, chat_mode="plan", turns_since_compact=4)
-
-    assert _turn_start(variables, _SessionManager(900_000, 1_000_000)) == ""
-    assert variables["turns_since_compact"] == 4
+    assert _after_tool(variables, manager)
+    assert _after_tool(variables, manager)
+    assert variables[PRESSURE_BAND_VARIABLE] == "block"
+    assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
 
 
 @pytest.mark.parametrize(
     "overrides",
-    [{"pending_context_reset": True}, {"chat_mode": "plan"}, {"plan_mode": True}],
-    ids=["pending-reset", "plan-chat-mode", "plan-mode"],
+    [
+        {HANDOFF_RESULT_VARIABLE: {"delivery_pending": True}},
+        {"pending_context_reset": True},
+        {"plan_mode": True},
+    ],
 )
-def test_mid_turn_suppression_preserves_epoch_markers(overrides: dict[str, Any]) -> None:
-    handoff_result = {"compacted": True, "reason": None}
+def test_mid_turn_suppression_clears_band_message_and_counter(overrides: dict[str, Any]) -> None:
     variables = _variables(
-        **overrides,
         **{
-            PRESSURE_BAND_VARIABLE: "strong",
-            HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE: "strong",
-            HANDOFF_RESULT_VARIABLE: handoff_result,
-        },
+            PRESSURE_BAND_VARIABLE: "block",
+            BLOCK_MESSAGE_VARIABLE: "blocked",
+            TOOL_CALLS_SINCE_NUDGE_VARIABLE: 4,
+            **overrides,
+        }
     )
 
-    assert _after_tool(variables, _SessionManager(400_000)) == ""
+    assert _after_tool(variables, _SessionManager(300_000, 1_000_000)) == ""
     assert variables[PRESSURE_BAND_VARIABLE] == "none"
-    assert variables[HIGHEST_ANNOUNCED_THRESHOLD_VARIABLE] == "strong"
-    assert variables[HANDOFF_RESULT_VARIABLE] == handoff_result
+    assert variables[BLOCK_MESSAGE_VARIABLE] == ""
+    assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
+
+
+def test_boundary_turn_start_never_recomputes_stale_usage() -> None:
+    variables = _variables(
+        **{
+            HANDOFF_RESULT_VARIABLE: {"delivery_pending": True},
+            PRESSURE_BAND_VARIABLE: "block",
+            BLOCK_MESSAGE_VARIABLE: "blocked",
+        }
+    )
+
+    assert _turn_start(variables, _SessionManager(260_000, 1_000_000)) == ""
+    assert variables[PRESSURE_BAND_VARIABLE] == "none"
+    assert variables[BLOCK_MESSAGE_VARIABLE] == ""
+    assert variables[HANDOFF_RESULT_VARIABLE] is None
+
+
+def test_missing_usage_writes_none_band() -> None:
+    variables = _variables(**{PRESSURE_BAND_VARIABLE: "block", BLOCK_MESSAGE_VARIABLE: "blocked"})
+
+    assert _after_tool(variables, _SessionManager(None, 1_000_000)) == ""
+    assert variables[PRESSURE_BAND_VARIABLE] == "none"
+    assert variables[BLOCK_MESSAGE_VARIABLE] == ""
+
+
+def test_non_retryable_handoff_failure_caps_epoch_at_warn() -> None:
+    variables = _variables()
+    manager = _SessionManager(300_000, 1_000_000)
+    failed = _set_handoff_event(
+        {
+            "success": True,
+            "result": {
+                "compacted": False,
+                "reason": "no terminal target",
+                "error_code": "terminal_target_unavailable",
+            },
+        }
+    )
+
+    assert "could not compact" in _after_tool(variables, manager, failed)
+    assert variables[PRESSURE_BAND_VARIABLE] == "warn"
+    assert variables[HANDOFF_UNAVAILABLE_VARIABLE] is True
+    assert variables[BLOCK_MESSAGE_VARIABLE] == ""
+    assert _after_tool(variables, manager) == ""
+    assert variables[PRESSURE_BAND_VARIABLE] == "warn"
+
+
+def test_background_delivery_failure_keeps_block_band() -> None:
+    variables = _variables(
+        **{
+            HANDOFF_RESULT_VARIABLE: {
+                "delivery_failed": True,
+                "retry_guidance": "Retry set_handoff",
+            }
+        }
+    )
+
+    assert _after_tool(variables, _SessionManager(300_000, 1_000_000))
+    assert variables[PRESSURE_BAND_VARIABLE] == "block"
+    assert variables[BLOCK_MESSAGE_VARIABLE]
+    assert variables.get(HANDOFF_UNAVAILABLE_VARIABLE) is not True
+
+    assert _turn_start(variables, _SessionManager(300_000, 1_000_000))
+    assert variables["context_compact_guidance_kind"] == "failed"
+    assert variables[HANDOFF_RESULT_VARIABLE]["delivery_failed"] is True
+    assert variables[PRESSURE_BAND_VARIABLE] == "block"
+
+
+def test_retryable_handoff_failure_keeps_block_band() -> None:
+    variables = _variables()
+    result = {
+        "compacted": False,
+        "reason": "Terminal dispatch failed.",
+        "error_code": "dispatch_failed",
+    }
+
+    assert _after_tool(
+        variables,
+        _SessionManager(300_000, 1_000_000),
+        _set_handoff_event(result),
+    )
+    assert variables[PRESSURE_BAND_VARIABLE] == "block"
+    assert variables[BLOCK_MESSAGE_VARIABLE]
+    assert variables.get(HANDOFF_UNAVAILABLE_VARIABLE) is not True
+
+
+def test_unknown_guidance_is_once_per_epoch() -> None:
+    variables = _variables(turns_since_compact=9)
+    manager = _SessionManager(None)
+
+    assert "unknown for 10" in _turn_start(variables, manager)
+    variables["parent_turn_seq"] = 1
+    assert _turn_start(variables, manager) == ""
+    assert variables[UNKNOWN_ANNOUNCED_VARIABLE] is True
+
+    _after_tool(variables, manager, _get_handoff_event())
+    variables["turns_since_compact"] = 9
+    variables["parent_turn_seq"] = 0
+    assert "unknown for 10" in _turn_start(variables, manager)
+
+
+def test_get_handoff_resets_band_counter_and_epoch_flags() -> None:
+    variables = _variables(
+        **{
+            PRESSURE_BAND_VARIABLE: "block",
+            BLOCK_MESSAGE_VARIABLE: "blocked",
+            TOOL_CALLS_SINCE_NUDGE_VARIABLE: 3,
+            HANDOFF_UNAVAILABLE_VARIABLE: True,
+            UNKNOWN_ANNOUNCED_VARIABLE: True,
+        }
+    )
+
+    _after_tool(variables, _SessionManager(None), _get_handoff_event())
+
+    assert variables[PRESSURE_BAND_VARIABLE] == "none"
+    assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
+    assert variables[BLOCK_MESSAGE_VARIABLE] == ""
+    assert variables[HANDOFF_UNAVAILABLE_VARIABLE] is False
+    assert variables[UNKNOWN_ANNOUNCED_VARIABLE] is False
+
+
+def test_plan_mode_returns_before_turn_accounting() -> None:
+    variables = _variables(plan_mode=True)
+
+    assert _turn_start(variables, _SessionManager(300_000, 1_000_000)) == ""
+    assert "turns_since_compact" not in variables
+    assert variables[PRESSURE_BAND_VARIABLE] == "none"
+    assert variables[BLOCK_MESSAGE_VARIABLE] == ""
