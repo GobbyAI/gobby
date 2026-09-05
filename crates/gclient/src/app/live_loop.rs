@@ -16,6 +16,7 @@ use crate::daemon::{
     SpawnOutcome, SpawnRequest,
 };
 use crate::frame_source::{FrameError, FrameSource};
+use crate::input::key_to_bytes_with_protocol;
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
@@ -462,8 +463,11 @@ async fn route_live_input(
             Resolution::Unbound => {
                 *prefix_armed = false;
                 chrome.mode = Mode::Terminal;
-                if let Some(pane_id) = chrome.focused_pane() {
-                    send_live_input(workspace, pane_id, &input.bytes).await?;
+                if let (Some(pane_id), Some(bytes)) = (
+                    chrome.focused_pane(),
+                    key_to_bytes_with_protocol(input.key, KeyboardProtocol::Legacy),
+                ) {
+                    send_live_input(workspace, pane_id, &bytes).await?;
                 }
             }
         }

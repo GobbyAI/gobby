@@ -384,8 +384,8 @@ async fn loop_routes_input_and_frames() {
     assert!(screen.contains("HELLO"), "rendered grid: {screen:?}");
 }
 
-#[test]
-fn input_encoder_covers_named_keys() {
+#[tokio::test]
+async fn input_encoder_covers_named_keys() {
     use gobby_terminal::input::KeyboardProtocol;
 
     let cases = [
@@ -404,6 +404,79 @@ fn input_encoder_covers_named_keys() {
         KeyboardProtocol::Kitty { flags: 1 },
     );
     assert_eq!(kitty.as_deref(), Some(b"\x1b[15;5~".as_slice()));
+
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-input", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let live_cases = [
+            (
+                TerminalKey::new(KeyCode::Up, KeyModifiers::CONTROL),
+                "\u{1b}[1;5A",
+            ),
+            (
+                TerminalKey::new(KeyCode::F(5), KeyModifiers::CONTROL),
+                "\u{1b}[15;5~",
+            ),
+            (
+                TerminalKey::new(KeyCode::Char('x'), KeyModifiers::ALT),
+                "\u{1b}x",
+            ),
+            // Physical-key metadata is not part of crossterm's KeyEvent. This
+            // case distinguishes the required crate::input path from calling
+            // gobby_terminal's TerminalKey encoder directly in the loop.
+            (
+                TerminalKey::new(KeyCode::Char('1'), KeyModifiers::SHIFT)
+                    .with_shifted_codepoint('!' as u32),
+                "1",
+            ),
+        ];
+        for (index, (key, _)) in live_cases.iter().enumerate() {
+            input_tx
+                .send(RawInputEvent::Key(key.clone()))
+                .await
+                .expect("live loop input");
+            wait_for_websocket_requests(&mock, "terminal_input", index + 1).await;
+        }
+
+        let writes = websocket_requests(&mock, "terminal_input");
+        let data: Vec<_> = writes
+            .iter()
+            .map(|write| write.get("data").and_then(Value::as_str))
+            .collect();
+        let expected: Vec<_> = live_cases
+            .iter()
+            .map(|(_, expected)| Some(*expected))
+            .collect();
+        assert_eq!(data, expected, "the live loop must use crate::input");
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
 }
 
 #[tokio::test]
