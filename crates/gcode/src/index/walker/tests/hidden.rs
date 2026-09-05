@@ -43,120 +43,6 @@ fn skips_non_allowlisted_hidden_metadata_by_default() {
 }
 
 #[test]
-fn discovers_wiki_markdown_and_skips_generated_wiki_metadata() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-    write_file(root, "wiki/page.md", b"# Wiki\n");
-    write_file(root, "wiki/nested/page.md", b"# Nested\n");
-    write_file(root, "wiki/_meta/codewiki.json", b"{}\n");
-    write_file(root, "wiki/_meta/readme.md", b"# Generated\n");
-    write_file(root, "wiki/_gwiki/scope.json", b"{}\n");
-    write_file(root, "wiki/_gwiki/compile/checkpoint-note.md", b"# State\n");
-    write_file(root, "wiki/wikis.json", b"{}\n");
-    write_file(root, "wiki/.obsidian/app.json", b"{}\n");
-    write_file(root, "wiki/.obsidian/workspace.json", b"{}\n");
-    write_file(root, "wiki/wikis.json.lock", b"lock\n");
-    write_file(root, "wiki/nested/page.lock", b"lock\n");
-
-    let (ast, content_only) = discover_files(root, &[] as &[&str]);
-
-    assert!(rels(root, ast).is_empty());
-    assert_eq!(
-        rels(root, content_only),
-        vec!["wiki/nested/page.md", "wiki/page.md"]
-    );
-    assert_eq!(
-        classify_file(root, &root.join("wiki/_meta/codewiki.json"), &[] as &[&str]),
-        None
-    );
-    assert_eq!(
-        classify_file(root, &root.join("wiki/wikis.json.lock"), &[] as &[&str]),
-        None
-    );
-    assert_eq!(
-        classify_file(
-            root,
-            &root.join("wiki/_gwiki/compile/checkpoint-note.md"),
-            &[] as &[&str]
-        ),
-        None,
-        "vault state-root markdown (compile checkpoints) is excluded"
-    );
-    assert_eq!(
-        classify_file(root, &root.join("wiki/.obsidian/app.json"), &[] as &[&str]),
-        None
-    );
-}
-
-#[test]
-fn discovers_gitignored_vault_markdown_via_allowlist() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-    // Real repos gitignore the vault (it publishes to the `wiki` branch), so
-    // the allowlist must rescue vault markdown from gitignore, not only from
-    // hidden-path filtering. The `.git` marker makes the ignore walker apply
-    // .gitignore rules (require_git).
-    std::fs::create_dir(root.join(".git")).expect("git marker");
-    write_file(root, ".gitignore", b"/wiki/\n");
-    write_file(root, "src/lib.rs", b"fn main() {}\n");
-    write_file(root, "wiki/_gwiki/scope.json", b"{}\n");
-    write_file(root, "wiki/page.md", b"# Wiki\n");
-    write_file(root, "wiki/nested/page.md", b"# Nested\n");
-    write_file(root, "wiki/_meta/readme.md", b"# Generated\n");
-
-    let (ast, content_only) = discover_files(root, &[] as &[&str]);
-
-    assert_eq!(rels(root, ast), vec!["src/lib.rs"]);
-    assert_eq!(
-        rels(root, content_only),
-        vec!["wiki/nested/page.md", "wiki/page.md"],
-        "gitignored vault markdown is rescued; vault metadata stays excluded"
-    );
-    assert_eq!(
-        classify_explicit_file_with_options(
-            root,
-            &root.join("wiki/page.md"),
-            &[] as &[&str],
-            DiscoveryOptions::default(),
-        ),
-        Some(FileClassification::ContentOnly),
-        "explicit classification rescues gitignored vault markdown too"
-    );
-}
-
-#[test]
-fn honors_gobby_wiki_fallback_vault_when_wiki_is_occupied() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path();
-    // `wiki/` is an ordinary docs directory (no vault scope file), so the
-    // resolver falls back to the initialized `gobby-wiki` vault.
-    write_file(root, "wiki/_meta/data.json", b"{}\n");
-    write_file(root, "gobby-wiki/_gwiki/scope.json", b"{}\n");
-    write_file(root, "gobby-wiki/page.md", b"# Wiki\n");
-    write_file(root, "gobby-wiki/_meta/codewiki.json", b"{}\n");
-
-    assert_eq!(
-        classify_file(root, &root.join("gobby-wiki/page.md"), &[] as &[&str]),
-        Some(FileClassification::ContentOnly),
-        "fallback vault markdown is content-only"
-    );
-    assert_eq!(
-        classify_file(
-            root,
-            &root.join("gobby-wiki/_meta/codewiki.json"),
-            &[] as &[&str]
-        ),
-        None,
-        "fallback vault metadata is excluded"
-    );
-    assert_eq!(
-        classify_file(root, &root.join("wiki/_meta/data.json"), &[] as &[&str]),
-        Some(FileClassification::Ast),
-        "the non-vault wiki/ collision stays ordinarily indexed"
-    );
-}
-
-#[test]
 fn discovers_project_hidden_allowlist_from_gcode_json() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
@@ -206,4 +92,73 @@ fn discovers_unix_backslash_filename_under_literal_key() {
 
     assert!(rels(root, ast).is_empty());
     assert_eq!(rels(root, content_only), vec![r".gobby/plans/name\plan.md"]);
+}
+
+#[test]
+fn explicit_files_respect_ignored_ancestors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(root)
+        .status()
+        .expect("initialize test repository");
+    assert!(status.success());
+    write_file(root, ".gitignore", b"/wiki/\n");
+    write_file(root, "wiki/_gwiki/scope.json", b"{}\n");
+    write_file(root, "wiki/page.md", b"# Retired vault\n");
+    write_file(root, "src/lib.rs", b"pub fn surviving_code() {}\n");
+
+    let (ast, content_only) = discover_files(root, &[] as &[&str]);
+    assert_eq!(rels(root, ast), vec!["src/lib.rs"]);
+    assert!(
+        content_only
+            .iter()
+            .all(|path| !path.starts_with(root.join("wiki")))
+    );
+    assert_eq!(
+        classify_explicit_file_with_options(
+            root,
+            &root.join("wiki/page.md"),
+            &[] as &[&str],
+            DiscoveryOptions::default(),
+        ),
+        None,
+    );
+    assert_eq!(
+        classify_explicit_file_with_options(
+            root,
+            &root.join("wiki/page.md"),
+            &[] as &[&str],
+            DiscoveryOptions {
+                respect_gitignore: false
+            },
+        ),
+        Some(FileClassification::ContentOnly),
+    );
+    write_file(
+        root,
+        ".gobby/gcode.json",
+        br#"{"index":{"hidden_allowlist":["wiki/**/*.md"]}}"#,
+    );
+    assert_eq!(
+        classify_explicit_file_with_options(
+            root,
+            &root.join("wiki/page.md"),
+            &[] as &[&str],
+            DiscoveryOptions::default(),
+        ),
+        Some(FileClassification::ContentOnly),
+    );
+}
+
+#[test]
+fn ordinary_wiki_named_directory_uses_normal_classification() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "wiki/_meta/settings.json", b"{\"enabled\":true}\n");
+    assert_eq!(
+        classify_file(root, &root.join("wiki/_meta/settings.json"), &[] as &[&str]),
+        Some(FileClassification::Ast),
+    );
 }
