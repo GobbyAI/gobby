@@ -48,6 +48,7 @@ def build_agentic_review_prompt(
     evidence_fingerprint: str,
     validation_commands: Mapping[str, object] | None = None,
     prior_requirements: str | None = None,
+    coordinator_owned_pending: bool = False,
 ) -> str:
     """Build the fixed taskless validator prompt for one persisted review intent.
 
@@ -75,6 +76,13 @@ def build_agentic_review_prompt(
             "their outcome was unknown, they were wrapped, or they were stale after a later edit; "
             "cite that entry when a verdict names a seen-but-uncredited run. "
         )
+    if coordinator_owned_pending:
+        prompt += (
+            "The close caller is a spawned agent. For every criterion beginning `Live:` "
+            "case-insensitively, report state `pending_external`, satisfied false, gap null, "
+            "and required_evidence null. Count it as neither satisfied nor a gap. Set the "
+            "overall status valid when every remaining implementer-owned criterion is satisfied. "
+        )
     prompt += (
         "Inspect the task, linked commits, exact acceptance tests, deterministic gate facts, "
         "and repository validations. Call submit_close_review with this exact review_id and "
@@ -100,10 +108,19 @@ def build_terminal_review_payload(
     """Build the persisted automatic-wake contract for one terminal review."""
     result = dict(close_result or {})
     closed = status == "closed"
-    validation_status = "valid" if closed else "invalid" if status == "invalid" else "error"
+    validation_status = (
+        "valid"
+        if closed
+        else "invalid"
+        if status == "invalid"
+        else "pending"
+        if status == "external_pending"
+        else "error"
+    )
     default_messages = {
         "closed": "Task closed after background validation.",
         "invalid": "Background validation found blocking task-close gaps.",
+        "external_pending": "Coordinator-owned live criteria remain pending verification.",
         "stale": "Task-close evidence changed while the background review was running.",
         "error": "Background task-close validation could not finish.",
     }
@@ -114,6 +131,10 @@ def build_terminal_review_payload(
     if not required_actions and status == "invalid":
         required_actions = [
             "Address every blocking reason, rerun focused validation, commit fixes, and call close_task again."
+        ]
+    elif not required_actions and status == "external_pending":
+        required_actions = [
+            "End this agent run; the coordinator must verify the pending Live criteria and close the task."
         ]
     elif not required_actions and status == "stale":
         required_actions = ["Call close_task again with the current task and commit evidence."]

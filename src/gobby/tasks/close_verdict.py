@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Literal, cast
 
+from gobby.tasks.criteria_contract import is_external_criterion
+
 VerdictStatus = Literal["valid", "invalid"]
+CriterionVerdictState = Literal["satisfied", "gap", "pending_external"]
 
 
 class CloseVerdictParseError(ValueError):
@@ -23,11 +26,19 @@ class CloseCriterionVerdict:
     satisfied: bool
     gap: str | None
     required_evidence: str | None = None
+    state: CriterionVerdictState | None = None
+
+    @property
+    def verdict_state(self) -> CriterionVerdictState:
+        if self.state is not None:
+            return self.state
+        return "satisfied" if self.satisfied else "gap"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "index": self.index,
             "criterion": self.criterion,
+            "state": self.verdict_state,
             "satisfied": self.satisfied,
             "gap": self.gap,
             "required_evidence": self.required_evidence,
@@ -52,7 +63,12 @@ class CloseVerdict:
         }
 
 
-def parse_close_verdict(payload: object, expected_criteria: Sequence[str]) -> CloseVerdict:
+def parse_close_verdict(
+    payload: object,
+    expected_criteria: Sequence[str],
+    *,
+    defer_external_criteria: bool = False,
+) -> CloseVerdict:
     """Parse a bounded verdict without citation or contradiction policing."""
     data = _coerce_payload(payload)
     status = _coerce_status(data.get("status"))
@@ -71,15 +87,29 @@ def parse_close_verdict(payload: object, expected_criteria: Sequence[str]) -> Cl
         entry = matched.get(index)
         if entry is None:
             satisfied = inherited_satisfied
-            gap = None if satisfied else feedback
+            state: CriterionVerdictState = "satisfied" if satisfied else "gap"
         else:
             satisfied = _coerce_satisfied(entry.get("satisfied"), inherited_satisfied)
-            gap = _coerce_gap(entry.get("gap"))
-            if not satisfied and gap is None:
+            state = _coerce_criterion_state(
+                entry.get("state"),
+                "satisfied" if satisfied else "gap",
+            )
+        if defer_external_criteria and is_external_criterion(criterion):
+            state = "pending_external"
+        if state == "pending_external":
+            satisfied = False
+            gap = None
+        elif state == "satisfied":
+            satisfied = True
+            gap = None
+        else:
+            satisfied = False
+            gap = _coerce_gap(entry.get("gap")) if entry is not None else feedback
+            if gap is None:
                 gap = feedback
         required_evidence = (
             _coerce_gap(entry.get("required_evidence"))
-            if entry is not None and not satisfied
+            if entry is not None and state == "gap"
             else None
         )
         criteria.append(
@@ -89,6 +119,7 @@ def parse_close_verdict(payload: object, expected_criteria: Sequence[str]) -> Cl
                 satisfied=satisfied,
                 gap=gap,
                 required_evidence=required_evidence,
+                state=state,
             )
         )
     return CloseVerdict(status=status, criteria=tuple(criteria), feedback=feedback)
@@ -193,6 +224,17 @@ def _coerce_satisfied(value: object, default: bool) -> bool:
     return default
 
 
+def _coerce_criterion_state(
+    value: object,
+    default: CriterionVerdictState,
+) -> CriterionVerdictState:
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"satisfied", "gap", "pending_external"}:
+            return cast(CriterionVerdictState, normalized)
+    return default
+
+
 def _coerce_gap(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
@@ -209,6 +251,7 @@ __all__ = [
     "CloseCriterionVerdict",
     "CloseVerdict",
     "CloseVerdictParseError",
+    "CriterionVerdictState",
     "VerdictStatus",
     "parse_close_verdict",
 ]

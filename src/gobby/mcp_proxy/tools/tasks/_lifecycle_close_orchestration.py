@@ -130,6 +130,7 @@ async def launch_close_review(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
         prior_requirements=prior_requirements,
+        coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
     )
     try:
         launch = await registry.call(
@@ -419,6 +420,8 @@ def _submission_result(
 
 
 def _failure_status(evaluation: CloseEvaluation) -> TerminalTaskCloseReviewStatus:
+    if evaluation.error == "external_pending":
+        return "external_pending"
     if evaluation.error in {
         "validation_provider_unavailable",
         "validation_infrastructure_unavailable",

@@ -12,7 +12,10 @@ import pytest
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import evaluate_criteria_review
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
+    account_criteria_verdict,
+    evaluate_criteria_review,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -191,6 +194,98 @@ async def test_invalid_verdict_returns_first_gap_and_increments_once(
     assert refreshed is not None and refreshed.validation_fail_count == 1
     history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
     assert [(item.iteration, item.status) for item in history] == [(1, "invalid")]
+
+
+def test_pending_external_verdict_keeps_failure_count_unchanged(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    verdict = CloseVerdict(
+        status="valid",
+        criteria=(
+            CloseCriterionVerdict(
+                1,
+                "The guide documents the checklist.",
+                True,
+                None,
+                state="satisfied",
+            ),
+            CloseCriterionVerdict(
+                2,
+                "Live: restart the daemon.",
+                False,
+                None,
+                state="pending_external",
+            ),
+        ),
+        feedback="Implementation criteria passed.",
+    )
+    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
+
+    result = account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=ctx,
+        resolved_id=task.id,
+        validation_config=None,
+        reset_reason="agentic_valid",
+    )
+
+    assert result.error_type == "external_pending"
+    assert result.validation_status == "pending"
+    assert result.extra["pending_external_criteria"] == ["Live: restart the daemon."]
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.validation_status == "pending"
+    assert refreshed.validation_fail_count == 0
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.iteration, item.status) for item in history] == [(1, "pending")]
+
+
+def test_implementer_gap_remains_invalid_with_external_criterion_pending(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    verdict = CloseVerdict(
+        status="valid",
+        criteria=(
+            CloseCriterionVerdict(
+                1,
+                "The guide documents the checklist.",
+                False,
+                "Document the checklist.",
+                state="gap",
+            ),
+            CloseCriterionVerdict(
+                2,
+                "Live: restart the daemon.",
+                False,
+                None,
+                state="pending_external",
+            ),
+        ),
+        feedback="Implementation remains incomplete.",
+    )
+    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
+
+    result = account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=ctx,
+        resolved_id=task.id,
+        validation_config=None,
+        reset_reason="agentic_valid",
+    )
+
+    assert result.error_type == "validation_failed"
+    assert result.extra["blocking_reasons"] == ["Document the checklist."]
+    assert result.extra["pending_external_criteria"] == ["Live: restart the daemon."]
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None and refreshed.validation_fail_count == 1
 
 
 @pytest.mark.asyncio

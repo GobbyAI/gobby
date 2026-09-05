@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?P<text>.+?)\s*$")
 _INLINE_NUMBERED_ITEM_RE = re.compile(r"\b(?P<number>\d+)[.)]\s+")
+_EXTERNAL_CRITERION_RE = re.compile(r"^live\s*:", re.IGNORECASE)
 
 _OPERATIONAL_REQUIREMENTS = {
     "install": re.compile(
@@ -257,6 +258,13 @@ def split_validation_criteria(value: str | None) -> tuple[str, ...]:
     return paragraphs or (normalized,)
 
 
+def is_external_criterion(criterion: str) -> bool:
+    """Return whether a criterion is coordinator-owned live verification."""
+    match = _LIST_ITEM_RE.match(criterion)
+    text = match.group("text") if match is not None else criterion.strip()
+    return _EXTERNAL_CRITERION_RE.match(text) is not None
+
+
 def required_operational_actions(value: str | None) -> tuple[str, ...]:
     """Return operational actions explicitly named by acceptance criteria."""
     return tuple(dict.fromkeys(requirement.action for requirement in _requirements(value)))
@@ -308,9 +316,10 @@ def missing_operational_evidence(
     changes_summary: str,
     *,
     transcript_actions: Iterable[str] = (),
+    skip_external: bool = False,
 ) -> tuple[str, ...]:
     """Return required operational actions lacking affirmative completion evidence."""
-    requirements = _requirements(validation_criteria)
+    requirements = _requirements(validation_criteria, skip_external=skip_external)
     if not requirements:
         return ()
     transcript_evidence = _parse_evidence_markers(transcript_actions)
@@ -326,9 +335,15 @@ def missing_operational_evidence(
     return tuple(dict.fromkeys(missing))
 
 
-def _requirements(value: str | None) -> tuple[_OperationalRequirement, ...]:
+def _requirements(
+    value: str | None,
+    *,
+    skip_external: bool = False,
+) -> tuple[_OperationalRequirement, ...]:
     requirements: list[_OperationalRequirement] = []
     for criterion in split_validation_criteria(value):
+        if skip_external and is_external_criterion(criterion):
+            continue
         for action, pattern in _OPERATIONAL_REQUIREMENTS.items():
             for match in pattern.finditer(criterion):
                 if _is_ruled_out(criterion, match) or (

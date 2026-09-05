@@ -46,6 +46,7 @@ async def test_close_persists_and_launches_one_taskless_validator(
     ctx = _ctx(registry=registry)
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     evaluation = _evaluation()
+    evaluation.extra["coordinator_owned_pending"] = True
     arguments = _arguments()
 
     result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=arguments)
@@ -60,6 +61,8 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert launch_args["model"] == "gpt-5.6-terra"
     # An unpinned candidate inherits the profile default, which is always `auto`.
     assert launch_args["reasoning_effort"] == "auto"
+    assert "close caller is a spawned agent" in launch_args["prompt"]
+    assert "state `pending_external`" in launch_args["prompt"]
     assert result["success"] is True
     assert result["closed"] is False
     assert result["can_close"] is False
@@ -475,6 +478,43 @@ async def test_invalid_and_stale_submissions_clear_active_lock(
         assert result["closed"] is False
         if expected == "invalid":
             assert result["terminal_payload"]["blocking_reasons"] == ["gap"]
+
+
+@pytest.mark.asyncio
+async def test_external_pending_submission_stays_open_and_names_live_criteria(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="running", run_id="run"))
+    _authenticate(monkeypatch, store.review)
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    evaluation = _evaluation()
+    evaluation.error = "external_pending"
+    evaluation.message = "Coordinator verification remains."
+    evaluation.validation_status = "pending"
+    evaluation.extra.update(
+        {
+            "pending_external_criteria": ["Live: restart the daemon."],
+            "blocking_reasons": [],
+            "required_actions": ["End this agent run."],
+        }
+    )
+    commit = AsyncMock()
+
+    result = await submit_close_review(
+        _ctx(),
+        review_id="review",
+        verdict=_verdict("valid"),
+        evaluate_close=AsyncMock(return_value=evaluation),
+        commit_close=commit,
+    )
+
+    assert result["review_status"] == "external_pending"
+    assert result["closed"] is False
+    assert result["terminal_payload"]["validation_status"] == "pending"
+    assert result["terminal_payload"]["pending_external_criteria"] == ["Live: restart the daemon."]
+    assert result["terminal_payload"]["blocking_reasons"] == []
+    assert store.finished_status == "external_pending"
+    commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

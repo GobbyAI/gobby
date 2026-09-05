@@ -86,6 +86,58 @@ def test_required_evidence_accepts_string_and_null() -> None:
     assert verdict.criteria[1].required_evidence is None
 
 
+def test_pending_external_state_is_neither_satisfied_nor_a_gap() -> None:
+    verdict = parse_close_verdict(
+        {
+            "status": "valid",
+            "criteria": [
+                {
+                    "index": 1,
+                    "state": "pending_external",
+                    "satisfied": False,
+                    "gap": "must be ignored",
+                    "required_evidence": "must also be ignored",
+                }
+            ],
+            "feedback": "Implementation criteria passed.",
+        },
+        ("Live: restart the daemon.",),
+    )
+
+    criterion = verdict.criteria[0]
+    assert criterion.verdict_state == "pending_external"
+    assert criterion.satisfied is False
+    assert criterion.gap is None
+    assert criterion.required_evidence is None
+    assert criterion.to_dict()["state"] == "pending_external"
+
+
+def test_spawned_agent_forces_live_criterion_to_pending_external() -> None:
+    verdict = parse_close_verdict(
+        {
+            "status": "invalid",
+            "criteria": [
+                {
+                    "index": 1,
+                    "state": "gap",
+                    "satisfied": False,
+                    "gap": "The agent cannot restart the daemon.",
+                },
+                {"index": 2, "state": "satisfied", "satisfied": True, "gap": None},
+            ],
+            "feedback": "Live verification unavailable.",
+        },
+        ("Live: restart the daemon.", "Focused tests pass."),
+        defer_external_criteria=True,
+    )
+
+    assert [criterion.verdict_state for criterion in verdict.criteria] == [
+        "pending_external",
+        "satisfied",
+    ]
+    assert verdict.criteria[0].gap is None
+
+
 def test_fuzzy_text_matches_when_index_is_missing() -> None:
     verdict = parse_close_verdict(
         {

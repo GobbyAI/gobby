@@ -7800,7 +7800,7 @@
     },
     {
       "name": "task_close_reviews.task_close_reviews_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'stale'::text, 'error'::text]))"
+      "definition": "CHECK (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'external_pending'::text, 'stale'::text, 'error'::text]))"
     },
     {
       "name": "task_close_reviews.task_close_reviews_test_bodies_sha_valid",

@@ -257,15 +257,55 @@ def account_criteria_verdict(
     store = TaskValidationBackoffStore(ctx.task_manager.db)
     if store.get(task.id) is not None:
         store.clear(task.id)
-    _record_validation_iteration(
-        task,
-        ctx,
-        status=verdict.status,
-        feedback=verdict.feedback,
-        failure_category=None if verdict.valid else FailureCategory.CODE,
-    )
     verdict_dict = verdict.to_dict()
-    if verdict.valid:
+    pending_external = [
+        criterion.criterion
+        for criterion in verdict.criteria
+        if criterion.verdict_state == "pending_external"
+    ]
+    gap_verdicts = [criterion for criterion in verdict.criteria if criterion.verdict_state == "gap"]
+    if pending_external and not gap_verdicts:
+        message = (
+            "Implementation criteria passed; coordinator-owned live criteria remain pending: "
+            f"{', '.join(pending_external)}"
+        )
+        ctx.task_manager.update_task(
+            resolved_id,
+            validation_status="pending",
+            validation_feedback=message,
+        )
+        _record_validation_iteration(
+            task,
+            ctx,
+            status="pending",
+            feedback=message,
+            failure_category=None,
+        )
+        return ValidationResult(
+            can_close=False,
+            error_type="external_pending",
+            message=message,
+            extra={
+                "verdict": verdict_dict,
+                "pending_external_criteria": pending_external,
+                "blocking_reasons": [],
+                "required_actions": [
+                    "End this agent run; the coordinator must verify the pending Live criteria "
+                    "and close the task."
+                ],
+            },
+            validation_status="pending",
+            validation_feedback=message,
+        )
+
+    if not gap_verdicts and verdict.valid:
+        _record_validation_iteration(
+            task,
+            ctx,
+            status="valid",
+            feedback=verdict.feedback,
+            failure_category=None,
+        )
         return ValidationResult(
             can_close=True,
             extra={"verdict": verdict_dict},
@@ -273,6 +313,14 @@ def account_criteria_verdict(
             validation_feedback=verdict.feedback,
             reset_reason=reset_reason,
         )
+
+    _record_validation_iteration(
+        task,
+        ctx,
+        status="invalid",
+        feedback=verdict.feedback,
+        failure_category=FailureCategory.CODE,
+    )
 
     threshold = validation_config.close_validation_escalation_threshold if validation_config else 5
     try:
@@ -301,6 +349,8 @@ def account_criteria_verdict(
             extra={"escalated": True, "already_escalated": True},
         )
     extra = {"validation_fail_count": fail_count, "verdict": verdict_dict}
+    if pending_external:
+        extra["pending_external_criteria"] = pending_external
     if escalated_now:
         escalated = ctx.task_manager.get_task(resolved_id)
         event_id = coordinate_task_escalation(
@@ -323,8 +373,8 @@ def account_criteria_verdict(
             )
             if part
         )
-        for criterion in verdict.criteria
-        if not criterion.satisfied and (criterion.gap or criterion.required_evidence)
+        for criterion in gap_verdicts
+        if criterion.gap or criterion.required_evidence
     ]
     requirements = gaps or [verdict.feedback]
     return ValidationResult(

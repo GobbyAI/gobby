@@ -46,6 +46,23 @@ def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
     assert "validation_commands=" not in prompt
 
 
+def test_agent_close_prompt_marks_live_criteria_pending_external() -> None:
+    prompt = build_agentic_review_prompt(
+        review_id="review",
+        task_id="task",
+        commit_shas=["abc"],
+        changes_summary="summary",
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        coordinator_owned_pending=True,
+    )
+
+    assert "close caller is a spawned agent" in prompt
+    assert "criterion beginning `Live:`" in prompt
+    assert "state `pending_external`" in prompt
+    assert "neither satisfied nor a gap" in prompt
+
+
 def test_launch_prompt_carries_gate10_validation_runs() -> None:
     """The taskless validator cannot read the transcript, so gate 10's record rides along."""
     validation_commands = {
@@ -144,7 +161,10 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.7"
+    assert body["version"] == "1.8"
+    assert '"state": "satisfied|gap|pending_external"' in body["prompts"]["agent"]
+    assert "criterion beginning `Live:` case-insensitively" in body["prompts"]["agent"]
+    assert "terminal closed, invalid, external_pending" in body["prompts"]["agent"]
     assert '"required_evidence": null|"complete evidence set"' in body["prompts"]["agent"]
     assert "complete evidence set the next close has to supply" in body["prompts"]["agent"]
     # Gate 10's run record is the authority on command runs; the validator must
@@ -164,6 +184,7 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     [
         ("closed", True, "valid"),
         ("invalid", False, "invalid"),
+        ("external_pending", False, "pending"),
         ("stale", False, "error"),
         ("error", False, "error"),
     ],
@@ -190,6 +211,22 @@ def test_terminal_payload_has_stable_public_contract(
     assert payload["validation_status"] == validation_status
     assert isinstance(payload["blocking_reasons"], list)
     assert isinstance(payload["required_actions"], list)
+
+
+def test_external_pending_payload_names_coordinator_owned_criteria() -> None:
+    payload = build_terminal_review_payload(
+        _review(status="running"),
+        status="external_pending",
+        close_result={"pending_external_criteria": ["Live: restart the daemon."]},
+    )
+
+    assert payload["status"] == "external_pending"
+    assert payload["closed"] is False
+    assert payload["validation_status"] == "pending"
+    assert payload["pending_external_criteria"] == ["Live: restart the daemon."]
+    assert payload["required_actions"] == [
+        "End this agent run; the coordinator must verify the pending Live criteria and close the task."
+    ]
 
 
 def _review(*, status: str) -> TaskCloseReview:

@@ -481,7 +481,7 @@
     "workflows/agents/qa-dev.yaml": "76bc62cf307887957b90a23ee99c9e95c9fa64c4795191612d5fd74601677f4a",
     "workflows/agents/qa-reviewer.yaml": "56106dd464d9fe8bf8a6e3c1305044cfde4edc2ca5ec9c88e609efa0470d3c82",
     "workflows/agents/researcher.yaml": "29a601fda3589653cd2e22cf09cb2f1c9dd5a4d781c6f6c2f321c77d824ac958",
-    "workflows/agents/task-close-validator.yaml": "df8f6e062bc879dcf8ba582f8216f8c8527275f0ee5ec12488d75d0fdf10afd9",
+    "workflows/agents/task-close-validator.yaml": "acdc461bb29ee8eac62132fc772f09c4fad53d421f7fe8033c0ba4beb2cb47bb",
     "workflows/agents/tech-writer.yaml": "0842d6fac2de7c006d1bd190d1c3beb40a184405ed96861ee6baa15c41ded0a0",
     "workflows/agents/trajectory-monitor.yaml": "cc2abdc97fec159b60a7617b0d60d3edf742464294f6c64e1bd01a130b14158a",
     "workflows/agents/triage-agent.yaml": "ff8ee2a478313bce61de9915647a07eaea125efd1af7fdc8734e8f5e63821426",

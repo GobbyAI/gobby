@@ -774,6 +774,7 @@ async def _evaluate_close(
         reason=reason,
         description=task.description or "",
         test_bodies=test_bodies,
+        closing_session_id=resolved_session_id,
         submitted_review=submitted_review,
     )
     review_duration_ms = round((perf_counter() - review_started) * 1_000, 3)

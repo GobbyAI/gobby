@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.tasks.criteria_contract import (
+    is_external_criterion,
     missing_operational_evidence,
     operational_actions_from_command,
     required_operational_actions,
@@ -10,6 +11,21 @@ from gobby.tasks.criteria_contract import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_live_criterion_detection_preserves_split_output() -> None:
+    source = "- Live: restart the daemon\n2) lIvE: run a smoke check\n- Unit tests pass."
+
+    criteria = split_validation_criteria(source)
+
+    assert criteria == (
+        "Live: restart the daemon",
+        "lIvE: run a smoke check",
+        "Unit tests pass.",
+    )
+    assert is_external_criterion("- Live: restart the daemon") is True
+    assert is_external_criterion("2) lIvE: run a smoke check") is True
+    assert [is_external_criterion(criterion) for criterion in criteria] == [True, True, False]
 
 
 def test_inline_numbered_criteria_split_only_when_sequential() -> None:
@@ -86,6 +102,13 @@ def test_operational_evidence_accepts_successful_transcript_actions() -> None:
     assert operational_actions_from_command("uv run gobby restart --wait") == (
         "restart:daemon,gobby",
     )
+
+
+def test_operational_evidence_can_skip_external_criteria() -> None:
+    criteria = "- Live: restart the daemon\n- Install the release."
+
+    assert missing_operational_evidence(criteria, "", skip_external=True) == ("install",)
+    assert missing_operational_evidence(criteria, "") == ("restart", "install")
 
 
 @pytest.mark.parametrize(
