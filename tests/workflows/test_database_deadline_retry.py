@@ -26,6 +26,7 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.observer_plan_mode import resolve_plan_mode
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.templates import TemplateEngine
 
 
 @pytest.fixture
@@ -109,6 +110,107 @@ def test_real_rule_condition_deadline_retries_without_committing_effects(
     assert variables.merge_variables.call_args.args[1]["directive_evaluated"] is True
     assert tasks.get_task.call_count == 2
     assert not caplog.records
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+@pytest.mark.parametrize("event_type", [HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL])
+@pytest.mark.parametrize(
+    "value",
+    ['{{ task_state_in("#1", "closed") }}', 'task_state_in("#1", "closed") and True'],
+    ids=["jinja", "expression"],
+)
+def test_real_set_variable_deadline_retries_without_saving_raw_or_partial_values(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    real_deadline_handler: tuple[WorkflowHookHandler, MagicMock, MagicMock],
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+    event_type: HookEventType,
+    value: str,
+) -> None:
+    handler, variables, tasks = real_deadline_handler
+    error = error_type("task value query expired")
+    tasks.get_task.side_effect = [error, None]
+    variables.get_variables.return_value["task_is_closed"] = "previous value"
+    RuleDefinitionManager(temp_db).create(
+        name="deadline-retry-variable",
+        definition_json=RuleDefinitionBody(
+            event=RuleTriggerEvent(event_type.value),
+            effects=[
+                RuleEffect(type="set_variable", variable="earlier_value", value=1),
+                RuleEffect(type="set_variable", variable="task_is_closed", value=value),
+                RuleEffect(type="set_variable", variable="following_value", value=2),
+            ],
+        ).model_dump_json(),
+        enabled=True,
+    )
+    event = _deadline_event(event_type, tmp_path)
+    stored = deepcopy(variables.get_variables.return_value)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(WorkflowEvaluationTimeout) as raised:
+            handler.evaluate(event)
+        assert raised.value.__cause__ is error
+        variables.merge_variables.assert_not_called()
+        assert variables.get_variables.return_value == stored
+
+        assert handler.evaluate(event).decision == "allow"
+
+    variables.merge_variables.assert_called_once()
+    updates = variables.merge_variables.call_args.args[1]
+    assert updates["task_is_closed"] is False
+    assert updates["earlier_value"] == 1
+    assert updates["following_value"] == 2
+    assert tasks.get_task.call_count == 2
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])
+@pytest.mark.parametrize("render_kind", ["inline", "file"])
+def test_template_engine_deadline_retries_without_logging_generic_errors(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+    render_kind: str,
+) -> None:
+    source = '{{ task_state_in("#1", "closed") }}'
+    (tmp_path / "value.j2").write_text(source)
+    tasks = MagicMock()
+    error = error_type("template query expired")
+    tasks.get_task.side_effect = [error, None]
+    context = build_condition_helpers(task_manager=tasks)
+    engine = TemplateEngine(template_dirs=[str(tmp_path)])
+    render = engine.render if render_kind == "inline" else engine.render_file
+    template = source if render_kind == "inline" else "value.j2"
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(error_type) as raised:
+            render(template, context)
+        assert raised.value is error
+        assert render(template, context) == "False"
+
+    assert tasks.get_task.call_count == 2
+    assert not caplog.records
+
+
+@pytest.mark.parametrize(
+    "value,wrote,expected",
+    [
+        ("{{ missing_helper() }}", True, "{{ missing_helper() }}"),
+        ("variables.get('missing') + 1", False, "previous value"),
+    ],
+    ids=["invalid-jinja", "invalid-expression"],
+)
+def test_set_variable_keeps_ordinary_invalid_value_fallbacks(
+    temp_db: HubDatabase, value: str, wrote: bool, expected: str
+) -> None:
+    variables: dict[str, Any] = {"target": "previous value"}
+    effect = RuleEffect(type="set_variable", variable="target", value=value)
+
+    applied = RuleEngine(temp_db)._apply_set_variable(effect, variables, {"variables": variables})
+
+    assert applied is wrote
+    assert variables == {"target": expected}
 
 
 @pytest.mark.parametrize("error_type", [DatabaseOperationDeadlineExceeded, QueryCanceled])

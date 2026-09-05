@@ -5,6 +5,9 @@ from typing import Any, Protocol, runtime_checkable
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, Undefined, select_autoescape
 from jinja2.sandbox import SandboxedEnvironment
+from psycopg.errors import QueryCanceled
+
+from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +103,8 @@ class TemplateEngine:
         try:
             template = self.env.from_string(template_str)
             return str(template.render(**context))
+        except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+            raise
         except Exception as e:
             logger.exception("Error rendering template: %s", e)
             # Fallback to original string or raise?
@@ -114,6 +119,8 @@ class TemplateEngine:
         try:
             template = self.file_env.get_template(template_name)
             return str(template.render(**context))
+        except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+            raise
         except Exception as e:
             logger.exception("Error rendering template file '%s': %s", template_name, e)
             raise

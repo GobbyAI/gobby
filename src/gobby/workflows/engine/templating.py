@@ -220,7 +220,7 @@ class TemplatingMixin:
             render_ctx = {**ctx, **allowed_funcs}
             engine = TemplateEngine(strict_undefined=False)
             return engine.render(template, render_ctx)
-        except SecurityError:
+        except (SecurityError, DatabaseOperationDeadlineExceeded, psycopg.errors.QueryCanceled):
             raise
         except Exception as e:
             logger.warning("Failed to render template: %s", e)
