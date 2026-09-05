@@ -24,8 +24,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane) {
 
     for row in 0..height {
         for col in 0..width {
-            let index = usize::from(src_y + row) * usize::from(grid.width)
-                + usize::from(src_x + col);
+            let index =
+                usize::from(src_y + row) * usize::from(grid.width) + usize::from(src_x + col);
             let source = &grid.cells[index];
             if source.skip {
                 continue;
@@ -46,10 +46,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane) {
             && cursor.y >= src_y
             && cursor.y < src_y + height
         {
-            frame.set_cursor_position((
-                dst_x + cursor.x - src_x,
-                dst_y + cursor.y - src_y,
-            ));
+            frame.set_cursor_position((dst_x + cursor.x - src_x, dst_y + cursor.y - src_y));
         }
     }
 }

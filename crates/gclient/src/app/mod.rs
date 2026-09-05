@@ -564,10 +564,7 @@ impl Workspace {
     pub fn drop_daemon_ws(&mut self) {
         self.daemon.set_ws_connected(false);
         let generation = Daemon::subscribe(&self.daemon).0.generation;
-        self.observe_daemon_disconnect(
-            generation,
-            DaemonError::Unavailable { retry_after: None },
-        );
+        self.observe_daemon_disconnect(generation, DaemonError::Unavailable { retry_after: None });
     }
 
     pub fn reconnect_daemon_ws(&mut self) -> Result<(), DaemonError> {
@@ -841,9 +838,9 @@ impl<D: Daemon> Workspace<D> {
     }
 
     pub(super) fn retire_attachment(&mut self, attachment_id: &str, reason: Option<&str>) -> bool {
-        self.panes.values_mut().any(|pane| {
-            pane.retire_attachment(attachment_id, reason.map(ToOwned::to_owned))
-        })
+        self.panes
+            .values_mut()
+            .any(|pane| pane.retire_attachment(attachment_id, reason.map(ToOwned::to_owned)))
     }
 
     pub(super) fn remove_terminal(&mut self, terminal_id: &str) {

@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use gobby_terminal::raw_input::RawInputEvent;
 use gobby_terminal::input::KeyboardProtocol;
+use gobby_terminal::raw_input::RawInputEvent;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -18,7 +18,7 @@ use serde_json::json;
 
 use super::{PaneId, Workspace};
 use crate::daemon::{DaemonEvent, ScriptedDaemon};
-use crate::key_input::{Resolution, key_input, resolve_chord, text_bytes};
+use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::ui::{Action, Chrome, Mode};
 
 /// The steady render cadence used by both the real loop and paused-clock tests.
@@ -34,6 +34,20 @@ pub const RECONNECT_DELAYS: [Duration; 4] = [
 
 pub const MIN_RETRY_AFTER: Duration = Duration::from_millis(250);
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(4);
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
+
+/// Enter the async shutdown phase at most once for this workspace.
+pub async fn shutdown<D: Daemon>(
+    workspace: &mut Workspace<D>,
+    daemon: D,
+    deadline: Instant,
+) -> Result<(), DaemonError> {
+    if workspace.shutdown_started {
+        return Ok(());
+    }
+    workspace.shutdown_started = true;
+    daemon.close(deadline).await
+}
 
 /// Scripted carrier for the real select loop used by integration tests.
 pub async fn run_scripted_loop<B: Backend>(
@@ -86,6 +100,8 @@ pub async fn run_scripted_loop<B: Backend>(
             }
         }
     }
+    let daemon = workspace.daemon().clone();
+    shutdown(workspace, daemon, Instant::now() + SHUTDOWN_DEADLINE).await?;
     Ok(())
 }
 
@@ -128,7 +144,10 @@ fn route_scripted_input(
 
 async fn recv_scripted_frame(
     workspace: &mut Workspace,
-) -> Option<(PaneId, Result<gobby_terminal::protocol::ServerMessage, FrameError>)> {
+) -> Option<(
+    PaneId,
+    Result<gobby_terminal::protocol::ServerMessage, FrameError>,
+)> {
     if workspace
         .panes
         .values()
@@ -292,7 +311,10 @@ impl ReconnectSupervisor {
             tokio::time::sleep_until(ready_at).await;
         }
 
-        let episode = self.episode.as_mut().expect("episode survived reconnect wait");
+        let episode = self
+            .episode
+            .as_mut()
+            .expect("episode survived reconnect wait");
         episode.attempts += 1;
         episode.phase = ReconnectPhase::AwaitingHandshake;
         let observed = episode.observed;

@@ -124,11 +124,10 @@ impl Workspace<LiveDaemon> {
             let terminal_id = self.panes[&pane_id].terminal_id.clone();
             if self.panes[&pane_id].direct_available {
                 let request_id = uuid::Uuid::new_v4().to_string();
-                self.panes.get_mut(&pane_id).expect("pane exists").begin_attaching(
-                    request_id.clone(),
-                    Transport::Direct,
-                    snapshot.generation,
-                );
+                self.panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .begin_attaching(request_id.clone(), Transport::Direct, snapshot.generation);
                 match self.request_direct_source(&terminal_id, &request_id).await {
                     Ok((reply, attachment, locator, source)) => {
                         self.install_direct_source(pane_id, &reply, attachment, &locator, source);
@@ -289,11 +288,11 @@ impl Workspace<LiveDaemon> {
             let daemon = self.daemon.clone();
             let (_, mut receiver) = daemon.subscribe();
             let detach = daemon.send(json!({
-                    "type": "terminal_detach",
-                    "request_id": uuid::Uuid::new_v4().to_string(),
-                    "terminal_id": terminal_id,
-                    "attachment_id": old_attachment,
-                }));
+                "type": "terminal_detach",
+                "request_id": uuid::Uuid::new_v4().to_string(),
+                "terminal_id": terminal_id,
+                "attachment_id": old_attachment,
+            }));
             tokio::pin!(detach);
             let reason = loop {
                 tokio::select! {
@@ -397,7 +396,9 @@ impl Workspace<LiveDaemon> {
             .and_then(Value::as_u64)
             .and_then(|value| u16::try_from(value).ok())
             .unwrap_or(80);
-        source.send(&ClientMessage::SetViewport { rows, cols }).await?;
+        source
+            .send(&ClientMessage::SetViewport { rows, cols })
+            .await?;
         Ok(ProxyAttachOutcome::Attached(reply, attachment, source))
     }
 
@@ -408,18 +409,20 @@ impl Workspace<LiveDaemon> {
         generation: Generation,
     ) -> Result<(), DaemonError> {
         let request_id = uuid::Uuid::new_v4().to_string();
-        self.panes.get_mut(&pane_id).expect("pane exists").begin_attaching(
-            request_id.clone(),
-            Transport::Proxy,
-            generation,
-        );
+        self.panes
+            .get_mut(&pane_id)
+            .expect("pane exists")
+            .begin_attaching(request_id.clone(), Transport::Proxy, generation);
         match self.request_proxy_source(terminal_id, &request_id).await {
             Ok(ProxyAttachOutcome::Attached(reply, attachment, source)) => {
                 if self.panes[&pane_id].tombstones.contains(&attachment) {
-                    self.panes.get_mut(&pane_id).expect("pane exists").refuse_attach(
-                        "attachment_reused",
-                        "daemon reused a tombstoned attachment id",
-                    );
+                    self.panes
+                        .get_mut(&pane_id)
+                        .expect("pane exists")
+                        .refuse_attach(
+                            "attachment_reused",
+                            "daemon reused a tombstoned attachment id",
+                        );
                 } else {
                     self.install_proxy_source(pane_id, &reply, attachment, source);
                 }

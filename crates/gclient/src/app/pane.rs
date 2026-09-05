@@ -208,8 +208,9 @@ impl Pane {
 
     pub fn transport(&self) -> Option<Transport> {
         match self.attach {
-            AttachState::Attaching { transport, .. }
-            | AttachState::Attached { transport, .. } => Some(transport),
+            AttachState::Attaching { transport, .. } | AttachState::Attached { transport, .. } => {
+                Some(transport)
+            }
             AttachState::Detached | AttachState::Detaching { .. } => {
                 self.frame_source.as_ref().map(FrameSource::transport)
             }

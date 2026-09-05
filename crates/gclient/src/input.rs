@@ -7,10 +7,7 @@ pub fn key_to_bytes(event: KeyEvent) -> Option<Vec<u8>> {
     key_to_bytes_with_protocol(event, KeyboardProtocol::Legacy)
 }
 
-pub fn key_to_bytes_with_protocol(
-    event: KeyEvent,
-    protocol: KeyboardProtocol,
-) -> Option<Vec<u8>> {
+pub fn key_to_bytes_with_protocol(event: KeyEvent, protocol: KeyboardProtocol) -> Option<Vec<u8>> {
     let bytes = encode_key(event, protocol);
     (!bytes.is_empty()).then_some(bytes)
 }

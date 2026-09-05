@@ -2,9 +2,7 @@
 
 use super::{ControlState, Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, DaemonError, Generation};
-use crate::frame_source::{
-    FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
-};
+use crate::frame_source::{FrameError, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_terminal::protocol::ClientMessage;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -104,7 +102,11 @@ impl Pane {
         Some((old_attachment_id, generation))
     }
 
-    pub(super) fn retire_attachment(&mut self, attachment_id: &str, reason: Option<String>) -> bool {
+    pub(super) fn retire_attachment(
+        &mut self,
+        attachment_id: &str,
+        reason: Option<String>,
+    ) -> bool {
         let matches_current = match &self.attach {
             AttachState::Attached {
                 attachment_id: current,
@@ -168,11 +170,11 @@ impl Pane {
         }
     }
 
-    pub(super) fn take_expired_detach_generation(
-        &mut self,
-        now: Instant,
-    ) -> Option<Generation> {
-        if self.detaching_deadline().is_none_or(|deadline| deadline > now) {
+    pub(super) fn take_expired_detach_generation(&mut self, now: Instant) -> Option<Generation> {
+        if self
+            .detaching_deadline()
+            .is_none_or(|deadline| deadline > now)
+        {
             return None;
         }
         let AttachState::Detaching {
@@ -295,7 +297,10 @@ impl Workspace {
             self.panes
                 .get_mut(&pane_id)
                 .expect("pane exists")
-                .refuse_attach("attachment_reused", "daemon reused a tombstoned attachment id");
+                .refuse_attach(
+                    "attachment_reused",
+                    "daemon reused a tombstoned attachment id",
+                );
             return Ok(());
         }
         let locator = self.locator_for(pane_id);

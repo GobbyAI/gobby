@@ -5,24 +5,24 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use gobby_client::app::AttachState;
 use gobby_client::app::run_loop::{
-    RENDER_TICK, ReconnectAttempt, ReconnectSupervisor, run_scripted_loop,
+    run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
 };
+use gobby_client::app::AttachState;
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, Page, RosterEntry,
     ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WsMessage, WsReply,
 };
-use gobby_client::Workspace;
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
-use serde_json::json;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
+use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
 use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
 use gobby_terminal::raw_input::RawInputEvent;
-use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::Terminal;
+use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
@@ -189,7 +189,15 @@ async fn loop_routes_input_and_frames() {
     drop(guard);
 
     assert_eq!(restore_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert!(ws.daemon().ws_sent_types().iter().any(|kind| kind == "terminal_input"));
+    assert!(ws
+        .daemon()
+        .ws_sent_types()
+        .iter()
+        .any(|kind| kind == "terminal_input"));
+    assert!(
+        !ws.daemon().ws_connected(),
+        "the run loop must finish its shutdown seam before returning"
+    );
     assert_eq!(ws.attention_entry_ids(), vec!["entry-loop".to_string()]);
     assert!(ws.pane(pane).frames_rendered() >= 2);
     let screen: String = terminal
@@ -360,7 +368,9 @@ fn proxy_fallback_uses_fresh_attachment() {
         .ws_sent()
         .into_iter()
         .rev()
-        .find(|message| message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach"))
+        .find(|message| {
+            message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach")
+        })
         .expect("proxy attach request");
     let request_id = attach
         .get("request_id")
@@ -370,7 +380,9 @@ fn proxy_fallback_uses_fresh_attachment() {
     assert_eq!(attach.get("frame_delivery"), Some(&json!("proxy")));
     assert_eq!(attach.get("encoding"), Some(&json!("semantic_frame")));
     assert_ne!(
-        attach.get("attachment_id").and_then(serde_json::Value::as_str),
+        attach
+            .get("attachment_id")
+            .and_then(serde_json::Value::as_str),
         Some(old_attachment.as_str()),
         "the tombstoned attachment id must never be reused"
     );
@@ -414,8 +426,15 @@ fn proxy_fallback_uses_fresh_attachment() {
         .ws_sent()
         .into_iter()
         .rev()
-        .find(|message| message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach"))
-        .and_then(|message| message.get("request_id").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .find(|message| {
+            message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach")
+        })
+        .and_then(|message| {
+            message
+                .get("request_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
         .expect("refused attach request");
     ws.apply_ws(&json!({
         "type": "terminal_attach_result",
@@ -425,7 +444,10 @@ fn proxy_fallback_uses_fresh_attachment() {
         "reason": "too many observers"
     }))
     .expect("settle refused attach");
-    assert!(matches!(ws.pane(pane).attach_state(), AttachState::Detached));
+    assert!(matches!(
+        ws.pane(pane).attach_state(),
+        AttachState::Detached
+    ));
     assert!(!ws.pane(pane).writable());
     assert!(ws.pane(pane).frame_source().is_none());
     assert_eq!(
@@ -484,8 +506,15 @@ async fn live_resize_propagates_geometry_by_policy() {
             message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_resize")
         })
         .collect();
-    assert_eq!(resizes.len(), 1, "only a controlled native pane owns PTY geometry");
-    assert_eq!(resizes[0].get("terminal_id"), Some(&json!("term-controlled")));
+    assert_eq!(
+        resizes.len(),
+        1,
+        "only a controlled native pane owns PTY geometry"
+    );
+    assert_eq!(
+        resizes[0].get("terminal_id"),
+        Some(&json!("term-controlled"))
+    );
     assert_eq!(resizes[0].get("rows"), Some(&json!(30)));
     assert_eq!(resizes[0].get("cols"), Some(&json!(100)));
 }
@@ -604,7 +633,8 @@ fn select_spawn_attach_terminate_loop() {
     let listed = ws
         .pane_for_terminal("term-listed")
         .expect("listed pane reconciled");
-    ws.terminate_terminal("term-listed").expect("terminate listed");
+    ws.terminate_terminal("term-listed")
+        .expect("terminate listed");
     ws.apply_ws(&json!({
         "type": "terminal_kill_result",
         "terminal_id": "term-listed",
@@ -637,8 +667,7 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
             assert_eq!(
                 outcome,
                 ReconnectAttempt::RetryScheduled {
-                    delay: [250, 500, 1_000, 2_000]
-                        .map(Duration::from_millis)[attempt]
+                    delay: [250, 500, 1_000, 2_000].map(Duration::from_millis)[attempt]
                 }
             );
         } else {
@@ -677,10 +706,8 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
             delay: Duration::from_secs(4)
         }
     );
-    assert!(
-        (Duration::from_millis(250)..=Duration::from_millis(251))
-            .contains(&(Instant::now() - started))
-    );
+    assert!((Duration::from_millis(250)..=Duration::from_millis(251))
+        .contains(&(Instant::now() - started)));
     supervisor.cancel(DaemonError::Protocol {
         detail: "quit".to_string(),
     });
@@ -824,7 +851,10 @@ fn daemon_loss_renders_read_only_until_recovery() {
         DaemonError::Unavailable { retry_after: None },
     );
     assert!(!ws.pane(pane).writable());
-    assert!(ws.pane(pane).is_live(), "direct attachment stays renderable");
+    assert!(
+        ws.pane(pane).is_live(),
+        "direct attachment stays renderable"
+    );
     ws.push_frame(pane, "direct frame after daemon loss");
     assert_eq!(ws.pane(pane).frames_rendered(), rendered_before + 1);
     assert!(ws.send_input(pane, b"blocked").is_err());
