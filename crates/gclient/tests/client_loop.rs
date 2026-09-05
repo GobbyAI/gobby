@@ -82,6 +82,24 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
 }
 
+async fn wait_for_http_requests(mock: &MockDaemon, method: &str, path: &str, expected: usize) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let count = mock
+                .requests()
+                .into_iter()
+                .filter(|request| request.method == method && request.target.starts_with(path))
+                .count();
+            if count >= expected {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {method} {path} requests"));
+}
+
 async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers: KeyModifiers) {
     input
         .send(RawInputEvent::Key(TerminalKey::new(code, modifiers)))
@@ -1306,21 +1324,31 @@ async fn select_spawn_attach_terminate_loop() {
                 "snapshot": {"daemon_epoch": "epoch-spawn", "seq": 1}
             }),
         );
-        for _ in 0..2 {
-            mock.enqueue(
-                "GET",
-                "/api/terminals?",
-                200,
-                json!({
-                    "items": [
-                        {"terminal_id": "terminal-survivor", "backend": "native", "state": "live"},
-                        {"terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "backend": "native", "state": "live"}
-                    ],
-                    "next_cursor": null,
-                    "snapshot": {"daemon_epoch": "epoch-spawn", "seq": 1}
-                }),
-            );
-        }
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-survivor", "backend": "native", "state": "live"},
+                    {"terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-spawn", "seq": 1}
+            }),
+        );
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-survivor", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-spawn", "seq": 3}
+            }),
+        );
         let daemon = LiveDaemon::connect(mock.url(), "local-token")
             .await
             .expect("connect live daemon");
@@ -1363,6 +1391,34 @@ async fn select_spawn_attach_terminate_loop() {
                         .map(str::to_string)
                 })
                 .expect("spawned attachment");
+            // The create reply and relist have already attached the pane. Delivering the
+            // lifecycle afterward, twice, must remain idempotent.
+            mock.send_event_and_wait(json!({
+                "type": "terminal_event",
+                "event": "created",
+                "daemon_epoch": "epoch-spawn",
+                "seq": 2,
+                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "terminal": {
+                    "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "backend": "native",
+                    "state": "live"
+                }
+            }))
+            .await;
+            mock.send_event_and_wait(json!({
+                "type": "terminal_event",
+                "event": "created",
+                "daemon_epoch": "epoch-spawn",
+                "seq": 3,
+                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "terminal": {
+                    "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "backend": "native",
+                    "state": "live"
+                }
+            }))
+            .await;
             mock.send_event_and_wait(json!({
                 "type": "terminal_frame",
                 "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1386,14 +1442,8 @@ async fn select_spawn_attach_terminate_loop() {
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
             send_key(&input_tx, KeyCode::Char('D'), KeyModifiers::SHIFT).await;
             wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
-            mock.send_event_and_wait(json!({
-                "type": "terminal_event",
-                "event": "killed",
-                "daemon_epoch": "epoch-spawn",
-                "seq": 2,
-                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-            }))
-            .await;
+            // Suppress the killed lifecycle: the post-reply relist must retire it.
+            wait_for_http_requests(&mock, "GET", "/api/terminals?", 3).await;
             mock.send_event_and_wait(json!({
                 "type": "terminal_frame",
                 "terminal_id": "terminal-survivor",
@@ -1425,10 +1475,134 @@ async fn select_spawn_attach_terminate_loop() {
                 .is_none(),
             "lifecycle removal must retire the spawned pane"
         );
+        assert_eq!(
+            workspace.pane_count(),
+            1,
+            "late/duplicate create and lost kill converge"
+        );
         let survivor = workspace
             .pane_for_terminal("terminal-survivor")
             .expect("streaming survivor");
         assert!(workspace.pane(survivor).frames_rendered() >= 3);
+        mock.shutdown().await;
+    }
+
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        mock.enqueue_spawn_events_before_reply(vec![json!({
+            "type": "terminal_event",
+            "event": "created",
+            "daemon_epoch": "epoch-early",
+            "seq": 2,
+            "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "terminal": {
+                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "backend": "native",
+                "state": "live"
+            }
+        })]);
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-early", "seq": 1}
+            }),
+        );
+        for _ in 0..2 {
+            mock.enqueue(
+                "GET",
+                "/api/terminals?",
+                200,
+                json!({
+                    "items": [
+                        {"terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "backend": "native", "state": "live"}
+                    ],
+                    "next_cursor": null,
+                    "snapshot": {"daemon_epoch": "epoch-early", "seq": 2}
+                }),
+            );
+        }
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-selected");
+        let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+
+        let driver = async {
+            settle_live_event().await;
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+            assert_eq!(
+                websocket_requests(&mock, "terminal_attach")
+                    .into_iter()
+                    .filter(|request| {
+                        request.get("terminal_id")
+                            == Some(&json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                    })
+                    .count(),
+                1,
+                "event-before-reply must attach the spawned terminal once"
+            );
+
+            mock.drop_websockets();
+            timeout(Duration::from_secs(1), async {
+                while mock.websocket_handshakes() < 2 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("spawned panes reconnect");
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+
+            let viewports = websocket_requests(&mock, "terminal_set_viewport");
+            let terminal_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+            let attachment_id = viewports
+                .iter()
+                .rev()
+                .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
+                .and_then(|request| request.get("attachment_id"))
+                .and_then(Value::as_str)
+                .expect("fresh attachment after reconnect");
+            mock.send_event_and_wait(json!({
+                "type": "terminal_frame",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+                "encoding": "bincode-b64",
+                "payload": encoded_frame("spawned-reconnected"),
+            }))
+            .await;
+            settle_live_event().await;
+            drop(input_tx);
+        };
+
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("event-before-reply and reconnect live loop");
+        assert_eq!(workspace.pane_count(), 1);
+        assert!(workspace
+            .pane_for_terminal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            .is_some());
+        assert_eq!(
+            websocket_requests(&mock, "terminal_attach")
+                .into_iter()
+                .filter(|request| {
+                    request.get("terminal_id")
+                        == Some(&json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                })
+                .count(),
+            2,
+            "the spawned terminal attaches once per connection generation"
+        );
         mock.shutdown().await;
     }
 

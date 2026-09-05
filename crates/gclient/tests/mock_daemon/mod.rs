@@ -47,6 +47,7 @@ struct MockState {
     responses: VecDeque<QueuedResponse>,
     requests: Vec<RequestRecord>,
     spawn_refusal: Option<String>,
+    spawn_events_before_reply: VecDeque<Vec<Value>>,
     suppressed_ws: HashSet<String>,
     websocket_handshakes: usize,
     websocket_failures: usize,
@@ -84,6 +85,7 @@ impl MockDaemon {
             responses: VecDeque::new(),
             requests: Vec::new(),
             spawn_refusal: None,
+            spawn_events_before_reply: VecDeque::new(),
             suppressed_ws: HashSet::new(),
             websocket_handshakes: 0,
             websocket_failures: 0,
@@ -209,6 +211,14 @@ impl MockDaemon {
 
     pub fn set_spawn_refusal(&self, reason: &str) {
         self.state.lock().expect("mock state").spawn_refusal = Some(reason.to_string());
+    }
+
+    pub fn enqueue_spawn_events_before_reply(&self, events: Vec<Value>) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .spawn_events_before_reply
+            .push_back(events);
     }
 
     pub fn set_token(&self, token: &str) {
@@ -754,12 +764,22 @@ fn websocket_events_before_reply(
     request: &Value,
     reply: Option<&Value>,
 ) -> Vec<Value> {
-    if request.get("type").and_then(Value::as_str) != Some("terminal_attach")
+    let request_type = request.get("type").and_then(Value::as_str);
+    let succeeded = reply
+        .and_then(|value| value.get("success"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    if request_type == Some("terminal_create") && succeeded {
+        return state
+            .lock()
+            .expect("mock state")
+            .spawn_events_before_reply
+            .pop_front()
+            .unwrap_or_default();
+    }
+    if request_type != Some("terminal_attach")
         || request.get("frame_delivery").and_then(Value::as_str) != Some("proxy")
-        || reply
-            .and_then(|value| value.get("success"))
-            .and_then(Value::as_bool)
-            != Some(true)
+        || !succeeded
     {
         return Vec::new();
     }
