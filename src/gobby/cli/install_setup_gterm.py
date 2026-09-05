@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
@@ -11,6 +14,8 @@ from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
+
+from . import install_release
 
 GTERM_NO_ZIG_SKIP_REASON = (
     "zig not found on PATH; skipping local gterm workspace build (vt-engine requires Zig 0.15)"
@@ -23,14 +28,14 @@ _CRATE_DIR = "gterminal"
 def get_latest_gterm_version(module: Any) -> str | None:
     """Query crates.io for latest gterm version."""
     try:
-        req = module.Request(
+        req = Request(
             module._GTERM_CRATES_API,
             headers={"User-Agent": "gobby-installer/1.0"},
         )
-        with module._urlopen_https(req, timeout=10) as resp:
-            data = module.json.loads(resp.read())
+        with install_release._urlopen_https(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         return str(data["crate"]["max_version"])
-    except (module.URLError, module.json.JSONDecodeError, KeyError, OSError) as e:
+    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
         module.logger.debug("gterm: could not check latest version: %s", e)
         return None
 
@@ -88,7 +93,7 @@ def install_gterm_from_github(
 ) -> bool:
     """Download and extract gterm from GitHub Releases."""
     return bool(
-        module._download_release_binary(
+        install_release._download_release_binary(
             bin_dir,
             binary_name=module._GTERM_BIN_NAME,
             artifact_name="gterm",

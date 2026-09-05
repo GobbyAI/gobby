@@ -25,9 +25,9 @@ from gobby.storage.schema_identity_pin import (
 )
 from gobby.utils.native_bin import native_bin_name
 
-SET_MEMBERS = ("gcode", "gdaemon", "ghook", "gwiki")
+SET_MEMBERS = ("gcode", "gdaemon", "ghook")
 IDENTITY_STAMP_NAME = ".gdaemon-schema-identity.json"
-REBUILD_REMEDY = "rebuild and install all four together"
+REBUILD_REMEDY = "rebuild and install all three together"
 _PROBE_TIMEOUT_SECONDS = 10
 
 
@@ -92,7 +92,7 @@ def promote_workspace_binary_set(
     complete_set = tuple(ordered) == SET_MEMBERS
     if metadata is not None and not complete_set:
         raise BinarySetCoherenceError(
-            "workspace promotion metadata requires all four binary set members"
+            "workspace promotion metadata requires all three binary set members"
         )
     if complete_set:
         _require_candidate_agreement(identities)

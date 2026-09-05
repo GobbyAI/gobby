@@ -183,24 +183,6 @@ def test_get_ghook_version(tmp_path: Path) -> None:
             assert deps.get_ghook_version() == "0.2.0"
 
 
-def test_get_gwiki_version(tmp_path: Path) -> None:
-    with patch.object(Path, "home", return_value=tmp_path):
-        stamp = tmp_path / ".gobby" / "bin" / ".gwiki-version"
-        stamp.parent.mkdir(parents=True)
-        stamp.write_text("0.1.0")
-        with patch("gobby.utils.deps.resolve_native_bin", return_value=None):
-            assert deps.get_gwiki_version() == "0.1.0"
-
-    with patch.object(Path, "home", return_value=tmp_path):
-        gwiki = tmp_path / ".gobby" / "bin" / "gwiki"
-        gwiki.write_text("")
-        gwiki.chmod(0o755)
-        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.1.1"):
-            assert deps.get_gwiki_version() == "0.1.1"
-        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
-            assert deps.get_gwiki_version() == "0.1.0"
-
-
 def test_get_gterm_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gterm-version"
@@ -850,7 +832,6 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_gobby_version", return_value="1"),
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
         patch("gobby.utils.deps.get_ghook_version", return_value="3.5"),
-        patch("gobby.utils.deps.get_gwiki_version", return_value="3.7"),
         patch("gobby.utils.deps.get_gterm_version", return_value="0.1.0"),
         patch("gobby.utils.deps.get_gclient_version", return_value="0.1.0"),
         patch("gobby.utils.deps.get_impeccable_version", return_value="3.5.0"),
@@ -876,7 +857,6 @@ def test_collect_all_deps() -> None:
         res = deps.collect_all_deps(MagicMock(), managed_services=True)
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
-        assert res["gobby"]["gwiki"] == "3.7"
         assert res["gobby"]["gterm"] == "0.1.0"
         assert res["gobby"]["gclient"] == "0.1.0"
         assert res["gobby"]["impeccable"] == "3.5.0"

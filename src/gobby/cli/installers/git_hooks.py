@@ -105,16 +105,13 @@ fi
 # Gobby verification runner for pre-push
 # Runs configured verification commands (type_check, unit_tests, security, etc.)
 
-# Capture pre-push refs once so delete checks, verification, and wiki publishing
-# all use the same stdin payload.
+# Capture pre-push refs once for delete-only checks.
 PUSH_REFS=$(cat)
 ZERO_SHA="0000000000000000000000000000000000000000"
 
 DELETE_ONLY=false
-WIKI_ONLY=false
 if [ -n "$PUSH_REFS" ]; then
     DELETE_ONLY=true
-    WIKI_ONLY=true
     while read -r local_ref local_sha remote_ref remote_sha; do
         if [ -z "$local_ref" ]; then
             continue
@@ -124,52 +121,10 @@ if [ -n "$PUSH_REFS" ]; then
             DELETE_ONLY=false
         fi
 
-        branch="${local_ref#refs/heads/}"
-        if [ "$branch" = "$local_ref" ]; then
-            branch="${remote_ref#refs/heads/}"
-        fi
-        if [ "$branch" != "wiki" ]; then
-            WIKI_ONLY=false
-        fi
     done <<< "$PUSH_REFS"
 fi
-if [ "$DELETE_ONLY" = true ] || [ "$WIKI_ONLY" = true ]; then
+if [ "$DELETE_ONLY" = true ]; then
     exit 0
-fi
-
-REMOTE_NAME="${1:-origin}"
-DEFAULT_BRANCH=$(
-    git symbolic-ref --quiet --short "refs/remotes/${REMOTE_NAME}/HEAD" 2>/dev/null \
-        | sed "s#^${REMOTE_NAME}/##"
-)
-if [ -z "$DEFAULT_BRANCH" ]; then
-    if git show-ref --verify --quiet refs/heads/main \
-        || git show-ref --verify --quiet "refs/remotes/${REMOTE_NAME}/main"; then
-        DEFAULT_BRANCH="main"
-    elif git show-ref --verify --quiet refs/heads/master \
-        || git show-ref --verify --quiet "refs/remotes/${REMOTE_NAME}/master"; then
-        DEFAULT_BRANCH="master"
-    else
-        DEFAULT_BRANCH=$(git branch --show-current 2>/dev/null || true)
-    fi
-fi
-
-PUBLISH_WIKI=false
-if [ -n "$DEFAULT_BRANCH" ] && [ "$DEFAULT_BRANCH" != "wiki" ] && [ -n "$PUSH_REFS" ]; then
-    while read -r local_ref local_sha remote_ref remote_sha; do
-        if [ -z "$local_ref" ] || [ "$local_sha" = "$ZERO_SHA" ]; then
-            continue
-        fi
-
-        branch="${local_ref#refs/heads/}"
-        if [ "$branch" = "$local_ref" ]; then
-            branch="${remote_ref#refs/heads/}"
-        fi
-        if [ "$branch" = "$DEFAULT_BRANCH" ]; then
-            PUBLISH_WIKI=true
-            break
-        fi
-    done <<< "$PUSH_REFS"
 fi
 
 # Gobby backup — snapshot tasks and memories outside the repository before push
@@ -188,48 +143,6 @@ if command -v gobby >/dev/null 2>&1; then
     fi
 fi
 
-if [ "$PUBLISH_WIKI" = true ]; then
-    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-
-    WIKI_VAULT=""
-    if [ -n "$REPO_ROOT" ] && command -v gobby >/dev/null 2>&1; then
-        WIKI_VAULT=$(gobby hooks resolve-wiki-vault "$REPO_ROOT" 2>/dev/null || true)
-    fi
-
-    if [ -n "$WIKI_VAULT" ]; then
-        REPO_NAME=$(basename "$REPO_ROOT")
-        REPO_PARENT=$(cd "$REPO_ROOT/.." && pwd)
-        WIKI_WORKTREE="$REPO_PARENT/${REPO_NAME}-wiki"
-
-        if [ ! -d "$WIKI_WORKTREE" ]; then
-            echo "gobby: wiki publish skipped; missing worktree at $WIKI_WORKTREE" >&2
-            echo "gobby: run 'gobby install git-hooks' from $REPO_ROOT to configure it." >&2
-        elif ! git -C "$WIKI_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "gobby: wiki publish skipped; $WIKI_WORKTREE is not a Git worktree" >&2
-        elif [ "$(git -C "$WIKI_WORKTREE" branch --show-current 2>/dev/null)" != "wiki" ]; then
-            echo "gobby: wiki publish skipped; $WIKI_WORKTREE is not on branch wiki" >&2
-        else
-            find "$WIKI_WORKTREE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-            if command -v rsync >/dev/null 2>&1; then
-                rsync -a --delete --exclude .git "$WIKI_VAULT"/ "$WIKI_WORKTREE"/
-            else
-                (cd "$WIKI_VAULT" && tar --exclude .git -cf - .) \
-                    | (cd "$WIKI_WORKTREE" && tar -xf -)
-            fi
-
-            git -C "$WIKI_WORKTREE" add -A
-            if ! git -C "$WIKI_WORKTREE" diff --cached --quiet --exit-code; then
-                if ! git -C "$WIKI_WORKTREE" commit -m "gobby: sync wiki vault" --no-verify; then
-                    echo "gobby: wiki publish warning; failed to commit wiki vault" >&2
-                fi
-            fi
-
-            if ! git -C "$WIKI_WORKTREE" push "$REMOTE_NAME" wiki; then
-                echo "gobby: wiki publish warning; failed to push branch wiki" >&2
-            fi
-        fi
-    fi
-fi
 """,
     "pre-merge-commit": """
 # Gobby verification runner for pre-merge-commit

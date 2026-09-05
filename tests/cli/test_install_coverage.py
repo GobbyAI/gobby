@@ -427,14 +427,6 @@ class TestInstallCommand:
             "success": True,
             "installed": ["pre-commit", "post-merge"],
             "skipped": [],
-            "wiki_setup": {
-                "success": True,
-                "gitignore_updated": True,
-                "worktree_path": "/fake/repo-wiki",
-                "branch": "wiki",
-                "warnings": [],
-                "tracked_files": [],
-            },
         }
         with (
             patch(
@@ -452,8 +444,6 @@ class TestInstallCommand:
 
         assert result.exit_code == 0, result.output
         assert "pre-commit" in result.output
-        assert "Wiki branch setup:" in result.output
-        assert "/fake/repo-wiki" in result.output
         assert "Git hooks component complete." in result.output
         mock_install.assert_called_once()
         for untouched in (

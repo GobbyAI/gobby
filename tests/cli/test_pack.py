@@ -527,9 +527,9 @@ def _seed_files_home(files_home: Path) -> None:
     dest = files_home / "_personal" / "attachments" / "p1"
     dest.mkdir(parents=True)
     (dest / "a.bin").write_bytes(b"att")
-    wiki = files_home / "wiki" / "alpha"
-    wiki.mkdir(parents=True)
-    (wiki / "note.md").write_text("wiki", encoding="utf-8")
+    notes = files_home / "notes" / "alpha"
+    notes.mkdir(parents=True)
+    (notes / "note.md").write_text("notes", encoding="utf-8")
 
 
 class TestFilesHomePack:
@@ -554,7 +554,7 @@ class TestFilesHomePack:
             names = tar.getnames()
         assert "gobby/files/USER.md" in names
         assert "gobby/files/_personal/attachments/p1/a.bin" in names
-        assert "gobby/files/wiki/alpha/note.md" in names
+        assert "gobby/files/notes/alpha/note.md" in names
         assert not any(name.startswith("gobby/personal") for name in names)
 
     def test_6_2_4_dry_run_includes_files_bind(self, pack_env: PackEnv, runner: CliRunner) -> None:

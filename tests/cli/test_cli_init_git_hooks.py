@@ -1,4 +1,4 @@
-"""Tests for ``gobby init`` Git hook/wiki setup behavior."""
+"""Tests for ``gobby init`` Git hook setup behavior."""
 
 import subprocess
 from pathlib import Path
@@ -39,7 +39,7 @@ def _init_result(
     project_path: Path, *, project_name: str = "repo", already_existed: bool = False
 ) -> InitResult:
     return InitResult(
-        project_id="proj-wiki-setup",
+        project_id="proj-hook-setup",
         project_name=project_name,
         project_path=str(project_path),
         created_at="2024-01-15T10:00:00Z",
@@ -70,14 +70,6 @@ def test_init_installs_hooks_for_git_root(
         "success": True,
         "installed": ["pre-push"],
         "skipped": [],
-        "wiki_setup": {
-            "success": True,
-            "gitignore_updated": True,
-            "worktree_path": str(temp_dir / "repo-wiki"),
-            "branch": "wiki",
-            "warnings": [],
-            "tracked_files": [],
-        },
     }
 
     result = runner.invoke(cli, ["init", "-C", str(target_dir)])
@@ -85,7 +77,6 @@ def test_init_installs_hooks_for_git_root(
     assert result.exit_code == 0
     mock_install_hooks.assert_called_once_with(target_dir.resolve())
     assert "Git hooks installed: pre-push" in result.output
-    assert "Wiki branch setup:" in result.output
 
 
 @patch("gobby.cli.init.install_git_hooks")
@@ -112,7 +103,7 @@ def test_init_skips_hooks_for_monorepo_subdirectory(
 
     assert result.exit_code == 0
     mock_install_hooks.assert_not_called()
-    assert "Git hooks/wiki setup skipped" in result.output
+    assert "Git hook setup skipped" in result.output
     assert str(repo_root.resolve()) in result.output
 
 
@@ -180,4 +171,4 @@ def test_init_existing_project_runs_initial_index(
     assert "Project already initialized: repo" in result.output
     assert "Indexing codebase..." in result.output
     assert "indexed" in result.output
-    assert "Git hooks/wiki setup skipped" not in result.output
+    assert "Git hook setup skipped" not in result.output

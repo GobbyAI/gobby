@@ -1228,4 +1228,4 @@ def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_managed_binary_install_inventory_includes_gterm_and_gclient() -> None:
-    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gwiki", "gterm", "gclient")
+    assert MANAGED_NATIVE_BINARY_NAMES == ("gcode", "ghook", "gterm", "gclient")

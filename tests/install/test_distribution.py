@@ -53,11 +53,10 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_missing(
 
     message = str(exc_info.value)
     assert "Homebrew-managed Gobby requires helper binaries satisfying pinned floors." in message
-    assert HOMEBREW_HELPERS == ("gcode", "ghook", "gwiki", "gterm", "gclient")
+    assert HOMEBREW_HELPERS == ("gcode", "ghook", "gterm", "gclient")
     assert HOMEBREW_HELPER_FORMULAE == {
         "gcode": "gobby-code",
         "ghook": "gobby-hooks",
-        "gwiki": "gobby-wiki",
         "gterm": "gobby-terminal",
         "gclient": "gobby-client",
     }

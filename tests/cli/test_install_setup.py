@@ -20,30 +20,24 @@ import pytest
 import yaml
 
 from gobby.agents.srt_runtime import SrtRuntimeError
-from gobby.cli.install_setup import (
+from gobby.cli.install_release import (
     _download_release_binary,
-    _ensure_gobby_bin_on_path,
     _extract_binary_from_release_archive,
     _fetch_release_checksum,
+    _resolve_latest_release_tag,
+    _verify_release_artifact,
+)
+from gobby.cli.install_setup import (
+    _ensure_gobby_bin_on_path,
     _get_installed_gcode_version,
-    _get_installed_gwiki_version,
     _get_latest_gcode_version,
-    _get_latest_gwiki_version,
     _install_gcode,
     _install_gcode_from_cargo_binstall,
     _install_gcode_from_cargo_install,
     _install_gcode_from_github,
     _install_gcode_from_submodule,
-    _install_gwiki,
-    _install_gwiki_from_cargo_binstall,
-    _install_gwiki_from_cargo_git,
-    _install_gwiki_from_cargo_install,
-    _install_gwiki_from_github,
-    _resolve_latest_release_tag,
     _run_npm_install,
-    _verify_release_artifact,
     _write_gcode_version_stamp,
-    _write_gwiki_version_stamp,
     ensure_daemon_config,
     run_daemon_setup,
 )
@@ -55,7 +49,6 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
-GWIKI_PIN: str = MANAGED_BIN_VERSION_PINS["gwiki"]
 _BUNDLED_INSTALL_ROOT = Path(__file__).parents[2] / "src" / "gobby" / "install"
 _MCP_ADD_SERVER_COMMAND = "gobby mcp-proxy add-server <name> --template <template> [--global]"
 _MCP_SERVERS_JSON_RETIRED = (
@@ -189,7 +182,6 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.install_setup._install_gwiki", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
@@ -198,7 +190,6 @@ class TestRunDaemonSetup:
         mock_ide,
         _mock_gclient,
         _mock_gterm,
-        _mock_gwiki,
         mock_ghook,
         mock_gcode,
         mock_run,
@@ -278,7 +269,6 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.install_setup._install_gwiki", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
@@ -287,7 +277,6 @@ class TestRunDaemonSetup:
         mock_ide: MagicMock,
         _mock_gclient: MagicMock,
         _mock_gterm: MagicMock,
-        _mock_gwiki: MagicMock,
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
         mock_run: MagicMock,
@@ -375,7 +364,6 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.install_setup._install_gwiki", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
     @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
@@ -384,7 +372,6 @@ class TestRunDaemonSetup:
         mock_ide,
         _mock_gclient,
         _mock_gterm,
-        _mock_gwiki,
         mock_ghook,
         mock_gcode,
         mock_run,
@@ -486,7 +473,7 @@ class TestRunDaemonSetup:
                 version="1.0.0",
                 ok=True,
             )
-            for name in ("gcode", "ghook", "gwiki", "gterm", "gclient")
+            for name in ("gcode", "ghook", "gterm", "gclient")
         ]
 
         with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
@@ -657,7 +644,7 @@ class TestRunNpmInstall:
 
 
 class TestReleaseTagHelpers:
-    @patch("gobby.cli.install_setup.urlopen")
+    @patch("gobby.cli.install_release.urlopen")
     def test_resolve_latest_release_tag_prefers_matching_stable_prefix(self, mock_urlopen):
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps(
@@ -693,7 +680,7 @@ class TestReleaseTagHelpers:
 
         assert _resolve_latest_release_tag(tag_prefix="gcode-v") == "gcode-v1.2.3"
 
-    @patch("gobby.cli.install_setup.urlopen")
+    @patch("gobby.cli.install_release.urlopen")
     def test_resolve_latest_release_tag_fails_closed_without_legacy_fallback(self, mock_urlopen):
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps(
@@ -717,7 +704,7 @@ class TestReleaseTagHelpers:
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
         ]
 
-    @patch("gobby.cli.install_setup.urlopen")
+    @patch("gobby.cli.install_release.urlopen")
     def test_download_release_binary_uses_only_canonical_repo(self, mock_urlopen, tmp_path):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -730,7 +717,7 @@ class TestReleaseTagHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
+        with patch("gobby.cli.install_release._verify_release_artifact", return_value=True):
             assert _download_release_binary(
                 tmp_path,
                 binary_name="gcode",
@@ -748,7 +735,7 @@ class TestReleaseTagHelpers:
         ]
         assert (tmp_path / "gcode").read_bytes() == b"fake!"
 
-    @patch("gobby.cli.install_setup.urlopen")
+    @patch("gobby.cli.install_release.urlopen")
     def test_download_release_binary_fails_closed_when_asset_is_missing(
         self, mock_urlopen, tmp_path
     ):
@@ -1020,7 +1007,7 @@ class TestGcodeHelpers:
         cargo_install.assert_called_once_with(bin_dir, newer_version)
         ensure_path.assert_called_once_with(bin_dir)
 
-    @patch("gobby.cli.install_setup.urlopen")
+    @patch("gobby.cli.install_release.urlopen")
     def test_get_latest_gcode_version(self, mock_url):
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps({"crate": {"max_version": "0.2.3"}}).encode()
@@ -1029,11 +1016,11 @@ class TestGcodeHelpers:
 
         assert _get_latest_gcode_version() == "0.2.3"
 
-    @patch("gobby.cli.install_setup.urlopen", side_effect=URLError("timeout"))
+    @patch("gobby.cli.install_release.urlopen", side_effect=URLError("timeout"))
     def test_get_latest_gcode_version_fail(self, mock_url):
         assert _get_latest_gcode_version() is None
 
-    @patch("gobby.cli.install_setup.urlopen")
+    @patch("gobby.cli.install_release.urlopen")
     def test_install_gcode_from_github_uses_binary_specific_tag_prefix(
         self, mock_urlopen, tmp_path
     ):
@@ -1049,7 +1036,7 @@ class TestGcodeHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
+        with patch("gobby.cli.install_release._verify_release_artifact", return_value=True):
             assert _install_gcode_from_github(tmp_path, "aarch64-apple-darwin", "0.2.3") is True
         url_called = mock_urlopen.call_args[0][0]
         if hasattr(url_called, "full_url"):
@@ -1092,215 +1079,6 @@ class TestGcodeHelpers:
         cmd = mock_run.call_args[0][0]
         assert "--version" in cmd
         assert "0.2.3" in cmd
-
-
-class TestGwikiHelpers:
-    def test_get_installed_gwiki_version(self, tmp_path):
-        assert _get_installed_gwiki_version(tmp_path) is None
-        (tmp_path / ".gwiki-version").write_text("0.1.0")
-        assert _get_installed_gwiki_version(tmp_path) == "0.1.0"
-
-    @patch("gobby.cli.install_setup.subprocess.run")
-    def test_get_installed_gwiki_version_prefers_binary_over_stamp(self, mock_run, tmp_path):
-        (tmp_path / "gwiki").write_bytes(b"fake")
-        (tmp_path / ".gwiki-version").write_text("0.0.1")
-        mock_run.return_value = MagicMock(returncode=0, stdout="gwiki 0.1.0\n", stderr="")
-
-        assert _get_installed_gwiki_version(tmp_path) == "0.1.0"
-
-        mock_run.assert_called_once_with(
-            [str(tmp_path / "gwiki"), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-    def test_write_gwiki_version_stamp(self, tmp_path):
-        _write_gwiki_version_stamp(tmp_path, GWIKI_PIN)
-        assert (tmp_path / ".gwiki-version").read_text() == f"{GWIKI_PIN}\n"
-
-    @patch("gobby.cli.install_setup.sys.platform", "darwin")
-    @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
-    @patch("gobby.cli.install_setup._get_latest_gwiki_version")
-    @patch("gobby.cli.install_setup._get_installed_gwiki_version", return_value=GWIKI_PIN)
-    @patch("gobby.cli.install_setup._install_gwiki_from_submodule")
-    @patch("gobby.cli.install_setup._install_gwiki_from_github")
-    @patch("gobby.cli.install_setup._install_gwiki_from_cargo_binstall")
-    @patch("gobby.cli.install_setup._install_gwiki_from_cargo_install")
-    @patch("gobby.cli.install_setup._install_gwiki_from_cargo_git")
-    def test_install_gwiki_skips_when_installed_version_satisfies_pin(
-        self,
-        mock_cargo_git,
-        mock_cargo_install,
-        mock_binstall,
-        mock_github,
-        mock_submodule,
-        mock_installed,
-        mock_latest,
-        mock_machine,
-        tmp_path,
-    ):
-        with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "gwiki").write_bytes(b"\x00")
-
-            res = _install_gwiki()
-
-        assert res == {"installed": False, "skipped": True, "version": GWIKI_PIN}
-        assert (bin_dir / ".gwiki-version").read_text() == f"{GWIKI_PIN}\n"
-        mock_latest.assert_not_called()
-        mock_submodule.assert_not_called()
-        mock_github.assert_not_called()
-        mock_binstall.assert_not_called()
-        mock_cargo_install.assert_not_called()
-        mock_cargo_git.assert_not_called()
-
-    def test_install_gwiki_uses_managed_pin_for_download_and_cargo_paths(self, tmp_path):
-        with (
-            patch("gobby.cli.install_setup.sys.platform", "darwin"),
-            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
-            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_installed_gwiki_version", return_value="0.0.1"),
-            patch("gobby.cli.install_setup._install_gwiki_from_submodule", return_value=False),
-            patch(
-                "gobby.cli.install_setup._install_gwiki_from_github", return_value=False
-            ) as github,
-            patch(
-                "gobby.cli.install_setup._install_gwiki_from_cargo_binstall",
-                return_value=False,
-            ) as binstall,
-            patch(
-                "gobby.cli.install_setup._install_gwiki_from_cargo_install",
-                return_value=True,
-            ) as cargo_install,
-            patch(
-                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
-            ) as ensure_path,
-        ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "gwiki").write_bytes(b"\x00")
-
-            res = _install_gwiki()
-
-        assert res["installed"] is True
-        assert res["version"] == GWIKI_PIN
-        github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", GWIKI_PIN)
-        binstall.assert_called_once_with(bin_dir, GWIKI_PIN)
-        cargo_install.assert_called_once_with(bin_dir, GWIKI_PIN)
-        ensure_path.assert_called_once_with(bin_dir)
-
-    def test_install_gwiki_detects_missing_binary_after_install(self, tmp_path) -> None:
-        with (
-            patch("gobby.cli.install_setup.sys.platform", "darwin"),
-            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
-            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_installed_gwiki_version", return_value=None),
-            patch("gobby.cli.install_setup._install_gwiki_from_submodule", return_value=False),
-            patch("gobby.cli.install_setup._install_gwiki_from_github", return_value=True),
-            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path") as ensure_path,
-        ):
-            res = _install_gwiki()
-
-        assert res["installed"] is False
-        assert res["skipped"] is False
-        assert "did not create" in res["reason"]
-        ensure_path.assert_not_called()
-
-    @patch("gobby.cli.install_setup.urlopen")
-    def test_get_latest_gwiki_version(self, mock_url):
-        fake_resp = MagicMock()
-        fake_resp.read.return_value = json.dumps({"crate": {"max_version": GWIKI_PIN}}).encode()
-        fake_resp.__enter__.return_value = fake_resp
-        mock_url.return_value = fake_resp
-
-        assert _get_latest_gwiki_version() == GWIKI_PIN
-
-    @patch("gobby.cli.install_setup.urlopen", side_effect=URLError("timeout"))
-    def test_get_latest_gwiki_version_fail(self, mock_url):
-        assert _get_latest_gwiki_version() is None
-
-    @patch("gobby.cli.install_setup.urlopen")
-    def test_install_gwiki_from_github_uses_wiki_tag_prefix(self, mock_urlopen, tmp_path):
-        buf = BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            info = tarfile.TarInfo(name="gwiki")
-            info.size = 5
-            tar.addfile(info, BytesIO(b"fake!"))
-
-        buf.seek(0)
-        fake_resp = MagicMock()
-        fake_resp.read.return_value = buf.read()
-        fake_resp.__enter__.return_value = fake_resp
-        mock_urlopen.return_value = fake_resp
-
-        with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
-            assert _install_gwiki_from_github(tmp_path, "aarch64-apple-darwin", GWIKI_PIN) is True
-        url_called = mock_urlopen.call_args[0][0]
-        if hasattr(url_called, "full_url"):
-            url_called = url_called.full_url
-        assert f"gwiki-v{GWIKI_PIN}" in url_called
-        assert (tmp_path / "gwiki").read_bytes() == b"fake!"
-
-    @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
-    @patch("subprocess.run")
-    def test_install_gwiki_from_cargo_binstall_with_version(self, mock_run, mock_which, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gwiki_from_cargo_binstall(tmp_path, GWIKI_PIN) is True
-        cmd = mock_run.call_args[0][0]
-        assert f"gobby-wiki@{GWIKI_PIN}" in cmd
-
-    @patch("shutil.which", return_value="/usr/bin/cargo")
-    @patch("subprocess.run")
-    @patch("gobby.cli.install_setup.click")
-    def test_install_gwiki_from_cargo_install_with_version(
-        self, mock_click, mock_run, mock_which, tmp_path
-    ):
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gwiki_from_cargo_install(tmp_path, GWIKI_PIN) is True
-        cmd = mock_run.call_args[0][0]
-        assert "gobby-wiki" in cmd
-        assert "--version" in cmd
-        assert GWIKI_PIN in cmd
-
-    @patch("shutil.which", return_value="/usr/bin/cargo")
-    @patch("subprocess.run")
-    @patch("gobby.cli.install_setup.click")
-    def test_install_gwiki_from_cargo_git_uses_wiki_package(
-        self, mock_click, mock_run, mock_which, tmp_path
-    ):
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gwiki_from_cargo_git(tmp_path) is True
-        cmd = mock_run.call_args[0][0]
-        assert "-p" in cmd
-        assert "gobby-wiki" in cmd
-
-    @patch("shutil.which", return_value="/usr/bin/cargo")
-    @patch("subprocess.run")
-    @patch("gobby.cli.install_setup.click")
-    def test_install_gwiki_from_cargo_git_pins_default_pin_tag(
-        self, mock_click, mock_run, mock_which, tmp_path
-    ):
-        # The cargo-git fallback must not build HEAD: with no explicit version
-        # it pins --tag gwiki-v<managed pin>.
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gwiki_from_cargo_git(tmp_path) is True
-        cmd = mock_run.call_args[0][0]
-        assert "--tag" in cmd
-        assert cmd[cmd.index("--tag") + 1] == f"gwiki-v{GWIKI_PIN}"
-
-    @patch("shutil.which", return_value="/usr/bin/cargo")
-    @patch("subprocess.run")
-    @patch("gobby.cli.install_setup.click")
-    def test_install_gwiki_from_cargo_git_pins_explicit_version_tag(
-        self, mock_click, mock_run, mock_which, tmp_path
-    ):
-        mock_run.return_value = MagicMock(returncode=0)
-        assert _install_gwiki_from_cargo_git(tmp_path, "9.9.9") is True
-        cmd = mock_run.call_args[0][0]
-        assert "--tag" in cmd
-        assert cmd[cmd.index("--tag") + 1] == "gwiki-v9.9.9"
 
 
 class TestEnsurePath:
@@ -1475,17 +1253,17 @@ class TestParseSha256Digest:
 class TestFetchReleaseChecksum:
     def test_success(self):
         digest = "d" * 64
-        with patch("gobby.cli.install_setup.urlopen", return_value=_checksum_resp(f"{digest}\n")):
+        with patch("gobby.cli.install_release.urlopen", return_value=_checksum_resp(f"{digest}\n")):
             result = _fetch_release_checksum("https://example.com/x.sha256", label="gcode")
         assert result == digest
 
     def test_network_error_returns_none(self):
-        with patch("gobby.cli.install_setup.urlopen", side_effect=URLError("boom")):
+        with patch("gobby.cli.install_release.urlopen", side_effect=URLError("boom")):
             result = _fetch_release_checksum("https://example.com/x.sha256", label="gcode")
         assert result is None
 
     def test_unparseable_body_returns_none(self):
-        with patch("gobby.cli.install_setup.urlopen", return_value=_checksum_resp("garbage\n")):
+        with patch("gobby.cli.install_release.urlopen", return_value=_checksum_resp("garbage\n")):
             result = _fetch_release_checksum("https://example.com/x.sha256", label="gcode")
         assert result is None
 
@@ -1494,14 +1272,14 @@ class TestVerifyReleaseArtifact:
     def test_matching_digest_passes(self):
         data = b"payload-bytes"
         digest = hashlib.sha256(data).hexdigest()
-        with patch("gobby.cli.install_setup._fetch_release_checksum", return_value=digest):
+        with patch("gobby.cli.install_release._fetch_release_checksum", return_value=digest):
             assert (
                 _verify_release_artifact(data, checksum_url="https://x/.sha256", label="gcode")
                 is True
             )
 
     def test_mismatched_digest_fails(self):
-        with patch("gobby.cli.install_setup._fetch_release_checksum", return_value="0" * 64):
+        with patch("gobby.cli.install_release._fetch_release_checksum", return_value="0" * 64):
             assert (
                 _verify_release_artifact(
                     b"payload-bytes", checksum_url="https://x/.sha256", label="gcode"
@@ -1510,7 +1288,7 @@ class TestVerifyReleaseArtifact:
             )
 
     def test_missing_checksum_fails_closed(self):
-        with patch("gobby.cli.install_setup._fetch_release_checksum", return_value=None):
+        with patch("gobby.cli.install_release._fetch_release_checksum", return_value=None):
             assert (
                 _verify_release_artifact(
                     b"payload-bytes", checksum_url="https://x/.sha256", label="gcode"
@@ -1538,7 +1316,7 @@ class TestDownloadReleaseBinaryChecksum:
         digest = hashlib.sha256(archive).hexdigest()
         # urlopen order: archive download, then checksum fetch.
         with patch(
-            "gobby.cli.install_setup.urlopen",
+            "gobby.cli.install_release.urlopen",
             side_effect=[_archive_resp(archive), _checksum_resp(f"{digest}\n")],
         ):
             result = self._download(tmp_path)
@@ -1552,7 +1330,7 @@ class TestDownloadReleaseBinaryChecksum:
 
         with (
             patch(
-                "gobby.cli.install_setup.try_acquire_native_bin_lock", return_value=lock
+                "gobby.cli.install_release.try_acquire_native_bin_lock", return_value=lock
             ) as acquire_lock,
             patch("gobby.install.bin_freshness_promotion.os.replace", wraps=os.replace) as replace,
         ):
@@ -1574,7 +1352,7 @@ class TestDownloadReleaseBinaryChecksum:
         destination = tmp_path / "gcode"
         destination.write_bytes(b"old-binary")
 
-        with patch("gobby.cli.install_setup.try_acquire_native_bin_lock", return_value=None):
+        with patch("gobby.cli.install_release.try_acquire_native_bin_lock", return_value=None):
             result = _extract_binary_from_release_archive(
                 _release_tarball("gcode", b"new-binary"),
                 archive_ext="tar.gz",
@@ -1589,7 +1367,7 @@ class TestDownloadReleaseBinaryChecksum:
     def test_rejects_and_skips_placement_on_mismatch(self, tmp_path):
         archive = _release_tarball("gcode")
         with patch(
-            "gobby.cli.install_setup.urlopen",
+            "gobby.cli.install_release.urlopen",
             side_effect=[
                 _archive_resp(archive),
                 _checksum_resp(("0" * 64) + "\n"),
@@ -1604,7 +1382,7 @@ class TestDownloadReleaseBinaryChecksum:
     def test_rejects_and_skips_placement_on_missing_checksum(self, tmp_path: Path) -> None:
         archive = _release_tarball("gcode")
         with patch(
-            "gobby.cli.install_setup.urlopen",
+            "gobby.cli.install_release.urlopen",
             side_effect=[
                 _archive_resp(archive),
                 URLError("no checksum published"),

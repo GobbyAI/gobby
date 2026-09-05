@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
@@ -12,6 +15,8 @@ from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
 
+from . import install_release
+
 _CRATE_PACKAGE = "gobby-client"
 _CRATE_DIR = "gclient"
 
@@ -19,14 +24,14 @@ _CRATE_DIR = "gclient"
 def get_latest_gclient_version(module: Any) -> str | None:
     """Query crates.io for latest gclient version."""
     try:
-        req = module.Request(
+        req = Request(
             module._GCLIENT_CRATES_API,
             headers={"User-Agent": "gobby-installer/1.0"},
         )
-        with module._urlopen_https(req, timeout=10) as resp:
-            data = module.json.loads(resp.read())
+        with install_release._urlopen_https(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         return str(data["crate"]["max_version"])
-    except (module.URLError, module.json.JSONDecodeError, KeyError, OSError) as e:
+    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
         module.logger.debug("gclient: could not check latest version: %s", e)
         return None
 
@@ -84,7 +89,7 @@ def install_gclient_from_github(
 ) -> bool:
     """Download and extract gclient from GitHub Releases."""
     return bool(
-        module._download_release_binary(
+        install_release._download_release_binary(
             bin_dir,
             binary_name=module._GCLIENT_BIN_NAME,
             artifact_name="gclient",

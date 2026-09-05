@@ -17,7 +17,7 @@ cutover_module = importlib.import_module("gobby.cli.cutover")
 
 pytestmark = pytest.mark.unit
 
-SET_MEMBERS = ("gcode", "gdaemon", "ghook", "gwiki")
+SET_MEMBERS = ("gcode", "gdaemon", "ghook")
 VERSION = "0.5.0"
 
 
@@ -120,12 +120,12 @@ def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(
     assert str(stale_gdaemon) in message
     assert "v419" in message
     assert "v420" in message
-    assert "rebuild and install all four together" in message
+    assert "rebuild and install all three together" in message
     assert (bin_dir / "gdaemon").read_bytes() == artifacts["gdaemon"].read_bytes()
     assert "restored prior install" not in message
 
 
-def test_build_uses_one_locked_release_command_for_all_four_packages(
+def test_build_uses_one_locked_release_command_for_all_set_packages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     artifacts = _artifacts(tmp_path, _identity(420))
@@ -150,8 +150,6 @@ def test_build_uses_one_locked_release_command_for_all_four_packages(
             "gobby-daemon",
             "-p",
             "gobby-hooks",
-            "-p",
-            "gobby-wiki",
         ]
     ]
 

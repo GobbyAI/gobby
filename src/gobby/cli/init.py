@@ -11,7 +11,6 @@ from pathlib import Path
 
 import click
 
-from gobby.cli._install_prompts import _echo_wiki_setup_summary
 from gobby.cli.installers.git_hooks import install_git_hooks
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.project_init import initialize_project
@@ -168,14 +167,14 @@ def init(
 
 
 def _maybe_install_git_hooks_for_init(project_path: Path) -> None:
-    """Install Git hooks/wiki setup during init when project is a Git top-level root."""
+    """Install Git hook setup during init when project is a Git top-level root."""
     git_root = _git_toplevel(project_path)
     if git_root is None:
         return
 
     if git_root != project_path:
         click.echo(
-            "  Warning: Git hooks/wiki setup skipped: "
+            "  Warning: Git hook setup skipped: "
             f"{project_path} is inside Git repository {git_root}. "
             "Run `gobby init` from the repository root to enable it."
         )
@@ -183,7 +182,7 @@ def _maybe_install_git_hooks_for_init(project_path: Path) -> None:
 
     hook_result = install_git_hooks(project_path)
     if not hook_result.get("success"):
-        click.echo(f"  Warning: Git hooks/wiki setup skipped: {hook_result.get('error')}")
+        click.echo(f"  Warning: Git hook setup skipped: {hook_result.get('error')}")
         return
 
     installed = hook_result.get("installed") or []
@@ -194,7 +193,6 @@ def _maybe_install_git_hooks_for_init(project_path: Path) -> None:
         click.echo("Git hooks already installed")
     else:
         click.echo("Git hooks checked")
-    _echo_wiki_setup_summary(hook_result.get("wiki_setup"))
 
 
 def _git_toplevel(project_path: Path) -> Path | None:

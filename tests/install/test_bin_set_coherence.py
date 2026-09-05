@@ -13,7 +13,7 @@ from gobby.install.bin_set_coherence import (
 )
 
 PIN_NAME = ".gdaemon-schema-identity.json"
-SET_MEMBERS = ("gcode", "gdaemon", "ghook", "gwiki")
+SET_MEMBERS = ("gcode", "gdaemon", "ghook")
 
 
 def _identity(version: int) -> dict[str, int | str]:
@@ -66,11 +66,11 @@ def test_partial_mixed_identity_is_refused_without_promoting(tmp_path: Path) -> 
     assert "gcode" in message
     assert json.dumps(candidate_identity, separators=(",", ":"), sort_keys=True) in message
     assert json.dumps(installed_identity, separators=(",", ":"), sort_keys=True) in message
-    assert "rebuild and install all four together" in message
+    assert "rebuild and install all three together" in message
     assert installed.read_text(encoding="utf-8") == "old-gcode"
 
 
-def test_all_four_coherent_members_promote_and_rewrite_pin(tmp_path: Path) -> None:
+def test_complete_set_coherent_members_promote_and_rewrite_pin(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     source_dir = tmp_path / "sources"
     bin_dir.mkdir()
@@ -133,13 +133,13 @@ def test_first_workspace_member_can_bootstrap_an_empty_bin_dir(tmp_path: Path) -
     assert (bin_dir / "gdaemon").read_bytes() == candidate.read_bytes()
 
 
-def test_all_four_disagreeing_members_are_refused_without_promoting(tmp_path: Path) -> None:
+def test_complete_set_disagreeing_members_are_refused_without_promoting(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     source_dir = tmp_path / "sources"
     bin_dir.mkdir()
     source_dir.mkdir()
     candidates = _candidate_set(source_dir, _identity(2))
-    _write_stub(candidates["gwiki"], _identity(3))
+    _write_stub(candidates["ghook"], _identity(3))
     for name in SET_MEMBERS:
         (bin_dir / name).write_text(f"old-{name}", encoding="utf-8")
 
@@ -148,8 +148,8 @@ def test_all_four_disagreeing_members_are_refused_without_promoting(tmp_path: Pa
 
     message = str(exc_info.value)
     assert "gcode" in message
-    assert "gwiki" in message
-    assert "rebuild and install all four together" in message
+    assert "ghook" in message
+    assert "rebuild and install all three together" in message
     for name in SET_MEMBERS:
         assert (bin_dir / name).read_text(encoding="utf-8") == f"old-{name}"
 
@@ -186,10 +186,9 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
 
     message = str(exc_info.value)
     assert "promoted: gcode, gdaemon" in message
-    assert "unpromoted: ghook, gwiki" in message
+    assert "unpromoted: ghook" in message
     assert "restored prior install" not in message
     assert (bin_dir / "gcode").read_bytes() == candidates["gcode"].read_bytes()
     assert (bin_dir / "gdaemon").read_bytes() == candidates["gdaemon"].read_bytes()
     assert (bin_dir / "ghook").read_text(encoding="utf-8") == "old-ghook"
-    assert (bin_dir / "gwiki").read_text(encoding="utf-8") == "old-gwiki"
     assert json.loads((bin_dir / PIN_NAME).read_text(encoding="utf-8")) == installed_identity
