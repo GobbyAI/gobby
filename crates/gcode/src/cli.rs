@@ -390,6 +390,18 @@ pub(crate) enum Command {
     },
     /// List indexed projects
     Projects,
+    /// Validate or apply exact manifest-bound retirement of missing file content
+    RetireFiles {
+        /// Private manifest containing exact project, path and content identities
+        #[arg(long)]
+        manifest: String,
+        /// Delete admitted content and projections; requires a durable receipt
+        #[arg(long, requires = "receipt")]
+        apply: bool,
+        /// Private receipt file for interruption-safe progress
+        #[arg(long, requires = "apply")]
+        receipt: Option<String>,
+    },
     /// Remove stale projects and reconcile orphaned graph + vector projection state across indexed projects
     Prune {
         /// Skip confirmation prompt

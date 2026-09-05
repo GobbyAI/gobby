@@ -646,6 +646,22 @@ fn delete_file_node_is_project_and_path_scoped() {
 }
 
 #[test]
+fn retirement_shell_delete_requires_no_incident_relationships() {
+    let query = delete_empty_file_node_query("project-1", "wiki/page.md").expect("query");
+    assert!(query.cypher.contains("WHERE NOT (f)--()"));
+    assert!(query.cypher.contains("DELETE f"));
+    assert!(!query.cypher.contains("DETACH"));
+    assert_eq!(
+        query.params.get("project").map(String::as_str),
+        Some("'project-1'")
+    );
+    assert_eq!(
+        query.params.get("file_path").map(String::as_str),
+        Some("'wiki/page.md'")
+    );
+}
+
+#[test]
 fn clear_project_is_project_scoped() {
     let query = clear_project_query("project-1").expect("query");
 

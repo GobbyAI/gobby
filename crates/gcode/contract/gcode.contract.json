@@ -2197,6 +2197,50 @@
       "json_output_keys": []
     },
     {
+      "name": "retire-files",
+      "summary": "Validate or apply exact manifest-bound retirement of missing file content; apply requires a private receipt.",
+      "daemon_consumed": false,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--manifest",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--apply",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--receipt",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "version",
+        "manifest_digest",
+        "backends",
+        "source_inventory_digest",
+        "project_id",
+        "machine_id",
+        "root_path",
+        "mode",
+        "complete",
+        "files"
+      ]
+    },
+    {
       "name": "prune",
       "summary": "Remove stale project records and reconcile projections across indexed projects.",
       "daemon_consumed": false,

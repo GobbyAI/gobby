@@ -20,8 +20,8 @@ mod sync_plan;
 
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_project_query, count_file_projection_nodes_query,
-    delete_content_version_queries, delete_file_graph_queries, delete_file_node_query,
-    delete_stale_file_graph_queries, project_file_path_queries,
+    delete_content_version_queries, delete_empty_file_node_query, delete_file_graph_queries,
+    delete_file_node_query, delete_stale_file_graph_queries, project_file_path_queries,
 };
 #[cfg(test)]
 pub(crate) use deletion::{clear_all_code_index_query, project_scopes_query};
@@ -182,6 +182,87 @@ impl<'a> CodeGraph<'a> {
             self.client,
             delete_file_node_query(self.project_id, file_path)?,
         )
+    }
+
+    /// Retire only an empty shell after the caller verified no content remains.
+    pub fn delete_empty_file_node(&mut self, file_path: &str) -> anyhow::Result<()> {
+        execute_write_query(
+            self.client,
+            delete_empty_file_node_query(self.project_id, file_path)?,
+        )?;
+        anyhow::ensure!(
+            self.count_file_projection_nodes(file_path)? == 0,
+            "retired file still has graph facts: {file_path}",
+        );
+        Ok(())
+    }
+
+    /// Refuse graph identities absent from the exact content manifest before deletion.
+    pub(crate) fn validate_file_retirement(
+        &mut self,
+        file_path: &str,
+        symbols: &std::collections::BTreeMap<String, String>,
+        hashes: &BTreeSet<String>,
+    ) -> anyhow::Result<()> {
+        for (kind, query) in deletion::retirement_scope_queries(self.project_id, file_path)?
+            .into_iter()
+            .enumerate()
+        {
+            let crate::graph::typed_query::TypedQuery { cypher, params } = query;
+            for row in self.client.query(&cypher, Some(params))? {
+                let admitted = match kind {
+                    0 => row
+                        .get("symbol_id")
+                        .and_then(Value::as_str)
+                        .and_then(|id| symbols.get(id))
+                        .is_some_and(|expected| {
+                            row.get("content_hash").and_then(Value::as_str)
+                                == Some(expected.as_str())
+                        }),
+                    1 => row
+                        .get("content_hash")
+                        .and_then(Value::as_str)
+                        .is_some_and(|hash| hashes.contains(hash)),
+                    2 => {
+                        row.get("other_project").and_then(Value::as_str) == Some(self.project_id)
+                            && row
+                                .get("relationship_type")
+                                .and_then(Value::as_str)
+                                .is_some_and(|kind| {
+                                    [
+                                        "DEFINES",
+                                        "IMPORTS",
+                                        "CALLS",
+                                        "INHERITS",
+                                        "EXTENDS",
+                                        "IMPLEMENTS",
+                                    ]
+                                    .contains(&kind)
+                                })
+                    }
+                    _ => {
+                        row.get("detached_type")
+                            .and_then(Value::as_str)
+                            .is_some_and(|kind| {
+                                ["INHERITS", "EXTENDS", "IMPLEMENTS"].contains(&kind)
+                            })
+                            && row
+                                .get("content_hash")
+                                .and_then(Value::as_str)
+                                .is_some_and(|hash| hashes.contains(hash))
+                            && row.get("source_project").and_then(Value::as_str)
+                                == Some(self.project_id)
+                            && row.get("target_project").and_then(Value::as_str)
+                                == Some(self.project_id)
+                    }
+                };
+                anyhow::ensure!(
+                    admitted,
+                    "unlisted graph identity or relationship for {file_path}"
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn cleanup_orphans(&mut self) -> anyhow::Result<()> {
