@@ -23,6 +23,7 @@ path = "src/main.rs"
 anyhow = "1"
 base64 = "0.22.1"
 crossterm = "0.29"
+futures-util = "0.3"
 gobby-core = { path = "../gcore", version = "0.10.0" }
 gobby-terminal = { path = "../gterminal", version = "0.1.0", default-features = false }
 libc = "0.2"
@@ -39,4 +40,6 @@ unicode-width = "0.2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+sha1 = "0.10"
 tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }
