@@ -24,6 +24,7 @@ from weakref import WeakValueDictionary
 
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
+from gobby.agents.run_completion import closed_task_completion_result
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
@@ -819,14 +820,7 @@ class SessionCoordinator:
                 e,
             )
             return None
-        if task.closed_at is None:
-            return None
-        task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
-        return (
-            "Task completion: "
-            f"task={task_ref}; closed_at={task.closed_at.isoformat()}; "
-            f"commit_sha={task.closed_commit_sha or '<none>'}"
-        )
+        return closed_task_completion_result(task)
 
     def _agent_run_notification_status(
         self,

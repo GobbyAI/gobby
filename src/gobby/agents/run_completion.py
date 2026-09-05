@@ -19,7 +19,7 @@ from gobby.agents.terminal_delivery import (
     reset_terminal_delivery_offload as reset_terminal_delivery_offload,
 )
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -123,6 +123,19 @@ class TaskCompletionState(TypedDict):
     is_escalated: bool
     escalation_reason: str | None
     linked_commits: list[str]
+
+
+def closed_task_completion_result(task: Task, result: str | None = None) -> str | None:
+    """Append authoritative close metadata to a task-bound agent result."""
+    if task.closed_at is None:
+        return None
+    task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
+    suffix = (
+        "Task completion: "
+        f"task={task_ref}; closed_at={task.closed_at.isoformat()}; "
+        f"commit_sha={task.closed_commit_sha or '<none>'}"
+    )
+    return f"{result.rstrip()}\n\n{suffix}" if result else suffix
 
 
 def _task_completion_state(db: HubDatabase, task_id: str | None) -> TaskCompletionState:

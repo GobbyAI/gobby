@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,7 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -148,6 +150,71 @@ async def test_closed_task_run_succeeds_on_next_completion_sweep(
     assert sweep_calls.index("check_completed_task_agents") < sweep_calls.index(
         "check_autonomous_stuck_agents"
     )
+
+
+@pytest.mark.asyncio
+async def test_task_completed_before_session_end_persists_closed_task_result(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    parent_session: dict[str, Any],
+    sample_project: dict[str, Any],
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task_id, run = _create_task_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        parent_session=parent_session,
+        sample_project=sample_project,
+    )
+    stale_result = "close_task was refused; the task is not definitively closed."
+    seeded = agent_run_manager.record_termination_intent(
+        run.id,
+        action="complete",
+        result_prefix=stale_result,
+    )
+    assert seeded is not None
+    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    closed_task = task_manager.get_task(task_id)
+    monitor = _monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        task_manager=task_manager,
+        stuck_detector=MagicMock(),
+    )
+
+    with (
+        patch.object(
+            monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(monitor._cleanup_handler, "post_terminal_cleanup", new=AsyncMock()),
+    ):
+        handled = await monitor.check_completed_task_agents()
+
+    coordinator = SessionCoordinator(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+    )
+    notification = MagicMock()
+    session = MagicMock(id="task-completed-child", agent_run_id=run.id)
+    with patch.object(coordinator, "_notify_agent_completion", notification):
+        await asyncio.to_thread(coordinator.complete_agent_run, session)
+
+    completed = agent_run_manager.get(run.id)
+    assert handled == 1
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.terminal_reason == "task_completed"
+    assert completed.error is None
+    assert closed_task.closed_at is not None
+    assert completed.result == (
+        f"{stale_result}\n\n"
+        "Task completion: "
+        f"task=#{closed_task.seq_num}; closed_at={closed_task.closed_at.isoformat()}; "
+        "commit_sha=abc123"
+    )
+    notification.assert_called_once_with(run.id, "success")
 
 
 @pytest.mark.asyncio
