@@ -294,7 +294,11 @@ impl ReconnectSupervisor {
         let rolled_forward = observed > episode.observed;
         episode.observed = episode.observed.max(observed);
         if rolled_forward && matches!(episode.phase, ReconnectPhase::AwaitingHandshake) {
-            episode.phase = ReconnectPhase::ReadyAt(Instant::now());
+            let delay = RECONNECT_DELAYS
+                .get(episode.attempts.saturating_sub(1))
+                .copied()
+                .unwrap_or_default();
+            episode.phase = ReconnectPhase::ReadyAt(Instant::now() + delay);
         }
         episode.waiters.push(sender);
         receiver
@@ -336,6 +340,22 @@ impl ReconnectSupervisor {
         &mut self,
         result: Result<Generation, DaemonError>,
     ) -> ReconnectAttempt {
+        if self
+            .episode
+            .as_ref()
+            .is_some_and(|episode| matches!(episode.phase, ReconnectPhase::ReadyAt(_)))
+        {
+            if let Ok(generation) = result {
+                let episode = self.episode.as_mut().expect("episode exists");
+                episode.observed = episode.observed.max(generation);
+            }
+            if self.attempt_count() > RECONNECT_DELAYS.len() {
+                let error = DaemonError::Unavailable { retry_after: None };
+                self.settle(Err(error.clone()));
+                return ReconnectAttempt::Exhausted(error);
+            }
+            return ReconnectAttempt::Idle;
+        }
         match result {
             Ok(generation) => {
                 if let Some(episode) = self.episode.as_mut() {

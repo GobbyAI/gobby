@@ -344,13 +344,22 @@ async fn handle_live_event(
     supervisor: &mut ReconnectSupervisor,
     event: DaemonEvent,
 ) -> Result<(), DaemonError> {
+    let terminal_created = matches!(
+        &event,
+        DaemonEvent::Terminal { payload, .. }
+            if payload.get("event").and_then(Value::as_str) == Some("created")
+    );
     if let DaemonEvent::Disconnected { generation, .. } = &event {
         drop(supervisor.request(*generation));
     }
     if let DaemonEvent::Message(message) = &event {
         apply_live_write_outcome(workspace, message);
     }
-    workspace.apply_live_event(event).await
+    workspace.apply_live_event(event).await?;
+    if terminal_created {
+        workspace.attach_ready_panes().await?;
+    }
+    Ok(())
 }
 
 async fn handle_reconnect_outcome(

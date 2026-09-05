@@ -632,9 +632,13 @@ impl Workspace<LiveDaemon> {
             let current = self.daemon.subscribe().0;
             self.daemon_ready = current.ready;
             self.daemon_error = current.last_error;
-            if current.ready {
-                self.attach_ready_panes().await?;
+            if !current.ready {
+                return Err(self
+                    .daemon_error
+                    .clone()
+                    .unwrap_or(DaemonError::Unavailable { retry_after: None }));
             }
+            self.attach_ready_panes().await?;
             return Ok(());
         }
     }
@@ -680,12 +684,45 @@ impl Workspace<LiveDaemon> {
                 self.advance_lifecycle(daemon_epoch, seq);
             }
             DaemonEvent::LeaseLost {
-                daemon_epoch, seq, ..
-            }
-            | DaemonEvent::AttachmentFinalized {
-                daemon_epoch, seq, ..
+                daemon_epoch,
+                seq,
+                payload,
             } => {
                 if self.accept_lifecycle(&daemon_epoch, seq) {
+                    if let Some(attachment_id) =
+                        payload.get("attachment_id").and_then(Value::as_str)
+                    {
+                        let lease_generation = payload
+                            .get("lease_generation")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        if let Some(pane) = self.pane_for_attachment_mut(attachment_id) {
+                            if lease_generation >= pane.lease_generation() {
+                                pane.set_lease_generation(lease_generation);
+                                pane.control = ControlState::LeaseLost;
+                                pane.take_back = true;
+                                pane.pending_input = None;
+                            }
+                        }
+                    }
+                    self.advance_lifecycle(daemon_epoch, seq);
+                } else if self
+                    .lifecycle
+                    .as_ref()
+                    .is_some_and(|pin| pin.daemon_epoch != daemon_epoch)
+                {
+                    self.fetch_roster().await?;
+                }
+            }
+            DaemonEvent::AttachmentFinalized {
+                daemon_epoch,
+                seq,
+                attachment_id,
+                payload,
+            } => {
+                if self.accept_lifecycle(&daemon_epoch, seq) {
+                    let reason = payload.get("reason").and_then(Value::as_str);
+                    self.retire_attachment(&attachment_id, reason);
                     self.advance_lifecycle(daemon_epoch, seq);
                 } else if self
                     .lifecycle

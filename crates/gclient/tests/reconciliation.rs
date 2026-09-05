@@ -2,6 +2,7 @@
 
 mod mock_daemon;
 
+use gobby_client::app::run_loop::{ReconnectAttempt, ReconnectSupervisor};
 use gobby_client::daemon::{Daemon, DaemonEvent, LiveDaemon};
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
@@ -207,10 +208,17 @@ async fn replay_never_rewinds_applied_state() {
     );
     mock.drop_websockets();
     wait_disconnected(&daemon).await;
+    let mut supervisor = ReconnectSupervisor::new();
+    drop(supervisor.request(daemon.generation()));
+    let generation = match supervisor.attempt_when_due(&daemon).await {
+        ReconnectAttempt::Reconnected(generation) => generation,
+        outcome => panic!("transport reconnect failed: {outcome:?}"),
+    };
     workspace
         .reconnect_daemon_ws()
         .await
         .expect("reconnect and replay buffered events");
+    supervisor.handshake_complete(generation);
     assert!(
         workspace
             .roster_terminal_ids()
@@ -349,7 +357,14 @@ async fn lagged_subscriber_relists_and_converges() {
         Some(gobby_client::daemon::DaemonError::Unavailable { retry_after: None })
     );
     let activity_before_recovery = mock.activity().len();
+    let mut supervisor = ReconnectSupervisor::new();
+    drop(supervisor.request(disconnected.generation));
+    let generation = match supervisor.attempt_when_due(&daemon).await {
+        ReconnectAttempt::Reconnected(generation) => generation,
+        outcome => panic!("transport reconnect failed: {outcome:?}"),
+    };
     workspace.drain_live_events().await.expect("lag recovery");
+    supervisor.handshake_complete(generation);
     assert_eq!(
         workspace.roster_terminal_ids(),
         vec!["terminal-recovered".to_string()]
@@ -564,6 +579,118 @@ async fn reconnect_reattaches_once_per_pane() {
         .close(Instant::now() + Duration::from_secs(1))
         .await
         .expect("close");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn typed_lifecycle_events_update_live_panes() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-1", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial reconciliation");
+    let pane_id = workspace
+        .pane_for_terminal("terminal-1")
+        .expect("terminal pane");
+    let attachment_id = workspace.pane(pane_id).attachment_id().to_string();
+
+    send_event_and_observe(
+        &mock,
+        &daemon,
+        json!({
+            "type": "terminal_lease_lost",
+            "terminal_id": "terminal-1",
+            "attachment_id": attachment_id,
+            "lease_generation": 2,
+            "daemon_epoch": "epoch-1",
+            "seq": 2
+        }),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("apply lease loss");
+    assert!(workspace.pane(pane_id).is_lease_lost());
+    assert!(workspace.pane(pane_id).has_take_back());
+    assert_eq!(workspace.pane(pane_id).lease_generation(), 2);
+
+    send_event_and_observe(
+        &mock,
+        &daemon,
+        json!({
+            "type": "terminal_attachment_finalized",
+            "terminal_id": "terminal-1",
+            "attachment_id": attachment_id,
+            "reason": "server finalized attachment",
+            "daemon_epoch": "epoch-1",
+            "seq": 3
+        }),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("apply attachment finalization");
+    assert!(!workspace.pane(pane_id).is_live());
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn disconnect_during_workspace_drain_fails_the_handshake() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial reconciliation");
+
+    mock.drop_websockets();
+    wait_disconnected(&daemon).await;
+    assert_eq!(
+        workspace
+            .drain_live_events()
+            .await
+            .expect_err("a disconnect observed during the drain fails the handshake"),
+        gobby_client::daemon::DaemonError::Unavailable { retry_after: None }
+    );
+    assert!(!workspace.daemon_ready());
+
     mock.shutdown().await;
 }
 

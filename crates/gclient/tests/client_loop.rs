@@ -1,5 +1,7 @@
 //! 3.3.5 select → spawn → attach → terminate against scripted endpoints.
 
+mod mock_daemon;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,10 +10,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_client::app::run_loop::{
     run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
 };
-use gobby_client::app::AttachState;
+use gobby_client::app::{run_live_loop, AttachState};
 use gobby_client::daemon::{
-    Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, Page, RosterEntry,
-    ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WsMessage, WsReply,
+    Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, LiveDaemon, Page,
+    RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
+    WsMessage, WsReply,
 };
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::startup::Ready;
@@ -21,11 +24,12 @@ use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
 use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
 use gobby_terminal::raw_input::RawInputEvent;
+use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use serde_json::json;
 use tokio::sync::mpsc;
-use tokio::time::Instant;
+use tokio::time::{timeout, Instant};
 
 #[test]
 fn live_entry_connects_before_running() {
@@ -42,7 +46,87 @@ fn live_entry_connects_before_running() {
     );
 }
 
-#[derive(Debug)]
+#[tokio::test]
+async fn live_created_event_attaches_before_next_reconciliation() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-initial", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let initial_attached = mock.requests().iter().any(|request| {
+                    request.body.as_ref().is_some_and(|body| {
+                        body.get("type") == Some(&json!("terminal_attach"))
+                            && body.get("terminal_id") == Some(&json!("terminal-initial"))
+                    })
+                });
+                if initial_attached {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("initial reconciliation");
+        mock.send_event_and_wait(json!({
+            "type": "terminal_event",
+            "event": "created",
+            "terminal_id": "terminal-created",
+            "backend": "native",
+            "daemon_epoch": "epoch-1",
+            "seq": 2
+        }))
+        .await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let created_attached = mock.requests().iter().any(|request| {
+                    request.body.as_ref().is_some_and(|body| {
+                        body.get("type") == Some(&json!("terminal_attach"))
+                            && body.get("terminal_id") == Some(&json!("terminal-created"))
+                    })
+                });
+                if created_attached {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("created terminal attaches without waiting for a relist");
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let created = workspace
+        .pane_for_terminal("terminal-created")
+        .expect("created terminal pane");
+    assert!(workspace.pane(created).is_live());
+    mock.shutdown().await;
+}
+
+#[derive(Debug, Clone)]
 struct ReconnectDaemon {
     inner: ScriptedDaemon,
     outcomes: Arc<Mutex<VecDeque<Result<Generation, DaemonError>>>>,
@@ -790,18 +874,27 @@ fn latched_exit_issues_no_further_requests() {
 #[tokio::test]
 async fn reconnect_episode_rolls_generation_forward() {
     tokio::time::pause();
-    let unavailable = || DaemonError::Unavailable { retry_after: None };
-    let daemon = ReconnectDaemon::new([Err(unavailable()), Ok(Generation(3))]);
+    let daemon = ReconnectDaemon::new([Ok(Generation(2)), Ok(Generation(3))]);
     let mut supervisor = ReconnectSupervisor::new();
     let first = supervisor.request(Generation(1));
-    assert_eq!(
-        supervisor.attempt_when_due(&daemon).await,
-        ReconnectAttempt::RetryScheduled {
-            delay: Duration::from_millis(250)
-        }
-    );
+    let first_attempt = supervisor
+        .start_due_attempt(daemon.clone())
+        .expect("first reconnect attempt");
 
     let rolled = supervisor.request(Generation(2));
+    assert_eq!(
+        supervisor.complete_attempt(first_attempt.await),
+        ReconnectAttempt::Idle,
+        "the completed G1 attempt cannot handshake after G2 was reported dead"
+    );
+    assert_eq!(
+        supervisor
+            .next_attempt_at()
+            .expect("rolled retry deadline")
+            .duration_since(Instant::now()),
+        Duration::from_millis(250),
+        "generation rollover preserves the episode's delay schedule"
+    );
     assert_eq!(
         supervisor.attempt_when_due(&daemon).await,
         ReconnectAttempt::Reconnected(Generation(3))
