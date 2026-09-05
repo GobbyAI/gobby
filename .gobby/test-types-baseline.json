@@ -1711,26 +1711,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/code_index/test_bm25_health.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 110,
-      "message": "Module \"gobby.code_index.bm25_health\" does not explicitly export attribute \"psycopg\"",
-      "occurrences": 3,
-      "path": "tests/code_index/test_bm25_health.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/code_index/test_bm25_health.py::::mypy:override",
-      "issue_code": "mypy:override",
-      "line": 81,
-      "message": "Cannot override writeable attribute with read-only property",
-      "occurrences": 1,
-      "path": "tests/code_index/test_bm25_health.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/code_index/test_sync_worker_breaker.py::::mypy:comparison-overlap",
       "issue_code": "mypy:comparison-overlap",
       "line": 75,

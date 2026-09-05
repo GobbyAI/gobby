@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
-from contextlib import nullcontext
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
 import psycopg
 from psycopg import sql
+from psycopg.errors import QueryCanceled
+
+from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 
 BM25_INDEXES = (
     "public.code_symbols_search_bm25",
@@ -121,10 +124,28 @@ def render_bm25_status(status: dict[str, Any]) -> list[str]:
     return lines
 
 
+@contextmanager
+def _verification_transaction(conn: Any) -> Iterator[None]:
+    """Isolate each check for both native connections and an enclosing hub transaction."""
+    transaction = getattr(conn, "transaction", None)
+    if callable(transaction):
+        with transaction():
+            yield
+        return
+
+    savepoint = conn.savepoint("gobby_bm25_verification")
+    try:
+        yield
+    except BaseException:
+        savepoint.rollback()
+        raise
+    finally:
+        savepoint.release()
+
+
 def _verify_index(conn: Any, name: str) -> dict[str, Any]:
     try:
-        transaction = getattr(conn, "transaction", None)
-        with transaction() if callable(transaction) else nullcontext():
+        with _verification_transaction(conn):
             row = conn.execute(
                 "SELECT to_regclass(%s)::text AS index_name",
                 (name,),
@@ -143,6 +164,8 @@ def _verify_index(conn: Any, name: str) -> dict[str, Any]:
                 (name,),
             ).fetchall()
     except psycopg.Error as exc:
+        if isinstance(exc, QueryCanceled) and current_database_operation_deadline() is not None:
+            raise
         state = "damaged" if exc.sqlstate in _CORRUPTION_SQLSTATES else "error"
         return _index_payload(name, state=state, error=_postgres_error(exc))
 

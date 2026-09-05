@@ -13,11 +13,15 @@ import psutil
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from psycopg.errors import QueryCanceled
 
 from gobby.cli.services import is_qdrant_healthy
 from gobby.hooks.runtime_compat import read_ghook_runtime_diagnostic
 from gobby.paths import get_install_dir
-from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.storage.hub.operation_deadline import (
+    DatabaseOperationDeadlineExceeded,
+    database_operation_deadline,
+)
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -59,7 +63,7 @@ async def _collect_status_item(
         result.values[name] = await awaitable
     except asyncio.CancelledError:
         raise
-    except TimeoutError:
+    except (TimeoutError, DatabaseOperationDeadlineExceeded, QueryCanceled):
         result.timed_out.append(name)
         logger.warning("Status collector %s timed out", name)
     except Exception as exc:
@@ -265,28 +269,29 @@ async def _get_postgres_dashboard_status(
     if not _is_postgres_runtime(server, database_status):
         return None
 
-    try:
-        from gobby.cli.installers.postgres import get_postgres_status
+    from gobby.cli.installers.postgres import get_postgres_status
 
-        return await get_postgres_status(
-            database=server.services.database,
-            run_db=server.run_db,
-        )
-    except Exception as exc:
-        logger.warning("Failed to get PostgreSQL status: %s", type(exc).__name__)
-        return {
-            "available": False,
-            "healthy": False,
-            "error": type(exc).__name__,
-        }
+    return await get_postgres_status(
+        database=server.services.database,
+        run_db=server.run_db,
+    )
 
 
-def _unavailable_falkordb_memory_status() -> dict[str, Any]:
+def _unavailable_falkordb_memory_status(server: "HTTPServer | None" = None) -> dict[str, Any]:
+    from gobby.config.persistence import is_falkordb_enabled
+
+    services = getattr(server, "services", None)
+    config = getattr(server, "config", None) or getattr(services, "config", None)
+    databases = getattr(config, "databases", None)
+    falkor = getattr(databases, "falkordb", None)
+    configured = databases is not None and is_falkordb_enabled(databases)
+    host = getattr(falkor, "host", None)
+    port = getattr(falkor, "port", None)
     return {
-        "configured": False,
-        "installed": False,
+        "configured": configured,
+        "installed": None if configured else False,
         "healthy": False,
-        "url": None,
+        "url": f"redis://{host}:{port}" if configured and host and port else None,
     }
 
 
@@ -318,43 +323,33 @@ def _gterm_host_status(server: "HTTPServer") -> dict[str, Any] | None:
 
 async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
     """Collect the FalkorDB status payload for the admin memory section."""
-    try:
-        from gobby.cli.services import get_falkordb_status
-        from gobby.config.persistence import is_falkordb_enabled
+    from gobby.cli.services import get_falkordb_status
+    from gobby.config.persistence import is_falkordb_enabled
 
-        services = getattr(server, "services", None)
-        daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
-        if daemon_config is None or services is None:
-            raise RuntimeError("server config unavailable")
-        database = getattr(services, "database", None)
-        if database is None:
-            raise RuntimeError("server database unavailable")
+    services = getattr(server, "services", None)
+    daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
+    if daemon_config is None or services is None:
+        raise RuntimeError("server config unavailable")
+    database = getattr(services, "database", None)
+    if database is None:
+        raise RuntimeError("server database unavailable")
 
-        falkor_cfg = daemon_config.databases.falkordb
-        async with asyncio.timeout(_STATUS_DEPENDENCY_TIMEOUT_SECONDS):
-            status = await get_falkordb_status(
-                db=database,
-                host=falkor_cfg.host,
-                port=falkor_cfg.port,
-                password=falkor_cfg.password,
-                run_db=server.run_db,
-                health_timeout=_STATUS_DEPENDENCY_TRANSPORT_TIMEOUT_SECONDS,
-            )
-        return {
-            "configured": is_falkordb_enabled(daemon_config.databases),
-            "installed": status["installed"],
-            "healthy": status["healthy"],
-            "url": status["url"],
-        }
-    except TimeoutError:
-        raise
-    except Exception as e:
-        logger.warning(
-            "Failed to check FalkorDB status: %s: %s",
-            type(e).__name__,
-            e,
+    falkor_cfg = daemon_config.databases.falkordb
+    async with asyncio.timeout(_STATUS_DEPENDENCY_TIMEOUT_SECONDS):
+        status = await get_falkordb_status(
+            db=database,
+            host=falkor_cfg.host,
+            port=falkor_cfg.port,
+            password=falkor_cfg.password,
+            run_db=server.run_db,
+            health_timeout=_STATUS_DEPENDENCY_TRANSPORT_TIMEOUT_SECONDS,
         )
-        return _unavailable_falkordb_memory_status()
+    return {
+        "configured": is_falkordb_enabled(daemon_config.databases),
+        "installed": status["installed"],
+        "healthy": status["healthy"],
+        "url": status["url"],
+    }
 
 
 def create_health_router(server: "HTTPServer") -> APIRouter:
@@ -526,7 +521,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 ),
                 "healthy": False,
             },
-            "falkordb": _unavailable_falkordb_memory_status(),
+            "falkordb": _unavailable_falkordb_memory_status(server),
         }
         pipeline_stats: dict[str, Any] = {
             "running": 0,
