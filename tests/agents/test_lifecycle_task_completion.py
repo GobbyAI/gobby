@@ -10,6 +10,7 @@ import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.run_completion import closed_task_completion_result
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
@@ -103,6 +104,26 @@ def _monitor(
         check_interval_seconds=1.0,
         tmux_config=TmuxConfig(),
     )
+
+
+def test_closed_task_completion_result_does_not_duplicate_supplied_suffix(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Persist close suffix once",
+        validation_criteria="The close suffix is idempotent.",
+    )
+    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    closed_task = task_manager.get_task(task.id)
+
+    supplied = closed_task_completion_result(closed_task, "done")
+
+    assert supplied is not None
+    assert closed_task_completion_result(closed_task, supplied) == supplied
+    assert supplied.count("Task completion:") == 1
 
 
 @pytest.mark.asyncio

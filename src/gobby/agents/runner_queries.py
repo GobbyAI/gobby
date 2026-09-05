@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.agents.run_completion import closed_task_run_completion_result
 from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
 from gobby.utils.uuid_validation import parse_uuid_reference
 
@@ -118,6 +119,8 @@ def complete_run(
         return False
     if run.status not in ("pending", "running"):
         return False
+
+    result = closed_task_run_completion_result(runner.run_storage.db, run, result)
 
     # Read session stats (message processor writes these to the sessions table).
     # The agent_runs table may still have 0/0 at this point since stats are
