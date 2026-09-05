@@ -13,8 +13,8 @@ import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, WorkflowEvaluationTimeout
+from gobby.workflows.hooks import WorkflowHookHandler
 
 
 def _event(tmp_path: Path) -> HookEvent:

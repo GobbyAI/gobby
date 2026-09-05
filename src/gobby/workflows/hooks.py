@@ -10,16 +10,22 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
+from psycopg.errors import QueryCanceled
+
 from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
     remaining_blocking_effect_seconds,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
-from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.storage.hub.operation_deadline import (
+    DatabaseOperationDeadlineExceeded,
+    database_operation_deadline,
+)
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
     FoundWorkStopAnalyzer,
@@ -42,6 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_TIMEOUT_SECONDS = 15.0
+_DATABASE_TIMEOUTS = (DatabaseOperationDeadlineExceeded, QueryCanceled)
 
 
 # Keeps the runtime wait ordered between the evaluation deadline it backstops
@@ -51,29 +58,6 @@ _RUNTIME_WAIT_MARGIN_SECONDS = 1.0
 # Enough for the scan to finish on a loaded machine, since finishing is what
 # keeps the dirty-file gates honest.
 _GIT_STATUS_FLOOR_SECONDS = 1.0
-
-
-class WorkflowEvaluationTimeout(TimeoutError):
-    """Raised when one workflow evaluation exceeds its internal budget."""
-
-    def __init__(
-        self,
-        *,
-        event_type: HookEventType | str,
-        session_id: str,
-        timeout_seconds: float,
-    ) -> None:
-        self.event_type = (
-            event_type.value if isinstance(event_type, HookEventType) else str(event_type)
-        )
-        self.session_id = session_id
-        self.timeout_seconds = timeout_seconds
-        self.queue_duration_seconds: float | None = None
-        self.execution_duration_seconds: float | None = None
-        super().__init__(
-            "Workflow evaluation timed out "
-            f"after {timeout_seconds:g}s for event={self.event_type} session={session_id or '<none>'}"
-        )
 
 
 _NO_REPO_PROJECT_CONSTANTS = frozenset(
@@ -389,6 +373,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         ) -> None:
             try:
                 observer(*args, **kwargs)
+            except _DATABASE_TIMEOUTS:
+                raise
             except Exception:
                 failures.add(name)
                 logger.warning(
@@ -551,6 +537,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                 session_id,
                             )
                         )
+                    except _DATABASE_TIMEOUTS:
+                        raise
                     except Exception as e:
                         if event.event_type == HookEventType.STOP:
                             logger.warning(
@@ -597,6 +585,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             variables["current_step"] = ""
                             variables["current_step_status_message"] = ""
                             variables["current_step_description"] = ""
+                    except _DATABASE_TIMEOUTS:
+                        raise
                     except Exception as e:
                         logger.warning(
                             "Could not inject current_step from workflow instance "
@@ -633,6 +623,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                     session_id,
                                     defaults,
                                 )
+                    except _DATABASE_TIMEOUTS:
+                        raise
                     except Exception as e:
                         logger.warning(
                             "Could not lazy-load variable defaults session=%s project=%s: %s",
@@ -887,6 +879,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         eval_lock_state,
                         cleanup=event.event_type == HookEventType.SESSION_END,
                     )
+        except _DATABASE_TIMEOUTS:
+            raise
         except Exception as e:
             logger.exception("RuleEngine evaluation failed: %s", e)
             raise
@@ -910,7 +904,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     self._evaluate_rules(event, blocking_deadline=blocking_deadline),
                     timeout=timeout,
                 )
-        except TimeoutError as exc:
+        except (TimeoutError, *_DATABASE_TIMEOUTS) as exc:
             session_id = event.metadata.get("_platform_session_id") or ""
             raise WorkflowEvaluationTimeout(
                 event_type=event.event_type,

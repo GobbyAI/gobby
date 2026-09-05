@@ -19,8 +19,8 @@ from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.storage.hub import postgres_pool
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, WorkflowEvaluationTimeout
+from gobby.workflows.hooks import WorkflowHookHandler
 
 pytestmark = pytest.mark.unit
 

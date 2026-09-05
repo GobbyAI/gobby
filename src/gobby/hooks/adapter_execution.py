@@ -20,7 +20,7 @@ from gobby.hooks.receipt_effects import (
     take_worker_staging,
     worker_staging_scope,
 )
-from gobby.workflows.hooks import WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
 

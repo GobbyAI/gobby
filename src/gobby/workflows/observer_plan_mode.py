@@ -9,7 +9,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Protocol
 
+from psycopg.errors import QueryCanceled
+
 from gobby.hooks.events import HookEvent, SessionSource
+from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -186,6 +189,8 @@ def _load_session(session_manager: _SessionManager | None, session_id: str) -> _
         return None
     try:
         return session_manager.get(session_id)
+    except (DatabaseOperationDeadlineExceeded, QueryCanceled):
+        raise
     except Exception:
         logger.debug(
             "Failed to load session %s while resolving plan mode", session_id, exc_info=True

@@ -10,7 +10,7 @@ from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.block_audit import audit_source_block_sync
-from gobby.workflows.hooks import WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 DispatchMcpCalls = Callable[[list[dict[str, Any]], HookEvent], list[dict[str, Any]]]
 FormatDiscoveryResult = Callable[[dict[str, Any]], str]
