@@ -50,6 +50,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/424_add_close_review_fingerprint_components.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 425,
+        filename: "425_add_external_pending_close_review_status.sql",
+        checksum: "d5bf7a2f1cbe660a2ff50751b79d302f16963e0452c7ae9b6a47718d657b7d1f",
+        sql: include_str!(
+            "../../assets/schema/migrations/425_add_external_pending_close_review_status.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

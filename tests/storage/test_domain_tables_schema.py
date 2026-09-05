@@ -121,7 +121,16 @@ def test_catalog_pins_task_close_review_state_and_active_lock() -> None:
     )
     assert all(
         value in status["definition"]
-        for value in ("launching", "running", "finalizing", "closed", "invalid", "stale", "error")
+        for value in (
+            "launching",
+            "running",
+            "finalizing",
+            "closed",
+            "invalid",
+            "external_pending",
+            "stale",
+            "error",
+        )
     )
     active = next(
         entry for entry in indexes if entry["name"] == "uq_task_close_reviews_active_task"

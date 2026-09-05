@@ -33,6 +33,20 @@ class SubmittedCloseReview:
 _TEST_BODY_REFERENCE_RE = re.compile(r"^###\s+(?P<reference>.+?)\s*$", re.MULTILINE)
 
 
+def _is_spawned_agent_caller(ctx: RegistryContext, session_id: str | None) -> bool:
+    if session_id is None:
+        return False
+    row = ctx.task_manager.db.fetchone(
+        "SELECT id FROM agent_runs WHERE child_session_id = %s LIMIT 1",
+        (session_id,),
+    )
+    try:
+        run_id = row["id"] if row is not None else None
+    except (KeyError, TypeError, IndexError):
+        return False
+    return isinstance(run_id, str) and bool(run_id)
+
+
 def _sequence_delta(label: str, before: object, after: object) -> str | None:
     if not isinstance(before, (list, tuple)) or not isinstance(after, (list, tuple)):
         return f"{label} changed" if before != after else None
@@ -98,9 +112,11 @@ async def evaluate_close_criteria(
     reason: str,
     description: str,
     test_bodies: str,
+    closing_session_id: str | None = None,
     submitted_review: SubmittedCloseReview | None = None,
 ) -> ValidationResult:
     """Detach a new review or account for an authenticated background verdict."""
+    spawned_agent_caller = _is_spawned_agent_caller(ctx, closing_session_id)
     raw_transcript_actions = checklist_facts.get("transcript_operational_actions", ())
     transcript_actions = (
         tuple(str(action) for action in raw_transcript_actions)
@@ -112,6 +128,7 @@ async def evaluate_close_criteria(
             task.validation_criteria,
             changes_summary,
             transcript_actions=transcript_actions,
+            skip_external=spawned_agent_caller,
         )
         if reason == "completed"
         else ()
@@ -180,6 +197,7 @@ async def evaluate_close_criteria(
             verdict = parse_close_verdict(
                 submitted_review.verdict,
                 list(prepared.criteria),
+                defer_external_criteria=spawned_agent_caller,
             )
         except CloseVerdictParseError as exc:
             return ValidationResult(
@@ -220,6 +238,7 @@ async def evaluate_close_criteria(
             "stable_facts": prepared.stable_facts,
             "manifest_count": prepared.manifest_count,
             "excerpt_chars": prepared.excerpt_chars,
+            "coordinator_owned_pending": spawned_agent_caller,
             # Gate 10's run record travels to the validator launch prompt; the
             # taskless validator cannot read the transcript itself.
             "validation_commands": checklist_facts.get("validation_commands"),

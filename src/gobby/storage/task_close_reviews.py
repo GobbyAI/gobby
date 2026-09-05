@@ -12,7 +12,7 @@ from uuid import uuid4
 from gobby.storage.hub.protocol import HubDatabase
 
 ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
-TerminalTaskCloseReviewStatus = Literal["closed", "invalid", "stale", "error"]
+TerminalTaskCloseReviewStatus = Literal["closed", "invalid", "external_pending", "stale", "error"]
 TaskCloseReviewStatus = ActiveTaskCloseReviewStatus | TerminalTaskCloseReviewStatus
 
 ACTIVE_TASK_CLOSE_REVIEW_STATUSES: tuple[ActiveTaskCloseReviewStatus, ...] = (
@@ -23,6 +23,7 @@ ACTIVE_TASK_CLOSE_REVIEW_STATUSES: tuple[ActiveTaskCloseReviewStatus, ...] = (
 TERMINAL_TASK_CLOSE_REVIEW_STATUSES: tuple[TerminalTaskCloseReviewStatus, ...] = (
     "closed",
     "invalid",
+    "external_pending",
     "stale",
     "error",
 )

@@ -2,7 +2,7 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.7"
+version: "1.8"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -60,6 +60,13 @@ prompts:
     ask for a run to be repeated, and never reject a criterion because your own
     sandbox cannot reproduce it.
 
+    When the launch prompt says the close caller is a spawned agent, treat every
+    criterion beginning `Live:` case-insensitively as coordinator-owned. Report
+    its state as `pending_external`, with satisfied false, gap null, and
+    required_evidence null. Count it as neither satisfied nor a gap. Set the
+    overall status valid when every remaining implementer-owned criterion is
+    satisfied. For any other caller, evaluate `Live:` criteria normally.
+
     Compare requested and delivered magnitude and shape. Reject stub-shaped
     delivery against broad or quantitative requirements. Reject delegated,
     constant, tautological, placeholder, or subject-free acceptance tests. Treat
@@ -72,7 +79,8 @@ prompts:
     {
       "status": "valid|invalid",
       "criteria": [
-        {"index": 1, "satisfied": true, "gap": null,
+        {"index": 1, "state": "satisfied|gap|pending_external",
+         "satisfied": true, "gap": null,
          "required_evidence": null|"complete evidence set"}
       ],
       "feedback": "short overall assessment"
@@ -86,7 +94,7 @@ prompts:
     does not depend on evidence fidelity. Call
     submit_close_review(review_id=<exact launch review_id>, verdict=<object>).
     Correct any malformed-verdict response while the review remains running.
-    After a terminal closed, invalid, stale, or error response, call the
+    After a terminal closed, invalid, external_pending, stale, or error response, call the
     zero-argument end_agent_run. Gobby delivers the persisted terminal payload
     to the originating session automatically.
 

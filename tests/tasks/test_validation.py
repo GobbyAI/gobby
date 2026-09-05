@@ -68,6 +68,11 @@ def test_prompt_and_generation_schema_define_optional_required_evidence() -> Non
 
     criteria_schema = TASK_CLOSE_VALIDATION_SCHEMA["properties"]["criteria"]["items"]
     assert criteria_schema["properties"]["required_evidence"] == {"type": ["string", "null"]}
+    assert criteria_schema["properties"]["state"]["enum"] == [
+        "satisfied",
+        "gap",
+        "pending_external",
+    ]
     assert "required_evidence" not in criteria_schema["required"]
 
 

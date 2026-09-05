@@ -111,6 +111,10 @@ TASK_CLOSE_VALIDATION_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "index": {"type": "integer"},
+                    "state": {
+                        "type": "string",
+                        "enum": ["satisfied", "gap", "pending_external"],
+                    },
                     "satisfied": {"type": "boolean"},
                     "gap": {"type": ["string", "null"]},
                     "required_evidence": {"type": ["string", "null"]},

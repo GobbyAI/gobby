@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.tasks import Task
+from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.validation import PreparedCloseReview, TaskValidator
 
 pytestmark = pytest.mark.unit
@@ -231,6 +232,97 @@ async def test_operational_criteria_reach_review_with_completion_evidence(
 
 
 @pytest.mark.asyncio
+async def test_spawned_agent_skips_live_operational_evidence() -> None:
+    result = await _evaluate(
+        criteria="- Live: restart the daemon.\n- Install the release.",
+        changes_summary="Release installed successfully.",
+        agent_caller=True,
+    )
+
+    assert result.error_type == "agentic_review_required"
+    assert result.extra["coordinator_owned_pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_non_agent_still_requires_live_operational_evidence() -> None:
+    result = await _evaluate(
+        criteria="- Live: restart the daemon.\n- Install the release.",
+        changes_summary="Release installed successfully.",
+        agent_caller=False,
+    )
+
+    assert result.error_type == "operational_evidence_missing"
+    assert result.extra["missing_operational_actions"] == ["restart"]
+
+
+@pytest.mark.asyncio
+async def test_spawned_agent_live_verdict_is_pending_external(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accounted = ValidationResult(can_close=False, error_type="external_pending")
+    account = MagicMock(return_value=accounted)
+    monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
+
+    result = await _evaluate(
+        criteria="- Live: restart the daemon.\n- Focused tests pass.",
+        changes_summary="Daemon restart completed.",
+        agent_caller=True,
+        submitted=SubmittedCloseReview(
+            verdict={
+                "status": "valid",
+                "criteria": [
+                    {"index": 1, "state": "satisfied", "satisfied": True, "gap": None},
+                    {"index": 2, "state": "satisfied", "satisfied": True, "gap": None},
+                ],
+                "feedback": "Everything passed.",
+            },
+            review_fingerprint="close",
+            evidence_fingerprint="evidence",
+            diff_sha="diff",
+            test_bodies_sha="tests",
+            stable_facts={},
+        ),
+    )
+
+    assert result is accounted
+    parsed = account.call_args.kwargs["verdict"]
+    assert [criterion.verdict_state for criterion in parsed.criteria] == [
+        "pending_external",
+        "satisfied",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_non_agent_live_criterion_evaluates_normally_and_can_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accounted = ValidationResult(can_close=True, validation_status="valid")
+    account = MagicMock(return_value=accounted)
+    monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
+
+    result = await _evaluate(
+        criteria="Live: restart the daemon.",
+        changes_summary="Daemon restart completed successfully.",
+        agent_caller=False,
+        submitted=SubmittedCloseReview(
+            verdict={
+                "status": "valid",
+                "criteria": [{"index": 1, "state": "satisfied", "satisfied": True, "gap": None}],
+                "feedback": "Live verification passed.",
+            },
+            review_fingerprint="close",
+            evidence_fingerprint="evidence",
+            diff_sha="diff",
+            test_bodies_sha="tests",
+            stable_facts={},
+        ),
+    )
+
+    assert result.can_close is True
+    assert account.call_args.kwargs["verdict"].criteria[0].verdict_state == "satisfied"
+
+
+@pytest.mark.asyncio
 async def test_no_work_disposition_skips_operational_evidence_gate() -> None:
     prepare = MagicMock(return_value=_prepared())
 
@@ -245,10 +337,10 @@ async def test_no_work_disposition_skips_operational_evidence_gate() -> None:
     prepare.assert_called_once()
 
 
-def _prepared() -> PreparedCloseReview:
+def _prepared(criteria: tuple[str, ...] = ("Criterion.",)) -> PreparedCloseReview:
     return PreparedCloseReview(
         prompt="prompt",
-        criteria=("Criterion.",),
+        criteria=criteria,
         prompt_chars=1_024,
         prompt_limit=256_000,
         review_fingerprint="close",
@@ -269,6 +361,7 @@ async def _evaluate(
     checklist_facts: dict[str, object] | None = None,
     reason: str = "completed",
     prepare: MagicMock | None = None,
+    agent_caller: bool | None = None,
 ) -> ValidationResult:
     task = Task(
         id="task",
@@ -280,12 +373,25 @@ async def _evaluate(
         updated_at=datetime(2026, 8, 21, tzinfo=UTC),
         validation_criteria=criteria,
     )
-    prepare_review = prepare or MagicMock(return_value=_prepared())
+    prepare_review = prepare or MagicMock(
+        return_value=_prepared(split_validation_criteria(criteria))
+    )
     validator = cast(
         TaskValidator,
         SimpleNamespace(prepare_task_review=prepare_review),
     )
-    ctx = cast(RegistryContext, SimpleNamespace())
+    closing_session_id = None
+    if agent_caller is None:
+        ctx = cast(RegistryContext, SimpleNamespace())
+    else:
+        closing_session_id = "caller"
+        db = SimpleNamespace(
+            fetchone=MagicMock(return_value={"id": "run"} if agent_caller else None)
+        )
+        ctx = cast(
+            RegistryContext,
+            SimpleNamespace(task_manager=SimpleNamespace(db=db)),
+        )
     return await evaluate_close_criteria(
         task=task,
         task_validator=validator,
@@ -298,5 +404,6 @@ async def _evaluate(
         reason=reason,
         description="",
         test_bodies="tests",
+        closing_session_id=closing_session_id,
         submitted_review=submitted,
     )

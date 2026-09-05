@@ -77,7 +77,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 3);
+    assert_eq!(first.migrations_applied, 5);
     let baseline_receipts: i64 = client.query_one(
         "SELECT COUNT(*) FROM schema_migrations WHERE version = 420 AND filename = 'baseline@420'",
         &[],
