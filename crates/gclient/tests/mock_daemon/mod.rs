@@ -1,20 +1,20 @@
 #![allow(dead_code)]
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, oneshot, Notify};
+use tokio::sync::{Notify, broadcast, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::protocol::{Message, Role};
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::protocol::{Message, Role};
 
 #[derive(Debug, Clone)]
 pub struct RequestRecord {
@@ -58,6 +58,7 @@ struct MockState {
     next_attachment_id: u64,
     take_control_replies: VecDeque<(bool, u64, Option<String>)>,
     write_outcomes: VecDeque<(String, Option<String>)>,
+    detach_replies: VecDeque<(bool, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
     proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
     activity: Vec<String>,
@@ -94,6 +95,7 @@ impl MockDaemon {
             next_attachment_id: 0,
             take_control_replies: VecDeque::new(),
             write_outcomes: VecDeque::new(),
+            detach_replies: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
             proxy_finalizations_before_reply: VecDeque::new(),
             activity: Vec::new(),
@@ -256,6 +258,14 @@ impl MockDaemon {
             .expect("mock state")
             .write_outcomes
             .push_back((outcome.to_string(), reason.map(ToString::to_string)));
+    }
+
+    pub fn enqueue_detach_reply(&self, success: bool, reason: Option<&str>) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .detach_replies
+            .push_back((success, reason.map(ToString::to_string)));
     }
 
     pub fn refuse_next_proxy_attach(&self, code: &str, reason: &str) {
@@ -681,13 +691,22 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "terminal_id": request.get("terminal_id"),
             "success": true,
         })),
-        "terminal_detach" => Some(json!({
-            "type": "terminal_detach_result",
-            "request_id": request.get("request_id"),
-            "terminal_id": request.get("terminal_id"),
-            "attachment_id": request.get("attachment_id"),
-            "success": true,
-        })),
+        "terminal_detach" => {
+            let (success, reason) = state
+                .lock()
+                .expect("mock state")
+                .detach_replies
+                .pop_front()
+                .unwrap_or((true, None));
+            Some(json!({
+                "type": "terminal_detach_result",
+                "request_id": request.get("request_id"),
+                "terminal_id": request.get("terminal_id"),
+                "attachment_id": request.get("attachment_id"),
+                "success": success,
+                "reason": reason,
+            }))
+        }
         "terminal_input" | "terminal_paste" => {
             let (outcome, reason) = state
                 .lock()

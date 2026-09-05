@@ -7,10 +7,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use gobby_client::Workspace;
 use gobby_client::app::run_loop::{
-    run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
+    RENDER_TICK, ReconnectAttempt, ReconnectSupervisor, run_scripted_loop,
 };
-use gobby_client::app::{run_live_loop, AttachState};
+use gobby_client::app::{AttachState, run_live_loop};
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, LiveDaemon, Page,
     RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
@@ -20,16 +21,15 @@ use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport
 use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
-use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
 use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use serde_json::{json, Value};
+use ratatui::backend::TestBackend;
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Instant};
+use tokio::time::{Instant, timeout};
 
 fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
     mock.requests()
@@ -384,11 +384,12 @@ async fn loop_routes_input_and_frames() {
     drop(guard);
 
     assert_eq!(restore_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert!(ws
-        .daemon()
-        .ws_sent_types()
-        .iter()
-        .any(|kind| kind == "terminal_input"));
+    assert!(
+        ws.daemon()
+            .ws_sent_types()
+            .iter()
+            .any(|kind| kind == "terminal_input")
+    );
     assert!(
         !ws.daemon().ws_connected(),
         "the run loop must finish its shutdown seam before returning"
@@ -1121,9 +1122,10 @@ fn select_spawn_attach_terminate_loop() {
         refused.is_err(),
         "spawn refusal must create no pane: {refused:?}"
     );
-    assert!(ws
-        .status_message()
-        .is_some_and(|message| message.contains("capacity exhausted")));
+    assert!(
+        ws.status_message()
+            .is_some_and(|message| message.contains("capacity exhausted"))
+    );
 
     // A lost create event is recovered by listing; a lost kill event is too.
     ws.daemon_mut().set_spawn_response(json!({
@@ -1217,8 +1219,10 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
             delay: Duration::from_secs(4)
         }
     );
-    assert!((Duration::from_millis(250)..=Duration::from_millis(251))
-        .contains(&(Instant::now() - started)));
+    assert!(
+        (Duration::from_millis(250)..=Duration::from_millis(251))
+            .contains(&(Instant::now() - started))
+    );
     supervisor.cancel(DaemonError::Protocol {
         detail: "quit".to_string(),
     });
@@ -1409,39 +1413,93 @@ async fn reconnect_episode_rolls_generation_forward() {
 
 #[tokio::test]
 async fn detach_deadlines_recover_through_the_supervisor() {
-    tokio::time::pause();
-    let mut ws = Workspace::scripted();
-    let first = ws
-        .open_terminal("term-detach-1", "native", "epoch-detach")
-        .expect("first pane");
-    let second = ws
-        .open_terminal("term-detach-2", "native", "epoch-detach")
-        .expect("second pane");
-    ws.kill_frame_stream(first).expect("detach first");
-    ws.kill_frame_stream(second).expect("detach second");
-    let daemon = ReconnectDaemon::new([Ok(Generation(2))]);
-    let mut supervisor = ReconnectSupervisor::new();
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "term-detach-1", "backend": "native", "state": "live"},
+                    {"terminal_id": "term-detach-2", "backend": "native", "state": "live"},
+                    {"terminal_id": "term-detach-3", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-detach", "seq": 1}
+            }),
+        );
+    }
+    for _ in 0..3 {
+        mock.enqueue_detach_reply(false, Some("detach state indeterminate"));
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
 
-    assert_eq!(
-        ws.submit_expired_detaches(&mut supervisor, Instant::now()),
-        0
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 3).await;
+        tokio::time::pause();
+        let attachments: Vec<_> = websocket_requests(&mock, "terminal_set_viewport")
+            .into_iter()
+            .map(|request| {
+                (
+                    request
+                        .get("terminal_id")
+                        .and_then(Value::as_str)
+                        .expect("viewport terminal")
+                        .to_string(),
+                    request
+                        .get("attachment_id")
+                        .and_then(Value::as_str)
+                        .expect("viewport attachment")
+                        .to_string(),
+                )
+            })
+            .collect();
+        for (index, (terminal_id, attachment_id)) in attachments.iter().enumerate() {
+            mock.send_event_and_wait(json!({
+                "type": "terminal_frame",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment_id,
+                "encoding": "bincode-b64",
+                "payload": "!",
+            }))
+            .await;
+            wait_for_websocket_requests(&mock, "terminal_detach", index + 1).await;
+        }
+        assert_eq!(mock.websocket_handshakes(), 1);
+        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 3);
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_attach", 6).await;
+        drop(input_tx);
+        attachments
+    };
+
+    let (result, old_attachments) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
     );
-    tokio::time::advance(Duration::from_secs(2)).await;
-    assert_eq!(
-        ws.submit_expired_detaches(&mut supervisor, Instant::now()),
-        2
-    );
-    assert_eq!(
-        ws.submit_expired_detaches(&mut supervisor, Instant::now()),
-        0,
-        "a timed-out attachment submits at most one reconnect intent"
-    );
-    assert_eq!(
-        supervisor.attempt_when_due(&daemon).await,
-        ReconnectAttempt::Reconnected(Generation(2))
-    );
-    assert_eq!(daemon.calls().len(), 1, "one coalesced reconnect episode");
-    supervisor.handshake_complete(Generation(2));
+    result.expect("deadline recovery loop");
+    assert_eq!(mock.websocket_handshakes(), 2, "one coalesced reconnect");
+    assert_eq!(websocket_requests(&mock, "terminal_detach").len(), 3);
+    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 6);
+    for (terminal_id, old_attachment) in old_attachments {
+        let pane_id = workspace
+            .pane_for_terminal(&terminal_id)
+            .expect("reattached pane");
+        assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
+        assert!(workspace.pane(pane_id).is_live());
+    }
+    mock.shutdown().await;
 }
 
 #[test]
@@ -1468,10 +1526,11 @@ fn daemon_loss_renders_read_only_until_recovery() {
     assert!(ws.send_input(pane, b"blocked").is_err());
     assert!(ws.take_control(pane).is_err());
     assert_eq!(ws.daemon().ws_sent().len(), sent_before);
-    assert!(ws
-        .pane(pane)
-        .status_message()
-        .is_some_and(|message| message.contains("unavailable")));
+    assert!(
+        ws.pane(pane)
+            .status_message()
+            .is_some_and(|message| message.contains("unavailable"))
+    );
 }
 
 #[test]

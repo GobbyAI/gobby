@@ -1,20 +1,20 @@
 use super::live_reader::{
-    connect_socket, run_connection, Outbound, WRITE_CANCELLED, WRITE_QUEUED, WRITE_STARTED,
+    Outbound, WRITE_CANCELLED, WRITE_QUEUED, WRITE_STARTED, connect_socket, run_connection,
 };
 use super::rest::RestClient;
 use super::{
-    route_key, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome,
-    Page, RosterEntry, RouteKey, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
+    Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, Page,
+    RosterEntry, RouteKey, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, route_key,
 };
 use reqwest::Url;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex as AsyncMutex, Notify};
+use tokio::sync::{Mutex as AsyncMutex, Notify, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
@@ -526,8 +526,6 @@ impl Daemon for LiveDaemon {
                         .clone()
                         .unwrap_or(DaemonError::Unavailable { retry_after: None }));
                 }
-            } else if state.ready {
-                return Ok(state.generation);
             } else if let Some(flight) = &state.reconnect {
                 (Some(flight.result_rx.clone()), None)
             } else {
