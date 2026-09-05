@@ -1,8 +1,10 @@
 # Legacy wiki retirement receipt
 
-Retirement is **in progress**. The scoped recovery backup is complete and isolated
-deletion has been rehearsed. Canonical recovery verification, live purge, registry
-archive, landing, installation, synchronization and daemon restart remain pending.
+Retirement is **in progress**. The original scoped backup, isolated deletion,
+canonical migration and exact restoration/repeat are verified. Final state audits
+found persisted wiki configuration and retained code-index content that must join
+the bounded retirement. A refreshed inventory/rehearsal, live purge, registry
+archive, landing, installation and daemon restart remain pending.
 
 ## Execution identity
 
@@ -31,6 +33,7 @@ projects, original files outside wiki storage, gcode services and explicit grant
 | Atomic isolated registry-reference recovery | #21857; `65b7708504` | Closed and memory-reviewed |
 | Maintenance claim admission | #21863; `136f611533` | Committed and tested |
 | Epoch-bound rehearsal identity admission | #21864; `a6397eb4f9` | Committed and tested |
+| Canonical FalkorDB rehearsal mount | #21868; `175abd188d` | Committed, tested and used successfully |
 | Active documentation retirement | #21861, #21862; `57008b1c5c`, `f22d0ae7ba` | Committed and tested |
 
 Root-session verification passed 506 focused Python tests across 21 named files
@@ -50,6 +53,13 @@ seconds after the real-lock and epoch-binding corrections. The exact named daemo
 A read-only merge rehearsal against `0.5.0` at `88e5cd8b66` found no conflicts and
 preserved main's transcript, gzip, task-review and terminal changes. Final
 integration verification will use the actual landed source identity.
+
+Managed sync from `0.5.0` at `53e9e6581c` completed as `62014bce512a` without
+conflicts. After rebuilding the debug daemon for those sources, 322 focused
+preservation/runtime/schema/manifest/classifier tests passed in 77.96 seconds.
+The final maintenance suite passed 185 tests in 0.77 seconds. Full `src/` Ruff,
+format and mypy checks passed. The frontend production build and 33 focused
+navigation/settings/shortcut tests passed. The full pytest suite was not run.
 
 ## Isolated rehearsal resources
 
@@ -105,10 +115,25 @@ Scoped restoration passed after #21857 fixed project-scoped registry references.
 Deferred deletion passed with 36,216 completed entries and one exact PostgreSQL
 intent. The first canonical backup refused its own maintenance PID; #21863 fixed
 that boundary. Resume then reached the active PostgreSQL login fence during
-profile identity admission; #21864 added canonical epoch discovery and binding,
-and read-only admission under the real fence passed. The existing campaign must
-resume through canonical maintenance, with
-all backup and schema guards retained. No live content has been deleted.
+profile identity admission; #21864 added canonical epoch discovery and binding.
+The next backup identified an incorrect rehearsal FalkorDB mount. #21868 corrected
+it to the installed image's `/var/lib/falkordb/data`, preserving the prior owned
+container, volume and exact RDB. The archive symlink guard remained unchanged.
+
+Canonical `hub-maintenance resume` completed the existing campaign at 18:51:26 UTC.
+Epoch `93d04846-1436-43fd-b9a3-0f63a7f64923` was released after the verified full
+backup and guarded 425→426 migration. All five wiki tables were absent before
+the scoped recovery exercise. Exact restoration passed in 46.9 seconds; repeat
+passed in 3.7 seconds with an unchanged receipt. The receipt records 36,244 completed
+items and 27 restored targets, with no errors. All 62 prior unrelated rows across
+eight tables survived unchanged. Root checked the artifact hashes, epoch match,
+completion state and five archive/restore verifier results.
+
+The authoritative private summary is
+`~/.gobby/retirement/gobby-rehearsal-21771-225eec02/21859-completion.json`.
+The rehearsal receipt SHA-256 is
+`abf68fcf3ae850cbce70ce3b943b0119c0c5251a1f48dc879bf1cf33b5afa8b3`.
+No live content has been deleted.
 
 A private read-only preservation baseline is recorded alongside the inventory as
 `21840-preservation-before-20260905T180743Z.json`. It fingerprints 11,704 summary
@@ -126,3 +151,28 @@ Main is `b5f7d2fa23`. Session #11789 owns the preceding restart and observation
 window; retirement landing and schema apply wait for that coordination. Session
 #11776 confirmed that its later migrations 427/428 will remain unlanded until
 retirement 426 and the preservation receipt are complete.
+
+Main subsequently advanced to `53e9e6581c`; #11789 deferred its announced restart
+to finish its own found work. The lifecycle/schema hold remains, while task RPC
+and isolated work have resumed. No retirement binaries have been installed.
+
+## Final state audit follow-through
+
+#21871 owns exact persisted wiki configuration cleanup. A read-only configuration
+load using retirement source against live 425 raised `UnknownStoredConfigKeyError`
+for `wiki.codewiki_nightly_enabled`. Inventory, scoped recovery and deletion must
+cover these settings before startup, while preserving unrelated config and secrets.
+
+#21872 owns inventory-scoped retained code-index cleanup. Read-only inspection
+matched 6,301 Gobby wiki paths and 4,041 Gobby Web wiki paths to the original
+inventory; 1,374 Web files had symbols. Existing missing-file indexing removes
+active selectors but retains content versions/projections. Project-wide prune and
+orphan cleanup are too broad for this task. The bounded path will reuse existing
+per-project locking and exact content/projection deletion, with manifest checks,
+remaining-machine-reference refusal and partial-result receipts.
+
+The refreshed inventory must include both corrections and receive scoped backup
+and isolated recovery evidence before live application. The original successful
+rehearsal remains valid evidence for its exact inventory, not for new targets.
+Memory corrections are drafted as 22 compare-before-update proposals on #21772;
+no memories have changed. Their application follows the live preservation check.
