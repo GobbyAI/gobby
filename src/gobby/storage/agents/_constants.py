@@ -13,6 +13,7 @@ AgentRunTerminalReason = Literal[
     "spawn_rollback",
     "task_blocker",
     "provider_quota_exhausted",
+    "provider_error",
 ]
 
 STATUS_PENDING: AgentRunStatus = "pending"
