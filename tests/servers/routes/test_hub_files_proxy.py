@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from starlette.responses import Response
 
@@ -22,6 +23,7 @@ from gobby.files_home_http import (
     USER_MD_PATH,
     USER_MD_WIRE_MAX_BYTES,
 )
+from gobby.files_home_proxy import proxy_owner_request
 from gobby.paths import get_gobby_home
 from gobby.servers.routes.hub_files_proxy import create_hub_files_proxy_router
 from gobby.utils.daemon_client import (
@@ -33,6 +35,94 @@ from gobby.utils.daemon_client import (
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "payload,read_error,expected_error",
+    [
+        pytest.param(b'{"id":"att-1"}', False, None, id="valid-json"),
+        pytest.param(b"not json", False, json.JSONDecodeError, id="invalid-json"),
+        pytest.param(b"", True, httpx.ReadError, id="read-failure"),
+    ],
+)
+async def test_streamed_hub_json_reads_and_closes_transport(
+    isolated_home: Path,
+    payload: bytes,
+    read_error: bool,
+    expected_error: type[Exception] | None,
+) -> None:
+    del isolated_home
+    _write_remote_bootstrap()
+    closed = False
+    clients: list[httpx.AsyncClient] = []
+
+    class HubBody(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            if read_error:
+                raise httpx.ReadError("hub stream interrupted")
+            yield payload
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    upstream = httpx.Response(200, headers={"content-type": "application/json"}, stream=HubBody())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.content == b"upload bytes"
+        assert request.headers[FILES_PROXY_HOP_HEADER] == "1"
+        assert request.url.path == "/api/chat/attachments"
+        return upstream
+
+    def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        client = _REAL_ASYNC_CLIENT(*args, **kwargs)
+        clients.append(client)
+        return client
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"upload bytes", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/chat/attachments",
+            "headers": [],
+            "query_string": b"",
+        },
+        receive,
+    )
+    with patch.object(httpx, "AsyncClient", side_effect=factory):
+        if expected_error is None:
+            assert await proxy_owner_request(request, stream_body=True) == {"id": "att-1"}
+        else:
+            with pytest.raises(expected_error):
+                await proxy_owner_request(request, stream_body=True)
+    assert closed
+    assert upstream.is_closed
+    assert len(clients) == 1
+    assert clients[0].is_closed
+
+
+async def test_shared_files_proxy_refuses_repeated_hop(isolated_home: Path) -> None:
+    del isolated_home
+    _write_remote_bootstrap()
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/chat/attachments/att-1/content",
+            "headers": [(FILES_PROXY_HOP_HEADER.lower().encode(), b"1")],
+            "query_string": b"",
+        }
+    )
+    with pytest.raises(HTTPException) as raised:
+        await proxy_owner_request(request)
+    assert raised.value.status_code == 409
+    detail: object = raised.value.detail
+    assert isinstance(detail, dict)
+    assert detail["error"] == "hop_refused"
 
 
 def _write_local_bootstrap(files_home: Path) -> None:

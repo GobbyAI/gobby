@@ -106,9 +106,11 @@ async def _proxy_stream(
     response = await context.__aenter__()
     content_type = response.headers.get("content-type", "")
     if "application/json" in content_type:
-        payload = response.json()
-        await context.__aexit__(None, None, None)
-        return payload
+        try:
+            await response.aread()
+            return response.json()
+        finally:
+            await context.__aexit__(None, None, None)
 
     async def body() -> Any:
         try:
