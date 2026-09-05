@@ -305,10 +305,21 @@ class IdleCheckHandler:
             transcript_snapshot is not None
             and transcript_snapshot.has_conclusive_terminal_provider_error
         ):
-            if await self._recovery._complete_if_work_finished(run):
+            error = transcript_snapshot.provider_error_event
+            created_at = parse_stored_datetime(run.created_at)
+            # Native resume appends to the predecessor's rollout. The new run
+            # exists before launch; started_at is persisted afterward and could
+            # exclude a current process's immediate startup failure.
+            if (
+                error is not None
+                and error.timestamp is not None
+                and created_at is not None
+                and error.timestamp >= created_at
+            ):
+                if await self._recovery._complete_if_work_finished(run):
+                    return 1
+                await self._recovery.fail_terminal_provider_agent(run, transcript_snapshot)
                 return 1
-            await self._recovery.fail_terminal_provider_agent(run, transcript_snapshot)
-            return 1
 
         if status == "unknown":
             idle_detector.reset_idle(run.id)

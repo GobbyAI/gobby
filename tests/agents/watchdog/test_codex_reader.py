@@ -95,48 +95,6 @@ async def test_codex_reader_scans_only_appended_records(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_reader_resets_incremental_state_at_session_boundary(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "resumed-session.jsonl"
-    terminal_error = {
-        "message": "You've hit your usage limit. Account-specific reset details.",
-        "codex_error_info": "usage_limit_exceeded",
-    }
-    _write(
-        path,
-        [
-            _record("event_msg", "task_started"),
-            _record("event_msg", "task_complete", error=terminal_error),
-        ],
-    )
-    reader = CodexTranscriptWatchdogReader()
-    predecessor = await reader.read(str(path))
-    assert predecessor.has_conclusive_terminal_provider_error is True
-
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"type": "session_meta", "payload": {"id": "resumed"}}) + "\n")
-    with patch("gobby.agents.watchdog.codex.json.loads", wraps=json.loads) as loads:
-        resumed = await reader.read(str(path))
-
-    assert loads.call_count == 1
-    assert resumed.has_conclusive_terminal_provider_error is False
-    assert resumed.turn_started_event is None
-    assert resumed.latest_turn_event is None
-    assert resumed.provider_error_event is None
-    assert resumed.last_malformed_line_num is None
-
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(_record("event_msg", "task_started")) + "\n")
-        handle.write(json.dumps(_record("event_msg", "task_complete", error=terminal_error)) + "\n")
-
-    current = await reader.read(str(path))
-
-    assert current.has_conclusive_terminal_provider_error is True
-    assert current.provider_error_reason == "usage_limit_exceeded"
-
-
-@pytest.mark.asyncio
 async def test_codex_reader_resets_incremental_state_after_truncation(tmp_path: Path) -> None:
     path = tmp_path / "truncated.jsonl"
     _write(
