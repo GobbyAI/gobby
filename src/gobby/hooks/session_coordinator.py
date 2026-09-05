@@ -732,11 +732,9 @@ class SessionCoordinator:
                         exc_info=True,
                     )
 
-            task_close_result = self._closed_task_result(agent_run)
+            task_close_result = self._closed_task_result(agent_run, result)
             if task_close_result is not None:
-                result = (
-                    f"{result.rstrip()}\n\n{task_close_result}" if result else task_close_result
-                )
+                result = task_close_result
             else:
                 incomplete_workflow_error = self._incomplete_step_workflow_error(session_id)
                 if incomplete_workflow_error:
@@ -805,8 +803,8 @@ class SessionCoordinator:
         except Exception as e:
             self.logger.error("Failed to complete agent run %s: %s", agent_run_id, e)
 
-    def _closed_task_result(self, agent_run: Any) -> str | None:
-        """Return a canonical result suffix when the run's bound task is closed."""
+    def _closed_task_result(self, agent_run: Any, result: str | None = None) -> str | None:
+        """Add canonical close metadata when the run's bound task is closed."""
         task_id = getattr(agent_run, "task_id", None)
         if self._task_manager is None or not isinstance(task_id, str) or not task_id:
             return None
@@ -820,7 +818,7 @@ class SessionCoordinator:
                 e,
             )
             return None
-        return closed_task_completion_result(task)
+        return closed_task_completion_result(task, result)
 
     def _agent_run_notification_status(
         self,
