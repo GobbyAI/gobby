@@ -118,7 +118,11 @@ fn ported_set_matches_upstream_inventory() {
     sorted.sort_unstable();
     assert_eq!(sorted, lines, "inventory is sorted ascending");
     let expected: BTreeSet<&str> = lines.iter().copied().collect();
-    assert_eq!(expected.len(), INVENTORY_LINES, "inventory has no duplicates");
+    assert_eq!(
+        expected.len(),
+        INVENTORY_LINES,
+        "inventory has no duplicates"
+    );
 
     let ported = ported_identities();
     let mut seen: BTreeSet<&str> = BTreeSet::new();

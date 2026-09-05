@@ -140,7 +140,11 @@ pub fn dim_background(frame: &mut Frame, area: Rect) {
 /// herdr `copy_feedback_offset_for_toast`: rows the copy-feedback box lifts
 /// by so it clears a toast it would otherwise overlap; `base_offset` when the
 /// two rects are apart.
-pub fn copy_feedback_offset_for_toast(feedback_rect: Rect, base_offset: u16, toast_rect: Rect) -> u16 {
+pub fn copy_feedback_offset_for_toast(
+    feedback_rect: Rect,
+    base_offset: u16,
+    toast_rect: Rect,
+) -> u16 {
     if rects_overlap(feedback_rect, toast_rect) {
         base_offset.saturating_add(toast_rect.height)
     } else {
