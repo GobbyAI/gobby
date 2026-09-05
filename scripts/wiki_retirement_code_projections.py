@@ -8,7 +8,6 @@ constructing an adapter with ``isolated=True``; this module never deletes record
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 from pathlib import PurePosixPath
 from typing import Any, Protocol
@@ -19,7 +18,13 @@ from falkordb.node import Node
 from pydantic import BaseModel, ConfigDict, Field
 from qdrant_client import QdrantClient, models
 
-from scripts.wiki_retirement_inventory import RetirementError, canonical, sha
+from scripts.wiki_retirement_inventory import (
+    CODE_TOMBSTONE_HASH,
+    RetirementError,
+    canonical,
+    sha,
+    validate_code_version,
+)
 
 GRAPH = "gobby_code"
 PREFIX = "code_symbols_"
@@ -125,10 +130,9 @@ def _selection(project_id: str, files: list[dict[str, Any]]) -> list[File]:
         paths.add(file.file_path)
         hashes: set[str] = set()
         for version in file.versions:
-            if str(UUID(version.id)) != version.id or not re.fullmatch(
-                "[0-9a-f]{64}", version.content_hash
-            ):
-                raise RetirementError("Code projection selection has an invalid version identity")
+            validate_code_version(
+                project_id, file.file_path, version.id, version.content_hash, version.symbol_ids
+            )
             if version.id in versions or version.content_hash in hashes:
                 raise RetirementError("Code projection selection repeats a content version")
             versions.add(version.id)
@@ -218,7 +222,12 @@ def _validate_node(node: GraphNode, project_id: str) -> None:
 
 
 def _index(files: list[File]) -> tuple[dict[str, set[str]], dict[str, tuple[str, str]]]:
-    hashes = {file.file_path: {v.content_hash for v in file.versions} for file in files}
+    hashes = {
+        file.file_path: {
+            v.content_hash for v in file.versions if v.content_hash != CODE_TOMBSTONE_HASH
+        }
+        for file in files
+    }
     symbols = {
         symbol: (file.file_path, version.content_hash)
         for file in files

@@ -7,7 +7,7 @@ import os
 from collections.abc import Iterator
 from contextlib import closing
 from typing import Any
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import pytest
 from qdrant_client import QdrantClient, models
@@ -28,9 +28,66 @@ from scripts.wiki_retirement_code_projections import (
     is_absent,
     owned_snapshot,
 )
-from scripts.wiki_retirement_inventory import RetirementError
+from scripts.wiki_retirement_inventory import (
+    CODE_INDEX_NAMESPACE,
+    CODE_TOMBSTONE_HASH,
+    RetirementError,
+)
 
 pytestmark = pytest.mark.cli
+
+
+@pytest.mark.parametrize("mutation", ["valid", "id", "hash", "symbols"])
+def test_tombstone_projection_admission_is_exact_and_empty(mutation: str) -> None:
+    project, files = selection()
+    file = files[0]
+    version: dict[str, Any] = {
+        "id": str(
+            uuid5(CODE_INDEX_NAMESPACE, f"{project}:{file['file_path']}:{CODE_TOMBSTONE_HASH}")
+        ),
+        "content_hash": CODE_TOMBSTONE_HASH,
+        "symbol_ids": [],
+    }
+    if mutation == "id":
+        version["id"] = str(uuid4())
+    elif mutation == "hash":
+        version["content_hash"] = "__other_tombstone__"
+    elif mutation == "symbols":
+        version["symbol_ids"] = [str(uuid4())]
+    file["versions"] = [version]
+    with closing(QdrantClient(location=":memory:")) as qdrant:
+        adapter = CodeProjections(qdrant, AbsentRedis())
+        if mutation == "valid":
+            assert is_absent(adapter.capture(project, files))
+        else:
+            with pytest.raises(RetirementError, match="tombstone|content hash"):
+                adapter.capture(project, files)
+        assert not qdrant.get_collections().collections
+
+
+def test_real_tombstone_allows_file_shell_but_refuses_version_edges(
+    real_projections: tuple[CodeProjections, str, list[dict[str, Any]]],
+) -> None:
+    adapter, project, files = real_projections
+    path = files[0]["file_path"]
+    files[0]["versions"] = [
+        {
+            "id": str(uuid5(CODE_INDEX_NAMESPACE, f"{project}:{path}:{CODE_TOMBSTONE_HASH}")),
+            "content_hash": CODE_TOMBSTONE_HASH,
+            "symbol_ids": [],
+        }
+    ]
+    adapter.graph.query(
+        "CREATE (f:CodeFile {project:$project,path:$path})", {"project": project, "path": path}
+    )
+    snapshot = adapter.capture(project, files)
+    assert len(snapshot["graph"]["nodes"]) == 1 and not snapshot["graph"]["edges"]
+    adapter.graph.query(
+        "MATCH (f:CodeFile {project:$project,path:$path}) CREATE (m:CodeModule {project:$project,name:'outside'}) CREATE (f)-[:IMPORTS {source_file_path:$path,content_hash:$hash}]->(m)",
+        {"project": project, "path": path, "hash": CODE_TOMBSTONE_HASH},
+    )
+    with pytest.raises(RetirementError, match="unknown native content version"):
+        adapter.capture(project, files)
 
 
 class AbsentRedis:

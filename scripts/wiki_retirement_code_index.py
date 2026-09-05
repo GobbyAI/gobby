@@ -22,6 +22,8 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.users import LocalUserManager
 from gobby.utils.native_bin import local_native_bin_path
 from scripts.wiki_retirement_inventory import (
+    CODE_TOMBSTONE_HASH,
+    CODE_TOMBSTONE_LANGUAGE,
     CodeIndexFile,
     CodeIndexTarget,
     CodeIndexVersion,
@@ -31,6 +33,7 @@ from scripts.wiki_retirement_inventory import (
     git,
     read_file,
     sha,
+    validate_code_version,
 )
 from scripts.wiki_retirement_receipts import Journal, private_directory, read_private, write_private
 
@@ -77,6 +80,18 @@ def project_lock_key(project_id: str) -> int:
     return int.from_bytes(
         hashlib.sha256(b"gcode:index:" + project_id.encode()).digest()[:8], "big", signed=True
     )
+
+
+def ordered_code_targets(targets: list[CodeIndexTarget]) -> list[CodeIndexTarget]:
+    """Remove parent selectors before overlay indexing can remove its tombstones."""
+
+    def key(target: CodeIndexTarget) -> tuple[bool, str]:
+        root = Path(target.root_path)
+        common = git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        directory = git(root, "rev-parse", "--path-format=absolute", "--git-dir")
+        return directory != common, target.project_id
+
+    return sorted(targets, key=key)
 
 
 class CodeIndexStorage:
@@ -377,6 +392,14 @@ class CodeIndexStorage:
             for file in target.files
             for version in file.versions
         }
+        for (path, content_hash), selected_version in versions.items():
+            validate_code_version(
+                target.project_id,
+                path,
+                selected_version.id,
+                content_hash,
+                selected_version.symbol_ids,
+            )
         for table, rows in snapshot["sql"].items():
             for row in rows:
                 path = row[TABLE_PATHS[table]]
@@ -386,6 +409,20 @@ class CodeIndexStorage:
                 version = versions.get((path, content_hash))
                 if row["project_id"] != target.project_id or version is None:
                     raise RetirementError("Code-index recovery contains an unowned content version")
+                if content_hash == CODE_TOMBSTONE_HASH:
+                    if table == "code_indexed_files":
+                        if (row["language"], row["symbol_count"], row["byte_size"]) != (
+                            CODE_TOMBSTONE_LANGUAGE,
+                            0,
+                            0,
+                        ):
+                            raise RetirementError(
+                                "Code-index tombstone row is not canonical and empty"
+                            )
+                    elif table != "code_indexed_file_states":
+                        raise RetirementError(
+                            "Code-index tombstone contains forbidden content facts"
+                        )
                 if table == "code_indexed_files" and row["id"] != version.id:
                     raise RetirementError("Code-index recovery version ID differs")
                 if table == "code_symbols" and row["id"] not in version.symbol_ids:
@@ -505,7 +542,7 @@ class CodeIndexStorage:
             if snapshot["sql"] != rows:
                 raise RetirementError("Code-index content changed during inventory")
             targets.append(target.model_copy(update={"digest": self.digest(snapshot)}))
-        return targets
+        return ordered_code_targets(targets)
 
     def restore_sql(self, target: CodeIndexTarget, snapshot: dict[str, Any], root: Path) -> None:
         if not self.isolated:

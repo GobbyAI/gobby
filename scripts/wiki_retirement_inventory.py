@@ -11,11 +11,14 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
 ARCHIVE_TAG = "legacy-wiki-before-retirement-21771"
+CODE_TOMBSTONE_HASH = "__gcode_tombstone__"
+CODE_TOMBSTONE_LANGUAGE = "__gcode_deleted__"
+CODE_INDEX_NAMESPACE = UUID("c0de1de0-0000-4000-8000-000000000000")
 PG_TABLES = ("gwiki_documents", "gwiki_chunks", "gwiki_links", "gwiki_sources", "gwiki_ingestions")
 GRAPH = "gobby_wiki"
 COLLECTION = re.compile(r"^gwiki_(?:project|topic)_[^/\\\x00-\x1f:]+$")
@@ -131,6 +134,20 @@ class CodeIndexTarget(Record):
 
     def native_files(self) -> list[dict[str, Any]]:
         return [file.native() for file in self.files]
+
+
+def validate_code_version(
+    project_id: str, file_path: str, version_id: str, content_hash: str, symbol_ids: list[str]
+) -> None:
+    """Admit current SHA256 content or the exact empty overlay deletion sentinel."""
+    if str(UUID(version_id)) != version_id:
+        raise RetirementError("Invalid code-index version identity")
+    if content_hash == CODE_TOMBSTONE_HASH:
+        expected = str(uuid5(CODE_INDEX_NAMESPACE, f"{project_id}:{file_path}:{content_hash}"))
+        if version_id != expected or symbol_ids:
+            raise RetirementError("Code-index tombstone identity or empty symbol contract differs")
+    elif not re.fullmatch(r"[0-9a-f]{64}", content_hash):
+        raise RetirementError("Invalid code-index content hash")
 
 
 class Inventory(Record):
@@ -645,8 +662,13 @@ def validate_code_indexes(inventory: Inventory) -> None:
                 if str(UUID(version.id)) != version.id or version.id in versions:
                     raise RetirementError("Duplicate or invalid code-index version")
                 versions.add(version.id)
-                if not re.fullmatch(r"[0-9a-f]{64}", version.content_hash):
-                    raise RetirementError("Invalid code-index content hash")
+                validate_code_version(
+                    target.project_id,
+                    file.file_path,
+                    version.id,
+                    version.content_hash,
+                    version.symbol_ids,
+                )
                 for symbol in version.symbol_ids:
                     if str(UUID(symbol)) != symbol or symbol in symbols:
                         raise RetirementError("Duplicate or invalid code-index symbol")

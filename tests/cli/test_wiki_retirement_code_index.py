@@ -8,7 +8,7 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import click
 import pytest
@@ -16,7 +16,11 @@ import pytest
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from scripts import retire_legacy_wiki as cli
 from scripts import wiki_retirement_inventory as inv
-from scripts.wiki_retirement_code_index import CodeIndexStorage, project_lock_key
+from scripts.wiki_retirement_code_index import (
+    CodeIndexStorage,
+    ordered_code_targets,
+    project_lock_key,
+)
 from scripts.wiki_retirement_receipts import (
     Backup,
     Journal,
@@ -346,6 +350,122 @@ def test_native_coordination_refuses_present_file_before_selector_changes(
 
 def test_project_lock_key_matches_native_signed_sha256_prefix() -> None:
     assert project_lock_key("00000000-0000-0000-0000-000000000000") == 2245844412862068868
+
+
+@pytest.fixture
+def tombstone(
+    indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path],
+    postgres_db: PostgresHubDatabase,
+) -> tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path]:
+    manager, target, root, recovery = indexed
+    file = target.files[0]
+    version = inv.CodeIndexVersion(
+        id=str(
+            uuid5(
+                inv.CODE_INDEX_NAMESPACE,
+                f"{target.project_id}:{file.file_path}:{inv.CODE_TOMBSTONE_HASH}",
+            )
+        ),
+        content_hash=inv.CODE_TOMBSTONE_HASH,
+        symbol_ids=[],
+    )
+    postgres_db.execute(
+        "INSERT INTO code_indexed_files(id,project_id,file_path,language,content_hash,symbol_count,byte_size) "
+        "VALUES (%s,%s,%s,%s,%s,0,0)",
+        (
+            version.id,
+            target.project_id,
+            file.file_path,
+            inv.CODE_TOMBSTONE_LANGUAGE,
+            version.content_hash,
+        ),
+    )
+    postgres_db.execute(
+        "UPDATE code_indexed_file_states SET content_hash=%s WHERE project_id=%s AND file_path=%s",
+        (version.content_hash, target.project_id, file.file_path),
+    )
+    versions = sorted([*file.versions, version], key=lambda item: item.id)
+    target = target.model_copy(
+        update={"files": [file.model_copy(update={"versions": versions}), *target.files[1:]]}
+    )
+    target = target.model_copy(update={"digest": manager.digest(manager.capture(target))})
+    return manager, target, root, recovery
+
+
+def test_canonical_empty_tombstone_backup_and_restore_preserve_real_versions(
+    tombstone: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path],
+    postgres_db: PostgresHubDatabase,
+) -> None:
+    manager, target, root, _ = tombstone
+    data = manager.backup(target)
+    assert len(json.loads(data)["sql"]["code_indexed_files"]) == 3
+    postgres_db.execute(
+        "DELETE FROM code_indexed_file_states WHERE file_path=ANY(%s)",
+        (["removed.py", "wiki/page.md"],),
+    )
+    postgres_db.execute(
+        "DELETE FROM code_indexed_files WHERE file_path=ANY(%s)", (["removed.py", "wiki/page.md"],)
+    )
+    assert manager.is_absent(manager.capture(target))
+    manager.restore(target, data, root)
+    assert manager.digest(manager.capture(target)) == target.digest
+    assert postgres_db.fetchone(
+        "SELECT content_hash FROM code_indexed_file_states WHERE file_path='removed.py'"
+    ) == {"content_hash": inv.CODE_TOMBSTONE_HASH}
+    assert postgres_db.fetchone(
+        "SELECT COUNT(*) AS count FROM code_indexed_files WHERE file_path='removed.py'"
+    ) == {"count": 2}
+    assert postgres_db.fetchone(
+        "SELECT COUNT(*) AS count FROM code_indexed_files WHERE file_path='keep.py'"
+    ) == {"count": 1}
+
+
+@pytest.mark.parametrize("mutation", ["language", "symbol_count", "byte_size", "content_fact"])
+def test_tombstone_metadata_or_content_facts_refuse_backup(
+    tombstone: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path],
+    postgres_db: PostgresHubDatabase,
+    mutation: str,
+) -> None:
+    manager, target, _, _ = tombstone
+    if mutation == "content_fact":
+        postgres_db.execute(
+            "INSERT INTO code_content_chunks(id,project_id,file_path,content_hash,chunk_index,line_start,line_end,content) VALUES (%s,%s,%s,%s,0,1,1,'forbidden')",
+            (str(uuid4()), target.project_id, "removed.py", inv.CODE_TOMBSTONE_HASH),
+        )
+    elif mutation == "language":
+        postgres_db.execute(
+            "UPDATE code_indexed_files SET language='python' WHERE content_hash=%s",
+            (inv.CODE_TOMBSTONE_HASH,),
+        )
+    elif mutation == "symbol_count":
+        postgres_db.execute(
+            "UPDATE code_indexed_files SET symbol_count=1 WHERE content_hash=%s",
+            (inv.CODE_TOMBSTONE_HASH,),
+        )
+    else:
+        postgres_db.execute(
+            "UPDATE code_indexed_files SET byte_size=1 WHERE content_hash=%s",
+            (inv.CODE_TOMBSTONE_HASH,),
+        )
+    with pytest.raises(inv.RetirementError, match="tombstone"):
+        manager.backup(target)
+    assert postgres_db.fetchone("SELECT COUNT(*) AS count FROM code_indexed_file_states") == {
+        "count": 3
+    }
+
+
+def test_parent_checkout_cleanup_precedes_lexically_earlier_overlay(
+    indexed: tuple[CodeIndexStorage, inv.CodeIndexTarget, Path, Path],
+) -> None:
+    _, target, root, recovery = indexed
+    overlay = recovery / "linked-overlay"
+    inv.git(root, "worktree", "add", "--quiet", "--detach", str(overlay))
+    parent = target.model_copy(update={"project_id": "d45545c5-ded5-4335-b115-0245752edacf"})
+    child = target.model_copy(
+        update={"project_id": "bdebec6e-2d60-57da-bd1a-b9ef55f15936", "root_path": str(overlay)}
+    )
+    assert child.project_id < parent.project_id
+    assert ordered_code_targets([child, parent]) == [parent, child]
 
 
 def test_native_interruption_keeps_durable_intent_and_retries_exact_remaining_rows(
