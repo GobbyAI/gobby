@@ -57,6 +57,8 @@ struct MockState {
     unique_attachment_ids: bool,
     next_attachment_id: u64,
     take_control_replies: VecDeque<(bool, u64, Option<String>)>,
+    proxy_attach_refusals: VecDeque<(String, String)>,
+    proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
     activity: Vec<String>,
 }
 
@@ -90,6 +92,8 @@ impl MockDaemon {
             unique_attachment_ids: false,
             next_attachment_id: 0,
             take_control_replies: VecDeque::new(),
+            proxy_attach_refusals: VecDeque::new(),
+            proxy_finalizations_before_reply: VecDeque::new(),
             activity: Vec::new(),
         }));
         let (events, _) = broadcast::channel(2048);
@@ -242,6 +246,33 @@ impl MockDaemon {
             .expect("mock state")
             .take_control_replies
             .push_back((granted, lease_generation, reason.map(ToString::to_string)));
+    }
+
+    pub fn refuse_next_proxy_attach(&self, code: &str, reason: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .proxy_attach_refusals
+            .push_back((code.to_string(), reason.to_string()));
+    }
+
+    pub fn finalize_next_proxy_attach_before_reply(
+        &self,
+        daemon_epoch: &str,
+        seq: u64,
+        code: &str,
+        reason: &str,
+    ) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .proxy_finalizations_before_reply
+            .push_back((
+                daemon_epoch.to_string(),
+                seq,
+                code.to_string(),
+                reason.to_string(),
+            ));
     }
 
     pub fn fail_next_websocket(&self) {
@@ -519,7 +550,12 @@ async fn serve_websocket(
                         state.activity.push(format!("WS {kind}"));
                     }
                 }
-                if let Some(reply) = websocket_reply(&state, &value) {
+                let reply = websocket_reply(&state, &value);
+                for event in websocket_events_before_reply(&state, &value, reply.as_ref()) {
+                    websocket.send(Message::Text(event.to_string().into())).await
+                        .map_err(std::io::Error::other)?;
+                }
+                if let Some(reply) = reply {
                     websocket.send(Message::Text(reply.to_string().into())).await
                         .map_err(std::io::Error::other)?;
                 }
@@ -565,6 +601,26 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
     }
     match kind {
         "terminal_attach" => {
+            let refusal = (request.get("frame_delivery").and_then(Value::as_str) == Some("proxy"))
+                .then(|| {
+                    state
+                        .lock()
+                        .expect("mock state")
+                        .proxy_attach_refusals
+                        .pop_front()
+                })
+                .flatten();
+            if let Some((code, reason)) = refusal {
+                return Some(json!({
+                    "type": "terminal_attach_result",
+                    "request_id": request.get("request_id"),
+                    "terminal_id": request.get("terminal_id"),
+                    "attachment_id": null,
+                    "success": false,
+                    "code": code,
+                    "reason": reason,
+                }));
+            }
             let attachment_id = {
                 let mut state = state.lock().expect("mock state");
                 if state.unique_attachment_ids {
@@ -654,6 +710,39 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
         })),
         _ => None,
     }
+}
+
+fn websocket_events_before_reply(
+    state: &Arc<Mutex<MockState>>,
+    request: &Value,
+    reply: Option<&Value>,
+) -> Vec<Value> {
+    if request.get("type").and_then(Value::as_str) != Some("terminal_attach")
+        || request.get("frame_delivery").and_then(Value::as_str) != Some("proxy")
+        || reply
+            .and_then(|value| value.get("success"))
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Vec::new();
+    }
+    let Some((daemon_epoch, seq, code, reason)) = state
+        .lock()
+        .expect("mock state")
+        .proxy_finalizations_before_reply
+        .pop_front()
+    else {
+        return Vec::new();
+    };
+    vec![json!({
+        "type": "terminal_attachment_finalized",
+        "daemon_epoch": daemon_epoch,
+        "seq": seq,
+        "terminal_id": request.get("terminal_id"),
+        "attachment_id": reply.and_then(|value| value.get("attachment_id")),
+        "code": code,
+        "reason": reason,
+    })]
 }
 
 fn default_response(method: &str, target: &str) -> QueuedResponse {

@@ -195,9 +195,17 @@ impl Pane {
     pub(super) fn attached_generation(&self) -> Option<Generation> {
         match self.attach {
             AttachState::Attached { generation, .. }
-            | AttachState::Detaching { generation, .. }
             | AttachState::Attaching { generation, .. } => Some(generation),
-            AttachState::Detached => None,
+            AttachState::Detaching {
+                generation,
+                supervisor_requested: false,
+                ..
+            } => Some(generation),
+            AttachState::Detaching {
+                supervisor_requested: true,
+                ..
+            }
+            | AttachState::Detached => None,
         }
     }
 }

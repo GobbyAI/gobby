@@ -66,6 +66,45 @@ async fn settle_live_event() {
     }
 }
 
+async fn live_workspace_with_scripted_direct(
+    mock: &MockDaemon,
+    terminal_id: &str,
+    roster_reads: usize,
+) -> (Workspace<LiveDaemon>, String) {
+    for _ in 0..roster_reads {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": terminal_id, "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial proxy attachment");
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("initial terminal pane");
+    let old_attachment = workspace.pane(pane_id).attachment_id().to_string();
+    workspace
+        .replace_frame_source(
+            pane_id,
+            PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+        )
+        .expect("install scripted direct source");
+    (workspace, old_attachment)
+}
+
 #[test]
 fn live_entry_connects_before_running() {
     let result = gobby_client::views::run_ready(Ready {
@@ -555,144 +594,218 @@ fn write_outcomes_drive_pane_state() {
     );
 }
 
-#[test]
-fn proxy_fallback_uses_fresh_attachment() {
-    let mut ws = Workspace::scripted();
-    let pane = ws
-        .open_terminal("term-fallback", "native", "epoch-fallback")
-        .expect("open terminal");
-    let old_attachment = ws.pane(pane).attachment_id().to_string();
-    let attach_count = ws
-        .daemon()
-        .ws_sent_types()
-        .iter()
-        .filter(|kind| kind.as_str() == "terminal_attach")
-        .count();
+#[tokio::test]
+async fn proxy_fallback_uses_fresh_attachment() {
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        let terminal_id = "terminal-detach-result";
+        let (mut workspace, old_attachment) =
+            live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+            wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("detach-result fallback loop");
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("fallback pane");
+        assert_eq!(workspace.pane(pane_id).attachment_id(), "attachment-2");
+        assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+        let detaches = websocket_requests(&mock, "terminal_detach");
+        assert_eq!(detaches.len(), 1);
+        assert_eq!(
+            detaches[0].get("attachment_id").and_then(Value::as_str),
+            Some(old_attachment.as_str())
+        );
+        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+        mock.shutdown().await;
+    }
 
-    ws.kill_frame_stream(pane).expect("start detach");
-    assert!(matches!(
-        ws.pane(pane).attach_state(),
-        AttachState::Detaching {
-            old_attachment_id,
-            ..
-        } if old_attachment_id == &old_attachment
-    ));
-    assert!(!ws.pane(pane).writable());
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        let terminal_id = "terminal-finalization";
+        let (mut workspace, old_attachment) =
+            live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+        mock.suppress_ws("terminal_detach");
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+            mock.send_event_and_wait(json!({
+                "type": "terminal_attachment_finalized",
+                "daemon_epoch": "epoch-1",
+                "seq": 2,
+                "terminal_id": terminal_id,
+                "attachment_id": old_attachment,
+                "code": "host_eof",
+                "reason": "direct observer ended"
+            }))
+            .await;
+            wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("finalization fallback loop");
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("finalization pane");
+        assert_eq!(workspace.pane(pane_id).attachment_id(), "attachment-2");
+        assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+        mock.shutdown().await;
+    }
 
-    ws.apply_ws(&json!({
-        "type": "terminal_detach_result",
-        "attachment_id": old_attachment,
-        "success": true
-    }))
-    .expect("settle detach result");
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        let terminal_id = "terminal-deadline";
+        let (mut workspace, old_attachment) =
+            live_workspace_with_scripted_direct(&mock, terminal_id, 3).await;
+        mock.suppress_ws("terminal_detach");
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+            timeout(Duration::from_secs(4), async {
+                loop {
+                    if websocket_requests(&mock, "terminal_set_viewport").len() >= 2 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("deadline recovery reattaches");
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("deadline fallback loop");
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("deadline pane");
+        assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
+        assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+        assert_eq!(
+            websocket_requests(&mock, "terminal_attach").len(),
+            2,
+            "the recovery episode must issue one fresh attach for the pane"
+        );
+        mock.shutdown().await;
+    }
 
-    assert!(matches!(
-        ws.pane(pane).attach_state(),
-        AttachState::Attaching {
-            transport: Transport::Proxy,
-            ..
-        }
-    ));
-    assert_eq!(
-        ws.daemon()
-            .ws_sent_types()
-            .iter()
-            .filter(|kind| kind.as_str() == "terminal_attach")
-            .count(),
-        attach_count + 1,
-        "a matching detach result advances exactly one fresh proxy attach"
-    );
-    let attach = ws
-        .daemon()
-        .ws_sent()
-        .into_iter()
-        .rev()
-        .find(|message| {
-            message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach")
-        })
-        .expect("proxy attach request");
-    let request_id = attach
-        .get("request_id")
-        .and_then(serde_json::Value::as_str)
-        .expect("proxy request id")
-        .to_string();
-    assert_eq!(attach.get("frame_delivery"), Some(&json!("proxy")));
-    assert_eq!(attach.get("encoding"), Some(&json!("semantic_frame")));
-    assert_ne!(
-        attach
-            .get("attachment_id")
-            .and_then(serde_json::Value::as_str),
-        Some(old_attachment.as_str()),
-        "the tombstoned attachment id must never be reused"
-    );
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        let terminal_id = "terminal-refused";
+        let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+        mock.refuse_next_proxy_attach("observer_limit", "too many observers");
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+            settle_live_event().await;
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("refused fallback loop");
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("refused pane");
+        assert!(matches!(
+            workspace.pane(pane_id).attach_state(),
+            AttachState::Detached
+        ));
+        assert!(!workspace.pane(pane_id).writable());
+        assert!(workspace.pane(pane_id).frame_source().is_none());
+        assert_eq!(
+            workspace.pane(pane_id).status_message(),
+            Some("observer_limit: too many observers")
+        );
+        mock.shutdown().await;
+    }
 
-    let fresh_attachment = "fresh-proxy-attachment";
-    ws.apply_ws(&json!({
-        "type": "terminal_attach_result",
-        "request_id": request_id,
-        "attachment_id": fresh_attachment,
-        "success": true,
-        "lease_generation": 0
-    }))
-    .expect("install fresh proxy attachment");
-    assert_eq!(ws.pane(pane).attachment_id(), fresh_attachment);
-    assert_eq!(ws.pane(pane).transport(), Some(Transport::Proxy));
-    assert!(ws.pane(pane).is_observe());
-    assert!(matches!(
-        ws.pane(pane)
-            .scripted_source()
-            .and_then(|source| source.last_client_message()),
-        Some(gobby_terminal::protocol::ClientMessage::SetViewport { rows: 24, cols: 80 })
-    ));
-
-    ws.apply_ws(&json!({
-        "type": "terminal_attachment_finalized",
-        "attachment_id": old_attachment,
-        "reason": "late old finalization"
-    }))
-    .expect("ignore late old finalization");
-    assert_eq!(ws.pane(pane).attachment_id(), fresh_attachment);
-
-    ws.kill_frame_stream(pane).expect("detach fresh proxy");
-    ws.apply_ws(&json!({
-        "type": "terminal_detach_result",
-        "attachment_id": fresh_attachment,
-        "success": true
-    }))
-    .expect("settle second detach");
-    let refused_request = ws
-        .daemon()
-        .ws_sent()
-        .into_iter()
-        .rev()
-        .find(|message| {
-            message.get("type").and_then(serde_json::Value::as_str) == Some("terminal_attach")
-        })
-        .and_then(|message| {
-            message
-                .get("request_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .expect("refused attach request");
-    ws.apply_ws(&json!({
-        "type": "terminal_attach_result",
-        "request_id": refused_request,
-        "success": false,
-        "code": "observer_limit",
-        "reason": "too many observers"
-    }))
-    .expect("settle refused attach");
-    assert!(matches!(
-        ws.pane(pane).attach_state(),
-        AttachState::Detached
-    ));
-    assert!(!ws.pane(pane).writable());
-    assert!(ws.pane(pane).frame_source().is_none());
-    assert_eq!(
-        ws.pane(pane).status_message(),
-        Some("observer_limit: too many observers")
-    );
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        let terminal_id = "terminal-buffered-finalization";
+        let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, terminal_id, 2).await;
+        mock.finalize_next_proxy_attach_before_reply(
+            "epoch-1",
+            2,
+            "attach_eof",
+            "ended before attach result",
+        );
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(16);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+            settle_live_event().await;
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("buffered finalization loop");
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("buffered finalization pane");
+        assert!(matches!(
+            workspace.pane(pane_id).attach_state(),
+            AttachState::Detached
+        ));
+        assert_eq!(
+            workspace.pane(pane_id).status_message(),
+            Some("attach_eof: ended before attach result")
+        );
+        let forbidden: Vec<_> = mock
+            .requests()
+            .into_iter()
+            .filter_map(|request| request.body)
+            .filter(|body| body.get("attachment_id") == Some(&json!("attachment-2")))
+            .filter(|body| {
+                matches!(
+                    body.get("type").and_then(Value::as_str),
+                    Some(
+                        "terminal_detach"
+                            | "terminal_set_viewport"
+                            | "terminal_take_control"
+                            | "terminal_release_control"
+                    )
+                )
+            })
+            .collect();
+        assert!(
+            forbidden.is_empty(),
+            "retired attach requests: {forbidden:?}"
+        );
+        mock.shutdown().await;
+    }
 }
 
 #[tokio::test]
