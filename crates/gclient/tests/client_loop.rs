@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_client::Workspace;
 use gobby_client::app::run_loop::{
@@ -22,7 +24,7 @@ use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_terminal::input::TerminalKey;
-use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
+use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage, write_message};
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
 use ratatui::Terminal;
@@ -85,6 +87,31 @@ async fn settle_live_event() {
     for _ in 0..16 {
         tokio::task::yield_now().await;
     }
+}
+
+fn encoded_frame(text: &str) -> String {
+    let message = ServerMessage::Frame(FrameData {
+        cells: text
+            .chars()
+            .map(|symbol| CellData {
+                symbol: symbol.to_string(),
+                fg: 0x10,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            })
+            .collect(),
+        width: u16::try_from(text.chars().count()).expect("test frame width"),
+        height: 1,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes: PaneModes::default(),
+    });
+    let mut framed = Vec::new();
+    write_message(&mut framed, &message).expect("encode test frame");
+    STANDARD.encode(&framed[4..])
 }
 
 async fn live_workspace_with_scripted_direct(
@@ -1031,8 +1058,197 @@ async fn live_resize_propagates_geometry_by_policy() {
     assert_eq!(resizes[0].get("cols"), Some(&json!(100)));
 }
 
+#[tokio::test]
+async fn select_spawn_attach_terminate_loop() {
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-survivor", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-spawn", "seq": 1}
+            }),
+        );
+        for _ in 0..2 {
+            mock.enqueue(
+                "GET",
+                "/api/terminals?",
+                200,
+                json!({
+                    "items": [
+                        {"terminal_id": "terminal-survivor", "backend": "native", "state": "live"},
+                        {"terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "backend": "native", "state": "live"}
+                    ],
+                    "next_cursor": null,
+                    "snapshot": {"daemon_epoch": "epoch-spawn", "seq": 1}
+                }),
+            );
+        }
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-selected");
+        let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(32);
+
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+            let survivor_attachment = websocket_requests(&mock, "terminal_set_viewport")[0]
+                .get("attachment_id")
+                .and_then(Value::as_str)
+                .expect("survivor attachment")
+                .to_string();
+            mock.send_event_and_wait(json!({
+                "type": "terminal_frame",
+                "terminal_id": "terminal-survivor",
+                "attachment_id": survivor_attachment,
+                "encoding": "bincode-b64",
+                "payload": encoded_frame("survivor-before"),
+            }))
+            .await;
+
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+            wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+            let spawned_attachment = websocket_requests(&mock, "terminal_set_viewport")
+                .into_iter()
+                .find(|request| {
+                    request.get("terminal_id")
+                        == Some(&json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                })
+                .and_then(|request| {
+                    request
+                        .get("attachment_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .expect("spawned attachment");
+            mock.send_event_and_wait(json!({
+                "type": "terminal_frame",
+                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "attachment_id": spawned_attachment,
+                "encoding": "bincode-b64",
+                "payload": encoded_frame("spawned-first"),
+            }))
+            .await;
+            mock.send_event_and_wait(json!({
+                "type": "terminal_frame",
+                "terminal_id": "terminal-survivor",
+                "attachment_id": survivor_attachment,
+                "encoding": "bincode-b64",
+                "payload": encoded_frame("survivor-during"),
+            }))
+            .await;
+            settle_live_event().await;
+
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('2'), KeyModifiers::NONE).await;
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('D'), KeyModifiers::SHIFT).await;
+            wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+            mock.send_event_and_wait(json!({
+                "type": "terminal_event",
+                "event": "killed",
+                "daemon_epoch": "epoch-spawn",
+                "seq": 2,
+                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            }))
+            .await;
+            mock.send_event_and_wait(json!({
+                "type": "terminal_frame",
+                "terminal_id": "terminal-survivor",
+                "attachment_id": survivor_attachment,
+                "encoding": "bincode-b64",
+                "payload": encoded_frame("survivor-after"),
+            }))
+            .await;
+            settle_live_event().await;
+            drop(input_tx);
+        };
+
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("spawn and terminate live loop");
+        assert_eq!(websocket_requests(&mock, "terminal_create").len(), 1);
+        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
+        let kills = websocket_requests(&mock, "terminal_kill");
+        assert_eq!(kills.len(), 1);
+        assert_eq!(
+            kills[0].get("terminal_id"),
+            Some(&json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+        );
+        assert!(
+            workspace
+                .pane_for_terminal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+                .is_none(),
+            "lifecycle removal must retire the spawned pane"
+        );
+        let survivor = workspace
+            .pane_for_terminal("terminal-survivor")
+            .expect("streaming survivor");
+        assert!(workspace.pane(survivor).frames_rendered() >= 3);
+        mock.shutdown().await;
+    }
+
+    {
+        let mock = MockDaemon::start("local-token").await;
+        mock.set_spawn_refusal("capacity exhausted");
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-refused", "seq": 1}
+            }),
+        );
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-selected");
+        let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let driver = async {
+            settle_live_event().await;
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+            wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+            settle_live_event().await;
+            drop(input_tx);
+        };
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("spawn refusal live loop");
+        assert_eq!(workspace.pane_count(), 0);
+        assert!(websocket_requests(&mock, "terminal_attach").is_empty());
+        assert!(
+            chrome
+                .status_message
+                .as_deref()
+                .is_some_and(|message| message.contains("capacity exhausted"))
+        );
+        mock.shutdown().await;
+    }
+}
+
 #[test]
-fn select_spawn_attach_terminate_loop() {
+fn spawn_attach_terminate_reducer_schedules_converge() {
     let mut ws = Workspace::scripted();
     ws.select_project("proj-1");
     assert_eq!(ws.project_id(), Some("proj-1"));
