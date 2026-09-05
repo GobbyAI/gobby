@@ -22,7 +22,7 @@ export function useAppKeyboardShortcuts({
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // A scoped surface (wiki quick-open, editors) that preventDefaulted the
+      // A scoped surface (such as an editor) that preventDefaulted the
       // key owns it — don't stack the app palette on top.
       if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {

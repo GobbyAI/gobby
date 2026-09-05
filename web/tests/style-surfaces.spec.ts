@@ -476,20 +476,6 @@ const OVERFLOW_MESSAGES = [
   },
 ];
 
-const WIKI_LONG_CONTENT = [
-  "---",
-  "title: Home",
-  "---",
-  "",
-  "# Home",
-  "",
-  ...Array.from(
-    { length: 60 },
-    (_, i) =>
-      `Section ${i} body copy that keeps the reader scrolling through a realistically long wiki document.\n`,
-  ),
-].join("\n");
-
 /** One nested config tree feeding /api/config/values for the 13 settings
  * sections, the memory tab's purge banner, and the knowledge-graph limits. */
 const CONFIG_VALUES = {
@@ -835,20 +821,6 @@ const CONFIG_VALUES = {
   },
   knowledge_graph_queue: { interval_minutes: 10, batch_size: 25 },
   memory_backup: { enabled: true, backup_path: ".gobby/memories.jsonl" },
-  wiki: {
-    enabled: true,
-    roots: [
-      { scope: "project", path: "docs/wiki" },
-      { scope: "global", path: "~/.gobby/wiki" },
-    ],
-    debounce_interval: 2.0,
-    poll_interval: 5.0,
-    ignore_globs: ["outputs/**", "node_modules/**"],
-    codewiki_on_commit: true,
-    codewiki_nightly_enabled: true,
-    codewiki_nightly_schedule_cron: "0 3 * * *",
-    codewiki_nightly_timezone: null,
-  },
   logging: {
     level: "info",
     format: "text",
@@ -1306,7 +1278,16 @@ function baseApi(
         ],
       };
     case "/api/config/values":
-      return { values: CONFIG_VALUES, secret_keys: SECRET_KEYS };
+      return {
+        revision: 1,
+        desired: CONFIG_VALUES,
+        active: CONFIG_VALUES,
+        secret_set: Object.fromEntries(
+          SECRET_KEYS.map((key) => [key, { desired: true, active: true }]),
+        ),
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      };
     case "/api/config/schema":
       return CONFIG_SCHEMA;
     case "/api/config/tool-approvals/global":
@@ -1386,59 +1367,6 @@ function baseApi(
           updated_at: "2026-04-08T12:00:00Z",
         },
       ];
-    case "/api/wiki/pages":
-      return {
-        ok: true,
-        command: "pages",
-        payload: {
-          pages: [
-            {
-              path: "Home.md",
-              title: "Home",
-              tags: ["seed"],
-              content_hash: "abc123",
-              updated_at: "2026-04-08T12:00:00Z",
-            },
-            {
-              path: "knowledge/concepts/routing.md",
-              title: "Routing",
-              tags: [],
-              content_hash: "def456",
-              updated_at: "2026-04-08T12:00:00Z",
-            },
-          ],
-          outputs: [],
-        },
-      };
-    case "/api/wiki/status":
-      return {
-        ok: true,
-        command: "status",
-        payload: { status: "ready", services: { gwiki: { configured: true } } },
-      };
-    case "/api/wiki/health":
-      return {
-        ok: true,
-        command: "health",
-        payload: { broken_links: [], stale_pages: [], uncompiled_sources: [] },
-      };
-    case "/api/wiki/sources":
-      return { ok: true, command: "sources", payload: { sources: [] } };
-    case "/api/wiki/read":
-      return {
-        ok: true,
-        command: "read",
-        payload: {
-          wiki_path: "Home.md",
-          title: "Home",
-          content: WIKI_LONG_CONTENT,
-          content_hash: "abc123",
-          status: "ok",
-          truncated: false,
-        },
-      };
-    case "/api/wiki/backlinks":
-      return { ok: true, command: "backlinks", payload: { backlinks: [] } };
     case "/api/pipelines/executions":
       return {
         executions: [
@@ -1776,10 +1704,6 @@ const TAB_CHECKPOINTS: Record<
     page.getByRole("list", { name: "Memories" }).getByRole("listitem").first(),
   integrations: (page) =>
     page.getByRole("button", { name: "Select Slack Alerts" }),
-  wiki: (page) =>
-    page
-      .getByRole("tree", { name: "Wiki pages" })
-      .getByRole("treeitem", { name: "Home" }),
   rules: (page) =>
     page.getByRole("button", { name: "Select no-secrets-in-diff" }),
   plans: (page) => page.getByTestId("plan-review-status"),
@@ -1991,20 +1915,6 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
         {
           prepare: async (page) => {
             await page.locator(".activity-panel-mobile-trigger").click();
-          },
-        },
-      );
-    }
-    if (tab.id === "wiki") {
-      states.overflow = tabImpl(
-        tab.id,
-        (page) => page.getByRole("heading", { name: "Home" }).first(),
-        {
-          prepare: async (page) => {
-            await page
-              .getByRole("tree", { name: "Wiki pages" })
-              .getByRole("treeitem", { name: "Home" })
-              .click();
           },
         },
       );
@@ -2285,6 +2195,109 @@ const REPRESENTATIVE_MAPPINGS: readonly RepresentativeMapping[] = [
 // ---------------------------------------------------------------------------
 // Always-on roster and mapping guards (run in the default project)
 // ---------------------------------------------------------------------------
+
+test.describe("wiki retirement browser behavior", () => {
+  for (const cell of expandCaptureCells().filter(
+    (cell) =>
+      cell.scenario === "tab-sessions" &&
+      cell.state === "base" &&
+      cell.pointer === "fine" &&
+      !cell.grayscale,
+  )) {
+    test(`restores navigation and settings ${cell.theme} ${cell.viewport.name}`, async ({
+      page,
+    }, testInfo) => {
+      await page.setViewportSize(cell.viewport);
+      await page.emulateMedia({ colorScheme: cell.theme });
+      const settings = { ...DEFAULT_SETTINGS, theme: cell.theme };
+      const wikiActivity: string[] = [];
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      await page.addInitScript((settings) => {
+        localStorage.setItem("gobby-settings", JSON.stringify(settings));
+        localStorage.setItem("gobby-activity-panel-tab-v2", "wiki");
+        localStorage.setItem("gobby-activity-panel-layout", "panel");
+      }, settings);
+      await page.routeWebSocket("**/ws", (ws) => {
+        ws.onMessage((raw) => {
+          const message = JSON.parse(String(raw)) as Record<string, unknown>;
+          if (/wiki/i.test(String(raw))) wikiActivity.push(String(raw));
+          if (message.type === "subscribe") {
+            ws.send(
+              JSON.stringify({
+                type: "connection_established",
+                conversation_ids: [],
+              }),
+            );
+            ws.send(
+              JSON.stringify({
+                type: "subscribe_success",
+                events: message.events,
+              }),
+            );
+          }
+        });
+      });
+      await page.route(
+        (url) => url.pathname.startsWith("/api/"),
+        async (route) => {
+          const url = new URL(route.request().url());
+          if (/wiki/i.test(url.pathname)) wikiActivity.push(url.pathname);
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(
+              baseApi(url.pathname, url, cell, settings) ?? {},
+            ),
+          });
+        },
+      );
+
+      await page.goto("/");
+      const panel = page.getByRole("complementary", {
+        name: "Activity: Sessions",
+      });
+      await expect
+        .poll(async () => ({ visible: await panel.isVisible(), pageErrors }))
+        .toEqual({ visible: true, pageErrors: [] });
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            localStorage.getItem("gobby-activity-panel-tab-v2"),
+          ),
+        )
+        .toBe("sessions");
+      await panel
+        .getByRole("button", { name: "Sessions", exact: true })
+        .click();
+      await expect(
+        panel.getByRole("button", { name: "Memory", exact: true }),
+      ).toBeVisible();
+      await expect(
+        panel.getByRole("button", { name: "Wiki", exact: true }),
+      ).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath("navigation.png") });
+      await panel.getByRole("button", { name: "Memory", exact: true }).click();
+      await expect(
+        page.getByRole("complementary", { name: "Activity: Memory" }),
+      ).toBeVisible();
+
+      await page.getByRole("button", { name: "Open settings" }).click();
+      const dialog = page.getByRole("dialog", { name: "Settings" });
+      await dialog.locator('[aria-haspopup="listbox"]').click();
+      await dialog
+        .getByRole("option", { name: "Memory & Knowledge", exact: true })
+        .click();
+      await expect(
+        dialog.getByRole("switch", { name: "Enable memory", exact: true }),
+      ).toBeVisible();
+      await expect(dialog.getByText(/wiki/i)).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath("settings.png") });
+      expect(wikiActivity).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+});
 
 test.describe("surface checkpoint assertion", () => {
   test("the scenario roster derives from the live registries", () => {
@@ -2782,34 +2795,37 @@ async function runCaptureCell(
       });
     });
 
-    await page.route("**/api/**", async (route) => {
-      const request = route.request();
-      const url = new URL(request.url());
-      if (request.method() !== "GET") {
+    await page.route(
+      (url) => url.pathname.startsWith("/api/"),
+      async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (request.method() !== "GET") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ ok: true }),
+          });
+          return;
+        }
+        const override = impl.api?.(url.pathname, url, cell);
+        if (override === "hang") {
+          // Deliberately never fulfilled: loading states.
+          return;
+        }
+        const payload = override ?? baseApi(url.pathname, url, cell, settings);
+        if (payload === undefined) {
+          // Unmodeled endpoint — surfaced in the failure diagnostics so a
+          // missing stub names itself instead of rendering an empty surface.
+          consoleLog.push(`api-miss: ${url.pathname}${url.search}`);
+        }
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ ok: true }),
+          body: JSON.stringify(payload ?? {}),
         });
-        return;
-      }
-      const override = impl.api?.(url.pathname, url, cell);
-      if (override === "hang") {
-        // Deliberately never fulfilled: loading states.
-        return;
-      }
-      const payload = override ?? baseApi(url.pathname, url, cell, settings);
-      if (payload === undefined) {
-        // Unmodeled endpoint — surfaced in the failure diagnostics so a
-        // missing stub names itself instead of rendering an empty surface.
-        consoleLog.push(`api-miss: ${url.pathname}${url.search}`);
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(payload ?? {}),
-      });
-    });
+      },
+    );
 
     await page.goto("/");
     await impl.prepare?.(page, cell);

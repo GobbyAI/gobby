@@ -114,7 +114,6 @@ const TAB_PLAN_SECTIONS: Record<string, string> = {
   skills: "4.8",
   memory: "4.8",
   integrations: "4.8",
-  wiki: "4.4",
   rules: "4.8",
   plans: "4.8",
   changes: "4.8",
@@ -183,9 +182,6 @@ export function buildCaptureScenarios(): CaptureScenarioDescriptor[] {
       // The sessions surface owns the filter overlay; the activity chrome's
       // tab dropdown is photographed here as its host tab.
       states.push({ id: "filter-open" }, { id: "menu-open" });
-    }
-    if (tab.id === "wiki") {
-      states.push({ id: "overflow" });
     }
     scenarios.push({
       id: `tab-${tab.id}`,

@@ -301,7 +301,6 @@ describe("MarkdownBody typography ownership", () => {
       "src/components/activity/TasksTabDetailPanel.tsx",
       "src/components/activity/skills/SkillContentView.tsx",
       "src/components/activity/taskdetail/TaskDetailEditableCore.tsx",
-      "src/components/activity/wiki/WikiPageReader.tsx",
     ];
     for (const host of hosts) {
       expect(readSource(host), host).toContain("markdownBodyClassName");

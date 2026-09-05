@@ -46,8 +46,8 @@ const CONTRACT_KEYS: ReadonlySet<string> = new Set(
 // Schema covering the rows the assertions touch. The two `profile` selects
 // (`memory.kg.profile`, `memory.dream.profile`) prove
 // multi-hop `$ref` traversal through the real DaemonConfig shape down to the
-// shared `FeatureProfile` enum; `candidates`, `wiki.roots`, and `ignore_globs`
-// cover the array "fix" rows from the configuration audit.
+// shared `FeatureProfile` enum; `candidates` covers the array editor
+// from the configuration audit.
 const FEATURE_PROFILE = {
   enum: ["feature_low", "feature_mid", "feature_high"],
   type: "string",
@@ -149,30 +149,6 @@ const SCHEMA: Record<string, unknown> = {
         backup_path: { type: "string" },
       },
     },
-    WikiRootConfig: {
-      type: "object",
-      properties: {
-        scope: { type: "string" },
-        path: { type: "string" },
-      },
-      required: ["scope", "path"],
-    },
-    WikiConfig: {
-      type: "object",
-      properties: {
-        enabled: { type: "boolean" },
-        roots: { type: "array", items: { $ref: "#/$defs/WikiRootConfig" } },
-        debounce_interval: { type: "number" },
-        poll_interval: { type: "number" },
-        ignore_globs: { type: "array", items: { type: "string" } },
-        codewiki_on_commit: { type: "boolean" },
-        codewiki_nightly_enabled: { type: "boolean" },
-        codewiki_nightly_schedule_cron: { type: "string" },
-        codewiki_nightly_timezone: {
-          anyOf: [{ type: "string" }, { type: "null" }],
-        },
-      },
-    },
   },
   type: "object",
   properties: {
@@ -184,7 +160,6 @@ const SCHEMA: Record<string, unknown> = {
     databases: { $ref: "#/$defs/DatabasesConfig" },
     knowledge_graph_queue: { $ref: "#/$defs/KnowledgeGraphQueueConfig" },
     memory_backup: { $ref: "#/$defs/MemoryBackupConfig" },
-    wiki: { $ref: "#/$defs/WikiConfig" },
   },
 };
 
@@ -256,17 +231,6 @@ function makeConfigValues(): Record<string, unknown> {
     memory_backup: {
       enabled: true,
       backup_path: ".gobby/memories.jsonl",
-    },
-    wiki: {
-      enabled: true,
-      roots: [{ scope: "project", path: "docs/wiki" }],
-      debounce_interval: 0.5,
-      poll_interval: 0.25,
-      ignore_globs: ["outputs/**"],
-      codewiki_on_commit: false,
-      codewiki_nightly_enabled: false,
-      codewiki_nightly_schedule_cron: "0 3 * * *",
-      codewiki_nightly_timezone: null,
     },
   };
 }
@@ -392,26 +356,12 @@ describe("MemoryKnowledgeSection", () => {
     );
   });
 
-  it("renders wiki.roots as a typed scope/path sub-form", () => {
+  it("renders shared memory settings without a wiki surface", () => {
     renderSection(makeContext());
 
-    expect(screen.getByLabelText("Wiki root 1 scope")).toHaveValue("project");
-    expect(screen.getByLabelText("Wiki root 1 path")).toHaveValue("docs/wiki");
-    expect(screen.getByLabelText("Wiki ignore globs item 1")).toHaveValue(
-      "outputs/**",
-    );
-    expect(
-      screen.queryByRole("switch", { name: "Refresh codewiki on commit" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("switch", { name: "Refresh codewiki nightly" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Nightly codewiki refresh schedule"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Nightly codewiki refresh timezone"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Enable memory" })).toBeChecked();
+    expect(screen.queryByText(/wiki/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/wiki/i)).not.toBeInTheDocument();
   });
 
   it("persists an edited draft row through the section Save", async () => {
