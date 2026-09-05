@@ -37,8 +37,7 @@
           "gobby test-quality audit"
         ],
         "required_args_all": [
-          "--fail-on-new",
-          "--min-severity"
+          "--fail-on-new"
         ]
       }
     ]
