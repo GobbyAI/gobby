@@ -1172,12 +1172,11 @@ fn hmac_sha256_rejects_empty_key() {
 
 #[test]
 fn expected_schema_identity_tracks_catalog_head() {
-    // With the postgres feature the identity is the live embedded catalog;
-    // without it, the frozen golden fixture identity.
-    #[cfg(feature = "postgres")]
-    assert_eq!(expected_schema_identity().latest_version, 423);
-    #[cfg(not(feature = "postgres"))]
-    assert_eq!(expected_schema_identity().latest_version, 420);
+    let packaged: GrantSchemaIdentity = serde_json::from_str(include_str!(
+        "../../../../src/gobby/storage/schema_expected_identity.json"
+    ))
+    .expect("packaged schema identity must parse");
+    assert_eq!(expected_schema_identity(), packaged);
 }
 
 #[test]
