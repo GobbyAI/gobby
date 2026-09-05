@@ -71,3 +71,71 @@ bytes under the negotiated keyboard protocol), `selection`
 | Commit | Decision | Notes |
 | --- | --- | --- |
 | `952729ee` | **accept (applied)** | copy-mode logical lines for wrapped wide graphemes (herdr #2735) |
+
+## Render-test parity (4.1)
+
+The keep-set render tests of herdr `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7` are ported
+under `tests/parity/` with row-text expectations unchanged; `tests/parity/upstream_tests.txt`
+is the pinned inventory (113 identities, SHA-256 `6d3cb09874a9c2b47a0b6982b4a1ccb920c77e435933bfada7e26d9ef116d412`).
+
+<!-- parity-table:start -->
+| herdr source | ported | not ported | gclient parity module |
+| --- | --- | --- | --- |
+| `src/ui.rs` | 31 | 4 | `tests/parity/chrome.rs` |
+| `src/ui/dialogs.rs` | 4 | 2 | `tests/parity/dialogs.rs` |
+| `src/ui/keybind_help.rs` | 2 | 0 | `tests/parity/chrome.rs` |
+| `src/ui/navigator.rs` | 5 | 0 | `tests/parity/navigator.rs` |
+| `src/ui/panes.rs` | 17 | 0 | `tests/parity/panes.rs` |
+| `src/ui/sidebar.rs` | 35 | 6 | `tests/parity/sidebar.rs` |
+| `src/ui/sidebar/tokens.rs` | 6 | 0 | `tests/parity/sidebar.rs` |
+| `src/ui/status.rs` | 4 | 0 | `tests/parity/status.rs` |
+| `src/ui/tab_surface.rs` | 2 | 1 | `tests/parity/chrome.rs` |
+| `src/ui/tabs.rs` | 5 | 0 | `tests/parity/tabs.rs` |
+| `src/ui/text.rs` | 2 | 0 | `tests/parity/chrome.rs` |
+| `src/ui/menus.rs` | 0 | 0 | dropped module |
+| `src/ui/mobile.rs` | 0 | 15 | dropped module |
+| `src/ui/onboarding.rs` | 0 | 0 | dropped module |
+| `src/ui/release_notes.rs` | 0 | 6 | dropped module |
+<!-- parity-table:end -->
+
+Not ported: pinned dropped-surface identities (13). These sit in kept modules but
+exercise worktree, git-space, or mobile surfaces gclient dropped (3.1):
+
+- `src/ui.rs::configured_mobile_width_threshold_controls_layout_switch`
+- `src/ui.rs::mobile_background_tabs_use_mobile_terminal_area`
+- `src/ui.rs::mobile_config_diagnostic_keeps_command_visible`
+- `src/ui.rs::mobile_width_uses_header_and_full_width_terminal`
+- `src/ui/dialogs.rs::new_worktree_error_renders_fatal_stderr_line`
+- `src/ui/dialogs.rs::new_worktree_hit_test_geometry_matches_modal_size`
+- `src/ui/sidebar.rs::desktop_worktree_connector_uses_full_list_at_viewport_boundary`
+- `src/ui/sidebar.rs::desktop_worktree_tree_aligns_parents_and_marks_children`
+- `src/ui/sidebar.rs::linked_only_worktree_members_do_not_form_parentless_group`
+- `src/ui/sidebar.rs::space_row_gap_preserves_compact_worktree_children`
+- `src/ui/sidebar.rs::workspace_list_entries_group_multiple_workspaces_in_same_git_space`
+- `src/ui/sidebar.rs::workspace_list_entries_group_non_contiguous_explicit_members`
+- `src/ui/tab_surface.rs::mobile_full_app_semantic_frame_is_characterized`
+
+Not ported: dropped modules (21). `menus.rs` and `onboarding.rs` carry no tests at
+the pinned commit; every `#[test]` in the other two is listed:
+
+- `src/ui/mobile.rs::global_agent_counts_ignore_active_agent_view_filter`
+- `src/ui/mobile.rs::agent_summary_leads_with_attention_states_in_priority_order`
+- `src/ui/mobile.rs::agent_summary_hides_empty_categories`
+- `src/ui/mobile.rs::agent_summary_collapses_to_all_idle_without_attention`
+- `src/ui/mobile.rs::agent_summary_drops_least_urgent_segments_when_narrow`
+- `src/ui/mobile.rs::agent_summary_keeps_all_segments_when_wide_enough`
+- `src/ui/mobile.rs::agent_summary_reports_no_agents_when_empty`
+- `src/ui/mobile.rs::switcher_leads_with_agents_and_shifts_spaces_below`
+- `src/ui/mobile.rs::switcher_spaces_follow_grouped_worktree_order`
+- `src/ui/mobile.rs::switcher_without_agents_keeps_spaces_first`
+- `src/ui/mobile.rs::mobile_agent_detail_includes_tab_context_when_available`
+- `src/ui/mobile.rs::mobile_agent_detail_keeps_existing_compact_detail_without_tab_context`
+- `src/ui/mobile.rs::mobile_tab_status_uses_compact_tab_label_and_position`
+- `src/ui/mobile.rs::mobile_switcher_uses_compact_tab_label_for_auto_tab_labels`
+- `src/ui/mobile.rs::mobile_header_uses_live_root_runtime_cwd_for_workspace_label`
+- `src/ui/release_notes.rs::release_notes_inline_code_spans_are_styled_without_backticks`
+- `src/ui/release_notes.rs::release_notes_config_inline_code_uses_nonbreaking_spaces`
+- `src/ui/release_notes.rs::release_notes_preview_lines_show_update_steps`
+- `src/ui/release_notes.rs::release_notes_preview_display_is_part_of_the_scrollable_notes_body`
+- `src/ui/release_notes.rs::release_notes_fenced_code_blocks_render_as_preformatted_lines`
+- `src/ui/release_notes.rs::release_notes_fenced_code_blocks_preserve_blank_lines`

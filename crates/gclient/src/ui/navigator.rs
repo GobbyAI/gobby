@@ -3,8 +3,8 @@
 //!
 //! herdr's popup arithmetic is kept: margins of `max(width / 16, 2)` and
 //! `max(height / 10, 1)`, a one-row search line, a rule, the row body, a
-//! detail row, and a footer. Rows are flat (no workspace tree), so the tree
-//! prefix is the depth-zero `"  "`.
+//! detail row, and a footer. Rows are flat (no workspace tree): every row
+//! sits at depth zero, so herdr's [`tree_prefix`] arithmetic yields `"  "`.
 
 use crate::ui::chrome::{attention_terminal, row_state, Chrome, RowState, WorkspaceView};
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
@@ -49,6 +49,12 @@ pub struct NavigatorRow {
     pub title: String,
     pub state: RowState,
     pub detail: String,
+    /// Tree depth; roster rows are flat, so `navigator_rows` emits zero.
+    pub depth: u8,
+    /// Workspace rows take an expand caret instead of a branch glyph.
+    pub is_workspace: bool,
+    /// Whether a workspace row's subtree is shown (ignored otherwise).
+    pub expanded: bool,
 }
 
 impl NavigatorRow {
@@ -73,6 +79,9 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
             title: id.clone(),
             target: NavigatorTarget::Terminal(id),
             state,
+            depth: 0,
+            is_workspace: false,
+            expanded: false,
         }
     });
     let attention = ws
@@ -87,6 +96,9 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
                 attention_kind(&entry)
             ),
             target: NavigatorTarget::Attention(entry),
+            depth: 0,
+            is_workspace: false,
+            expanded: false,
         });
     terminals
         .chain(attention)
@@ -109,6 +121,42 @@ fn matches_filter(state: RowState, filter: NavigatorStateFilter) -> bool {
             matches!(state, RowState::Idle | RowState::Unseen | RowState::Unknown)
         }
     }
+}
+
+/// Tree prefix for a navigator row: expand caret for workspaces, connected
+/// branch glyphs for children (`├──`, `└──` for the last sibling, with `│`
+/// continuation lines under ancestors that have more siblings below).
+pub fn tree_prefix(rows: &[NavigatorRow], idx: usize) -> String {
+    let row = &rows[idx];
+    if row.is_workspace {
+        return if row.expanded { "▾" } else { "▸" }.to_string();
+    }
+    if row.depth == 0 {
+        return "  ".to_string();
+    }
+    let mut prefix = String::new();
+    for level in 1..row.depth {
+        prefix.push_str(if has_following_sibling_at_depth(rows, idx, level) {
+            "│  "
+        } else {
+            "   "
+        });
+    }
+    prefix.push_str(if has_following_sibling_at_depth(rows, idx, row.depth) {
+        "├──"
+    } else {
+        "└──"
+    });
+    prefix
+}
+
+/// Whether another row at `depth` follows `idx` before the subtree at that
+/// depth ends (a row shallower than `depth` closes the subtree).
+pub fn has_following_sibling_at_depth(rows: &[NavigatorRow], idx: usize, depth: u8) -> bool {
+    rows[idx + 1..]
+        .iter()
+        .take_while(|row| row.depth >= depth)
+        .any(|row| row.depth == depth)
 }
 
 pub fn render_navigator<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W, chrome: &Chrome) {
@@ -245,7 +293,10 @@ fn render_rows(
         let rect = Rect::new(body.x, body.y + visible_idx as u16, body.width, 1);
         let selected = idx == chrome.navigator.selected;
         let is_current = current == Some(rows[idx].terminal_id());
-        render_row(frame, rect, &rows[idx], selected, is_current, chrome);
+        let prefix = tree_prefix(rows, idx);
+        render_row(
+            frame, rect, &rows[idx], &prefix, selected, is_current, chrome,
+        );
     }
 }
 
@@ -253,6 +304,7 @@ fn render_row(
     frame: &mut Frame,
     rect: Rect,
     row: &NavigatorRow,
+    prefix: &str,
     selected: bool,
     is_current: bool,
     chrome: &Chrome,
@@ -286,7 +338,6 @@ fn render_row(
         Style::default().fg(status_color).bg(p.panel_bg)
     };
 
-    let prefix = "  ";
     let current = if is_current { "◆" } else { " " };
     let gutter = format!(" {current} ");
     let gutter_style = if selected {
