@@ -190,6 +190,10 @@ step_workflow:
         task manifest. If development review is disabled, call close_task with
         preview=true and commit_sha, then repair every blocker until it closes;
         otherwise submit_for_review(stage_name="development") for QA.
+        Sending the parent a task_blocker message ends this run after delivery;
+        the parent respawns you with the answer, reusing the worktree. For a question
+        that needs a reply while this run stays alive, use message_type=message; the
+        reply arrives in a later tool result.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:de_escalate_task"

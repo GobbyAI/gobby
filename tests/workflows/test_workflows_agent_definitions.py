@@ -319,6 +319,19 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
 
 
+@pytest.mark.parametrize(
+    "agent_name",
+    ["backend-developer", "frontend-developer", "fullstack-developer", "tech-writer"],
+)
+def test_task_assigned_agents_document_parent_reply_paths(agent_name: str) -> None:
+    status = " ".join(_step(_agent(agent_name), "implement")["status_message"].split())
+
+    assert "task_blocker message ends this run after delivery" in status
+    assert "parent respawns you with the answer, reusing the worktree" in status
+    assert "use message_type=message" in status
+    assert "reply arrives in a later tool result" in status
+
+
 @pytest.mark.parametrize("agent_name", ["backend-developer", "fullstack-developer"])
 def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
     instructions = _agent(agent_name)["prompts"]["agent"]

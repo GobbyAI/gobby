@@ -75,6 +75,7 @@ from ._step_state import (
     persist_initial_step_instance_if_resolved,
     preclaimed_task_instruction,
     spawn_starts_after_claim,
+    task_coordination_instruction,
 )
 from ._worktree_reuse import prepare_reused_worktree
 
@@ -406,6 +407,9 @@ async def spawn_agent_impl(
         assert resolved_task_id is not None
         task_ref = f"#{task_seq_num}" if task_seq_num else resolved_task_id
         prompt = f"{prompt}\n\n{preclaimed_task_instruction(task_ref)}"
+    initial_task_ref = initial_variables.get("assigned_task_id") if initial_variables else None
+    if resolved_task_id is not None or isinstance(initial_task_ref, str):
+        prompt = f"{prompt}\n\n{task_coordination_instruction()}"
 
     # 5. Build spawn config and handle worktree_id/clone_id reuse.
     spawn_config = SpawnConfig(

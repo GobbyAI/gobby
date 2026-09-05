@@ -106,6 +106,16 @@ def preclaimed_task_instruction(task_ref: str) -> str:
     )
 
 
+def task_coordination_instruction() -> str:
+    """Return child-facing guidance for questions sent to the parent session."""
+    return (
+        "Sending the parent a task_blocker message ends this run after delivery; "
+        "the parent respawns you with the answer, reusing the worktree. For a question "
+        "that needs a reply while this run stays alive, use message_type=message; the "
+        "reply arrives in a later tool result."
+    )
+
+
 def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
