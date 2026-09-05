@@ -168,7 +168,7 @@ state inconsistent.
   call `src/gobby/build/service.py`). Read `src/gobby/dispatch/AGENTS.md` before
   touching dispatch, build, or stage-registry code.
 - Rust workspace (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
-  `gobby-hooks`→`ghook`, `gobby-wiki`→`gwiki`, `gobby-terminal`→`gterm`,
+  `gobby-hooks`→`ghook`, `gobby-terminal`→`gterm`,
   `gobby-client`→`gclient`, shared `gobby-core`. The daemon shells
   out to the installed `~/.gobby/bin/` binaries, so a crate change is live only after
   rebuild and reinstall — and install via a new inode (`cp` to a dotfile, `mv -f` over

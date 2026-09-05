@@ -15,7 +15,7 @@ decision record. The live tracker is epic #21542.
 - **Data**: PostgreSQL is the runtime hub; FalkorDB graph; Qdrant vectors.
   Schema authority lives in Rust — `gcore` embeds one flattened `baseline@420`
   with no stacked migrations, and `gdaemon schema apply/verify` owns DDL.
-- **Rust bridgehead**: `crates/` ships `gcode`, `gwiki`, `ghook`, `gdaemon`,
+- **Rust bridgehead**: `crates/` ships `gcode`, `ghook`, `gdaemon`,
   `gobby-terminal` (`gterm`), and `gobby-client` (`gclient`) over the shared
   `gcore` library. gterminal and gclient are merged on `0.5.0` (`7ccd140a73`);
   gclient is a skeleton owned by #21334.
@@ -56,7 +56,7 @@ Nothing else moves. `gdaemon` (package `gobby-daemon`) is the Rust daemon
 throughout, growing from today's bridgehead into the front door at Stage 1 and
 into `standalone`/`hub`/`node` modes across Stages 1 and 4. `gterm` (package
 `gobby-terminal`) is the herdr-based PTY host, permanently a separate supervised
-process. `gcode`, `gwiki`, and `ghook` keep their names unchanged.
+process. `gcode` and `ghook` keep their names unchanged.
 
 ## Destination
 
@@ -122,8 +122,6 @@ authentication are prerequisites and are not yet tasks.
 | --- | --- | --- | --- |
 | Project checkout browser | `/api/files/*` | `/api/files/*` (except `user-md`) | Local repo on this machine |
 | Working profile | `GET`/`PUT /api/hub/user` | `GET`/`PUT /api/files/user-md` | Hub `files_home/USER.md` |
-| Hub wiki (personal, topic; project vaults after #18779) | `/api/hub/wiki/*` | `/api/wiki/*` with topic or personal scope | Hub `files_home/wiki/` |
-| Project / CodeWiki vault | `/api/wiki/*` with a real project id until #18779, then `/api/hub/wiki/*` | `/api/wiki/*` with project scope | `<checkout>/wiki` until #18779, then `files_home/wiki/<project.name>` |
 | Hub chat uploads | `/api/hub/chat/attachments` | `/api/chat/attachments` | Hub `files_home/attachments/<project-id>/...` |
 | Telegram inbound media | hub `files_home` at S4.8 | machine-local | `~/.gobby/comms_attachments` until then |
 
@@ -133,18 +131,13 @@ Destination on-disk tree on the hub host (`$GOBBY_HOME/files` standalone;
 ```text
 <files_home>/
   USER.md
-  _personal/                 # life-admin only; not a git repo; not a vault
-  wiki/                      # wiki home; not itself a vault
-    wikis.json
-    personal/                # personal vault
-    <topic>/
-    <project.name>/          # after #18779 only
+  _personal/                 # life-admin only; not a git repo
   attachments/               # all hub chat uploads, keyed by project id
     <project-id>/<id[:2]>/<id>/<filename>
 ```
 
-Reserved names at `<files_home>`: `USER.md`, `_personal`, `wiki`,
-`attachments`. Reserved vault name: `personal`. Chat uploads for a gobby-repo
+Reserved names at `<files_home>`: `USER.md`, `_personal`, and
+`attachments`. Chat uploads for a gobby-repo
 conversation are hub documents but not personal files; they belong under
 `attachments/<project-id>/`, and today's `_personal/attachments/...` writers are
 transitional.
@@ -267,7 +260,7 @@ is real.
 | **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone` |
 | **S4.3** · #20202 | Remote `gobby` attach — plan home stays under #21334 |
 | **S4.4** · #17769 | Per-user auth and multi-user; labeled `later` |
-| **S4.5** · #21577 | `gcode` and `gwiki` on nodes — configuration, once the tunnel exists |
+| **S4.5** · #21577 | `gcode` on nodes — configuration, once the tunnel exists |
 | **S4.6** · #19652 | Hub transcript archive research |
 | **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine |
 | **S4.8** · #21576 | Move Telegram and comms attachments onto hub `files_home` |
@@ -285,7 +278,7 @@ node behind the tunnel. Stage 4 as a whole closes with S4.1b.
 Documented, allowed to run concurrently, labeled `sidequest` in the task graph,
 and **never a blocker of anything on the path**.
 
-- Wiki redesign and cutover: #19670 → #19664, #18779, #21504
+- Legacy wiki retirement: #21771; replacement planning follows retirement
 - Plugin system on the public API: #20201
 - Hosted privacy stance and story C: #20203; datastore TLS and Qdrant auth are
   not yet tasks
@@ -389,7 +382,7 @@ Completed plans: `.gobby/plans/completed/daemon-native-runtime-boundary.md`,
 Live plans: `.gobby/plans/herdr-terminal-client.md`,
 `herdr-terminal-client-qa-fixes.md`, `herdr-foundation-landing.md`,
 `herdr-client-completion.md`, `m0-shared-datastores-bridge.md`,
-`hub-pc-datastore-move.md`, `wiki-output-design.md`.
+`hub-pc-datastore-move.md`, `retire-legacy-wiki.md`.
 
 Architecture and guides: `docs/architecture/hub-owned-files-home.md`,
 `docs/guides/shared-stack.md`, `docs/guides/remote-docker-acceptance.md`,

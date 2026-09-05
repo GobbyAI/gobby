@@ -59,7 +59,7 @@ Every surface serves one visitor mode; name it before designing and let it steer
 
 - **Persuade** — marketing pages, landing pages, launch moments. The visitor is deciding; commit to a bold visual world. (Gobby: the gobby.ai marketing site.)
 - **Operate** — product UI where the user is in a task: app screens, dashboards, settings, tables, tools. Earned familiarity beats novelty. Load `references/operate.md` for extended depth. (Gobby: the `web/` product UI, installer, CLI/TUI surfaces.)
-- **Read** — docs, guides, long-form. Prose measure and navigation dominate; take the typography and consistency rules from `references/operate.md`. (Gobby: docs and wiki reading surfaces.)
+- **Read** — docs, guides, long-form. Prose measure and navigation dominate; take the typography and consistency rules from `references/operate.md`. (Gobby: documentation reading surfaces.)
 - **Experience** — playable or expressive pages where the visit itself is the product. The rarest mode; everything can be committed.
 
 **Quality floor**: before editing any surface in any mode, load `references/craft-floor.md` via `get_skill_file` — its Verify and Refuse lists are the floor every mode builds on. The steering references assume it.

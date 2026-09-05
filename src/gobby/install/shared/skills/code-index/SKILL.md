@@ -117,17 +117,6 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 - `gcode vector cleanup-orphans` — remove Qdrant code-symbol vectors for files missing from PostgreSQL, without resolving embeddings
 - `gcode prune` — remove stale project records globally and reconcile graph and vector projections for all remaining indexed projects; use `--project` to scope projection cleanup
 
-## CodeWiki Lifecycle
-
-- `gwiki code` owns CodeWiki generation and remains available for isolated/manual use.
-- Production-vault execution and daemon scheduling are operationally paused pending the wiki redesign.
-- `gwiki --project <root> code --out <vault>` generates into an explicit manual output directory.
-- Add `--scope <PATH...>` or `--since <git-ref>` for bounded regeneration.
-- Add `--repair-citations` to re-anchor `[file:line]` citations without generation or AI calls.
-- `--purge --out <vault> --force` removes generated Markdown and metadata only; it leaves PostgreSQL code facts, FalkorDB graph data, and Qdrant vectors intact.
-
-See `docs/guides/codewiki.md` for the dormant daemon status/error contract, canonical vault, and purge safety.
-
 ## When to use which
 
 | Looking for... | Use |
