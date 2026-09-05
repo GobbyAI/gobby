@@ -235,10 +235,27 @@ async fn every_method_has_success_and_typed_failure() {
             }
         }),
     );
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        403,
+        json!({"detail": "forbidden"}),
+    );
+    mock.enqueue(
+        "POST",
+        "/api/attention/run:missing/respond",
+        404,
+        json!({"detail": "missing"}),
+    );
+    mock.enqueue_retry_after("POST", "/api/attention/run:retry/seen", 503, 11);
 
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let (initial, mut events) = daemon.subscribe();
+    assert!(initial.ready);
+    assert_eq!(initial.last_error, None);
     let first = daemon
         .list_terminals("project-1", None)
         .await
@@ -281,6 +298,26 @@ async fn every_method_has_success_and_typed_failure() {
         daemon.list_terminals("project-1", None).await,
         Err(DaemonError::Protocol { .. })
     ));
+    assert_eq!(
+        daemon.roster().await.expect_err("403 must fail"),
+        DaemonError::Unauthorized
+    );
+    assert_eq!(
+        daemon
+            .respond(
+                "run:missing",
+                "attention-missing",
+                &Answer::option("fingerprint-missing", 1),
+            )
+            .await,
+        Err(DaemonError::NotFound)
+    );
+    assert_eq!(
+        daemon.mark_seen("run:retry", "attention-retry").await,
+        Err(DaemonError::Unavailable {
+            retry_after: Some(Duration::from_secs(11))
+        })
+    );
     mock.set_token("rotated-token");
     assert_eq!(
         daemon
@@ -289,6 +326,106 @@ async fn every_method_has_success_and_typed_failure() {
             .expect_err("stale bearer token must fail"),
         DaemonError::Unauthorized
     );
+    mock.set_token("local-token");
+
+    assert!(matches!(
+        daemon.spawn(SpawnRequest::default()).await.expect("spawn"),
+        SpawnOutcome::Created { .. }
+    ));
+    mock.set_spawn_refusal("capacity");
+    assert_eq!(
+        daemon
+            .spawn(SpawnRequest::default())
+            .await
+            .expect("create refusal"),
+        SpawnOutcome::Refused {
+            reason: "capacity".into()
+        }
+    );
+    assert_eq!(
+        daemon.terminate("terminal-1").await.expect("terminate"),
+        KillOutcome::Killed {
+            terminal_id: "terminal-1".into()
+        }
+    );
+    let attached = daemon
+        .send(json!({
+            "type": "terminal_attach",
+            "request_id": "every-method-attach",
+            "terminal_id": "terminal-1",
+            "frame_delivery": "proxy"
+        }))
+        .await
+        .expect("send");
+    daemon
+        .notify(json!({
+            "type": "terminal_set_viewport",
+            "terminal_id": "terminal-1",
+            "attachment_id": attached["attachment_id"],
+            "rows": 24,
+            "cols": 80
+        }))
+        .await
+        .expect("notify");
+    timeout(Duration::from_secs(1), async {
+        while !mock.requests().iter().any(|request| {
+            request
+                .body
+                .as_ref()
+                .and_then(|body| body.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("terminal_set_viewport")
+        }) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("notify recorded by mock");
+
+    mock.fail_next_websocket();
+    mock.drop_websockets();
+    let disconnected_generation = timeout(Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Disconnected { generation, error } =
+                events.recv().await.expect("daemon event")
+            {
+                assert_eq!(
+                    error,
+                    DaemonError::Unavailable { retry_after: None },
+                    "subscribe exposes a typed connection failure"
+                );
+                break generation;
+            }
+        }
+    })
+    .await
+    .expect("disconnect deadline");
+    assert_eq!(disconnected_generation, initial.generation);
+    let disconnected = daemon.subscribe().0;
+    assert!(!disconnected.ready);
+    assert_eq!(
+        disconnected.last_error,
+        Some(DaemonError::Unavailable { retry_after: None })
+    );
+    assert_eq!(
+        daemon.reconnect(initial.generation).await,
+        Err(DaemonError::Unavailable { retry_after: None })
+    );
+    let failed_reconnect = daemon.subscribe().0;
+    assert!(!failed_reconnect.ready);
+    assert_eq!(
+        failed_reconnect.last_error,
+        Some(DaemonError::Unavailable { retry_after: None })
+    );
+    let reconnected = daemon
+        .reconnect(initial.generation)
+        .await
+        .expect("reconnect after connection failure");
+    assert!(reconnected > initial.generation);
+    let ready_again = daemon.subscribe().0;
+    assert!(ready_again.ready);
+    assert_eq!(ready_again.generation, reconnected);
+    assert_eq!(ready_again.last_error, None);
 
     let requests = mock.requests();
     assert!(requests
@@ -312,11 +449,77 @@ async fn every_method_has_success_and_typed_failure() {
             .and_then(|body| body.get("attention_id")),
         Some(&json!("attention-1"))
     );
+    for kind in [
+        "terminal_create",
+        "terminal_kill",
+        "terminal_attach",
+        "terminal_set_viewport",
+    ] {
+        assert!(requests.iter().any(|request| {
+            request
+                .body
+                .as_ref()
+                .and_then(|body| body.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some(kind)
+        }));
+    }
     daemon
         .close(Instant::now() + Duration::from_secs(1))
         .await
         .expect("close");
+    assert_eq!(
+        daemon.spawn(SpawnRequest::default()).await,
+        Err(DaemonError::Unavailable { retry_after: None })
+    );
+    assert_eq!(
+        daemon.terminate("terminal-1").await,
+        Err(DaemonError::Unavailable { retry_after: None })
+    );
+    assert_eq!(
+        daemon
+            .send(json!({
+                "type": "terminal_attach",
+                "request_id": "after-close",
+                "terminal_id": "terminal-1",
+                "frame_delivery": "proxy"
+            }))
+            .await,
+        Err(DaemonError::Unavailable { retry_after: None })
+    );
+    assert_eq!(
+        daemon
+            .notify(json!({
+                "type": "terminal_set_viewport",
+                "terminal_id": "terminal-1",
+                "attachment_id": "after-close",
+                "rows": 24,
+                "cols": 80
+            }))
+            .await,
+        Err(DaemonError::Unavailable { retry_after: None })
+    );
+    assert_eq!(
+        daemon.reconnect(reconnected).await,
+        Err(DaemonError::Unavailable { retry_after: None })
+    );
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("idempotent close");
     mock.shutdown().await;
+
+    let close_timeout_mock = MockDaemon::start("local-token").await;
+    let close_timeout_daemon = LiveDaemon::connect(close_timeout_mock.url(), "local-token")
+        .await
+        .expect("connect close-timeout daemon");
+    assert_eq!(
+        close_timeout_daemon
+            .close(Instant::now() - Duration::from_millis(1))
+            .await,
+        Err(DaemonError::Timeout)
+    );
+    close_timeout_mock.shutdown().await;
 }
 
 #[tokio::test]

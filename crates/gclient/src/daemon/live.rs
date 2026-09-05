@@ -584,6 +584,9 @@ impl Daemon for LiveDaemon {
             if state.closed {
                 return Ok(());
             }
+            if deadline <= Instant::now() {
+                return Err(DaemonError::Timeout);
+            }
             state.closed = true;
             state.ready = false;
             let reconnect_done = state.reconnect.as_ref().map(|flight| {
