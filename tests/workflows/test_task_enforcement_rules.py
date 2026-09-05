@@ -8,6 +8,7 @@ task claim/release tracking.
 from __future__ import annotations
 
 import shlex
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -499,6 +500,99 @@ class TestRequireTaskBeforeEdit:
         assert "canonical_repo_mutation" in body.when
         assert "requires_task_for_any_touched_file" in body.when
         assert "plan_mode" in body.when
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            (
+                "cp /private/tmp/claude-501/project/source/scratchpad/input.txt "
+                "/private/tmp/claude-501/project/destination/scratchpad/output.txt"
+            ),
+            "mv /tmp/gobby-taskless-source.txt /tmp/gobby-taskless-destination.txt",
+            f"printf content > {tempfile.gettempdir()}/gobby-taskless-output.txt",
+            "cat <<'EOF' > /private/tmp/gobby-taskless-heredoc.txt\ncontent\nEOF",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_external_temp_write_does_not_require_task(
+        self,
+        db: HubDatabase,
+        command: str,
+    ) -> None:
+        _sync_bundled(db)
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+        )
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is False
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_registered_worktree_write_still_requires_task(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        _sync_bundled(db)
+        checkout = tmp_path / "checkout"
+        common_dir = checkout / ".git"
+        linked_git_dir = common_dir / "worktrees" / "linked"
+        linked_checkout = tmp_path / "linked"
+        linked_git_dir.mkdir(parents=True)
+        linked_checkout.mkdir()
+        (linked_checkout / ".git").write_text(
+            f"gitdir: {linked_git_dir}\n",
+            encoding="utf-8",
+        )
+        (linked_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        target = linked_checkout / "generated.py"
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"printf content > {target}"},
+            "project_path": str(checkout),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+        )
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_workbook_diagnostic_heredoc_is_not_treated_as_an_edit(
