@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,7 +30,7 @@ def _record(
     }
 
 
-def _write(path: Path, records: list[dict[str, object] | str]) -> None:
+def _write(path: Path, records: Sequence[dict[str, object] | str]) -> None:
     lines = [record if isinstance(record, str) else json.dumps(record) for record in records]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
