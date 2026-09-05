@@ -5,6 +5,7 @@ Provides hook execution endpoint for CLI adapters.
 Extracted from base.py as part of Strangler Fig decomposition.
 """
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -504,7 +505,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # carry-forward can presume the previous delivery lost and bump
             # the generation those acks would CAS against.
             try:
-                consume_pending_delivery_receipts(request.app)
+                await asyncio.to_thread(consume_pending_delivery_receipts, request.app)
             except Exception:
                 logger.warning(
                     "Pending delivery-receipt sweep failed; the periodic drain remains",
