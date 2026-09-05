@@ -21,7 +21,7 @@ from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.utils.session_refs import try_resolve_session_field
 from gobby.workflows.state_manager import SessionVariableManager
 
-from .schema_guidance import build_invalid_arguments_response
+from .schema_guidance import build_invalid_arguments_response, record_schema_shown
 from .tool_proxy_utils import safe_truncate
 
 logger = logging.getLogger("gobby.mcp.server")
@@ -180,6 +180,7 @@ async def list_tools(
     *,
     project_id: str | None = None,
     scope: str | None = None,
+    enforce_workflow: bool = False,
 ) -> dict[str, Any]:
     """List tools for a specific server with progressive discovery format."""
     server_name = service._resolve_server_name(server_name)
@@ -201,7 +202,7 @@ async def list_tools(
                         else getattr(tool, "description", "")
                     )
                     brief_tools.append({"name": name, "brief": safe_truncate(desc)})
-            if service._tool_filter and session_id:
+            if enforce_workflow and service._tool_filter and session_id:
                 brief_tools = await asyncio.to_thread(
                     service._tool_filter.filter_tools, brief_tools, session_id
                 )
@@ -212,13 +213,14 @@ async def list_tools(
         registry = service._internal_manager.get_registry(server_name)
         if registry:
             tools = registry.list_tools()
-            if service._tool_filter and session_id:
+            if enforce_workflow and service._tool_filter and session_id:
                 tools = await asyncio.to_thread(
                     service._tool_filter.filter_tools, tools, session_id
                 )
-            await asyncio.to_thread(
-                service.record_listed_server, server_name, session_id=session_id
-            )
+            if enforce_workflow:
+                await asyncio.to_thread(
+                    service.record_listed_server, server_name, session_id=session_id
+                )
             return {"success": True, "tools": tools, "tool_count": len(tools)}
         error_msg = f"Internal server '{server_name}' not found"
         suggestion = service._get_server_suggestion(server_name)
@@ -257,11 +259,14 @@ async def list_tools(
                         "brief": safe_truncate(tool.description),
                     }
                 )
-        if service._tool_filter and session_id:
+        if enforce_workflow and service._tool_filter and session_id:
             ext_brief_tools = await asyncio.to_thread(
                 service._tool_filter.filter_tools, ext_brief_tools, session_id
             )
-        await asyncio.to_thread(service.record_listed_server, server_name, session_id=session_id)
+        if enforce_workflow:
+            await asyncio.to_thread(
+                service.record_listed_server, server_name, session_id=session_id
+            )
         return {"success": True, "tools": ext_brief_tools, "tool_count": len(ext_brief_tools)}
 
     error_msg = f"Server '{server_name}' not found"
@@ -282,7 +287,7 @@ async def call_tool(
     arguments: str | dict[str, Any] | None = None,
     session_id: str | None = None,
     strip_unknown: bool = False,
-    enforce_workflow: bool = True,
+    enforce_workflow: bool = False,
     timeout: float | None = None,
     wrapper_originated: bool = False,
     intent: str | None = None,
@@ -306,7 +311,21 @@ async def call_tool(
         scope=scope,
         offload=offload,
     )
+    if not enforce_workflow:
+        return outcome.result
     try:
+        if (
+            isinstance(outcome.result, dict)
+            and outcome.result.get("error_code") == ToolProxyErrorCode.INVALID_ARGUMENTS.value
+            and isinstance(outcome.result.get("schema"), dict)
+        ):
+            await asyncio.to_thread(
+                record_schema_shown,
+                service,
+                outcome.effective_session_id or session_id,
+                server_name=outcome.server_name,
+                tool_name=outcome.tool_name,
+            )
         sv_mgr = _tracking_variable_manager(service)
         if sv_mgr is not None:
             await asyncio.to_thread(
@@ -335,7 +354,7 @@ async def _call_tool_impl(
     arguments: str | dict[str, Any] | None = None,
     session_id: str | None = None,
     strip_unknown: bool = False,
-    enforce_workflow: bool = True,
+    enforce_workflow: bool = False,
     timeout: float | None = None,
     wrapper_originated: bool = False,
     intent: str | None = None,
@@ -357,12 +376,10 @@ async def _call_tool_impl(
             logger.debug("Could not fetch schema for argument preparation error: %s", schema_error)
         result = await asyncio.to_thread(
             build_invalid_arguments_response,
-            service,
             server_name=server_name,
             tool_name=tool_name,
             validation_errors=[error.get("error", "Invalid arguments")],
             input_schema=input_schema,
-            session_id=session_id,
             error_message=error.get("error"),
         )
         return _CallToolOutcome(
@@ -545,7 +562,7 @@ async def _call_tool_impl(
         dispatch_id = config.id
         server_name = config.name
 
-    if service._tool_filter and effective_session_id:
+    if enforce_workflow and service._tool_filter and effective_session_id:
         allowed, reason = await asyncio.to_thread(
             service._tool_filter.is_tool_allowed, tool_name, effective_session_id
         )
@@ -597,12 +614,10 @@ async def _call_tool_impl(
                             error_message = f"Missing required parameters: {missing}"
                     result = await asyncio.to_thread(
                         build_invalid_arguments_response,
-                        service,
                         server_name=server_name,
                         tool_name=tool_name,
                         validation_errors=validation_errors,
                         input_schema=input_schema,
-                        session_id=effective_session_id,
                         error_message=error_message,
                     )
                     return _CallToolOutcome(
@@ -815,12 +830,10 @@ async def _execute_tool(
                 logger.debug("Could not fetch schema for error enrichment: %s", schema_error)
             response = await asyncio.to_thread(
                 build_invalid_arguments_response,
-                service,
                 server_name=server_name,
                 tool_name=tool_name,
                 validation_errors=[error_message],
                 input_schema=input_schema,
-                session_id=effective_session_id,
                 error_message=error_message,
                 hint="Review the schema for the accepted arguments.",
             )

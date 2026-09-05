@@ -1022,6 +1022,7 @@ class TestCallToolBlockedToolsEnforcement:
             tool_name="Edit",
             arguments={"file": "test.py"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result["success"] is False
@@ -1043,6 +1044,7 @@ class TestCallToolBlockedToolsEnforcement:
             tool_name="Read",
             arguments={"file": "test.py"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         mock_tool_filter.is_tool_allowed.assert_called_once_with("Read", "session-123")
@@ -1064,6 +1066,7 @@ class TestCallToolBlockedToolsEnforcement:
             tool_name="Edit",
             arguments={"file": "test.py"},
             # No session_id
+            enforce_workflow=True,
         )
 
         mock_tool_filter.is_tool_allowed.assert_not_called()
@@ -1091,6 +1094,7 @@ class TestCallToolBlockedToolsEnforcement:
             tool_name="Edit",
             arguments={"file": "test.py"},
             session_id="session-123",  # session_id provided but no filter
+            enforce_workflow=True,
         )
 
         mock_mcp_manager.call_tool.assert_called_once()
@@ -1113,6 +1117,7 @@ class TestCallToolBlockedToolsEnforcement:
             tool_name="Write",
             arguments={},
             session_id="session-456",
+            enforce_workflow=True,
         )
 
         assert result["success"] is False
@@ -1180,6 +1185,7 @@ class TestWorkflowBeforeToolEnforcement:
             tool_name="reopen_task",
             arguments={"task_id": "#123"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result["success"] is False
@@ -1213,6 +1219,7 @@ class TestWorkflowBeforeToolEnforcement:
                 server_name="gobby-tasks-ops",
                 tool_name="submit_for_review",
                 arguments={"task_id": "#123", "stage_name": "development"},
+                enforce_workflow=True,
             )
 
         assert result["success"] is False
@@ -1252,6 +1259,7 @@ class TestWorkflowBeforeToolEnforcement:
             tool_name="start_expansion_run",
             arguments={"task_id": "#123"},
             session_id="pipeline-session-abc",
+            enforce_workflow=True,
         )
 
         event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
@@ -1283,6 +1291,7 @@ class TestWorkflowBeforeToolEnforcement:
                 tool_name="start_expansion_run",
                 arguments={"task_id": "#123"},
                 session_id="pipeline-session-abc",
+                enforce_workflow=True,
             )
 
         event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
@@ -1318,6 +1327,7 @@ class TestWorkflowBeforeToolEnforcement:
             tool_name="get_task",
             arguments={"task_id": "#123"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result == {}
@@ -1338,8 +1348,7 @@ class TestWorkflowBeforeToolEnforcement:
 
         with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
             result = await tool_proxy_with_hooks.list_tools(
-                "gobby-tasks",
-                session_id="session-123",
+                "gobby-tasks", session_id="session-123", enforce_workflow=True
             )
 
         assert result["success"] is True
@@ -1417,6 +1426,7 @@ class TestDirectMcpAfterToolWorkflow:
             tool_name="create_task",
             arguments={"title": "Test task"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result == {"id": "task-123", "ref": "#123"}
@@ -1467,6 +1477,7 @@ class TestDirectMcpAfterToolWorkflow:
             tool_name="create_task",
             arguments={"title": "Test task"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result == {"id": "task-123", "ref": "#123"}
@@ -1502,6 +1513,7 @@ class TestDirectMcpAfterToolWorkflow:
             tool_name="create_task",
             arguments={"title": "Test task"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result == {"id": "task-123", "ref": "#123"}
@@ -1533,6 +1545,7 @@ class TestDirectMcpAfterToolWorkflow:
             tool_name="create_task",
             arguments={"title": "Test task"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result == successful_result
@@ -1558,6 +1571,7 @@ class TestDirectMcpAfterToolWorkflow:
             tool_name="create_task",
             arguments={"title": "Test task"},
             session_id="session-123",
+            enforce_workflow=True,
         )
 
         assert result["success"] is False

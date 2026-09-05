@@ -37,8 +37,7 @@ async def execute_mcp_step(
 
     # Set project + session context for pipeline MCP steps via the shared
     # helper. Resolves external_id refs to the platform UUID and propagates
-    # it to tool_proxy — otherwise the proxy would prefer the raw ref over
-    # the ContextVar and re-poison workflow checks and tool filters.
+    # it to tool_proxy so target tools and metrics receive canonical attribution.
     from gobby.utils.session_context import (
         reset_seeded_contexts,
         resolve_and_seed_contexts,
@@ -55,28 +54,12 @@ async def execute_mcp_step(
     )
     effective_session_id = tokens.resolved_session_id
     try:
-        if pipeline_session_id:
-            # Internal pipeline execution still needs to satisfy progressive
-            # discovery rules before calling the tool.
-            try:
-                await tool_proxy.get_tool_schema(
-                    mcp_config.server,
-                    mcp_config.tool,
-                    session_id=effective_session_id,
-                )
-            except Exception as schema_err:
-                logger.debug(
-                    "Failed to prefetch schema for pipeline MCP step %s:%s: %s",
-                    mcp_config.server,
-                    mcp_config.tool,
-                    schema_err,
-                )
-
         result = await tool_proxy.call_tool(
             mcp_config.server,
             mcp_config.tool,
             mcp_config.arguments or {},
             session_id=effective_session_id,
+            enforce_workflow=False,
         )
     finally:
         reset_seeded_contexts(tokens)

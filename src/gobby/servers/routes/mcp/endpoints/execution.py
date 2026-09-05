@@ -23,11 +23,13 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
-from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
+from gobby.servers.routes.mcp.endpoints.request_context import (
+    is_mcp_wrapper_request,
+    request_mcp_scope,
+)
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.project_context import reset_project_context, set_project_context
-from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -110,11 +112,9 @@ def _timeout_response_payload(timeout: float, response_time_ms: float) -> dict[s
 def _incompatible_stdio_wrapper_wait_result(
     request: Request,
     tool_name: str,
-    *,
-    require_stdio_proxy: bool,
 ) -> dict[str, Any] | None:
     provided_protocol_version = request.headers.get(MCP_WRAPPER_PROTOCOL_VERSION_HEADER)
-    if provided_protocol_version is None and not require_stdio_proxy:
+    if not is_mcp_wrapper_request(request):
         return None
     return mcp_wrapper_protocol_mismatch_result(
         tool_name,
@@ -264,7 +264,7 @@ async def list_mcp_tools(
                 tools = registry.list_tools()
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 observe_histogram("list_mcp_tools", response_time_ms / 1000)
-                if server.tool_proxy:
+                if server.tool_proxy and is_mcp_wrapper_request(request):
                     server.tool_proxy.record_listed_server(
                         server_name,
                         session_id=ctx_token.resolved_session_id,
@@ -344,7 +344,7 @@ async def list_mcp_tools(
                     "response_time_ms": response_time_ms,
                 },
             )
-            if server.tool_proxy:
+            if server.tool_proxy and is_mcp_wrapper_request(request):
                 server.tool_proxy.record_listed_server(
                     server_name,
                     session_id=ctx_token.resolved_session_id,
@@ -385,7 +385,8 @@ async def list_mcp_tools(
 
 def _record_schema_lease(
     server: "HTTPServer",
-    body: dict[str, Any],
+    request: Request,
+    session_id: str | None,
     server_name: str,
     tool_name: str,
 ) -> None:
@@ -395,10 +396,7 @@ def _record_schema_lease(
     back — a dropped hook channel would otherwise deadlock the
     progressive-discovery gates (#19891). Best-effort: never fails the response.
     """
-    if not server.tool_proxy:
-        return
-    session_id = body.get("session_id") or get_current_session_id()
-    if not session_id:
+    if not is_mcp_wrapper_request(request) or not server.tool_proxy or not session_id:
         return
     try:
         record_schema_shown(
@@ -472,7 +470,9 @@ async def get_tool_schema(
                         }
                         if schema.get("description"):
                             result["description"] = schema["description"]
-                        _record_schema_lease(server, body, server_name, tool_name)
+                        _record_schema_lease(
+                            server, request, ctx_token.resolved_session_id, server_name, tool_name
+                        )
                         return result
                     raise HTTPException(
                         status_code=404,
@@ -531,7 +531,9 @@ async def get_tool_schema(
                 description = schema.get("description")
                 if description:
                     result["description"] = description
-                _record_schema_lease(server, body, server_name, tool_name)
+                _record_schema_lease(
+                    server, request, ctx_token.resolved_session_id, server_name, tool_name
+                )
                 return result
 
             # Get from external MCP server
@@ -549,7 +551,9 @@ async def get_tool_schema(
                 }
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
-                _record_schema_lease(server, body, server_name, tool_name)
+                _record_schema_lease(
+                    server, request, ctx_token.resolved_session_id, server_name, tool_name
+                )
                 return response
 
             except (KeyError, ValueError, MCPError) as e:
@@ -636,7 +640,6 @@ async def call_mcp_tool(
         incompatible_wrapper_result = _incompatible_stdio_wrapper_wait_result(
             request,
             tool_name,
-            require_stdio_proxy=False,
         )
         if incompatible_wrapper_result is not None:
             return incompatible_wrapper_result
@@ -677,6 +680,7 @@ async def call_mcp_tool(
                     tool_name,
                     arguments,
                     session_id=ctx_token.resolved_session_id,
+                    enforce_workflow=is_mcp_wrapper_request(request),
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
@@ -770,7 +774,6 @@ async def mcp_proxy(
         incompatible_wrapper_result = _incompatible_stdio_wrapper_wait_result(
             request,
             tool_name,
-            require_stdio_proxy=True,
         )
         if incompatible_wrapper_result is not None:
             return incompatible_wrapper_result
@@ -787,6 +790,7 @@ async def mcp_proxy(
                     tool_name,
                     arguments,
                     session_id=ctx_token.resolved_session_id,
+                    enforce_workflow=is_mcp_wrapper_request(request),
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,

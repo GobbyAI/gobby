@@ -139,10 +139,7 @@ async def test_executed_failure_finalizes_once_off_event_loop_thread() -> None:
         ),
     ):
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {"command": "false"},
-            session_id="session-1",
+            "server-a", "run", {"command": "false"}, session_id="session-1", enforce_workflow=True
         )
 
     assert result == {"success": False, "error": "boom"}
@@ -186,10 +183,7 @@ async def test_before_tool_return_sites_carry_structural_outcome_class(
         ) as audit_source_block,
     ):
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {"command": "echo ok"},
-            session_id="session-1",
+            "server-a", "run", {"command": "echo ok"}, session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -220,6 +214,7 @@ async def test_rule_rewrite_preserves_caller_and_final_dispatch_identities() -> 
             "run",
             {"command": "echo original"},
             session_id="session-1",
+            enforce_workflow=True,
         )
 
     assert tracking.call_args.args[2:4] == (
@@ -244,10 +239,7 @@ async def test_proxy_namespace_recursion_finalizes_exactly_once() -> None:
         patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking,
     ):
         await proxy.call_tool(
-            "gobby",
-            "run",
-            {"command": "false"},
-            session_id="session-1",
+            "gobby", "run", {"command": "false"}, session_id="session-1", enforce_workflow=True
         )
 
     assert tracking.call_count == 1
@@ -271,6 +263,7 @@ async def test_internal_registry_failure_is_tracked_once_as_executed() -> None:
             "run",
             {"pipeline": "build"},
             session_id="session-1",
+            enforce_workflow=True,
         )
 
     assert result == {"success": False, "error": "pipeline failed"}
@@ -299,10 +292,7 @@ async def test_unknown_named_server_is_invalid_call(
 
     with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
         result = await proxy.call_tool(
-            server_name,
-            "run",
-            {},
-            session_id="session-1",
+            server_name, "run", {}, session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -316,10 +306,7 @@ async def test_malformed_caller_arguments_are_invalid_and_never_dispatch() -> No
 
     with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            "{not-json",
-            session_id="session-1",
+            "server-a", "run", "{not-json", session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -351,10 +338,7 @@ async def test_schema_validation_failure_is_invalid_and_never_dispatches() -> No
         patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking,
     ):
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {"count": "wrong"},
-            session_id="session-1",
+            "server-a", "run", {"count": "wrong"}, session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -372,10 +356,7 @@ async def test_unresolved_proxy_namespace_is_invalid_call() -> None:
         patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking,
     ):
         result = await proxy.call_tool(
-            "gobby",
-            "missing_tool",
-            {},
-            session_id="session-1",
+            "gobby", "missing_tool", {}, session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -391,10 +372,7 @@ async def test_session_tool_filter_denial_is_policy_denied() -> None:
 
     with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {},
-            session_id="session-1",
+            "server-a", "run", {}, session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -413,10 +391,7 @@ async def test_invalid_rule_rewrite_is_failed_pre_dispatch() -> None:
 
     with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {},
-            session_id="session-1",
+            "server-a", "run", {}, session_id="session-1", enforce_workflow=True
         )
 
     assert result["success"] is False
@@ -438,10 +413,7 @@ async def test_after_tool_evaluation_failure_keeps_executed_ownership() -> None:
 
     with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
         result = await proxy.call_tool(
-            "server-a",
-            "run",
-            {},
-            session_id="session-1",
+            "server-a", "run", {}, session_id="session-1", enforce_workflow=True
         )
 
     assert result == {"success": False, "error": "dispatch failed"}
@@ -463,6 +435,7 @@ async def test_real_proxy_failure_persists_and_matching_success_resolves(
         "close_task",
         {"task_id": "#18819"},
         session_id=session_id,
+        enforce_workflow=True,
     )
 
     records = SessionVariableManager(temp_db).get_variables(session_id)["open_tool_errors"]
@@ -476,6 +449,7 @@ async def test_real_proxy_failure_persists_and_matching_success_resolves(
         "close_task",
         {"task_id": "#18819"},
         session_id=session_id,
+        enforce_workflow=True,
     )
 
     assert SessionVariableManager(temp_db).get_variables(session_id)["open_tool_errors"] == []
@@ -508,12 +482,14 @@ async def test_rewritten_executed_failure_replaces_caller_predispatch_record(
         "run",
         {"command": "echo original"},
         session_id=session_id,
+        enforce_workflow=True,
     )
     await proxy.call_tool(
         "server-a",
         "run",
         {"command": "echo original"},
         session_id=session_id,
+        enforce_workflow=True,
     )
 
     records = SessionVariableManager(temp_db).get_variables(session_id)["open_tool_errors"]
@@ -544,6 +520,7 @@ async def test_same_identity_failure_after_predispatch_increments_standing_recor
             "run",
             {"command": "echo original"},
             session_id=session_id,
+            enforce_workflow=True,
         )
 
     records = SessionVariableManager(temp_db).get_variables(session_id)["open_tool_errors"]

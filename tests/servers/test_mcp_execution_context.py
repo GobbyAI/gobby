@@ -39,7 +39,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     monkeypatch.setenv("GOBBY_SESSION_ID", "session-1")
-    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "21000000-0000-4000-8000-000000000071")
     response = MagicMock(status_code=200)
     response.json.return_value = {"success": True}
     client = MagicMock()
@@ -56,12 +56,14 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert await proxy._request("POST", "/api/mcp/gobby-agents/end_agent_run") == {"success": True}
     request_headers = client.request.await_args.kwargs["headers"]
-    assert request_headers[AGENT_RUN_ID_HEADER] == "run-1"
+    assert request_headers[AGENT_RUN_ID_HEADER] == "21000000-0000-4000-8000-000000000071"
 
     server = MagicMock()
     server.session_manager.db = MagicMock()
     server.run_db = AsyncMock(side_effect=lambda operation, *args: operation(*args))
-    run = SimpleNamespace(id="run-1", child_session_id="session-1", status="running")
+    run = SimpleNamespace(
+        id="21000000-0000-4000-8000-000000000071", child_session_id="session-1", status="running"
+    )
     run_manager = MagicMock()
     run_manager.get.return_value = run
     run_manager.get_by_session.return_value = run
@@ -69,7 +71,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
     valid_request = _request(
         **{
             "X-Gobby-Session-Id": "session-1",
-            AGENT_RUN_ID_HEADER: "run-1",
+            AGENT_RUN_ID_HEADER: "21000000-0000-4000-8000-000000000071",
             "X-Gobby-Project-Id": "project-1",
             MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         }
@@ -87,7 +89,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
         ),
     ):
         tokens = await _set_context_for_request(server, {}, valid_request)
-        assert get_current_agent_run_id() == "run-1"
+        assert get_current_agent_run_id() == "21000000-0000-4000-8000-000000000071"
         _reset_context(tokens)
         assert get_current_agent_run_id() is None
 
@@ -105,7 +107,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
         forged = _request(
             **{
                 "X-Gobby-Session-Id": "session-1",
-                AGENT_RUN_ID_HEADER: "run-forged",
+                AGENT_RUN_ID_HEADER: "21000000-0000-4000-8000-000000000072",
                 "X-Gobby-Project-Id": "project-1",
                 MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
             }
@@ -114,14 +116,14 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
             await _set_context_for_request(server, {}, forged)
 
         run_manager.get.return_value = SimpleNamespace(
-            id="run-other",
+            id="21000000-0000-4000-8000-000000000073",
             child_session_id="session-other",
             status="running",
         )
         mismatched = _request(
             **{
                 "X-Gobby-Session-Id": "session-1",
-                AGENT_RUN_ID_HEADER: "run-other",
+                AGENT_RUN_ID_HEADER: "21000000-0000-4000-8000-000000000073",
                 "X-Gobby-Project-Id": "project-1",
                 MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
             }

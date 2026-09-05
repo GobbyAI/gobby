@@ -501,7 +501,10 @@ class TestListMCPTools:
         with TestClient(server.app) as client:
             response = client.get(
                 "/api/mcp/gobby-tasks/tools",
-                headers={"X-Gobby-Session-Id": session.id},
+                headers={
+                    "X-Gobby-Session-Id": session.id,
+                    MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
+                },
             )
 
         assert response.status_code == 200
@@ -1270,6 +1273,12 @@ class TestGetToolSchema:
         self, session_storage: SessionManager
     ) -> None:
         """A successfully served internal schema grants the unlocked_tools lease."""
+        session = session_storage.register(
+            external_id="schema-lease",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            source="codex",
+            project_id=None,
+        )
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -1289,17 +1298,21 @@ class TestGetToolSchema:
             with TestClient(server.app) as client:
                 response = client.post(
                     "/api/mcp/tools/schema",
+                    headers={
+                        "X-Gobby-Session-Id": session.id,
+                        MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
+                    },
                     json={
                         "server_name": "gobby-tasks",
                         "tool_name": "list_tasks",
-                        "session_id": "#77",
+                        "session_id": "different-target-session",
                     },
                 )
 
         assert response.status_code == 200
         record.assert_called_once_with(
             server.tool_proxy,
-            "#77",
+            session.id,
             server_name="gobby-tasks",
             tool_name="list_tasks",
         )
@@ -1308,6 +1321,12 @@ class TestGetToolSchema:
         self, session_storage: SessionManager
     ) -> None:
         """A successfully served external schema grants the unlocked_tools lease."""
+        session = session_storage.register(
+            external_id="schema-lease",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            source="codex",
+            project_id=None,
+        )
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -1335,10 +1354,14 @@ class TestGetToolSchema:
             with TestClient(server.app) as client:
                 response = client.post(
                     "/api/mcp/tools/schema",
+                    headers={
+                        "X-Gobby-Session-Id": session.id,
+                        MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
+                    },
                     json={
                         "server_name": "external-server",
                         "tool_name": "get_item",
-                        "session_id": "#77",
+                        "session_id": "different-target-session",
                     },
                 )
 
@@ -1349,7 +1372,7 @@ class TestGetToolSchema:
         assert data["inputSchema"] == {"type": "object"}
         record.assert_called_once_with(
             server.tool_proxy,
-            "#77",
+            session.id,
             server_name="external-server",
             tool_name="get_item",
         )
@@ -2787,10 +2810,10 @@ class TestMCPProxy:
             "updated_at": "2026-07-03T12:35:00+00:00",
         }
 
-    def test_proxy_rejects_missing_wait_wrapper_protocol_version(
+    def test_programmatic_proxy_wait_needs_no_wrapper_protocol_version(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy route rejects wrappers without protocol version headers."""
+        """Programmatic waits do not require the agent bridge protocol."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2813,9 +2836,8 @@ class TestMCPProxy:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert data["error_code"] == MCP_WRAPPER_STALE_ERROR_CODE
-        assert data["restart_required"] is True
+        assert data["success"] is True
+        assert data["result"]["tool"] == "wait_for_output"
 
     def test_proxy_rejects_incompatible_wait_wrapper_protocol_version(
         self, session_storage: SessionManager

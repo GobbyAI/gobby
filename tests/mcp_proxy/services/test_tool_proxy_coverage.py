@@ -398,7 +398,9 @@ class TestListToolsInternalServer:
             tool_filter=mock_filter,
         )
 
-        result = await proxy.list_tools("gobby-tasks", session_id="session-123")
+        result = await proxy.list_tools(
+            "gobby-tasks", session_id="session-123", enforce_workflow=True
+        )
 
         assert result["success"] is True
         assert result["tool_count"] == 1
@@ -478,7 +480,9 @@ class TestListToolsExternalServer:
             tool_filter=mock_filter,
         )
 
-        result = await proxy.list_tools("ext-server", session_id="session-456")
+        result = await proxy.list_tools(
+            "ext-server", session_id="session-456", enforce_workflow=True
+        )
 
         assert result["success"] is True
         assert result["tool_count"] == 1
@@ -1298,7 +1302,7 @@ class TestProxyNamespaceResolution:
             tool_filter=mock_filter,
         )
 
-        result = await proxy.list_tools("gobby", session_id="session-123")
+        result = await proxy.list_tools("gobby", session_id="session-123", enforce_workflow=True)
 
         assert result["success"] is True
         assert result["tool_count"] == 1

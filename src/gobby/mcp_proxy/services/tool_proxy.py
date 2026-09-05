@@ -253,10 +253,16 @@ class ToolProxyService:
         *,
         project_id: str | None = None,
         scope: str | None = None,
+        enforce_workflow: bool = False,
     ) -> dict[str, Any]:
         """List tools for a specific server with progressive discovery format."""
         return await list_tools_impl(
-            self, server_name, session_id, project_id=project_id, scope=scope
+            self,
+            server_name,
+            session_id,
+            project_id=project_id,
+            scope=scope,
+            enforce_workflow=enforce_workflow,
         )
 
     async def call_tool(
@@ -266,7 +272,7 @@ class ToolProxyService:
         arguments: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         strip_unknown: bool = False,
-        enforce_workflow: bool = True,
+        enforce_workflow: bool = False,
         timeout: float | None = None,
         wrapper_originated: bool = False,
         intent: str | None = None,
@@ -274,7 +280,7 @@ class ToolProxyService:
         scope: str | None = None,
         offload: bool = True,
     ) -> Any:
-        """Execute a tool with optional pre-validation."""
+        """Execute a tool; agent entrypoints opt into workflow enforcement and bookkeeping."""
         operation_context = (
             self._operation_context_factory()
             if self._operation_context_factory is not None

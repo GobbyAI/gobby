@@ -66,17 +66,15 @@ def record_schema_shown(
 
 
 def build_invalid_arguments_response(
-    service: Any,
     *,
     server_name: str,
     tool_name: str,
     validation_errors: list[str],
     input_schema: dict[str, Any] | None = None,
-    session_id: str | None = None,
     error_message: str | None = None,
     hint: str | None = "Review the schema for the accepted arguments.",
 ) -> dict[str, Any]:
-    """Build an invalid-argument response with the current schema and lease."""
+    """Build schema guidance without changing the caller's discovery state."""
     errors = [str(error) for error in validation_errors if str(error)]
     if not errors and error_message:
         errors = [error_message]
@@ -94,11 +92,5 @@ def build_invalid_arguments_response(
 
     if input_schema is not None:
         response["schema"] = input_schema
-        record_schema_shown(
-            service,
-            session_id,
-            server_name=server_name,
-            tool_name=tool_name,
-        )
 
     return response

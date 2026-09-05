@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
+from uuid import UUID
 
 from fastapi import HTTPException, Request
 
@@ -69,6 +70,13 @@ def _parse_terminal_context_header(raw_context: str | None, *, seen: bool) -> di
 
 def _header_seen(headers: Mapping[str, str], name: str) -> bool:
     return name in headers or name.lower() in headers
+
+
+def is_mcp_wrapper_request(request: Request | None) -> bool:
+    """Identify agent bridge traffic independently of session identity or credentials."""
+    return request is not None and _header_seen(
+        request.headers, MCP_WRAPPER_PROTOCOL_VERSION_HEADER
+    )
 
 
 def _get_argument_session_id(arguments: Any) -> str | None:
@@ -149,7 +157,7 @@ async def _set_context_for_request(
     header_session_id = headers.get("x-gobby-session-id")
     project_id_header = headers.get("x-gobby-project-id")
     caller_project_id_header = headers.get("x-gobby-caller-project-id")
-    wrapper_request = _header_seen(headers, MCP_WRAPPER_PROTOCOL_VERSION_HEADER)
+    wrapper_request = is_mcp_wrapper_request(request)
     terminal_context_seen = _header_seen(headers, TERMINAL_CONTEXT_HEADER)
     argument_session_id = _get_argument_session_id(arguments)
     terminal_context: dict[str, Any] | None = None
@@ -287,6 +295,10 @@ async def _bind_agent_run_context(
     header_run_id = request.headers.get(AGENT_RUN_ID_HEADER)
     manager = LocalAgentRunManager(db)
     if header_run_id:
+        try:
+            UUID(header_run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="Invalid agent run identity") from exc
         run = await server.run_db(manager.get, header_run_id)
         if (
             run is None

@@ -323,6 +323,7 @@ class GobbyDaemonTools:
                     tool_name,
                     guard.arguments,
                     effective_session_id,
+                    enforce_workflow=True,
                     wrapper_originated=True,
                     intent=intent,
                     project_id=project_id or self._caller_project_ref(),
@@ -383,6 +384,7 @@ class GobbyDaemonTools:
             server_name,
             session_id=session_id,
             project_id=self._caller_project_ref(),
+            enforce_workflow=True,
         )
 
     async def get_tool_schema(

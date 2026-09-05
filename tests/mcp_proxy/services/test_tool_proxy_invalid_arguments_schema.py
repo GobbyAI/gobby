@@ -103,10 +103,7 @@ async def test_first_invalid_call_includes_schema_and_records_latch(
     mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     result = await proxy.call_tool(
-        "test-server",
-        "test_tool",
-        {"wrong": "value"},
-        session_id=session_id,
+        "test-server", "test_tool", {"wrong": "value"}, session_id=session_id, enforce_workflow=True
     )
 
     assert result["success"] is False
@@ -133,16 +130,10 @@ async def test_repeated_invalid_call_includes_schema_and_retains_lease(
     mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     await proxy.call_tool(
-        "test-server",
-        "test_tool",
-        {"wrong": "value"},
-        session_id=session_id,
+        "test-server", "test_tool", {"wrong": "value"}, session_id=session_id, enforce_workflow=True
     )
     result = await proxy.call_tool(
-        "test-server",
-        "test_tool",
-        {"wrong": "value"},
-        session_id=session_id,
+        "test-server", "test_tool", {"wrong": "value"}, session_id=session_id, enforce_workflow=True
     )
 
     assert result["success"] is False

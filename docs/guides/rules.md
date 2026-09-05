@@ -8,6 +8,18 @@ covers other supported sources as their adapters emit normalized events.
 
 For the larger system model, see [Workflows Overview](./workflows-overview.md).
 
+Rules govern agent actions through provider hooks and MCP bridges. Programmatic
+MCP calls from `gobby mcp-proxy call-tool`, ordinary REST clients, pipelines, and
+internal code skip before/after tool rules. Session identity and agent credentials
+still provide attribution and authorization; they do not turn a programmatic call
+into an agent action. Argument validation and metrics remain active.
+
+Programmatic calls also leave agent enforcement state untouched: they neither
+grant schema leases nor create or clear agent tool errors or discovery state.
+Agent bridges opt into enforcement using their existing wrapper protocol marker.
+To restrict an agent's access to the Gobby CLI, block its shell invocation with a
+tool rule.
+
 ## What Rules Are Good For
 
 Use rules when you need behavior that should happen automatically at hook time:
