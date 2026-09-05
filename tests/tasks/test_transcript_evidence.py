@@ -164,7 +164,10 @@ def _resource_tracker_pid() -> int | None:
 
 
 def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
-    pool = transcript_evidence_pool._get_pool()
+    try:
+        pool = transcript_evidence_pool._get_pool()
+    except OSError as exc:
+        pytest.skip(f"process pool unavailable: {exc}")
     try:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
