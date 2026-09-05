@@ -245,6 +245,7 @@ class HookManagerFactory:
             session_storage=cast(HookSessionManager, storage.session),
             message_processor_resolver=message_processor_resolver,
             agent_run_manager=storage.agent_run,
+            task_manager=storage.task,
             worktree_manager=storage.worktree,
             logger=hook_logger,
         )

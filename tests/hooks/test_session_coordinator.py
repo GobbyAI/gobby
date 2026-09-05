@@ -33,6 +33,7 @@ from gobby.sessions.processor_lifecycle import SessionFlushResult
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
@@ -1076,6 +1077,73 @@ class TestAgentRunCompletion:
         assert "before step workflow completed" in updated.error
         assert "workflow=merge-worker" in updated.error
         assert "current_step=resolve_conflicts" in updated.error
+
+    def test_complete_agent_run_completes_closed_task_and_refreshes_result(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """A closed bound task wins over stale workflow and handoff state."""
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        _install_step_workflow(temp_db, CHILD_SESSION_ID, "resolve_conflicts")
+
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=PROJECT_ID,
+            title="Resolve merge conflicts",
+            task_type="bug",
+            category="code",
+            implementation_domain="backend",
+            validation_criteria="Merged result is valid.",
+        )
+        task_manager.close_task(
+            task.id,
+            reason="Done",
+            closed_in_session_id=CHILD_SESSION_ID,
+            closed_commit_sha="abc1234",
+        )
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="claude",
+            prompt="resolve merge conflicts",
+            workflow_name="merge-worker",
+            agent_name="merge-worker",
+            child_session_id=CHILD_SESSION_ID,
+            task_id=task.id,
+        )
+        run_manager.start(run.id)
+
+        coordinator = SessionCoordinator(
+            agent_run_manager=run_manager,
+            task_manager=task_manager,
+        )
+        notification = MagicMock()
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=run.id,
+            summary_markdown="close_task was refused; the task is not definitively closed.",
+            tool_call_count=7,
+            turn_count=3,
+        )
+
+        with patch.object(coordinator, "_notify_agent_completion", notification):
+            coordinator.complete_agent_run(session)
+
+        closed_task = task_manager.get_task(task.id)
+        updated = run_manager.get(run.id)
+        assert closed_task.closed_at is not None
+        assert updated is not None
+        assert updated.status == "success"
+        assert updated.error is None
+        assert updated.result is not None
+        assert updated.result.endswith(
+            "Task completion: "
+            f"task=#{closed_task.seq_num}; closed_at={closed_task.closed_at.isoformat()}; "
+            "commit_sha=abc1234"
+        )
+        notification.assert_called_once_with(run.id, "success")
 
     def test_complete_agent_run_allows_completed_step_workflow(
         self,
