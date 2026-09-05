@@ -56,6 +56,7 @@ struct MockState {
     websocket_closes: usize,
     unique_attachment_ids: bool,
     next_attachment_id: u64,
+    take_control_replies: VecDeque<(bool, u64, Option<String>)>,
     activity: Vec<String>,
 }
 
@@ -88,6 +89,7 @@ impl MockDaemon {
             websocket_closes: 0,
             unique_attachment_ids: false,
             next_attachment_id: 0,
+            take_control_replies: VecDeque::new(),
             activity: Vec::new(),
         }));
         let (events, _) = broadcast::channel(2048);
@@ -227,6 +229,19 @@ impl MockDaemon {
 
     pub fn use_unique_attachment_ids(&self) {
         self.state.lock().expect("mock state").unique_attachment_ids = true;
+    }
+
+    pub fn enqueue_take_control_reply(
+        &self,
+        granted: bool,
+        lease_generation: u64,
+        reason: Option<&str>,
+    ) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .take_control_replies
+            .push_back((granted, lease_generation, reason.map(ToString::to_string)));
     }
 
     pub fn fail_next_websocket(&self) {
@@ -615,7 +630,22 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "outcome": "applied",
             "reason": null,
         })),
-        "terminal_take_control" | "terminal_release_control" => Some(json!({
+        "terminal_take_control" => {
+            let reply = state
+                .lock()
+                .expect("mock state")
+                .take_control_replies
+                .pop_front()
+                .unwrap_or((true, 1, None));
+            Some(json!({
+                "type": "terminal_control_result",
+                "attachment_id": request.get("attachment_id"),
+                "granted": reply.0,
+                "lease_generation": reply.1,
+                "reason": reply.2,
+            }))
+        }
+        "terminal_release_control" => Some(json!({
             "type": "terminal_control_result",
             "attachment_id": request.get("attachment_id"),
             "granted": true,

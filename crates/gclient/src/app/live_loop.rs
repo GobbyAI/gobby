@@ -586,6 +586,11 @@ async fn take_live_control(
         .get("granted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let refusal_reason = reply
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("control request denied")
+        .to_string();
     let pending = {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
         if generation < pane.lease_generation() {
@@ -607,6 +612,11 @@ async fn take_live_control(
     };
     if let Some(data) = pending {
         send_live_write(workspace, pane_id, &data).await?;
+    }
+    if !granted {
+        return Err(FrameError::from(DaemonError::Protocol {
+            detail: refusal_reason,
+        }));
     }
     Ok(())
 }

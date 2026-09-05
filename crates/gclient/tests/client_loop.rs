@@ -27,9 +27,44 @@ use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Instant};
+
+fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
+    mock.requests()
+        .into_iter()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("type") == Some(&json!(kind)))
+        .collect()
+}
+
+async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: usize) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if websocket_requests(mock, kind).len() >= expected {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
+}
+
+async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers: KeyModifiers) {
+    input
+        .send(RawInputEvent::Key(TerminalKey::new(code, modifiers)))
+        .await
+        .expect("live loop input");
+}
+
+async fn settle_live_event() {
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+}
 
 #[test]
 fn live_entry_connects_before_running() {
@@ -332,51 +367,155 @@ fn input_encoder_covers_named_keys() {
     assert_eq!(kitty.as_deref(), Some(b"\x1b[15;5~".as_slice()));
 }
 
-#[test]
-fn focus_moves_control_and_settles_pending_input_once() {
-    let mut ws = Workspace::scripted();
-    let pane = ws
-        .open_terminal("term-control", "native", "epoch-control")
-        .expect("open terminal");
-    let attachment = ws.pane(pane).attachment_id().to_string();
+#[tokio::test]
+async fn focus_moves_control_and_settles_pending_input_once() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
 
-    let _ = ws.send_keys(pane, "x");
-    assert_eq!(
-        ws.daemon()
-            .ws_sent_types()
-            .iter()
-            .filter(|kind| kind.as_str() == "terminal_take_control")
-            .count(),
-        1,
-        "the first unheld key must trigger exactly one take-control request"
-    );
-    assert_eq!(
-        ws.daemon()
-            .ws_sent_types()
-            .iter()
-            .filter(|kind| kind.as_str() == "terminal_input")
-            .count(),
-        0,
-        "pending input cannot be written before the lease grant"
-    );
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let initially_focused = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("terminal_id")
+            .and_then(Value::as_str)
+            .expect("initial focused terminal")
+            .to_string();
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
 
-    ws.apply_ws(&json!({
-        "type": "terminal_control_result",
-        "attachment_id": attachment,
-        "granted": true,
-        "reason": "held",
-        "lease_generation": 1
-    }))
-    .expect("apply control grant");
-    assert_eq!(
-        ws.daemon()
-            .ws_sent_types()
-            .iter()
-            .filter(|kind| kind.as_str() == "terminal_input")
-            .count(),
-        1,
-        "the triggering key must settle exactly once after the grant"
+        let releases = websocket_requests(&mock, "terminal_release_control");
+        assert_eq!(
+            releases[0].get("terminal_id").and_then(Value::as_str),
+            Some(initially_focused.as_str())
+        );
+        assert!(
+            websocket_requests(&mock, "terminal_detach")
+                .iter()
+                .all(|request| {
+                    request.get("terminal_id").and_then(Value::as_str)
+                        != Some(initially_focused.as_str())
+                }),
+            "focus change must release control without detaching the old pane"
+        );
+        let focused_request = websocket_requests(&mock, "terminal_take_control")
+            .into_iter()
+            .find(|request| {
+                request.get("terminal_id").and_then(Value::as_str)
+                    != Some(initially_focused.as_str())
+            })
+            .expect("focused pane take-control request");
+        let focused_terminal_id = focused_request
+            .get("terminal_id")
+            .and_then(Value::as_str)
+            .expect("focused terminal")
+            .to_string();
+        let attachment_id = focused_request
+            .get("attachment_id")
+            .and_then(Value::as_str)
+            .expect("focused attachment")
+            .to_string();
+
+        mock.send_event_and_wait(json!({
+            "type": "terminal_lease_lost",
+            "terminal_id": focused_terminal_id,
+            "attachment_id": attachment_id,
+            "holder": "peer",
+            "lease_generation": 2,
+            "daemon_epoch": "epoch-1",
+            "seq": 2
+        }))
+        .await;
+        settle_live_event().await;
+
+        mock.enqueue_take_control_reply(true, 1, None);
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        assert!(
+            websocket_requests(&mock, "terminal_input").is_empty(),
+            "a stale grant cannot settle the pending key"
+        );
+        send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            3,
+            "further keys must not start another request while input is pending"
+        );
+
+        mock.enqueue_take_control_reply(true, 2, None);
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 4).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        let writes = websocket_requests(&mock, "terminal_input");
+        assert_eq!(writes.len(), 1, "the pending key must be written once");
+        assert_eq!(writes[0].get("data"), Some(&json!("x")));
+
+        mock.send_event_and_wait(json!({
+            "type": "terminal_lease_lost",
+            "terminal_id": focused_terminal_id,
+            "attachment_id": attachment_id,
+            "holder": "peer",
+            "lease_generation": 3,
+            "daemon_epoch": "epoch-1",
+            "seq": 3
+        }))
+        .await;
+        settle_live_event().await;
+        mock.enqueue_take_control_reply(false, 3, Some("held by peer"));
+        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 5).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_input").len(),
+            1,
+            "a rejected pending key must be discarded"
+        );
+        drop(input_tx);
+        focused_terminal_id
+    };
+
+    let (result, focused_terminal_id) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
     );
+    result.expect("live loop exits cleanly");
+    let pane_id = workspace
+        .pane_for_terminal(&focused_terminal_id)
+        .expect("focused terminal pane");
+    assert!(workspace.pane(pane_id).is_observe());
+    assert!(workspace.pane(pane_id).has_take_back());
+    assert!(
+        chrome
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.contains("held by peer")),
+        "control refusal reason must remain visible: {:?}",
+        chrome.status_message
+    );
+    mock.shutdown().await;
 }
 
 #[test]
