@@ -1829,6 +1829,46 @@ class TestExecuteSpawnSandbox:
         assert "--settings" in command
         assert result.success is True
 
+    @pytest.mark.asyncio
+    async def test_project_sandbox_escape_fails_before_runtime_launch(self, tmp_path: Path) -> None:
+        project_root = tmp_path / "project"
+        workspace = tmp_path / "worktree"
+        (project_root / ".gobby").mkdir(parents=True)
+        workspace.mkdir()
+        (project_root / ".gobby" / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": "sandbox-project",
+                    "sandbox": {"extra_write_paths": ["../outside"]},
+                }
+            )
+        )
+        request = SpawnRequest(
+            prompt="Test invalid project sandbox",
+            cwd=str(workspace),
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            project_path=str(project_root),
+            sandbox_config=SandboxConfig(enabled=False),
+            session_manager=MagicMock(),
+            prepared_spawn=prepared_spawn(
+                env_vars={"GOBBY_SESSION_ID": "project-preflight-session"}
+            ),
+            terminal_backend="tmux",
+        )
+
+        result = await execute_spawn(request)
+
+        assert result.success is False
+        assert _runtime_of(request).last_request is None
+        error = result.error or ""
+        assert "../outside" in error
+        assert str(project_root.resolve()) in error
+        assert "strict descendant" in error
+
     def test_sandbox_config_for_spawn_adds_policy_write_paths(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

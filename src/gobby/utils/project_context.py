@@ -14,10 +14,16 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from gobby.utils.env import is_test_protect_enabled
 
 if TYPE_CHECKING:
-    from gobby.config.features import HooksConfig, ProjectVerificationConfig
+    from gobby.config.features import (
+        HooksConfig,
+        ProjectSandboxConfig,
+        ProjectVerificationConfig,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +300,10 @@ class IsolationProjectJsonError(RuntimeError):
     """Raised when isolated project metadata cannot be created safely."""
 
 
+class ProjectSandboxConfigError(ValueError):
+    """Raised when project sandbox configuration is malformed or unsafe."""
+
+
 def read_isolation_marker(root: Path) -> dict[str, str] | None:
     """Read parent isolation fields from the gitignored sidecar only."""
     path = Path(root) / ISOLATION_MARKER_RELATIVE_PATH
@@ -505,3 +515,61 @@ def get_hooks_config(cwd: Path | None = None) -> HooksConfig | None:
     except Exception as e:
         logger.warning("Failed to parse hooks config: %s", e)
         return None
+
+
+def get_project_sandbox_config(cwd: Path | None = None) -> ProjectSandboxConfig | None:
+    """Read and validate repository-local sandbox write paths."""
+    from gobby.config.features import ProjectSandboxConfig
+
+    context = get_project_context(cwd)
+    if not context or "sandbox" not in context:
+        return None
+
+    project_path = context.get("project_path")
+    if not isinstance(project_path, str):
+        raise ProjectSandboxConfigError(
+            "Invalid project sandbox entry '<sandbox section>' for project root "
+            "'<unavailable>': project context must provide a project root"
+        )
+
+    try:
+        project_root = Path(project_path).resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ProjectSandboxConfigError(
+            "Invalid project sandbox entry '<project root>' for project root "
+            f"{project_path!r}: project root must resolve successfully"
+        ) from exc
+
+    try:
+        config = ProjectSandboxConfig.model_validate(context["sandbox"])
+    except ValidationError as exc:
+        raise ProjectSandboxConfigError(
+            "Invalid project sandbox entry '<sandbox section>' for project root "
+            f"{str(project_root)!r}: sandbox must be an object containing only "
+            "extra_write_paths as a list of strings"
+        ) from exc
+
+    resolved_paths: list[str] = []
+    for entry in config.extra_write_paths:
+        candidate = Path(entry)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        try:
+            resolved_path = candidate.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise ProjectSandboxConfigError(
+                f"Invalid project sandbox extra_write_paths entry {entry!r} for project root "
+                f"{str(project_root)!r}: entry must resolve successfully"
+            ) from exc
+
+        if resolved_path == project_root or not resolved_path.is_relative_to(project_root):
+            raise ProjectSandboxConfigError(
+                f"Invalid project sandbox extra_write_paths entry {entry!r} for project root "
+                f"{str(project_root)!r}: resolved path {str(resolved_path)!r}; entries must "
+                "resolve to a strict descendant of the project root"
+            )
+        resolved_text = str(resolved_path)
+        if resolved_text not in resolved_paths:
+            resolved_paths.append(resolved_text)
+
+    return config.model_copy(update={"extra_write_paths": resolved_paths})

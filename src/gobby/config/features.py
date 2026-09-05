@@ -24,6 +24,7 @@ __all__ = [
     "ImportMCPServerConfig",
     "MergeResolutionConfig",
     "MetricsConfig",
+    "ProjectSandboxConfig",
     "ProjectVerificationConfig",
     "ProjectVerificationSynthesisConfig",
     "HookStageConfig",
@@ -300,6 +301,14 @@ class ProjectVerificationConfig(BaseModel):
                 result[field] = cmd
         result.update(self.custom)
         return result
+
+
+class ProjectSandboxConfig(BaseModel):
+    """Repository-local writable sandbox roots."""
+
+    extra_write_paths: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class ChatConfig(FeatureDefaultConfig):

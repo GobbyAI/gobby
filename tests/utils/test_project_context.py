@@ -11,6 +11,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import (
     IsolationProjectJsonError,
+    ProjectSandboxConfigError,
     _build_and_set_project_context,
     _current_project_context,
     ensure_project_json_for_isolation,
@@ -18,6 +19,7 @@ from gobby.utils.project_context import (
     get_project_context,
     get_project_mcp_config_path,
     get_project_mcp_dir,
+    get_project_sandbox_config,
     get_verification_config,
     reset_project_context,
     set_project_context,
@@ -260,6 +262,81 @@ class TestGetProjectContext:
         assert result is not None
         assert result["id"] == "parent-id"
         assert result["name"] == "parent-project"
+
+
+class TestGetProjectSandboxConfig:
+    """Project sandbox paths are canonicalized and confined to the project root."""
+
+    @staticmethod
+    def _write_project(root: Path, sandbox: object | None = None) -> None:
+        gobby_dir = root / ".gobby"
+        gobby_dir.mkdir(exist_ok=True)
+        data: dict[str, object] = {"id": "sandbox-project"}
+        if sandbox is not None:
+            data["sandbox"] = sandbox
+        (gobby_dir / "project.json").write_text(json.dumps(data))
+
+    def test_missing_section_returns_none(self, tmp_path: Path) -> None:
+        self._write_project(tmp_path)
+
+        assert get_project_sandbox_config(tmp_path) is None
+
+    def test_resolves_relative_and_absolute_descendants(self, tmp_path: Path) -> None:
+        relative_path = tmp_path / "var"
+        absolute_path = tmp_path / "data" / "generated"
+        self._write_project(
+            tmp_path,
+            {"extra_write_paths": ["var", str(absolute_path), "var"]},
+        )
+
+        config = get_project_sandbox_config(tmp_path)
+
+        assert config is not None
+        assert config.extra_write_paths == [
+            str(relative_path.resolve()),
+            str(absolute_path.resolve()),
+        ]
+
+    @pytest.mark.parametrize("entry", [".", ".."])
+    def test_rejects_root_and_parent(self, tmp_path: Path, entry: str) -> None:
+        self._write_project(tmp_path, {"extra_write_paths": [entry]})
+
+        with pytest.raises(ProjectSandboxConfigError) as exc_info:
+            get_project_sandbox_config(tmp_path)
+
+        message = str(exc_info.value)
+        assert repr(entry) in message
+        assert repr(str(tmp_path.resolve())) in message
+        assert "strict descendant" in message
+
+    def test_rejects_absolute_and_symlink_escapes(self, tmp_path: Path) -> None:
+        project_root = tmp_path / "project"
+        outside_root = tmp_path / "outside"
+        project_root.mkdir()
+        outside_root.mkdir()
+        (project_root / "escape").symlink_to(outside_root, target_is_directory=True)
+
+        for entry in (str(outside_root), "escape/generated"):
+            self._write_project(project_root, {"extra_write_paths": [entry]})
+
+            with pytest.raises(ProjectSandboxConfigError) as exc_info:
+                get_project_sandbox_config(project_root)
+
+            message = str(exc_info.value)
+            assert repr(entry) in message
+            assert repr(str(project_root.resolve())) in message
+            assert "strict descendant" in message
+
+    def test_rejects_malformed_section(self, tmp_path: Path) -> None:
+        self._write_project(tmp_path, {"extra_write_paths": "var"})
+
+        with pytest.raises(ProjectSandboxConfigError) as exc_info:
+            get_project_sandbox_config(tmp_path)
+
+        message = str(exc_info.value)
+        assert "'<sandbox section>'" in message
+        assert repr(str(tmp_path.resolve())) in message
+        assert "list of strings" in message
 
 
 class TestGetProjectMcpDir:

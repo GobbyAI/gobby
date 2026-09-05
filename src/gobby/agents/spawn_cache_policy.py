@@ -116,8 +116,19 @@ def merge_spawn_path_env(env_vars: dict[str, str], preferred_path: str) -> None:
 def sandbox_config_for_spawn(
     sandbox_config: SandboxConfig | None,
     env_vars: dict[str, str],
+    *,
+    project_path: str | None = None,
+    resume_metadata_json: dict[str, object] | None = None,
 ) -> SandboxConfig | None:
     """Include spawned validation caches, registry egress, and hook inbox."""
+    project_write_paths: list[str] = []
+    if project_path is not None:
+        from gobby.utils.project_context import get_project_sandbox_config
+
+        project_config = get_project_sandbox_config(Path(project_path))
+        if project_config is not None:
+            project_write_paths = project_config.extra_write_paths
+
     if sandbox_config is None:
         return None
     if not sandbox_config.enabled:
@@ -126,16 +137,19 @@ def sandbox_config_for_spawn(
     apply_spawn_cache_policy(env_vars)
     _apply_sandbox_cache_policy(env_vars)
     extra_write_paths = list(sandbox_config.extra_write_paths)
-    for path in sandbox_write_paths(env_vars):
+    for path in [*project_write_paths, *sandbox_write_paths(env_vars)]:
         if path and path not in extra_write_paths:
             extra_write_paths.append(path)
 
-    return sandbox_config.model_copy(
+    resolved_config = sandbox_config.model_copy(
         update={
             "extra_write_paths": extra_write_paths,
             "allow_package_registries": True,
         }
     )
+    if resume_metadata_json is not None:
+        resume_metadata_json["sandbox_config"] = resolved_config.model_dump(mode="json")
+    return resolved_config
 
 
 def _apply_sandbox_cache_policy(env_vars: dict[str, str]) -> None:
