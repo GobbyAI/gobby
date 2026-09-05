@@ -26,7 +26,6 @@ import { StagesTab } from "./StagesTab";
 import { SkillsTab } from "./SkillsTab";
 import { MemoryTab } from "./MemoryTab";
 import { IntegrationsTab } from "./IntegrationsTab";
-import { WikiTab } from "./WikiTab";
 import { RulesTab } from "./RulesTab";
 import { DirtyGuardProvider } from "./DirtyGuardContext";
 import {
@@ -243,7 +242,15 @@ function ActivityDropdown({
         <DropdownCaret open={isOpen} />
       </Button>
       {isOpen && (
-        <div className="activity-panel-mobile-menu absolute top-[calc(100%+0.25rem)] left-0 z-[5] grid max-h-[70vh] w-[min(19rem,calc(100vw-1.5rem))] grid-cols-2 gap-0.5 overflow-y-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-lg)]">
+        <div
+          className="activity-panel-mobile-menu absolute top-[calc(100%+0.25rem)] left-0 z-[5] grid w-[min(19rem,calc(100vw-1.5rem))] grid-flow-col grid-cols-2 grid-rows-[repeat(var(--activity-menu-rows),auto)] gap-0.5 rounded-lg border border-border bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-lg)] [--activity-menu-rows:var(--activity-menu-two-column-rows)] mobile:landscape:w-[min(28rem,calc(100vw-1.5rem))] mobile:landscape:grid-cols-3 mobile:landscape:[--activity-menu-rows:var(--activity-menu-three-column-rows)]"
+          style={
+            {
+              "--activity-menu-two-column-rows": Math.ceil(tabs.length / 2),
+              "--activity-menu-three-column-rows": Math.ceil(tabs.length / 3),
+            } as CSSProperties
+          }
+        >
           {[...tabs]
             .sort((a, b) => a.label.localeCompare(b.label))
             .map((tab) => (
@@ -256,7 +263,7 @@ function ActivityDropdown({
                 aria-current={activeTab === tab.id ? "page" : undefined}
                 className={cn(
                   "activity-panel-mobile-menu__item",
-                  "inline-flex min-h-7 w-full items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 mobile:min-h-11 mobile:min-w-11",
+                  "inline-flex min-h-7 w-full items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11",
                   // Active pill mirrors .activity-filter-dropdown__item--active:
                   // bg-tertiary on bg-secondary was too faint to read as the
                   // current tab (#20047).
@@ -460,14 +467,6 @@ export function ActivityPanel({
         );
       case "integrations":
         return <IntegrationsTab />;
-      case "wiki":
-        return (
-          <WikiTab
-            projectId={projectId}
-            requestPanelOverride={requestPanelOverride}
-            releasePanelOverride={releasePanelOverride}
-          />
-        );
       case "rules":
         return <RulesTab projectId={projectId} />;
       case "tasks":
