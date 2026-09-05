@@ -2,18 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
-from gobby.tasks.transcript_outcomes import EvidenceOutcome, infer_failure_categories
+from gobby.tasks.transcript_outcomes import (
+    EvidenceOutcome,
+    classify_validation_command_equivalence,
+    infer_failure_categories,
+)
 
 GateStatus = Literal["passed", "failed", "skipped"]
 
 _TEST_REQUIRED_CATEGORIES = frozenset({"code", "refactor", "test"})
 _AUTO_PASS_CATEGORIES = frozenset({"docs", "planning", "research", "manual"})
+_REVIEW_COMMAND_BUDGET = 48_000
+_REVIEW_COMMAND_LIMIT = 64
+_DIAGNOSTIC_COMMAND_LIMIT = 2_048
+_GENERIC_COMMAND_WORDS = frozenset(
+    {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +90,7 @@ def evaluate_validation_commands(
     task_category: str | None,
     evidence: TranscriptEvidence,
     has_attributed_edits: bool,
+    validation_criteria: str = "",
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -107,7 +121,7 @@ def evaluate_validation_commands(
     unresolved_failures = [
         {
             "category": run_category,
-            "command": run.command,
+            "command": _failure_command_description(run.command),
             "completed_at": run.completed_at.isoformat(),
         }
         for run_category, run in sorted(unresolved.items())
@@ -136,6 +150,7 @@ def evaluate_validation_commands(
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
     }
+    details = _bound_review_details(details, validation_criteria)
 
     # Exempt tasks still need the command record for their explicit criteria review.
     if not has_attributed_edits:
@@ -221,6 +236,125 @@ def _fresh_runs(evidence: TranscriptEvidence) -> list[TranscriptValidationRun]:
         return runs
     last_edit_order = max(edit.order for edit in evidence.edits)
     return [run for run in runs if run.order > last_edit_order]
+
+
+def _failure_command_description(command: str) -> str:
+    """Keep failure diagnostics bounded without representing an excerpt as an exact run."""
+    if len(command) <= _DIAGNOSTIC_COMMAND_LIMIT:
+        return command
+    digest = hashlib.sha256(command.encode()).hexdigest()
+    return f"{command[:256]}… [command excerpt; sha256={digest}]"
+
+
+def _command_priority(record: Mapping[str, object], criteria: str) -> int:
+    """Prefer exact raw/core commands, then invoked tools and explicit path arguments.
+
+    Inline script contents and ordinary prose are never command-name evidence.
+    This affects selection only; the original equivalence/outcome still controls credit.
+    """
+    command = str(record["command"])
+    core = record.get("core_command")
+    if not isinstance(core, str):
+        core = classify_validation_command_equivalence(command).core_command
+    criteria = criteria.casefold()
+    if any(value and value.casefold().strip() in criteria for value in (command, core)):
+        return 3
+    criterion_words = {word.rstrip(".") for word in re.findall(r"[\w./-]+", criteria)}
+    priority = 0
+    for segment in parse_shell_command(core or command).segments:
+        arguments = list(segment)
+        while arguments and arguments[0] in {"uv", "run", "npx", "--yes", "-y"}:
+            arguments.pop(0)
+        if not arguments:
+            continue
+        executable = arguments[0].rsplit("/", 1)[-1].casefold()
+        if executable in {"python", "python3"} and arguments[1:2] == ["-m"]:
+            arguments = arguments[2:]
+            if not arguments:
+                continue
+            executable = arguments[0].casefold()
+        if executable in {"python", "python3", "bash", "sh", "zsh", "echo", "printf"}:
+            continue
+        if executable not in _GENERIC_COMMAND_WORDS and executable in criterion_words:
+            priority = max(priority, 2)
+        if len(arguments) > 1 and " ".join(arguments[:2]).casefold() in criteria:
+            priority = max(priority, 2)
+        if any(
+            argument.casefold() in criterion_words and ("/" in argument or "." in argument)
+            for argument in arguments[1:]
+        ):
+            priority = max(priority, 1)
+    return priority
+
+
+def _select_command_records(
+    records: list[dict[str, object]],
+    *,
+    priorities: Mapping[int, int],
+    budget: int,
+    limit: int,
+    priority: int,
+) -> tuple[list[dict[str, object]], int]:
+    selected: list[tuple[int, dict[str, object]]] = []
+    for index, record in reversed(list(enumerate(records))):
+        command = str(record["command"])
+        if priorities[id(record)] != priority:
+            continue
+        if len(command) > _DIAGNOSTIC_COMMAND_LIMIT and priority < 3:
+            continue
+        size = len(json.dumps(record, separators=(",", ":")))
+        if size > budget or len(selected) >= limit:
+            continue
+        selected.append((index, record))
+        budget -= size
+    return [record for _, record in sorted(selected)], budget
+
+
+def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, Any]:
+    """Bound presentation only; gate decisions retain all definitive category outcomes.
+
+    Complete referenced commands are selected first. Never shorten a credited
+    command: an omitted script cannot accidentally compare equal to a criterion.
+    """
+    records: dict[str, list[dict[str, object]]] = {
+        "latest_runs": details["latest_runs"],
+        "uncredited_runs": details["uncredited_runs"],
+    }
+    selected: dict[str, list[dict[str, object]]] = {key: [] for key in records}
+    priorities = {
+        id(record): _command_priority(record, criteria)
+        for entries in records.values()
+        for record in entries
+    }
+    remaining = _REVIEW_COMMAND_BUDGET
+    for priority in (3, 2, 1, 0):
+        for key, limit in (("latest_runs", _REVIEW_COMMAND_LIMIT), ("uncredited_runs", 16)):
+            additions, remaining = _select_command_records(
+                records[key],
+                priorities=priorities,
+                budget=remaining,
+                limit=limit - len(selected[key]),
+                priority=priority,
+            )
+            selected[key].extend(additions)
+    for key, entries in records.items():
+        selected_ids = {id(record) for record in selected[key]}
+        details[key] = [record for record in entries if id(record) in selected_ids]
+    omitted_latest = len(records["latest_runs"]) - len(details["latest_runs"])
+    omitted_uncredited = len(records["uncredited_runs"]) - len(details["uncredited_runs"])
+    if omitted_latest or omitted_uncredited:
+        details.update(
+            {
+                "omitted_latest_run_count": omitted_latest,
+                "omitted_uncredited_run_count": omitted_uncredited,
+                "evidence_selection": (
+                    "Bounded task-command evidence: referenced commands precede recent diagnostics. "
+                    "Omitted commands are not proof of failure or absence. Only complete listed "
+                    "commands support exact-command credit; category outcomes use all fresh runs."
+                ),
+            }
+        )
+    return details
 
 
 def _latest_definitive_by_category(

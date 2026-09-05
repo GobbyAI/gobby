@@ -170,7 +170,26 @@ async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2
             pass
 
 
+async def _stop_code_index_workers(runner: GobbyRunner) -> None:
+    """Settle gcode consumers while the daemon config endpoint is still available."""
+    for attr in ("_code_index_shutdown", "_sync_worker_shutdown"):
+        shutdown_flag = getattr(runner, attr, None)
+        if shutdown_flag is not None:
+            shutdown_flag.set()
+    await asyncio.gather(
+        _best_effort(
+            lambda: _cancel_runner_task(runner, "_code_index_task"),
+            "Code-index maintenance shutdown",
+        ),
+        _best_effort(
+            lambda: _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0),
+            "Code-index projection shutdown",
+        ),
+    )
+
+
 async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
+    await _stop_code_index_workers(runner)
     wiki_watcher = getattr(runner, "_wiki_watcher", None)
     if wiki_watcher is not None:
         try:
@@ -215,14 +234,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_wiki_watcher_task",
     )
 
-    code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
-    if code_index_shutdown is not None:
-        code_index_shutdown.set()
-
-    sync_worker_shutdown = getattr(runner, "_sync_worker_shutdown", None)
-    if sync_worker_shutdown is not None:
-        sync_worker_shutdown.set()
-
     external_issue_sync_shutdown = getattr(runner, "_external_issue_sync_shutdown", None)
     if external_issue_sync_shutdown is not None:
         external_issue_sync_shutdown.set()
@@ -251,11 +262,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
     ]
     cancellations.extend(
         (
-            ("_code_index_task", _cancel_runner_task(runner, "_code_index_task")),
-            (
-                "_sync_worker_task",
-                _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0),
-            ),
             (
                 "_external_issue_sync_task",
                 _cancel_runner_task(runner, "_external_issue_sync_task", timeout=10.0),
@@ -826,10 +832,6 @@ async def shutdown_daemon_services(
     """Run graceful shutdown within the CLI's process-termination deadline."""
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     services = getattr(getattr(runner, "http_server", None), "services", None)
-    if services is not None:
-        services.startup_ready = False
-        services.shutdown_in_progress = True
-
     loop = asyncio.get_running_loop()
     overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
     graceful_deadline = min(
@@ -844,6 +846,12 @@ async def shutdown_daemon_services(
                     lambda: _cancel_runner_task(runner, "_subsystem_init_task"),
                     "Subsystem initialization task cancellation",
                 )
+                # gcode obtains effective config through this daemon. Cancel and
+                # await its workers before readiness begins returning HTTP 503.
+                await _stop_code_index_workers(runner)
+                if services is not None:
+                    services.startup_ready = False
+                    services.shutdown_in_progress = True
                 graceful_timeout = asyncio.timeout_at(graceful_deadline)
                 try:
                     async with graceful_timeout:

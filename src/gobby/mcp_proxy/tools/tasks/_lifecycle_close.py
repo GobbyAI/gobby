@@ -567,7 +567,9 @@ async def _evaluate_close(
                 backoff.message or "Validation infrastructure is unavailable.",
                 extra=backoff.extra,
             )
-    if commands_required or (task.validation_criteria and not task.is_escalated):
+    if commands_required or (
+        task.validation_criteria and not task.is_escalated and reason not in NO_WORK_CLOSE_REASONS
+    ):
         try:
             transcript = await _derive_close_transcript_evidence(
                 ctx,
@@ -577,6 +579,7 @@ async def _evaluate_close(
                 owner_window_start=evaluation.claim_started_at,
                 task_edited_files=evaluation.edited_paths,
                 repo_path=repo_path,
+                require_task_link=not evaluation.had_attributed_edits,
             )
         except (TranscriptEvidenceUnavailable, RemoteSessionOwnershipError) as exc:
             if commands_required and isinstance(exc, RemoteSessionOwnershipError):
@@ -613,6 +616,7 @@ async def _evaluate_close(
                 task_category=task.category,
                 evidence=transcript,
                 has_attributed_edits=evaluation.had_attributed_edits,
+                validation_criteria=task.validation_criteria or "",
             ),
             item=10,
         )

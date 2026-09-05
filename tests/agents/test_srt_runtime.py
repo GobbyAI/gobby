@@ -698,13 +698,14 @@ def test_verify_srt_installation_wraps_missing_lockfile(
     assert vars(record)["policy_hash"] == "policy-hash"
 
 
-def _write_valid_srt_install(root: Path) -> None:
+def _write_valid_srt_install(root: Path, *, helper_mode: int = 0o755) -> None:
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
     package_dir.mkdir(parents=True)
-    helper = package_dir / "vendor" / "seccomp" / "arm64" / "apply-seccomp"
-    helper.parent.mkdir(parents=True)
-    helper.write_bytes(b"executable helper")
-    helper.chmod(0o755)
+    for architecture in ("arm64", "x64"):
+        helper = package_dir / "vendor" / "seccomp" / architecture / "apply-seccomp"
+        helper.parent.mkdir(parents=True)
+        helper.write_bytes(b"executable helper")
+        helper.chmod(helper_mode)
     (package_dir / "package.json").write_text(
         json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
         encoding="utf-8",
@@ -738,6 +739,31 @@ def _patch_srt_verification_runtime(
             error=None,
         ),
     )
+
+
+@pytest.mark.parametrize("helper_mode", [0o644, 0o444])
+def test_srt_hardening_restores_seccomp_execute_bits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    helper_mode: int,
+) -> None:
+    root = tmp_path / "runtime"
+    _write_valid_srt_install(root, helper_mode=helper_mode)
+    _patch_srt_verification_runtime(monkeypatch, root)
+
+    installation = verify_srt_installation()
+
+    assert installation.root == root.resolve()
+    package_dir = root / "node_modules/@anthropic-ai/sandbox-runtime"
+    for architecture in ("arm64", "x64"):
+        helper = package_dir / "vendor/seccomp" / architecture / "apply-seccomp"
+        assert helper.stat().st_mode & 0o777 == 0o555
+        assert helper.read_bytes() == b"executable helper"
+    for path in (root / "runner.mjs", root / "receipt.json", package_dir / "package.json"):
+        assert path.stat().st_mode & 0o777 == 0o444
+    assert root.stat().st_mode & 0o777 == 0o555
+    manifest = json.loads((root / "content-manifest.json").read_text(encoding="utf-8"))
+    assert srt_runtime.build_srt_content_manifest(root) == manifest
 
 
 def test_verify_srt_installation_accepts_release_contract(
@@ -778,6 +804,7 @@ def test_verify_srt_installation_rejects_unmanifested_package_content(
         ("version", "package identity"),
         ("runner", "runner checksum"),
         ("helper-mode", "seccomp helper is not executable"),
+        ("helper-content", "content manifest mismatch"),
     ],
 )
 def test_verify_srt_installation_rejects_corruption(
@@ -801,11 +828,16 @@ def test_verify_srt_installation_rejects_corruption(
             json.dumps({"name": SRT_RELEASE.package, "version": "0.0.65"}),
             encoding="utf-8",
         )
-    elif corruption == "helper-mode":
+    elif corruption in ("helper-mode", "helper-content"):
         helper = (
             root / "node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
         )
-        helper.chmod(0o444)
+        if corruption == "helper-mode":
+            helper.chmod(0o444)
+        else:
+            helper.chmod(0o644)
+            helper.write_bytes(b"corrupted helper")
+            helper.chmod(0o555)
     else:
         (root / "runner.mjs").chmod(0o644)
         (root / "runner.mjs").write_text("corrupted", encoding="utf-8")

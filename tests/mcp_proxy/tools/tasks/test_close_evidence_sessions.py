@@ -200,3 +200,39 @@ async def test_missing_owner_or_closing_session_still_raises() -> None:
             task_edited_files=set(),
             repo_path="/repo",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("linked", [False, True])
+async def test_optional_evidence_excludes_unrelated_closing_session(linked: bool) -> None:
+    window = "2026-08-27T02:10:00+00:00"
+    ctx = _context(
+        [_link(IMPLEMENTER, "worked_on", window)] if linked else [],
+        {
+            IMPLEMENTER: _session(IMPLEMENTER, window),
+            REVIEWER: _session(REVIEWER, "2026-08-26T00:00:00+00:00"),
+        },
+    )
+    derive = AsyncMock()
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", derive),
+        patch(f"{_SUPPORT}.merge_transcript_evidence"),
+    ):
+        await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=REVIEWER,
+            closing_session_id=REVIEWER,
+            owner_window_start=None,
+            task_edited_files=set(),
+            repo_path="/repo",
+            require_task_link=True,
+        )
+    assert derive.await_count == int(linked)
+    if linked:
+        assert derive.await_args is not None
+        assert derive.await_args.args[0].id == IMPLEMENTER
+        assert derive.await_args.args[1] == window
+    else:
+        ctx.session_manager.get.assert_not_called()
