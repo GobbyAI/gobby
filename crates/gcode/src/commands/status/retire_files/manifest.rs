@@ -34,6 +34,12 @@ pub(super) struct ContentVersion {
     pub symbol_ids: Vec<String>,
 }
 
+impl ContentVersion {
+    pub(super) fn is_tombstone(&self) -> bool {
+        self.content_hash == crate::visibility::TOMBSTONE_HASH
+    }
+}
+
 pub(super) fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -104,7 +110,23 @@ impl Manifest {
                     version_ids.insert(&version.id),
                     "duplicate content identity"
                 );
-                ensure!(is_hash(&version.content_hash), "invalid content hash");
+                if version.is_tombstone() {
+                    ensure!(
+                        version.symbol_ids.is_empty(),
+                        "tombstone cannot own symbols"
+                    );
+                    ensure!(
+                        version.id
+                            == crate::models::IndexedFile::make_id(
+                                &self.project_id,
+                                &file.file_path,
+                                crate::visibility::TOMBSTONE_HASH,
+                            ),
+                        "invalid tombstone content identity"
+                    );
+                } else {
+                    ensure!(is_hash(&version.content_hash), "invalid content hash");
+                }
                 ensure!(
                     hashes.insert(&version.content_hash),
                     "duplicate file content hash"

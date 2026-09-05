@@ -715,3 +715,118 @@ fn exact_retirement_roundtrip_retries_interrupted_sql_deletion() -> anyhow::Resu
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires explicit isolated PostgreSQL, Qdrant and FalkorDB endpoints"]
+#[serial_test::serial(serial_db)]
+fn exact_retirement_tombstone_requires_empty_facts_and_removed_selector() -> anyhow::Result<()> {
+    use crate::index::api::{self, IndexWriteMode};
+    use crate::models::IndexedFile;
+    use crate::visibility::{TOMBSTONE_HASH, TOMBSTONE_LANGUAGE};
+
+    let mut fixture = Fixture::new()?;
+    fixture.enable_isolated_projections()?;
+    fixture.seed_projections()?;
+    let path = "wiki/deleted.md";
+    let tombstone = IndexedFile {
+        id: IndexedFile::make_id(&fixture.manifest.project_id, path, TOMBSTONE_HASH),
+        project_id: fixture.manifest.project_id.clone(),
+        file_path: path.to_string(),
+        language: TOMBSTONE_LANGUAGE.to_string(),
+        content_hash: TOMBSTONE_HASH.to_string(),
+        symbol_count: 0,
+        byte_size: 0,
+        indexed_at: "0".to_string(),
+    };
+    // Exercise the same canonical upserts as the overlay tombstone writer.
+    api::upsert_file(&mut fixture.conn, &tombstone)?;
+    api::upsert_file_state(
+        &mut fixture.conn,
+        &fixture.manifest.machine_id,
+        &tombstone,
+        &fixture.ctx.project_root,
+        IndexWriteMode::Overlay,
+    )?;
+    fixture.manifest.files.push(RetiredFile {
+        file_path: path.to_string(),
+        versions: vec![ContentVersion {
+            id: tombstone.id.clone(),
+            content_hash: TOMBSTONE_HASH.to_string(),
+            symbol_ids: vec![],
+        }],
+    });
+    fixture.write_manifest()?;
+    let file = &fixture.manifest.files[1];
+    assert!(validate_file(&mut fixture.conn, &fixture.manifest, file).is_err());
+    api::delete_file_state(
+        &mut fixture.conn,
+        &fixture.manifest.machine_id,
+        &fixture.manifest.project_id,
+        path,
+        &fixture.ctx.project_root,
+        IndexWriteMode::Overlay,
+    )?;
+    validate_file(&mut fixture.conn, &fixture.manifest, file)?;
+    let id = db::id_param(&tombstone.id)?;
+    for mutation in ["language='rust'", "symbol_count=1", "byte_size=1"] {
+        fixture.conn.execute(
+            &format!("UPDATE code_indexed_files SET {mutation} WHERE id=$1"),
+            &[&id],
+        )?;
+        assert!(validate_file(&mut fixture.conn, &fixture.manifest, file).is_err());
+        api::upsert_file(&mut fixture.conn, &tombstone)?;
+    }
+    let project_id = db::id_param(&fixture.manifest.project_id)?;
+    let chunk_id = uuid::Uuid::new_v4();
+    fixture.conn.execute("INSERT INTO code_content_chunks (id,project_id,file_path,content_hash,chunk_index,line_start,line_end,content,language,created_at) VALUES ($1,$2,$3,$4,0,1,1,'unexpected',$5,NOW())", &[&chunk_id, &project_id, &path, &TOMBSTONE_HASH, &TOMBSTONE_LANGUAGE])?;
+    assert!(validate_file(&mut fixture.conn, &fixture.manifest, file).is_err());
+    fixture
+        .conn
+        .execute("DELETE FROM code_content_chunks WHERE id=$1", &[&chunk_id])?;
+    validate_file(&mut fixture.conn, &fixture.manifest, file)?;
+    fixture.graph()?.query(&format!("MATCH (keep:CodeFile {{project:'{project_id}',path:'src/keep.rs'}}) CREATE (:CodeFile {{project:'{project_id}',path:'{path}'}})-[:IMPORTS {{content_hash:'{TOMBSTONE_HASH}'}}]->(keep)"), None)?;
+    assert!(
+        run(
+            &fixture.ctx,
+            &fixture.manifest_path,
+            true,
+            Some(&fixture.receipt_path)
+        )
+        .is_err()
+    );
+    assert!(
+        !fixture.receipt_path.exists(),
+        "tombstone graph facts must refuse before mutation"
+    );
+    assert_eq!(fixture.count(&tombstone.id)?, 1);
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (:CodeFile {{project:'{project_id}',path:'{path}'}})-[r:IMPORTS]->() DELETE r"
+        ),
+        None,
+    )?;
+    run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )?;
+    run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )?;
+    assert_eq!(fixture.count(&tombstone.id)?, 0);
+    assert_eq!(fixture.count(&fixture.kept_id.clone())?, 1);
+    let rows = fixture.graph()?.query(
+        &format!("MATCH (n {{project:'{project_id}'}}) RETURN count(n) AS count"),
+        None,
+    )?;
+    assert_eq!(
+        rows[0]["count"],
+        json!(2),
+        "unrelated graph file and symbol survive"
+    );
+    Ok(())
+}

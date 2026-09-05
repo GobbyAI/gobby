@@ -271,6 +271,8 @@ fn validate_file(
     }
     let rows = conn.query(
         "SELECT f.id::text, f.content_hash, f.graph_synced, f.vectors_synced,
+            f.language, f.symbol_count, f.byte_size,
+            EXISTS(SELECT 1 FROM code_content_chunks k WHERE k.project_id=f.project_id AND k.file_path=f.file_path AND k.content_hash=f.content_hash) AS has_content_chunks,
             (EXISTS(SELECT 1 FROM code_symbols s WHERE s.project_id=f.project_id AND s.file_path=f.file_path AND s.file_content_hash=f.content_hash)
              OR EXISTS(SELECT 1 FROM code_imports i WHERE i.project_id=f.project_id AND i.source_file=f.file_path AND i.content_hash=f.content_hash)
              OR EXISTS(SELECT 1 FROM code_calls c WHERE c.project_id=f.project_id AND c.file_path=f.file_path AND c.content_hash=f.content_hash)
@@ -298,6 +300,18 @@ fn validate_file(
                 == expected.symbol_ids.iter().collect::<BTreeSet<_>>(),
             "symbol membership changed: {id}"
         );
+        if expected.is_tombstone() {
+            // Overlay deletion markers are canonical non-hash identities, but
+            // they must never carry content or projection facts.
+            ensure!(
+                row.get::<_, String>("language") == crate::visibility::TOMBSTONE_LANGUAGE
+                    && row.get::<_, i32>("symbol_count") == 0
+                    && row.get::<_, i32>("byte_size") == 0
+                    && !row.get::<_, bool>("has_graph_facts")
+                    && !row.get::<_, bool>("has_content_chunks"),
+                "tombstone has nonempty content facts: {id}"
+            );
+        }
         candidates.push(ContentGcCandidate {
             id,
             project_id: manifest.project_id.clone(),
@@ -394,6 +408,7 @@ fn validate_graph(ctx: &Context, file: &RetiredFile) -> anyhow::Result<()> {
     let hashes = file
         .versions
         .iter()
+        .filter(|version| !version.is_tombstone())
         .map(|version| version.content_hash.clone())
         .collect();
     code_graph::with_code_graph(ctx, |graph| {

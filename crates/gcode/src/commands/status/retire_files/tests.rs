@@ -59,6 +59,41 @@ fn manifest_rejects_scope_escapes_and_duplicate_identities() -> anyhow::Result<(
 }
 
 #[test]
+fn manifest_admits_only_canonical_empty_tombstones() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let mut manifest = sample_manifest(&root.path().canonicalize()?);
+    let version = &mut manifest.files[0].versions[0];
+    version.content_hash = crate::visibility::TOMBSTONE_HASH.to_string();
+    version.id = crate::models::IndexedFile::make_id(
+        &manifest.project_id,
+        "wiki/page.md",
+        crate::visibility::TOMBSTONE_HASH,
+    );
+    assert!(
+        manifest.validate().is_err(),
+        "tombstone symbols must refuse"
+    );
+    manifest.files[0].versions[0].symbol_ids.clear();
+    manifest.validate()?;
+    manifest.source_inventory_digest = crate::visibility::TOMBSTONE_HASH.to_string();
+    assert!(
+        manifest.validate().is_err(),
+        "inventory still requires SHA256"
+    );
+    manifest.source_inventory_digest = "a".repeat(64);
+    manifest.files[0].versions[0].id = uuid::Uuid::new_v4().to_string();
+    assert!(
+        manifest.validate().is_err(),
+        "tombstone UUID must match its path"
+    );
+    for invalid in ["__gcode_tombstone_", "__gcode_deleted__", "abcd", ""] {
+        manifest.files[0].versions[0].content_hash = invalid.to_string();
+        assert!(manifest.validate().is_err(), "accepted {invalid:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn existing_file_refuses_retirement_readiness() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let path = root.path().canonicalize()?;
