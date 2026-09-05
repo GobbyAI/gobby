@@ -6,32 +6,38 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use gobby_client::Workspace;
 use gobby_client::app::run_loop::{
-    RENDER_TICK, ReconnectAttempt, ReconnectSupervisor, run_scripted_loop,
+    run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
 };
-use gobby_client::app::{AttachState, run_live_loop};
+use gobby_client::app::{run_live_loop, AttachState};
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, LiveDaemon, Page,
     RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
     WsMessage, WsReply,
 };
-use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
+use gobby_client::frame_source::{
+    AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
+};
 use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
+use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
-use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage, write_message};
+use gobby_terminal::protocol::{
+    read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
+    PaneModes, ServerMessage, MAX_FRAME_SIZE,
+};
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
-use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use serde_json::{Value, json};
+use ratatui::Terminal;
+use serde_json::{json, Value};
+use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-use tokio::time::{Instant, timeout};
+use tokio::time::{timeout, Instant};
 
 fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
     mock.requests()
@@ -89,8 +95,8 @@ async fn settle_live_event() {
     }
 }
 
-fn encoded_frame(text: &str) -> String {
-    let message = ServerMessage::Frame(FrameData {
+fn semantic_frame(text: &str) -> ServerMessage {
+    ServerMessage::Frame(FrameData {
         cells: text
             .chars()
             .map(|symbol| CellData {
@@ -108,9 +114,12 @@ fn encoded_frame(text: &str) -> String {
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
         modes: PaneModes::default(),
-    });
+    })
+}
+
+fn encoded_frame(text: &str) -> String {
     let mut framed = Vec::new();
-    write_message(&mut framed, &message).expect("encode test frame");
+    write_message(&mut framed, &semantic_frame(text)).expect("encode test frame");
     STANDARD.encode(&framed[4..])
 }
 
@@ -411,12 +420,11 @@ async fn loop_routes_input_and_frames() {
     drop(guard);
 
     assert_eq!(restore_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert!(
-        ws.daemon()
-            .ws_sent_types()
-            .iter()
-            .any(|kind| kind == "terminal_input")
-    );
+    assert!(ws
+        .daemon()
+        .ws_sent_types()
+        .iter()
+        .any(|kind| kind == "terminal_input"));
     assert!(
         !ws.daemon().ws_connected(),
         "the run loop must finish its shutdown seam before returning"
@@ -1237,12 +1245,10 @@ async fn select_spawn_attach_terminate_loop() {
         result.expect("spawn refusal live loop");
         assert_eq!(workspace.pane_count(), 0);
         assert!(websocket_requests(&mock, "terminal_attach").is_empty());
-        assert!(
-            chrome
-                .status_message
-                .as_deref()
-                .is_some_and(|message| message.contains("capacity exhausted"))
-        );
+        assert!(chrome
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.contains("capacity exhausted")));
         mock.shutdown().await;
     }
 }
@@ -1338,10 +1344,9 @@ fn spawn_attach_terminate_reducer_schedules_converge() {
         refused.is_err(),
         "spawn refusal must create no pane: {refused:?}"
     );
-    assert!(
-        ws.status_message()
-            .is_some_and(|message| message.contains("capacity exhausted"))
-    );
+    assert!(ws
+        .status_message()
+        .is_some_and(|message| message.contains("capacity exhausted")));
 
     // A lost create event is recovered by listing; a lost kill event is too.
     ws.daemon_mut().set_spawn_response(json!({
@@ -1435,10 +1440,8 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
             delay: Duration::from_secs(4)
         }
     );
-    assert!(
-        (Duration::from_millis(250)..=Duration::from_millis(251))
-            .contains(&(Instant::now() - started))
-    );
+    assert!((Duration::from_millis(250)..=Duration::from_millis(251))
+        .contains(&(Instant::now() - started)));
     supervisor.cancel(DaemonError::Protocol {
         detail: "quit".to_string(),
     });
@@ -1718,8 +1721,190 @@ async fn detach_deadlines_recover_through_the_supervisor() {
     mock.shutdown().await;
 }
 
+#[tokio::test]
+async fn daemon_loss_renders_read_only_until_recovery() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-loss", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-loss", "seq": 1}
+            }),
+        );
+    }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        500,
+        json!({"code": "reconcile_failed", "message": "roster unavailable"}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "terminal-loss", "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-loss", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial loss pane");
+    let pane_id = workspace
+        .pane_for_terminal("terminal-loss")
+        .expect("loss pane");
+    let old_attachment = workspace.pane(pane_id).attachment_id().to_string();
+
+    let (client, mut host) = UnixStream::pair().expect("direct frame socket pair");
+    let (frame_tx, mut frame_rx) = mpsc::channel(8);
+    let host_task = tokio::spawn(async move {
+        let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
+            .await
+            .expect("direct hello");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Welcome {
+                host_epoch: "direct-loss-epoch".into(),
+            },
+        )
+        .await
+        .expect("direct welcome");
+        let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
+            .await
+            .expect("direct attach");
+        while let Some(frame) = frame_rx.recv().await {
+            write_message_async(&mut host, &frame)
+                .await
+                .expect("direct frame");
+        }
+    });
+    let direct = UnixSocketFrameSource::connect_stream(
+        client,
+        &AttachLocator {
+            backend: "native".into(),
+            frame_host_epoch: "direct-loss-epoch".into(),
+            host_terminal_id: "terminal-loss".into(),
+            frame_socket_path: "socket-pair".into(),
+            pane: None,
+        },
+        "local-token",
+        80,
+        24,
+    )
+    .await
+    .expect("direct frame source");
+    workspace
+        .replace_frame_source(pane_id, PaneFrameSource::Direct(direct))
+        .expect("install direct frame source");
+
+    let reconnect_gate = mock.pause_next_websocket();
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        mock.drop_websockets();
+        timeout(Duration::from_secs(1), async {
+            while mock.websocket_handshakes() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("paused reconnect attempt");
+
+        let take_count = websocket_requests(&mock, "terminal_take_control").len();
+        frame_tx
+            .send(semantic_frame("direct-during-loss"))
+            .await
+            .expect("direct frame during reconnect");
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        assert!(websocket_requests(&mock, "terminal_input").is_empty());
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            take_count,
+            "control is suppressed while the daemon is unavailable"
+        );
+
+        tokio::time::pause();
+        reconnect_gate.notify_waiters();
+        for _ in 0..1_024 {
+            let roster_reads = mock
+                .requests()
+                .iter()
+                .filter(|request| {
+                    request.method == "GET" && request.target.starts_with("/api/terminals?")
+                })
+                .count();
+            if roster_reads >= 3 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(mock.websocket_handshakes(), 2);
+        frame_tx
+            .send(semantic_frame("direct-during-roster-backoff"))
+            .await
+            .expect("direct frame during roster backoff");
+        send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        assert!(websocket_requests(&mock, "terminal_input").is_empty());
+
+        tokio::time::advance(Duration::from_millis(250)).await;
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        drop(frame_tx);
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("daemon loss recovery loop");
+    host_task.await.expect("direct host task");
+    let pane_id = workspace
+        .pane_for_terminal("terminal-loss")
+        .expect("recovered pane");
+    assert!(workspace.pane(pane_id).frames_rendered() >= 2);
+    assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
+    assert!(workspace.pane(pane_id).writable());
+    assert_eq!(mock.websocket_handshakes(), 3);
+    let take_attachments: Vec<_> = websocket_requests(&mock, "terminal_take_control")
+        .into_iter()
+        .filter_map(|request| {
+            request
+                .get("attachment_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(take_attachments.len(), 2);
+    assert_ne!(take_attachments[0], take_attachments[1]);
+    mock.shutdown().await;
+}
+
 #[test]
-fn daemon_loss_renders_read_only_until_recovery() {
+fn daemon_loss_reducer_clears_control_without_frames() {
     let mut ws = Workspace::scripted();
     let pane = ws
         .open_terminal("term-loss", "native", "epoch-loss")
@@ -1742,11 +1927,10 @@ fn daemon_loss_renders_read_only_until_recovery() {
     assert!(ws.send_input(pane, b"blocked").is_err());
     assert!(ws.take_control(pane).is_err());
     assert_eq!(ws.daemon().ws_sent().len(), sent_before);
-    assert!(
-        ws.pane(pane)
-            .status_message()
-            .is_some_and(|message| message.contains("unavailable"))
-    );
+    assert!(ws
+        .pane(pane)
+        .status_message()
+        .is_some_and(|message| message.contains("unavailable")));
 }
 
 #[test]
