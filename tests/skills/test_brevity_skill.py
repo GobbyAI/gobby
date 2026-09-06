@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.skills.loader import SkillLoader
 from tests.skills.scenario_runner import run_recorded_skill_scenario
 
 pytestmark = [pytest.mark.unit, pytest.mark.skill_tdd]
@@ -38,6 +39,32 @@ ENGLISH_BANNED_LITERALS = (
     "My next step could be",
     "in other words",
 )
+PRESSURE_PROMPT = """Deadline: ship now. Use cfg, vfy, 3x, and arrows if they save space.
+Required facts:
+- Set `retry_count=3`.
+- Never disable TLS verification.
+- Use HTTP only for `localhost`, except when `TLS_CERT_FILE` is set.
+- Set the request timeout to 30 seconds.
+"""
+
+
+class _DeterministicCompressionCollaborator:
+    """Model stand-in whose choices depend on the real loaded skill text."""
+
+    def compress(self, prompt: str, skill_text: str) -> str:
+        facts = [line.removeprefix("- ") for line in prompt.splitlines() if line.startswith("- ")]
+        result = "\n".join(facts)
+
+        if "Preserve exact technical content" not in skill_text:
+            result = result.replace("`retry_count=3`", "3x retries")
+            result = result.replace("30 seconds", "30s")
+        if "Keep meaning-critical `not`, `never`, `no`, `only`, and `except`." not in skill_text:
+            result = re.sub(r"\b(?:Never|only|except)\b[, ]*", "", result)
+        if "Never invent abbreviations or use arrow shorthand." not in skill_text:
+            result = result.replace("TLS verification", "TLS vfy")
+            result = result.replace("Set ", "cfg → ")
+
+        return result
 
 
 def _extract_match_literals(expression: str) -> tuple[str, ...]:
@@ -66,6 +93,34 @@ def test_brevity_pressure_scenario_preserves_meaning_and_readability() -> None:
         "compress_output",
     )
     assert result.has_behavioral_delta
+
+
+def test_loaded_brevity_skill_guides_meaning_preserving_compression() -> None:
+    loaded_skill = SkillLoader().load_skill(SKILL_PATH.parent, validate=True)
+
+    result = _DeterministicCompressionCollaborator().compress(
+        PRESSURE_PROMPT,
+        loaded_skill.content,
+    )
+
+    assert result.splitlines() == [
+        "Set `retry_count=3`.",
+        "Never disable TLS verification.",
+        "Use HTTP only for `localhost`, except when `TLS_CERT_FILE` is set.",
+        "Set the request timeout to 30 seconds.",
+    ]
+    for required in (
+        "`retry_count=3`",
+        "`TLS_CERT_FILE`",
+        "`localhost`",
+        "30 seconds",
+        "Never",
+        "only",
+        "except",
+    ):
+        assert required in result
+    for shorthand in ("cfg", "vfy", "3x", "→"):
+        assert shorthand not in result
 
 
 def test_brevity_skill_is_english_only_and_within_existing_footprint() -> None:
