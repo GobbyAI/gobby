@@ -195,8 +195,9 @@ fn live_entry_connects_before_running() {
     let result = gobby_client::views::run_ready(Ready {
         daemon_url: "not a URL".to_string(),
         token: Some("test-token".to_string()),
-        project: None,
+        project: "project-1".to_string(),
         host: None,
+        host_notice: None,
     });
 
     assert!(
