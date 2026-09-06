@@ -18,13 +18,37 @@ use sha2::{Digest, Sha256};
 /// `CASES` entry keyed by `<source_path>::<test_name>`, which the harness
 /// compares against `upstream_tests.txt`. Herdr `#[tokio::test]` cases are
 /// ported as sync fns that build a runtime inside the body.
+///
+/// A `#[deferred = "TODO(#N): why"]` marker before a `fn` keeps the identity
+/// ported with its herdr expectations verbatim while the surface it needs
+/// waits on task `#N`: nextest ignores it with that reason,
+/// `keep_set_render_tests_all_pass` skips it, and
+/// `deferred_cases_are_still_red` fails as soon as it passes, so landing the
+/// surface also retires the marker.
 macro_rules! parity_tests {
-    ($( $path:literal => { $( fn $name:ident () $body:block )* } )*) => {
-        $( $( #[test] fn $name() $body )* )*
+    (@test ; $name:ident $body:block) => {
+        #[test]
+        fn $name() $body
+    };
+    (@test $reason:literal ; $name:ident $body:block) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() $body
+    };
+    (@deferral) => { None };
+    (@deferral $reason:literal) => { Some($reason) };
+    ($( $path:literal => {
+        $( $( #[deferred = $reason:literal] )? fn $name:ident () $body:block )*
+    } )*) => {
+        $( $( parity_tests!(@test $( $reason )? ; $name $body); )* )*
 
-        /// `(herdr identity, test)` pairs registered by this module.
-        pub const CASES: &[(&str, fn())] = &[
-            $( $( (concat!($path, "::", stringify!($name)), $name), )* )*
+        /// `(herdr identity, test, deferral reason)` registered by this module.
+        pub const CASES: &[(&str, fn(), Option<&str>)] = &[
+            $( $( (
+                concat!($path, "::", stringify!($name)),
+                $name,
+                parity_tests!(@deferral $( $reason )?),
+            ), )* )*
         ];
     };
 }
@@ -43,13 +67,13 @@ mod tabs;
 /// herdr commit the keep-set was extracted from (fork point, see UPSTREAM.md).
 const UPSTREAM_COMMIT: &str = "346411fa21afd297f5ed3b3fa56f9e3fbf7654b7";
 const INVENTORY: &str = include_str!("upstream_tests.txt");
-const INVENTORY_LINES: usize = 113;
-const INVENTORY_SHA256: &str = "6d3cb09874a9c2b47a0b6982b4a1ccb920c77e435933bfada7e26d9ef116d412";
+const INVENTORY_LINES: usize = 109;
+const INVENTORY_SHA256: &str = "654b542316d6b354962c43f40a8d8a608904b10bcaee5f61202b88cf4fec3e14";
 const UPSTREAM_MD: &str = include_str!("../../UPSTREAM.md");
 const PARITY_TABLE_START: &str = "<!-- parity-table:start -->";
 const PARITY_TABLE_END: &str = "<!-- parity-table:end -->";
 
-type Cases = &'static [(&'static str, fn())];
+type Cases = &'static [(&'static str, fn(), Option<&'static str>)];
 
 fn modules() -> [(&'static str, Cases); 7] {
     [
@@ -66,7 +90,7 @@ fn modules() -> [(&'static str, Cases); 7] {
 fn ported_identities() -> Vec<&'static str> {
     modules()
         .iter()
-        .flat_map(|(_, cases)| cases.iter().map(|(id, _)| *id))
+        .flat_map(|(_, cases)| cases.iter().map(|(id, _, _)| *id))
         .collect()
 }
 
@@ -160,9 +184,14 @@ fn keep_set_render_tests_all_pass() {
     // Failing cases are collected below; the default hook's per-panic
     // backtrace chatter would bury the list.
     std::panic::set_hook(Box::new(|_| {}));
+    let mut run = 0;
     let mut failures = Vec::new();
     for (_, cases) in modules() {
-        for (id, case) in cases {
+        for (id, case, deferral) in cases {
+            if deferral.is_some() {
+                continue;
+            }
+            run += 1;
             if std::panic::catch_unwind(case).is_err() {
                 failures.push(*id);
             }
@@ -171,8 +200,29 @@ fn keep_set_render_tests_all_pass() {
     std::panic::set_hook(previous_hook);
     assert!(
         failures.is_empty(),
-        "{} of {} keep-set tests fail: {failures:#?}",
-        failures.len(),
-        INVENTORY_LINES
+        "{} of {run} keep-set tests fail: {failures:#?}",
+        failures.len()
+    );
+}
+
+/// A `#[deferred]` case documents a surface that is not there yet; once it
+/// passes, the marker is stale and this test names it for removal.
+#[test]
+fn deferred_cases_are_still_red() {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let mut stale = Vec::new();
+    for (_, cases) in modules() {
+        for (id, case, deferral) in cases {
+            let Some(reason) = deferral else { continue };
+            if std::panic::catch_unwind(case).is_ok() {
+                stale.push((*id, *reason));
+            }
+        }
+    }
+    std::panic::set_hook(previous_hook);
+    assert!(
+        stale.is_empty(),
+        "deferred keep-set tests now pass; remove their #[deferred] markers: {stale:#?}"
     );
 }

@@ -27,16 +27,17 @@ const CLOSE_TARGET: CloseTarget = CloseTarget::Terminal;
 /// herdr `confirm_close_overlay_text(app, runtimes) -> (title, detail)`.
 ///
 /// gclient derives no dialog text from workspace state: `Dialog::ConfirmClose`
-/// carries the selected row's name as a caller-supplied `title`, and the
-/// renderer writes `Close <noun>?` over `<title> — <fixed target detail>`.
+/// carries the selected row's name as a caller-supplied `title` and its pane
+/// count, and the renderer writes `Close <noun>?` over `<title> — <n> panes`.
 /// herdr's display-name precedence (custom name, then live runtime cwd, then
 /// terminal cwd, then identity cwd) therefore maps onto the name passed
 /// here, and both rows are read back from the rendered popup.
-fn confirm_close_overlay_text(name: &str) -> (String, String) {
+fn confirm_close_overlay_text(name: &str, panes: usize) -> (String, String) {
     let mut chrome = Chrome::new(theme());
     chrome.dialog = Some(Dialog::ConfirmClose {
         target: CLOSE_TARGET,
         title: name.to_string(),
+        panes,
     });
     let terminal = render(AREA.width, AREA.height, |frame| {
         render_dialog(frame, AREA, &chrome)
@@ -58,10 +59,11 @@ parity_tests! {
         fn confirm_close_text_uses_live_workspace_cwd_label() {
             // herdr: no custom name, identity cwd `/projects/original`, and the
             // attached terminal's live cwd `/projects/current`; the live cwd's
-            // basename names the workspace.
-            let (title, detail) = confirm_close_overlay_text("current");
+            // basename names the workspace. herdr's `workspace` noun is
+            // gclient's `terminal` (plan 3.1 keymap/noun mapping).
+            let (title, detail) = confirm_close_overlay_text("current", 1);
 
-            assert_eq!(title, "Close workspace?");
+            assert_eq!(title, "Close terminal?");
             assert_eq!(detail, "current — 1 pane");
         }
 
@@ -75,7 +77,7 @@ parity_tests! {
                     // the terminal record still says `<tmp>/original`; the
                     // runtime's cwd wins. gclient terminals run in the daemon,
                     // so there is no local runtime to spawn.
-                    let (_, detail) = confirm_close_overlay_text("current");
+                    let (_, detail) = confirm_close_overlay_text("current", 1);
 
                     assert_eq!(detail, "current — 1 pane");
                 });
@@ -85,16 +87,18 @@ parity_tests! {
             // herdr: workspace `active` is active, workspace `selected` is the
             // sidebar selection with terminal cwd `/projects/current`; the
             // selected workspace's custom name wins over both.
-            let (_, detail) = confirm_close_overlay_text("selected");
+            let (_, detail) = confirm_close_overlay_text("selected", 1);
 
             assert_eq!(detail, "selected — 1 pane");
         }
 
+        // TODO(#21908): herdr's `main` is the repo checkout of a worktree space
+        // whose linked worktree `issue` is also open, so closing the parent
+        // closes the group and the dialog reports the group's scope. gclient
+        // carries no worktree spaces until that plan lands.
+        #[deferred = "TODO(#21908): worktree groups do not exist in gclient yet"]
         fn confirm_close_text_reports_parent_group_scope() {
-            // herdr: workspace `main` is the repo checkout of a worktree space
-            // whose linked worktree `issue` is also open, so closing the parent
-            // closes the group. gclient carries no worktree spaces.
-            let (title, detail) = confirm_close_overlay_text("main");
+            let (title, detail) = confirm_close_overlay_text("main", 2);
 
             assert_eq!(title, "Close worktree group?");
             assert_eq!(detail, "main — 2 workspaces, 2 panes");

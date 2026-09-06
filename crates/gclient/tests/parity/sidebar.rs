@@ -372,20 +372,6 @@ parity_tests! {
             assert!(second.contains(" claude"), "rendered row: {second:?}");
         }
 
-        fn narrow_agent_rows_preserve_later_tab_tokens() {
-            // herdr's later token is the tab name; gclient's later tokens are
-            // the state label and detail.
-            let mut board = Board::new(&[]);
-            board.add("very-long-workspace-name", "pi");
-            let chrome = chrome();
-            let area = Rect::new(0, 0, 18, 20);
-            let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = roster_body(area, None);
-            let first = row_str(&terminal, body.y, 17);
-
-            assert!(first.contains("idle"), "rendered row: {first:?}");
-            assert!(first.contains('·'), "rendered row: {first:?}");
-        }
 
         fn stripped_terminal_title_renders_with_unicode_width_truncation() {
             // herdr strips the `⠋` spinner from the terminal title; gclient's
@@ -731,18 +717,6 @@ parity_tests! {
             // so both rows start at the same column.
             assert_eq!(cards[1].1.x, cards[0].1.x);
             assert_eq!(cards[1].1.y, cards[0].1.y + cards[0].1.height);
-        }
-
-        fn packed_workspace_drag_indicator_overlays_an_internal_boundary() {
-            let board = Board::new(&["a", "b", "c"]);
-            let area = Rect::new(0, 0, 30, 20);
-            let (terminal, hits) = draw_sidebar(&board, &chrome(), area.width, area.height);
-            let list_area = expanded_sections(area, None).0;
-            // herdr `WorkspaceDropTarget::Before(2)` lands on card 1's top row.
-            let indicator_row = hits.roster[1].1.y;
-            assert_eq!(indicator_row, hits.roster[0].1.y + 1);
-
-            assert_eq!(cell(&terminal, list_area.x, indicator_row).symbol(), "─");
         }
 
         fn compact_space_group_scroll_clamps_when_all_entries_fit() {

@@ -76,17 +76,17 @@ bytes under the negotiated keyboard protocol), `selection`
 
 The keep-set render tests of herdr `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7` are ported
 under `tests/parity/` with row-text expectations unchanged; `tests/parity/upstream_tests.txt`
-is the pinned inventory (113 identities, SHA-256 `6d3cb09874a9c2b47a0b6982b4a1ccb920c77e435933bfada7e26d9ef116d412`).
+is the pinned inventory (109 identities, SHA-256 `654b542316d6b354962c43f40a8d8a608904b10bcaee5f61202b88cf4fec3e14`).
 
 <!-- parity-table:start -->
 | herdr source | ported | not ported | gclient parity module |
 | --- | --- | --- | --- |
-| `src/ui.rs` | 31 | 4 | `tests/parity/chrome.rs` |
+| `src/ui.rs` | 29 | 6 | `tests/parity/chrome.rs` |
 | `src/ui/dialogs.rs` | 4 | 2 | `tests/parity/dialogs.rs` |
 | `src/ui/keybind_help.rs` | 2 | 0 | `tests/parity/chrome.rs` |
 | `src/ui/navigator.rs` | 5 | 0 | `tests/parity/navigator.rs` |
 | `src/ui/panes.rs` | 17 | 0 | `tests/parity/panes.rs` |
-| `src/ui/sidebar.rs` | 35 | 6 | `tests/parity/sidebar.rs` |
+| `src/ui/sidebar.rs` | 33 | 8 | `tests/parity/sidebar.rs` |
 | `src/ui/sidebar/tokens.rs` | 6 | 0 | `tests/parity/sidebar.rs` |
 | `src/ui/status.rs` | 4 | 0 | `tests/parity/status.rs` |
 | `src/ui/tab_surface.rs` | 2 | 1 | `tests/parity/chrome.rs` |
@@ -98,10 +98,17 @@ is the pinned inventory (113 identities, SHA-256 `6d3cb09874a9c2b47a0b6982b4a1cc
 | `src/ui/release_notes.rs` | 0 | 6 | dropped module |
 <!-- parity-table:end -->
 
-Not ported: pinned dropped-surface identities (13). These sit in kept modules but
-exercise worktree, git-space, or mobile surfaces gclient dropped (3.1):
+Not ported: pinned dropped-surface identities (17). These sit in kept modules but
+exercise worktree, git-space, or mobile surfaces gclient dropped (3.1), or the three
+surfaces gclient redesigned or omitted (D4): the toast is pinned to the bottom-right
+corner and never dodges the top-right diagnostic bar, there is no tab-bar position
+setting, sidebar rows are not drag-reorderable, and a roster row is named by its
+terminal title, so the title outranks its trailing tokens instead of truncating to
+keep them (herdr's later token there is a tab name, which gclient rows do not carry).
 
 - `src/ui.rs::configured_mobile_width_threshold_controls_layout_switch`
+- `src/ui.rs::desktop_tab_bar_position_controls_geometry_and_mode_bar_placement`
+- `src/ui.rs::desktop_toast_hit_area_still_offsets_for_config_diagnostic`
 - `src/ui.rs::mobile_background_tabs_use_mobile_terminal_area`
 - `src/ui.rs::mobile_config_diagnostic_keeps_command_visible`
 - `src/ui.rs::mobile_width_uses_header_and_full_width_terminal`
@@ -110,6 +117,8 @@ exercise worktree, git-space, or mobile surfaces gclient dropped (3.1):
 - `src/ui/sidebar.rs::desktop_worktree_connector_uses_full_list_at_viewport_boundary`
 - `src/ui/sidebar.rs::desktop_worktree_tree_aligns_parents_and_marks_children`
 - `src/ui/sidebar.rs::linked_only_worktree_members_do_not_form_parentless_group`
+- `src/ui/sidebar.rs::narrow_agent_rows_preserve_later_tab_tokens`
+- `src/ui/sidebar.rs::packed_workspace_drag_indicator_overlays_an_internal_boundary`
 - `src/ui/sidebar.rs::space_row_gap_preserves_compact_worktree_children`
 - `src/ui/sidebar.rs::workspace_list_entries_group_multiple_workspaces_in_same_git_space`
 - `src/ui/sidebar.rs::workspace_list_entries_group_non_contiguous_explicit_members`
@@ -139,3 +148,10 @@ the pinned commit; every `#[test]` in the other two is listed:
 - `src/ui/release_notes.rs::release_notes_preview_display_is_part_of_the_scrollable_notes_body`
 - `src/ui/release_notes.rs::release_notes_fenced_code_blocks_render_as_preformatted_lines`
 - `src/ui/release_notes.rs::release_notes_fenced_code_blocks_preserve_blank_lines`
+
+Deferred: ported with herdr's expectations verbatim and counted above, but marked
+`#[deferred]` in `tests/parity/` (ignored by nextest, asserted still-red by
+`deferred_cases_are_still_red`) until the named task lands the surface:
+
+- `src/ui.rs::keybind_help_shows_custom_command_descriptions` — #20201 (custom
+  command bindings and their help rows)

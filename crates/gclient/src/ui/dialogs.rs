@@ -55,14 +55,11 @@ impl CloseTarget {
             CloseTarget::Terminal => "terminal",
         }
     }
+}
 
-    fn detail(self) -> &'static str {
-        match self {
-            CloseTarget::Pane => "closes this pane",
-            CloseTarget::Tab => "closes every pane in the tab",
-            CloseTarget::Terminal => "closes the terminal session",
-        }
-    }
+/// herdr's confirm-close scope line: how much the close destroys.
+fn pane_scope(panes: usize) -> String {
+    format!("{panes} pane{}", if panes == 1 { "" } else { "s" })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +67,8 @@ pub enum Dialog {
     ConfirmClose {
         target: CloseTarget,
         title: String,
+        /// Panes the close destroys, shown as herdr's scope line.
+        panes: usize,
     },
     Rename {
         kind: RenameKind,
@@ -89,8 +88,12 @@ pub enum Dialog {
 /// Render `chrome.dialog`, if any, centred over `area`.
 pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     match &chrome.dialog {
-        Some(Dialog::ConfirmClose { target, title }) => {
-            render_confirm_close(frame, area, chrome, *target, title);
+        Some(Dialog::ConfirmClose {
+            target,
+            title,
+            panes,
+        }) => {
+            render_confirm_close(frame, area, chrome, *target, title, *panes);
         }
         Some(Dialog::Rename {
             kind,
@@ -128,6 +131,7 @@ pub fn render_confirm_close(
     chrome: &Chrome,
     target: CloseTarget,
     title: &str,
+    panes: usize,
 ) {
     let p = &chrome.palette;
     let Some(popup) =
@@ -165,7 +169,7 @@ pub fn render_confirm_close(
                 format!(" {title}"),
                 Style::default().fg(p.text).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" — {}", target.detail()), dim),
+            Span::styled(format!(" — {}", pane_scope(panes)), dim),
         ])),
         rows[1],
     );

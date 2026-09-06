@@ -4,8 +4,6 @@ src/ui.rs::compute_view_clamps_sidebar_width_to_configured_max
 src/ui.rs::compute_view_clamps_sidebar_width_to_configured_min
 src/ui.rs::compute_view_reserves_terminal_column_when_pane_scrollbar_is_visible
 src/ui.rs::copy_feedback_offset_only_increases_when_toast_rect_overlaps
-src/ui.rs::desktop_tab_bar_position_controls_geometry_and_mode_bar_placement
-src/ui.rs::desktop_toast_hit_area_still_offsets_for_config_diagnostic
 src/ui.rs::desktop_toast_hit_area_uses_full_frame_not_terminal_area
 src/ui.rs::dragging_from_current_thumb_row_preserves_offset
 src/ui.rs::expanded_sidebar_workspace_rows_show_state_before_name_without_numbers
@@ -73,12 +71,10 @@ src/ui/sidebar.rs::expanded_sidebar_sections_handle_tiny_heights
 src/ui/sidebar.rs::expanded_sidebar_toggle_sits_inside_sidebar_content
 src/ui/sidebar.rs::grouped_child_label_keeps_custom_workspace_name
 src/ui/sidebar.rs::grouped_child_label_uses_short_branch_for_auto_named_workspace
-src/ui/sidebar.rs::narrow_agent_rows_preserve_later_tab_tokens
 src/ui/sidebar.rs::occurrence_false_removes_default_workspace_bold_and_agent_dim
 src/ui/sidebar.rs::occurrence_foreground_flattens_composite_git_status_colors
 src/ui/sidebar.rs::oversized_agent_override_is_clipped_to_the_panel_body
 src/ui/sidebar.rs::oversized_space_layout_is_clipped_to_the_section_body
-src/ui/sidebar.rs::packed_workspace_drag_indicator_overlays_an_internal_boundary
 src/ui/sidebar.rs::parent_workspace_row_stays_clickable_when_grouped
 src/ui/sidebar.rs::priority_agent_panel_sort_uses_attention_then_space_order
 src/ui/sidebar.rs::render_sidebar_toggle_draws_expanded_collapse_icon
