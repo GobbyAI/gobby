@@ -208,7 +208,7 @@ async fn every_method_has_success_and_typed_failure() {
         "/api/terminals?",
         200,
         json!({
-            "items": [{"id": "terminal-1", "state": "live"}],
+            "items": [{"id": "terminal-1", "terminal_id": "terminal-1", "state": "live"}],
             "next_cursor": "next-1",
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 7}
         }),
@@ -223,7 +223,7 @@ async fn every_method_has_success_and_typed_failure() {
         "GET",
         "/api/terminals/terminal-1",
         200,
-        json!({"id": "terminal-1", "state": "live"}),
+        json!({"id": "terminal-1", "terminal_id": "terminal-1", "state": "live"}),
     );
     mock.enqueue(
         "GET",
@@ -2181,4 +2181,23 @@ async fn late_control_reply_cannot_settle_a_newer_request() {
         .await
         .expect("close");
     mock.shutdown().await;
+}
+
+/// The daemon's terminal rows carry the id under two keys.
+///
+/// `inventory_item` (ws_protocol.py) emits `terminal_id`, and `_row_json`
+/// (routes/terminals.py) then adds `id` with the same value, so every real
+/// `/api/terminals` and `/api/terminals/{id}` row arrives with both. Decoding
+/// must accept that row and take the canonical `terminal_id`.
+#[test]
+fn terminal_row_decodes_the_daemons_dual_keyed_row() {
+    let row: gobby_client::daemon::TerminalRow = serde_json::from_value(json!({
+        "terminal_id": "terminal-1",
+        "id": "terminal-1",
+        "backend": "native",
+        "state": "live"
+    }))
+    .expect("a real daemon row must decode");
+
+    assert_eq!(row.id(), "terminal-1");
 }

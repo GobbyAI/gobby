@@ -111,7 +111,7 @@ async fn replay_never_rewinds_applied_state() {
         "GET",
         "/api/terminals?",
         json!({
-            "items": [{"id": "terminal-1", "state": "live"}],
+            "items": [{"id": "terminal-1", "terminal_id": "terminal-1", "state": "live"}],
             "next_cursor": "cursor-1",
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 5}
         }),
@@ -129,7 +129,7 @@ async fn replay_never_rewinds_applied_state() {
         "/api/terminals?",
         200,
         json!({
-            "items": [{"id": "terminal-1", "state": "live"}],
+            "items": [{"id": "terminal-1", "terminal_id": "terminal-1", "state": "live"}],
             "next_cursor": null
         }),
     );
@@ -180,9 +180,9 @@ async fn replay_never_rewinds_applied_state() {
         "/api/terminals?",
         json!({
             "items": [
-                {"id": "terminal-1", "state": "live"},
-                {"id": "terminal-2", "state": "live"},
-                {"id": "terminal-3", "state": "live"}
+                {"id": "terminal-1", "terminal_id": "terminal-1", "state": "live"},
+                {"id": "terminal-2", "terminal_id": "terminal-2", "state": "live"},
+                {"id": "terminal-3", "terminal_id": "terminal-3", "state": "live"}
             ],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 8}
@@ -237,7 +237,7 @@ async fn replay_never_rewinds_applied_state() {
         "/api/terminals?",
         200,
         json!({
-            "items": [{"id": "terminal-new-epoch", "state": "live"}],
+            "items": [{"id": "terminal-new-epoch", "terminal_id": "terminal-new-epoch", "state": "live"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-2", "seq": 1}
         }),
@@ -278,7 +278,7 @@ async fn lagged_subscriber_relists_and_converges() {
         "/api/terminals?",
         200,
         json!({
-            "items": [{"id": "terminal-initial"}],
+            "items": [{"id": "terminal-initial", "terminal_id": "terminal-initial"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 0}
         }),
@@ -305,7 +305,7 @@ async fn lagged_subscriber_relists_and_converges() {
         "/api/terminals?",
         200,
         json!({
-            "items": [{"id": "terminal-recovered"}],
+            "items": [{"id": "terminal-recovered", "terminal_id": "terminal-recovered"}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1025}
         }),

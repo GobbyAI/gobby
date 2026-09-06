@@ -111,7 +111,10 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TerminalRow {
-    #[serde(alias = "id")]
+    // No `alias = "id"`: the daemon sends the id under BOTH `terminal_id` and
+    // `id` (inventory_item sets the first, _row_json adds the second), and an
+    // alias binds both keys to this one field, which serde rejects as a
+    // duplicate. `terminal_id` is the canonical key; `id` lands in `fields`.
     pub terminal_id: String,
     #[serde(flatten)]
     pub fields: BTreeMap<String, Value>,

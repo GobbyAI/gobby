@@ -2722,3 +2722,45 @@ fn control_tombstone_reducer_retires_the_attachment() {
         .collect();
     assert_eq!(take_attachments, vec![fresh_attachment]);
 }
+
+/// The keymap advertises prefix `?` and prefix `s`, so the live loop must act
+/// on them.
+///
+/// Both actions resolved and were then dropped by `handle_live_action`'s
+/// wildcard arm, so the keys were recognised and silently ignored in the real
+/// client while the help table and settings pane rendered fine under a mode
+/// the loop never entered.
+#[tokio::test]
+async fn prefix_help_and_settings_open_their_modes_in_the_live_loop() {
+    for (key, expected) in [
+        ('?', gobby_client::ui::chrome::Mode::KeybindHelp),
+        ('s', gobby_client::ui::chrome::Mode::Settings),
+    ] {
+        let mock = MockDaemon::start("local-token").await;
+        let (mut workspace, _) =
+            live_workspace_with_scripted_direct(&mock, "terminal-help", 1).await;
+        let pane = workspace
+            .pane_for_terminal("terminal-help")
+            .expect("terminal pane");
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(pane, "loop");
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+        let (input_tx, input_rx) = mpsc::channel(256);
+
+        let driver = async move {
+            tokio::task::yield_now().await;
+            send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+            send_key(&input_tx, KeyCode::Char(key), KeyModifiers::NONE).await;
+            tokio::task::yield_now().await;
+            drop(input_tx);
+        };
+
+        let (result, ()) = tokio::join!(
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            driver
+        );
+        result.expect("live loop exits cleanly");
+        assert_eq!(chrome.mode, expected, "prefix {key} must open {expected:?}");
+        mock.shutdown().await;
+    }
+}

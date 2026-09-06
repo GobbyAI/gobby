@@ -605,6 +605,13 @@ async fn handle_live_action(
         }
         Action::Respond => open_response_dialog(workspace, chrome).await?,
         Action::CopyMode => chrome.mode = Mode::Copy,
+        // Both are bound in the default keymap and both render (chrome_render
+        // draws the help table and the settings pane), but neither was ever
+        // dispatched here, so the advertised keys did nothing in the real
+        // client. The wildcard arm below swallows any action added later:
+        // triage a new Action here rather than letting it go quietly inert.
+        Action::Help => chrome.mode = Mode::KeybindHelp,
+        Action::Settings => chrome.mode = Mode::Settings,
         Action::ReleaseControl | Action::Detach => {
             if let Some(pane_id) = chrome.focused_pane() {
                 release_live_control(workspace, pane_id).await?;

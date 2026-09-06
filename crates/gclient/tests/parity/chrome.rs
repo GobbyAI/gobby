@@ -1162,9 +1162,13 @@ switch_terminal = "ctrl+1..9"
                         .assert_cursor_position((focused.x + 4, focused.y));
                     // herdr pinned its own frame bytes; gclient's frame is
                     // characterized the same way against its own render.
+                    // Rehashed when the status line gained the transport
+                    // field: 4.1.3 requires a glyph change to fail here, so
+                    // this digest moves only alongside a deliberate render
+                    // change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "0a8d95793bddd6444379ad87b11ddf37945b0fc29b42d7b1469c1e9e225b1b3a"
+                        "1ab5b261e9474d65e780743c601f4592436711e3bca12792b28bcd16d1042629"
                     );
                 });
         }
