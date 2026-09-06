@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from gobby.config.shell_lexing import parse_shell_command
+from gobby.config.shell_lexing import parse_shell_command, safe_split
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
@@ -24,6 +24,11 @@ _AUTO_PASS_CATEGORIES = frozenset({"docs", "planning", "research", "manual"})
 _REVIEW_COMMAND_BUDGET = 48_000
 _REVIEW_COMMAND_LIMIT = 64
 _DIAGNOSTIC_COMMAND_LIMIT = 2_048
+_TEST_TYPES_AUDIT_MATCHER = "gobby-test-types-audit"
+_TEST_TYPES_AUDIT_COMMAND = (
+    "uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new"
+)
+_TEST_TYPES_BASELINE = ".gobby/test-types-baseline.json"
 _GENERIC_COMMAND_WORDS = frozenset(
     {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
 )
@@ -91,6 +96,7 @@ def evaluate_validation_commands(
     evidence: TranscriptEvidence,
     has_attributed_edits: bool,
     validation_criteria: str = "",
+    changed_paths: Iterable[str] = (),
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -102,12 +108,19 @@ def evaluate_validation_commands(
     reviewer can treat them as the authoritative account of what ran.
     """
     category = (task_category or "").strip().casefold()
+    test_types_audit_required = _changed_python_tests(changed_paths)
     details = _validation_details(evidence)
 
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
     attributed = _attribute_compound_failures(credited)
+    canonical_audits = [run for run in credited if _is_canonical_test_types_audit(run)]
+    latest_audit = max(
+        canonical_audits,
+        key=lambda run: (run.order, run.completed_at),
+        default=None,
+    )
     latest_by_category = _latest_definitive_by_category(attributed)
     latest_by_command: dict[str, TranscriptValidationRun] = {}
     for run in sorted(definitive, key=lambda item: (item.order, item.completed_at)):
@@ -149,11 +162,25 @@ def evaluate_validation_commands(
         ],
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
+        "test_types_audit_required": test_types_audit_required,
+        "canonical_test_types_audit_command": (
+            _TEST_TYPES_AUDIT_COMMAND if test_types_audit_required else None
+        ),
+        "latest_test_types_audit": (
+            {
+                "command": latest_audit.command,
+                "completed_at": latest_audit.completed_at.isoformat(),
+                "outcome": latest_audit.outcome,
+                "exit_code": latest_audit.exit_code,
+            }
+            if latest_audit is not None
+            else None
+        ),
     }
     details = _bound_review_details(details, validation_criteria)
 
     # Exempt tasks still need the command record for their explicit criteria review.
-    if not has_attributed_edits:
+    if not has_attributed_edits and not test_types_audit_required:
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -162,13 +189,28 @@ def evaluate_validation_commands(
             details={**details, "skip_reason": "no-edit"},
         )
 
-    if category in _AUTO_PASS_CATEGORIES:
+    if category in _AUTO_PASS_CATEGORIES and not test_types_audit_required:
         return CloseGateResult(
             item=9,
             name="validation_commands",
             status="skipped",
             message=f"Validation command requirement skipped for task category '{category}'.",
             details={**details, "skip_reason": "category"},
+        )
+
+    if test_types_audit_required and (latest_audit is None or latest_audit.outcome != "success"):
+        reason = "is missing"
+        if latest_audit is not None:
+            reason = f"last failed at {latest_audit.completed_at.isoformat()}"
+        return CloseGateResult(
+            item=9,
+            name="validation_commands",
+            status="failed",
+            message=(
+                f"The required whole-tree Python test type audit {reason}. "
+                f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit."
+            ),
+            details=details,
         )
 
     if unresolved:
@@ -197,10 +239,12 @@ def evaluate_validation_commands(
             and latest_by_category[required_category].outcome == "success"
         )
 
-    if has_success:
+    if has_success or category in _AUTO_PASS_CATEGORIES:
         message = "A clean validation command ran after the final task edit."
         if required_category:
             message = "A clean test-category validation command ran after the final task edit."
+        elif test_types_audit_required:
+            message = "The required whole-tree Python test type audit ran clean."
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -227,6 +271,66 @@ def evaluate_validation_commands(
         status="failed",
         message=message,
         details=details,
+    )
+
+
+def _changed_python_tests(changed_paths: Iterable[str]) -> bool:
+    for path in changed_paths:
+        normalized = path.replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        if normalized.startswith("tests/") and normalized.endswith(".py"):
+            return True
+    return False
+
+
+def _is_canonical_test_types_audit(run: TranscriptValidationRun) -> bool:
+    if run.matcher_id != _TEST_TYPES_AUDIT_MATCHER:
+        return False
+    core_command = run.core_command or run.command
+    if len(parse_shell_command(core_command).segments) != 1:
+        return False
+    commands = [segment.command for segment in run.validation_segments]
+    if not commands:
+        commands = [core_command]
+    return any(_is_canonical_test_types_command(command) for command in commands)
+
+
+def _is_canonical_test_types_command(command: str) -> bool:
+    tokens = safe_split(command)
+    prefix = ["gobby", "test-types", "audit"]
+    try:
+        start = next(
+            index
+            for index in range(len(tokens) - len(prefix) + 1)
+            if tokens[index : index + len(prefix)] == prefix
+        )
+    except StopIteration:
+        return False
+
+    arguments = tokens[start + len(prefix) :]
+    targets: list[str] = []
+    baselines: list[str] = []
+    fail_on_new = 0
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--baseline":
+            index += 1
+            if index >= len(arguments):
+                return False
+            baselines.append(arguments[index])
+        elif argument.startswith("--baseline="):
+            baselines.append(argument.partition("=")[2])
+        elif argument == "--fail-on-new":
+            fail_on_new += 1
+        else:
+            targets.append(argument)
+        index += 1
+    return (
+        targets in (["tests"], ["tests/"])
+        and baselines == [_TEST_TYPES_BASELINE]
+        and fail_on_new == 1
     )
 
 

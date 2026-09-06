@@ -22,8 +22,12 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
-from gobby.tasks.close_checklist import CloseGateResult
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
+from gobby.tasks.transcript_evidence import (
+    TranscriptEvidence,
+    TranscriptValidationRun,
+    TranscriptValidationSegment,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -142,6 +146,40 @@ def _operational_transcript() -> TranscriptEvidence:
     )
 
 
+def _transcript_with_test_types_audit() -> TranscriptEvidence:
+    return TranscriptEvidence(
+        validation_runs=(
+            *_transcript().validation_runs,
+            TranscriptValidationRun(
+                session_id=SESSION_ID,
+                source="claude",
+                command=(
+                    "uv run gobby test-types audit tests/ "
+                    "--baseline .gobby/test-types-baseline.json --fail-on-new"
+                ),
+                categories=("type_check",),
+                matcher_id="gobby-test-types-audit",
+                label="Gobby test-types ratchet",
+                outcome="success",
+                started_at=NOW,
+                completed_at=NOW,
+                order=2,
+                exit_code=0,
+                validation_segments=(
+                    TranscriptValidationSegment(
+                        command=(
+                            "gobby test-types audit tests/ "
+                            "--baseline .gobby/test-types-baseline.json --fail-on-new"
+                        ),
+                        categories=("type_check",),
+                    ),
+                ),
+            ),
+        ),
+        sessions=(SESSION_ID,),
+    )
+
+
 async def _evaluate(
     task: Task,
     *,
@@ -159,6 +197,7 @@ async def _evaluate(
     reason: str = "completed",
     has_edits: bool = True,
     transcript_deriver: AsyncMock | None = None,
+    linked_paths: set[str] | None = None,
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -208,6 +247,7 @@ async def _evaluate(
             "evaluate_task_scope",
             return_value=TaskScopeEvaluation((), (), ()),
         ),
+        patch.object(lifecycle, "collect_commit_paths", return_value=linked_paths or set()),
         patch.object(
             lifecycle,
             "_derive_close_transcript_evidence",
@@ -236,6 +276,25 @@ async def _evaluate(
             response_detail=response_detail,
             override_justification=override_justification,
         )
+
+
+@pytest.mark.asyncio
+async def test_linked_commit_paths_reach_both_validation_evaluations() -> None:
+    evaluator = MagicMock(wraps=evaluate_validation_commands)
+    with patch.object(lifecycle, "evaluate_validation_commands", evaluator):
+        evaluation = await _evaluate(
+            _task(escalated=False),
+            override_justification=None,
+            transcript=_transcript_with_test_types_audit(),
+            linked_paths={"tests/deleted.py"},
+        )
+
+    assert evaluation.error is None
+    assert evaluator.call_count == 2
+    assert [call.kwargs["changed_paths"] for call in evaluator.call_args_list] == [
+        {"src/a.py", "tests/deleted.py"},
+        {"src/a.py", "tests/deleted.py"},
+    ]
 
 
 @pytest.mark.parametrize("response_detail", ["concise", "diagnostic"])

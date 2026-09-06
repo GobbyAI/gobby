@@ -46,6 +46,31 @@ def _run(
     )
 
 
+def _audit_run(
+    order: int,
+    *,
+    outcome: str = "success",
+    command: str = (
+        "uv run gobby test-types audit tests/ "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    ),
+    normalized_command: str = (
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new"
+    ),
+) -> TranscriptValidationRun:
+    return replace(
+        _run(order, outcome=outcome, categories=("type_check",), command=command),
+        matcher_id="gobby-test-types-audit",
+        label="Gobby test-types ratchet",
+        validation_segments=(
+            TranscriptValidationSegment(
+                command=normalized_command,
+                categories=("type_check",),
+            ),
+        ),
+    )
+
+
 def _edit(order: int) -> TranscriptEdit:
     return TranscriptEdit(
         session_id="session-1",
@@ -89,6 +114,199 @@ def test_no_edit_task_skips_validation_for_any_category() -> None:
 
     assert gate.status == "skipped"
     assert gate.details["skip_reason"] == "no-edit"
+
+
+def test_python_test_change_requires_whole_tree_test_types_audit() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(1, categories=("type_check",), command="mypy src/"),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["test_types_audit_required"] is True
+    assert (
+        "uv run gobby test-types audit tests/ "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    ) in gate.message
+
+
+def test_canonical_test_types_audit_and_test_run_pass() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_audit_run(1), _run(2))),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["latest_test_types_audit"]["outcome"] == "success"
+
+
+def test_generic_type_check_cannot_cure_failed_test_types_audit() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(1, outcome="failure"),
+                _run(2, categories=("type_check",), command="mypy src/"),
+                _run(3),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert "last failed" in gate.message
+    assert gate.details["latest_outcomes"]["type_check"] == "success"
+
+
+def test_later_canonical_test_types_audit_cures_failure() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_audit_run(1, outcome="failure"), _run(2), _audit_run(3))
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["latest_test_types_audit"]["outcome"] == "success"
+
+
+def test_stale_test_types_audit_does_not_satisfy_guard() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_audit_run(1), _run(3)),
+            edits=(_edit(2),),
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+
+
+@pytest.mark.parametrize(
+    ("command", "normalized_command"),
+    [
+        (
+            "uv run gobby test-types audit tests/tasks/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new",
+            "gobby test-types audit tests/tasks/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new",
+        ),
+        (
+            "uv run gobby test-types audit tests/ --baseline other.json --fail-on-new",
+            "gobby test-types audit tests/ --baseline other.json --fail-on-new",
+        ),
+        (
+            "uv run gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new --write-baseline",
+            "gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new --write-baseline",
+        ),
+        (
+            "uv run gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new "
+            "--allow-failing-baseline",
+            "gobby test-types audit tests/ "
+            "--baseline .gobby/test-types-baseline.json --fail-on-new "
+            "--allow-failing-baseline",
+        ),
+    ],
+)
+def test_noncanonical_test_types_audits_do_not_satisfy_guard(
+    command: str,
+    normalized_command: str,
+) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _audit_run(1, command=command, normalized_command=normalized_command),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GOBBY_TEST_PROTECT=1 uv run gobby test-types audit tests/ "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new",
+        "poetry run gobby test-types audit tests/ "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new",
+        "cd /repo && uv run gobby test-types audit tests/ "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new",
+    ],
+)
+def test_supported_test_types_audit_prefixes_are_accepted(command: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_audit_run(1, command=command), _run(2))),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+
+
+def test_compound_test_types_audit_does_not_satisfy_guard() -> None:
+    command = (
+        "uv run gobby test-types audit tests/ "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new && "
+        "uv run pytest tests/tasks/test_close_checklist.py"
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_audit_run(1, command=command), _run(2))),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_test_types_audit"] is None
+
+
+@pytest.mark.parametrize("changed_path", ["tests/deleted.py", "tests/renamed.py"])
+def test_deleted_or_renamed_python_test_paths_trigger_guard(changed_path: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        changed_paths=(changed_path,),
+    )
+
+    assert gate.status == "failed"
+
+
+def test_non_test_changes_keep_existing_validation_behavior() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        changed_paths=("src/gobby/tasks/close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["test_types_audit_required"] is False
 
 
 @pytest.mark.parametrize("category,has_edits", [("manual", True), ("code", False)])

@@ -62,7 +62,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     validate_uncommitted_task_edits,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
+from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths, evaluate_task_scope
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task, TaskNotFoundError
@@ -547,12 +547,23 @@ async def _evaluate_close(
     else:
         evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
 
+    try:
+        committed_paths = await asyncio.to_thread(collect_commit_paths, commit_shas, repo_path)
+    except RuntimeError as exc:
+        return evaluation.fail(
+            10,
+            "validation_commands",
+            "validation_paths_unavailable",
+            f"Cannot determine changed paths for validation requirements: {exc}",
+        )
+    validation_paths = evaluation.edited_paths | committed_paths
     transcript = TranscriptEvidence()
     command_gate = replace(
         evaluate_validation_commands(
             task_category=task.category,
             evidence=TranscriptEvidence(),
             has_attributed_edits=evaluation.had_attributed_edits,
+            changed_paths=validation_paths,
         ),
         item=10,
     )
@@ -617,6 +628,7 @@ async def _evaluate_close(
                 evidence=transcript,
                 has_attributed_edits=evaluation.had_attributed_edits,
                 validation_criteria=task.validation_criteria or "",
+                changed_paths=validation_paths,
             ),
             item=10,
         )

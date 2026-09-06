@@ -59,7 +59,10 @@ _MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 @pytest.fixture(autouse=True)
 def _committed_manifest_is_current() -> Iterator[None]:
-    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
+    with (
+        patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None),
+        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+    ):
         yield
 
 
