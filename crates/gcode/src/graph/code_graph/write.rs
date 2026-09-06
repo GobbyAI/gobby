@@ -210,55 +210,96 @@ impl<'a> CodeGraph<'a> {
         {
             let crate::graph::typed_query::TypedQuery { cypher, params } = query;
             for row in self.client.query(&cypher, Some(params))? {
-                let admitted = match kind {
-                    0 => row
-                        .get("symbol_id")
-                        .and_then(Value::as_str)
-                        .and_then(|id| symbols.get(id))
-                        .is_some_and(|expected| {
-                            row.get("content_hash").and_then(Value::as_str)
-                                == Some(expected.as_str())
-                        }),
-                    1 => row
-                        .get("content_hash")
-                        .and_then(Value::as_str)
-                        .is_some_and(|hash| hashes.contains(hash)),
-                    2 => {
-                        row.get("other_project").and_then(Value::as_str) == Some(self.project_id)
-                            && row
-                                .get("relationship_type")
-                                .and_then(Value::as_str)
-                                .is_some_and(|kind| {
-                                    [
-                                        "DEFINES",
-                                        "IMPORTS",
-                                        "CALLS",
-                                        "INHERITS",
-                                        "EXTENDS",
-                                        "IMPLEMENTS",
-                                    ]
-                                    .contains(&kind)
+                let admitted =
+                    match kind {
+                        0 => row.get("identities").and_then(Value::as_array).is_some_and(
+                            |identities| {
+                                identities.iter().all(|identity| {
+                                    identity
+                                        .get("symbol_id")
+                                        .and_then(Value::as_str)
+                                        .and_then(|id| symbols.get(id))
+                                        .is_some_and(|expected| {
+                                            identity.get("content_hash").and_then(Value::as_str)
+                                                == Some(expected.as_str())
+                                        })
                                 })
-                    }
-                    _ => {
-                        row.get("detached_type")
-                            .and_then(Value::as_str)
-                            .is_some_and(|kind| {
-                                ["INHERITS", "EXTENDS", "IMPLEMENTS"].contains(&kind)
-                            })
-                            && row
-                                .get("content_hash")
-                                .and_then(Value::as_str)
-                                .is_some_and(|hash| hashes.contains(hash))
-                            && row.get("source_project").and_then(Value::as_str)
+                            },
+                        ),
+                        1 => row.get("identities").and_then(Value::as_array).is_some_and(
+                            |identities| {
+                                identities.iter().all(|identity| {
+                                    identity
+                                        .get("content_hash")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|hash| hashes.contains(hash))
+                                })
+                            },
+                        ),
+                        _ => {
+                            row.get("other_project").and_then(Value::as_str)
                                 == Some(self.project_id)
-                            && row.get("target_project").and_then(Value::as_str)
-                                == Some(self.project_id)
-                    }
-                };
+                                && row
+                                    .get("relationship_type")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|kind| {
+                                        [
+                                            "DEFINES",
+                                            "IMPORTS",
+                                            "CALLS",
+                                            "INHERITS",
+                                            "EXTENDS",
+                                            "IMPLEMENTS",
+                                        ]
+                                        .contains(&kind)
+                                    })
+                        }
+                    };
                 anyhow::ensure!(
                     admitted,
                     "unlisted graph identity or relationship for {file_path}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Repeated before each deletion batch while the caller holds the project
+    /// lease. Grouping by path bounds result rows even above the server row cap.
+    pub(crate) fn validate_detached_retirement(
+        &mut self,
+        hashes: &std::collections::BTreeMap<String, BTreeSet<String>>,
+    ) -> anyhow::Result<()> {
+        let paths = hashes.keys().cloned().collect::<Vec<_>>();
+        let query = deletion::retirement_detached_query(self.project_id, &paths)?;
+        for row in self.client.query(&query.cypher, Some(query.params))? {
+            let path = row
+                .get("file_path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("retirement graph row has no path"))?;
+            let admitted_hashes = hashes
+                .get(path)
+                .ok_or_else(|| anyhow::anyhow!("unlisted retirement graph path: {path}"))?;
+            let identities = row
+                .get("identities")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow::anyhow!("retirement graph row has no identities"))?;
+            for identity in identities {
+                let admitted = identity
+                    .get("detached_type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| ["INHERITS", "EXTENDS", "IMPLEMENTS"].contains(&kind))
+                    && identity
+                        .get("content_hash")
+                        .and_then(Value::as_str)
+                        .is_some_and(|hash| admitted_hashes.contains(hash))
+                    && identity.get("source_project").and_then(Value::as_str)
+                        == Some(self.project_id)
+                    && identity.get("target_project").and_then(Value::as_str)
+                        == Some(self.project_id);
+                anyhow::ensure!(
+                    admitted,
+                    "unlisted graph identity or relationship for {path}"
                 );
             }
         }
@@ -314,10 +355,9 @@ impl<'a> CodeGraph<'a> {
         let crate::graph::typed_query::TypedQuery { cypher, params } = query;
         let rows = self.client.query(&cypher, Some(params))?;
         Ok(rows
-            .first()
-            .and_then(|row| row.get("nodes"))
-            .and_then(value_to_usize)
-            .unwrap_or(0))
+            .iter()
+            .map(|row| row.get("nodes").and_then(value_to_usize).unwrap_or(0))
+            .sum())
     }
 
     pub fn clear_project(&mut self) -> anyhow::Result<()> {

@@ -321,25 +321,63 @@ pub(super) fn retirement_scope_queries(
     };
     [
         "MATCH (s:CodeSymbol {project:$project, file_path:$file_path})
-         RETURN s.id AS symbol_id, s.file_content_hash AS content_hash",
-        "MATCH (s {project:$project})-[r]->(n {project:$project})
-         WHERE (s:CodeFile AND s.path=$file_path AND type(r) IN ['DEFINES','IMPORTS'])
-            OR (s:CodeSymbol AND s.file_path=$file_path AND type(r) IN ['CALLS','INHERITS','EXTENDS','IMPLEMENTS'])
-            OR (r.source_file_path=$file_path AND type(r) IN ['INHERITS','EXTENDS','IMPLEMENTS'])
-         RETURN r.content_hash AS content_hash",
-        "MATCH (s {project:$project})-[r]-(n)
-         WHERE (s:CodeFile AND s.path=$file_path)
-            OR (s:CodeSymbol AND s.file_path=$file_path)
+         RETURN collect(DISTINCT {symbol_id:s.id,content_hash:s.file_content_hash}) AS identities",
+        "MATCH (s:CodeFile {project:$project, path:$file_path})-[r]->(n {project:$project})
+         WHERE type(r) IN ['DEFINES','IMPORTS']
+         RETURN collect(DISTINCT {content_hash:r.content_hash}) AS identities
+         UNION ALL
+         MATCH (s:CodeSymbol {project:$project, file_path:$file_path})-[r]->(n {project:$project})
+         WHERE type(r) IN ['CALLS','INHERITS','EXTENDS','IMPLEMENTS']
+         RETURN collect(DISTINCT {content_hash:r.content_hash}) AS identities
+         UNION ALL
+         MATCH ()-[r:INHERITS]->() WHERE r.source_file_path=$file_path
+         WITH r, startNode(r) AS s, endNode(r) AS n
+         WHERE s.project=$project AND n.project=$project
+         RETURN collect(DISTINCT {content_hash:r.content_hash}) AS identities
+         UNION ALL
+         MATCH ()-[r:EXTENDS]->() WHERE r.source_file_path=$file_path
+         WITH r, startNode(r) AS s, endNode(r) AS n
+         WHERE s.project=$project AND n.project=$project
+         RETURN collect(DISTINCT {content_hash:r.content_hash}) AS identities
+         UNION ALL
+         MATCH ()-[r:IMPLEMENTS]->() WHERE r.source_file_path=$file_path
+         WITH r, startNode(r) AS s, endNode(r) AS n
+         WHERE s.project=$project AND n.project=$project
+         RETURN collect(DISTINCT {content_hash:r.content_hash}) AS identities",
+        "MATCH (s:CodeFile {project:$project, path:$file_path})-[r]-(n)
+         RETURN DISTINCT type(r) AS relationship_type, n.project AS other_project
+         UNION
+         MATCH (s:CodeSymbol {project:$project, file_path:$file_path})-[r]-(n)
          RETURN DISTINCT type(r) AS relationship_type, n.project AS other_project",
-        "MATCH ()-[r]->()
-         WHERE r.source_file_path=$file_path
+    ]
+    .into_iter()
+    .map(|cypher| typed_query(cypher, params()))
+    .collect()
+}
+
+/// One arbitrary-edge scan per bounded batch keeps unknown relationship types
+/// visible without repeating a full graph scan for every missing file.
+pub(super) fn retirement_detached_query(
+    project_id: &str,
+    file_paths: &[String],
+) -> anyhow::Result<TypedQuery> {
+    typed_query(
+        "MATCH ()-[r]->() WHERE r.source_file_path IN $file_paths
          WITH r, startNode(r) AS s, endNode(r) AS n
          WHERE (s.project=$project OR n.project=$project)
-           AND NOT ((s:CodeFile AND coalesce(s.path,'')=$file_path)
-                 OR (s:CodeSymbol AND coalesce(s.file_path,'')=$file_path))
-         RETURN type(r) AS detached_type, r.content_hash AS content_hash,
-                s.project AS source_project, n.project AS target_project",
-    ].into_iter().map(|cypher| typed_query(cypher, params())).collect()
+           AND NOT ((s:CodeFile AND coalesce(s.path,'')=r.source_file_path)
+                 OR (s:CodeSymbol AND coalesce(s.file_path,'')=r.source_file_path))
+         RETURN r.source_file_path AS file_path,
+                collect(DISTINCT {detached_type:type(r),content_hash:r.content_hash,
+                  source_project:s.project,target_project:n.project}) AS identities",
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            (
+                "file_paths",
+                TypedValue::List(file_paths.iter().cloned().map(TypedValue::String).collect()),
+            ),
+        ],
+    )
 }
 
 pub(crate) fn project_file_path_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
@@ -365,10 +403,9 @@ pub(crate) fn count_file_projection_nodes_query(
     file_path: &str,
 ) -> anyhow::Result<TypedQuery> {
     typed_query(
-        "MATCH (n {project: $project})
-         WHERE (n:CodeFile AND n.path = $file_path)
-            OR (n:CodeSymbol AND n.file_path = $file_path)
-         RETURN count(n) AS nodes",
+        "MATCH (f:CodeFile {project:$project, path:$file_path}) RETURN count(f) AS nodes
+         UNION ALL
+         MATCH (s:CodeSymbol {project:$project, file_path:$file_path}) RETURN count(s) AS nodes",
         [
             ("project", TypedValue::String(project_id.to_string())),
             ("file_path", TypedValue::String(file_path.to_string())),

@@ -613,11 +613,15 @@ fn deleted_file_cleanup_queries_are_project_scoped_and_count_file_nodes() {
         Some("'src/stale.rs'")
     );
     assert!(
-        count_query.cypher.contains("n:CodeFile")
-            && count_query.cypher.contains("n.path = $file_path")
-            && count_query.cypher.contains("n:CodeSymbol")
-            && count_query.cypher.contains("n.file_path = $file_path")
-            && count_query.cypher.contains("count(n) AS nodes"),
+        count_query
+            .cypher
+            .contains("(f:CodeFile {project:$project, path:$file_path})")
+            && count_query
+                .cypher
+                .contains("(s:CodeSymbol {project:$project, file_path:$file_path})")
+            && count_query.cypher.contains("RETURN count(f) AS nodes")
+            && count_query.cypher.contains("RETURN count(s) AS nodes")
+            && count_query.cypher.contains("UNION ALL"),
         "{}",
         count_query.cypher
     );
