@@ -43,10 +43,9 @@ pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
             let daemon =
                 LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
             let mut workspace = Workspace::live(daemon);
-            if let Some(project) = ready.project {
-                workspace.select_project(project);
-            }
+            workspace.select_project(ready.project);
             let mut chrome = Chrome::new(Theme::new(ThemeKind::Dark));
+            chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();
             run_live_loop(&mut workspace, &mut terminal, &mut chrome, input).await?;
