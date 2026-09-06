@@ -24,6 +24,8 @@ use super::content_gc::{
 };
 use manifest::{Manifest, RetiredFile};
 
+const PROJECTION_BATCH_SIZE: usize = 256;
+
 #[derive(Debug, Deserialize, Serialize)]
 struct Receipt {
     backends: backend::BackendIdentity,
@@ -120,29 +122,46 @@ pub(crate) fn run(
     }
     // Inventory every graph scope before the first mutation, including files
     // later in the manifest. Repeat this check under the same project lock.
-    for file in &manifest.files {
-        let current = receipt.files[&file.file_path]
-            .versions
-            .iter()
-            .filter(|(_, state)| state.as_str() == "ready")
-            .map(|(id, _)| id.as_str())
-            .collect();
-        validate_projections(ctx, file, &current)?;
+    for files in manifest.files.chunks(PROJECTION_BATCH_SIZE) {
+        validate_detached_projections(&mut conn, ctx, &manifest, files)?;
+        for file in files {
+            let current = receipt.files[&file.file_path]
+                .versions
+                .iter()
+                .filter(|(_, state)| state.as_str() == "ready")
+                .map(|(id, _)| id.as_str())
+                .collect();
+            validate_projections(ctx, file, &current)?;
+        }
     }
     let receipt_path = receipt_path.context("--apply requires --receipt")?;
     validate_receipt_path(receipt_path, &receipt)?;
     write_receipt(receipt_path, &receipt)?;
-    for file in &manifest.files {
-        let result = retire_file(&mut conn, ctx, &manifest, file, &mut receipt, receipt_path);
-        if let Err(error) = result {
+    for files in manifest.files.chunks(PROJECTION_BATCH_SIZE) {
+        // All arbitrary edge types are checked again immediately before this
+        // batch. Per-file indexed graph and SQL checks still run before delete.
+        if let Err(error) = validate_detached_projections(&mut conn, ctx, &manifest, files) {
             receipt
                 .files
-                .entry(file.file_path.clone())
+                .entry(files[0].file_path.clone())
                 .or_default()
                 .error = Some(format!("{error:#}"));
             write_receipt(receipt_path, &receipt)?;
             output::print_json(&receipt)?;
             return Err(error);
+        }
+        for file in files {
+            let result = retire_file(&mut conn, ctx, &manifest, file, &mut receipt, receipt_path);
+            if let Err(error) = result {
+                receipt
+                    .files
+                    .entry(file.file_path.clone())
+                    .or_default()
+                    .error = Some(format!("{error:#}"));
+                write_receipt(receipt_path, &receipt)?;
+                output::print_json(&receipt)?;
+                return Err(error);
+            }
         }
     }
     // A writer that disregards the shared lock must not turn a partial result
@@ -402,6 +421,27 @@ fn retire_file(
         .or_default()
         .shell = "absent".to_string();
     write_receipt(receipt_path, receipt)
+}
+
+fn validate_detached_projections(
+    conn: &mut Client,
+    ctx: &Context,
+    manifest: &Manifest,
+    files: &[RetiredFile],
+) -> anyhow::Result<()> {
+    let mut hashes = BTreeMap::new();
+    for file in files {
+        let current = validate_file(conn, manifest, file)?;
+        hashes.insert(
+            file.file_path.clone(),
+            current
+                .into_iter()
+                .filter(|candidate| candidate.content_hash != crate::visibility::TOMBSTONE_HASH)
+                .map(|candidate| candidate.content_hash)
+                .collect(),
+        );
+    }
+    code_graph::with_code_graph(ctx, |graph| graph.validate_detached_retirement(&hashes))
 }
 
 fn validate_projections(

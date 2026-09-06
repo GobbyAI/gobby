@@ -877,3 +877,181 @@ fn exact_retirement_tombstone_requires_empty_facts_and_removed_selector() -> any
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires explicit isolated PostgreSQL, Qdrant and FalkorDB endpoints"]
+#[serial_test::serial(serial_db)]
+fn exact_retirement_batches_preserve_unknown_edge_admission() -> anyhow::Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.enable_isolated_projections()?;
+    fixture.seed_projections()?;
+    assert!(
+        code_graph::with_code_graph(&fixture.ctx, |graph| {
+            graph.delete_empty_file_node("wiki/page.md")
+        })
+        .is_err(),
+        "indexed count still sees the retained file and symbol"
+    );
+    for index in 0..PROJECTION_BATCH_SIZE {
+        fixture.manifest.files.push(RetiredFile {
+            file_path: format!("wiki/missing-{index:04}.md"),
+            versions: vec![],
+        });
+    }
+    fixture.write_manifest()?;
+    let late_path = fixture
+        .manifest
+        .files
+        .last()
+        .context("last batch")?
+        .file_path
+        .clone();
+    let project = fixture.manifest.project_id.clone();
+    let symbol = fixture.kept_symbol.clone();
+    let id = fixture.manifest.files[0].versions[0].id.clone();
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',id:'{symbol}'}})
+         CREATE (s)-[:UNRECOGNIZED_RETIREMENT_FACT {{source_file_path:'{late_path}'}}]->(s)"
+        ),
+        None,
+    )?;
+    let error = run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )
+    .expect_err("unknown edge in a later batch must refuse before any deletion");
+    assert!(error.to_string().contains(&late_path), "{error:#}");
+    assert!(!fixture.receipt_path.exists());
+    assert_eq!(fixture.count(&id)?, 1);
+    fixture.graph()?.query(&format!(
+        "MATCH (s:CodeSymbol {{project:'{project}',id:'{symbol}'}})-[r:UNRECOGNIZED_RETIREMENT_FACT]->(s)
+         DELETE r"
+    ), None)?;
+    // More relationships than the server row cap must not hide a final bad
+    // identity. The batched query aggregates identities into one row per path.
+    let hash = fixture.manifest.files[0].versions[0].content_hash.clone();
+    fixture.graph()?.query(&format!(
+        "MATCH (s:CodeSymbol {{project:'{project}',id:'{symbol}'}})
+         UNWIND range(1,10001) AS i
+         CREATE (s)-[:INHERITS {{source_file_path:'wiki/page.md',content_hash:'{hash}',ordinal:i}}]->(s)"
+    ), None)?;
+    let selected_symbol = fixture.manifest.files[0].versions[0].symbol_ids[0].clone();
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',id:'{selected_symbol}'}}),
+               (n:CodeSymbol {{project:'{project}',id:'{symbol}'}})
+         UNWIND range(1,10001) AS i
+         CREATE (s)-[:INHERITS {{content_hash:'{hash}',ordinal:i}}]->(n)"
+        ),
+        None,
+    )?;
+    let admitted_symbols = [(selected_symbol.clone(), hash.clone())]
+        .into_iter()
+        .collect();
+    let admitted_hashes = [hash.clone()].into_iter().collect();
+    code_graph::with_code_graph(&fixture.ctx, |graph| {
+        graph.validate_file_retirement("wiki/page.md", &admitted_symbols, &admitted_hashes)
+    })?;
+    fixture.graph()?.query(
+        &format!(
+            "UNWIND range(1,10001) AS i
+         CREATE (:CodeSymbol {{project:'{project}',file_path:'wiki/page.md',
+             id:'batch-cap-'+toString(i),file_content_hash:'{hash}'}})"
+        ),
+        None,
+    )?;
+    let mut all_symbols = admitted_symbols.clone();
+    for i in 1..=10001 {
+        all_symbols.insert(format!("batch-cap-{i}"), hash.clone());
+    }
+    code_graph::with_code_graph(&fixture.ctx, |graph| {
+        graph.validate_file_retirement("wiki/page.md", &all_symbols, &admitted_hashes)
+    })?;
+    fixture.graph()?.query(
+        &format!(
+            "CREATE (:CodeSymbol {{project:'{project}',file_path:'wiki/page.md',
+            id:'batch-cap-unlisted',file_content_hash:'{hash}'}})"
+        ),
+        None,
+    )?;
+    assert!(
+        code_graph::with_code_graph(&fixture.ctx, |graph| {
+            graph.validate_file_retirement("wiki/page.md", &all_symbols, &admitted_hashes)
+        })
+        .is_err(),
+        "symbol identity beyond the row cap must refuse"
+    );
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',file_path:'wiki/page.md'}})
+         WHERE s.id STARTS WITH 'batch-cap-' DELETE s"
+        ),
+        None,
+    )?;
+    // A late invalid source-owned hash must survive the per-file query's
+    // aggregation as well, independently of the detached-edge batch guard.
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',id:'{selected_symbol}'}}),
+               (n:CodeSymbol {{project:'{project}',id:'{symbol}'}})
+         CREATE (s)-[:INHERITS {{content_hash:'unlisted'}}]->(n)"
+        ),
+        None,
+    )?;
+    assert!(
+        code_graph::with_code_graph(&fixture.ctx, |graph| {
+            graph.validate_file_retirement("wiki/page.md", &admitted_symbols, &admitted_hashes)
+        })
+        .is_err()
+    );
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',id:'{selected_symbol}'}})-[r:INHERITS]->()
+         DELETE r"
+        ),
+        None,
+    )?;
+    let files = &fixture.manifest.files[..PROJECTION_BATCH_SIZE];
+    validate_detached_projections(&mut fixture.conn, &fixture.ctx, &fixture.manifest, files)?;
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',id:'{symbol}'}})
+         CREATE (s)-[:INHERITS {{source_file_path:'wiki/page.md'}}]->(s)"
+        ),
+        None,
+    )?;
+    assert!(
+        validate_detached_projections(&mut fixture.conn, &fixture.ctx, &fixture.manifest, files)
+            .is_err()
+    );
+    fixture.graph()?.query(
+        &format!(
+            "MATCH (s:CodeSymbol {{project:'{project}',id:'{symbol}'}})-[r:INHERITS]->(s)
+         WHERE r.source_file_path='wiki/page.md' DELETE r"
+        ),
+        None,
+    )?;
+    // The valid empty later batch and unrelated file both survive the same
+    // complete command/retry path used by production.
+    run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )?;
+    run(
+        &fixture.ctx,
+        &fixture.manifest_path,
+        true,
+        Some(&fixture.receipt_path),
+    )?;
+    assert_eq!(fixture.count(&id)?, 0);
+    assert_eq!(fixture.count(&fixture.kept_id.clone())?, 1);
+    let receipt: Receipt = serde_json::from_slice(&fs::read(&fixture.receipt_path)?)?;
+    assert!(receipt.complete);
+    assert_eq!(receipt.files.len(), PROJECTION_BATCH_SIZE + 1);
+    Ok(())
+}
