@@ -6,6 +6,7 @@ mod attention;
 mod live;
 mod live_loop;
 mod pane;
+mod persistence;
 pub mod run_loop;
 
 pub use attach::AttachState;
@@ -20,7 +21,6 @@ use crate::daemon::{
 use crate::frame_source::{
     AttachLocator, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
 };
-use crate::persist::{load_snapshot, WorkspaceSnapshot};
 use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -57,6 +57,50 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     status_message: Option<String>,
     exit_reason: Option<String>,
     shutdown_started: bool,
+}
+
+impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
+    fn begin_shutdown(&mut self) -> bool {
+        if self.shutdown_started {
+            false
+        } else {
+            self.shutdown_started = true;
+            true
+        }
+    }
+
+    fn shutdown_reason(&self) -> &str {
+        self.exit_reason.as_deref().unwrap_or("client exiting")
+    }
+
+    fn take_shutdown_requests(&mut self) -> Vec<Value> {
+        let mut releases = Vec::new();
+        let mut detaches = Vec::new();
+        for pane_id in &self.order {
+            let Some(pane) = self.panes.get(pane_id) else {
+                continue;
+            };
+            let attachment_id = pane.attachment_id();
+            if pane.is_held() {
+                releases.push(json!({
+                    "type": "terminal_release_control",
+                    "request_id": uuid::Uuid::new_v4().to_string(),
+                    "terminal_id": pane.terminal_id,
+                    "attachment_id": attachment_id,
+                }));
+            }
+            if matches!(pane.attach_state(), AttachState::Attached { .. }) {
+                detaches.push(json!({
+                    "type": "terminal_detach",
+                    "request_id": uuid::Uuid::new_v4().to_string(),
+                    "terminal_id": pane.terminal_id,
+                    "attachment_id": attachment_id,
+                }));
+            }
+        }
+        releases.extend(detaches);
+        releases
+    }
 }
 
 impl Workspace {
@@ -259,6 +303,18 @@ impl Workspace {
         backend: &str,
         epoch: &str,
     ) -> Result<PaneId, FrameError> {
+        let id = self.open_terminal_unpersisted(terminal_id, backend, epoch)?;
+        self.persist_workspace()
+            .map_err(|error| FrameError::Other(error.to_string()))?;
+        Ok(id)
+    }
+
+    fn open_terminal_unpersisted(
+        &mut self,
+        terminal_id: &str,
+        backend: &str,
+        epoch: &str,
+    ) -> Result<PaneId, FrameError> {
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
         let pane = Pane::new(id, terminal_id, backend, epoch);
@@ -325,6 +381,10 @@ impl Workspace {
             let pane = self.panes.get_mut(&id).expect("pane");
             pane.control = ControlState::Observe;
         }
+        self.persist_workspace()
+            .map_err(|error| DaemonError::Protocol {
+                detail: format!("persist workspace: {error}"),
+            })?;
         Ok(())
     }
 
@@ -656,23 +716,6 @@ impl Workspace {
         }))
     }
 
-    pub fn restore_project(&mut self, project_id: &str) -> Result<(), FrameError> {
-        self.ensure_requests_allowed()
-            .map_err(|error| FrameError::Other(error.to_string()))?;
-        self.select_project(project_id);
-        let home = self.gobby_home.clone().unwrap_or_default();
-        let snapshot: WorkspaceSnapshot =
-            load_snapshot(&home, project_id).map_err(|err| FrameError::Other(err.to_string()))?;
-        let live = self.daemon.live_terminals().to_vec();
-        for terminal_id in snapshot.terminal_ids {
-            if live.iter().any(|id| id == &terminal_id) {
-                self.open_terminal(&terminal_id, "native", "epoch-a")?;
-            }
-        }
-        self.roster_ids = live;
-        Ok(())
-    }
-
     pub fn apply_ws(&mut self, message: &Value) -> Result<(), DaemonError> {
         if self.exit_reason.is_some() {
             return Ok(());
@@ -744,7 +787,13 @@ impl<D: Daemon> Workspace<D> {
         if self.exit_reason.is_some() {
             return false;
         }
-        self.exit_reason = Some(reason.into());
+        let reason = reason.into();
+        tracing::info!(
+            lifecycle_stage = "latch-exit",
+            reason = %reason,
+            "gclient exit latched"
+        );
+        self.exit_reason = Some(reason);
         true
     }
 

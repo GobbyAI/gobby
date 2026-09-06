@@ -846,10 +846,26 @@ async fn proxy_fallback_uses_fresh_attachment() {
         assert_eq!(workspace.pane(pane_id).attachment_id(), "attachment-2");
         assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
         let detaches = websocket_requests(&mock, "terminal_detach");
-        assert_eq!(detaches.len(), 1);
+        assert_eq!(detaches.len(), 2);
         assert_eq!(
             detaches[0].get("attachment_id").and_then(Value::as_str),
             Some(old_attachment.as_str())
+        );
+        assert_eq!(
+            detaches[1].get("attachment_id").and_then(Value::as_str),
+            Some("attachment-2"),
+            "shutdown detaches the live replacement attachment"
+        );
+        assert_eq!(
+            detaches
+                .iter()
+                .filter(|request| {
+                    request.get("attachment_id").and_then(Value::as_str)
+                        == Some(old_attachment.as_str())
+                })
+                .count(),
+            1,
+            "fallback detaches the old attachment exactly once"
         );
         assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
         mock.shutdown().await;
@@ -2107,14 +2123,37 @@ async fn detach_deadlines_recover_through_the_supervisor() {
     );
     result.expect("deadline recovery loop");
     assert_eq!(mock.websocket_handshakes(), 2, "one coalesced reconnect");
-    assert_eq!(websocket_requests(&mock, "terminal_detach").len(), 3);
+    let detaches = websocket_requests(&mock, "terminal_detach");
+    assert_eq!(detaches.len(), 6);
     assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 6);
     for (terminal_id, old_attachment) in old_attachments {
         let pane_id = workspace
             .pane_for_terminal(&terminal_id)
             .expect("reattached pane");
-        assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
+        let fresh_attachment = workspace.pane(pane_id).attachment_id();
+        assert_ne!(fresh_attachment, old_attachment);
         assert!(workspace.pane(pane_id).is_live());
+        assert_eq!(
+            detaches
+                .iter()
+                .filter(|request| {
+                    request.get("attachment_id").and_then(Value::as_str)
+                        == Some(old_attachment.as_str())
+                })
+                .count(),
+            1,
+            "recovery detaches each old attachment exactly once"
+        );
+        assert_eq!(
+            detaches
+                .iter()
+                .filter(|request| {
+                    request.get("attachment_id").and_then(Value::as_str) == Some(fresh_attachment)
+                })
+                .count(),
+            1,
+            "shutdown detaches each live replacement exactly once"
+        );
     }
     mock.shutdown().await;
 }
@@ -2633,7 +2672,13 @@ async fn control_tombstone_retires_the_attachment() {
         takes[2].get("attachment_id").and_then(Value::as_str),
         Some(fresh_attachment.as_str())
     );
-    assert!(websocket_requests(&mock, "terminal_release_control").is_empty());
+    let releases = websocket_requests(&mock, "terminal_release_control");
+    assert_eq!(releases.len(), 1);
+    assert_eq!(
+        releases[0].get("attachment_id").and_then(Value::as_str),
+        Some(fresh_attachment.as_str()),
+        "shutdown releases only the recovered live attachment"
+    );
     mock.shutdown().await;
 }
 

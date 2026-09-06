@@ -1,4 +1,4 @@
-use super::live::{LiveInner, LiveState};
+use super::live::{CloseStage, LiveInner, LiveState};
 use super::{decode_message, encode_message, message_kind, route_key, DaemonError, DaemonEvent};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -36,6 +36,36 @@ pub(super) enum Outbound {
     Close {
         done: oneshot::Sender<()>,
     },
+}
+
+struct ConnectionResources {
+    inner: Arc<LiveInner>,
+    sink_active: bool,
+}
+
+impl ConnectionResources {
+    fn new(inner: Arc<LiveInner>) -> Self {
+        inner.reader_active.store(true, Ordering::Release);
+        inner.sink_active.store(true, Ordering::Release);
+        Self {
+            inner,
+            sink_active: true,
+        }
+    }
+
+    fn sink_closed(&mut self) {
+        self.inner.sink_active.store(false, Ordering::Release);
+        self.sink_active = false;
+    }
+}
+
+impl Drop for ConnectionResources {
+    fn drop(&mut self) {
+        if self.sink_active {
+            self.inner.sink_active.store(false, Ordering::Release);
+        }
+        self.inner.reader_active.store(false, Ordering::Release);
+    }
 }
 
 pub(super) async fn connect_socket(
@@ -103,6 +133,7 @@ pub(super) async fn run_connection(
     socket: Socket,
     mut outbound: mpsc::Receiver<Outbound>,
 ) {
+    let mut resources = ConnectionResources::new(Arc::clone(&inner));
     let (mut sink, mut stream) = socket.split();
     let mut fragments = FragmentAssembler::default();
     let mut sweep = interval(Duration::from_millis(100));
@@ -148,8 +179,13 @@ pub(super) async fn run_connection(
                         let _ = written.send(());
                     }
                     Some(Outbound::Close { done }) => {
+                        inner.stall_close_stage(CloseStage::SinkClose).await;
                         let _ = timeout(super::REQUEST_DEADLINE, sink.close()).await;
+                        resources.sink_closed();
                         let _ = done.send(());
+                        inner
+                            .stall_close_stage(CloseStage::ReaderShutdown)
+                            .await;
                         return;
                     }
                     None => break DaemonError::Unavailable { retry_after: None },

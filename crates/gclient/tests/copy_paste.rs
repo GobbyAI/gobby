@@ -1,8 +1,18 @@
 //! 3.3.13 / 3.3.14 / 3.3.20 scrollback, copy, and paste.
 
-use gobby_client::copy_mode::{extract_logical_line, PASTE_MAX_BYTES};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::copy_mode::{
+    copy_finalized_selection, extract_logical_line, route_mouse_selection, route_paste_event,
+    write_selection_osc52, PASTE_MAX_BYTES,
+};
+use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
+use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::Workspace;
-use gobby_terminal::protocol::ClientMessage;
+use gobby_terminal::layout::PaneId as LayoutPaneId;
+use gobby_terminal::protocol::{CellData, ClientMessage, FrameData, PaneModes, ServerMessage};
+use gobby_terminal::raw_input::RawInputEvent;
+use gobby_terminal::selection::Selection;
+use ratatui::layout::Rect;
 use serde_json::json;
 
 #[test]
@@ -17,11 +27,15 @@ fn scrollback_copy_is_lease_independent() {
     assert_eq!(ws.pane(a).scroll_offset(), 4);
     assert_eq!(ws.pane(b).scroll_offset(), 1);
 
-    let line = extract_logical_line("👩‍💻 wraps onto two cells then continues", 4);
-    assert!(
-        line.contains("👩‍💻"),
-        "wide grapheme stays on the logical line: {line}"
-    );
+    let line = extract_logical_line("A👩‍💻B\nc\nhard", 4);
+    assert_eq!(line, "A👩‍💻Bc");
+
+    let mut selection = Selection::anchor(LayoutPaneId::from_raw(0), 0, 0, None);
+    selection.drag(4, 0, Rect::new(0, 0, 10, 2), None);
+    assert!(selection.finish());
+    let mut osc52 = Vec::new();
+    assert!(write_selection_osc52(&mut osc52, &selection, "hello").unwrap());
+    assert_eq!(osc52, b"\x1b]52;c;aGVsbG8=\x07");
 
     ws.push_frame(a, "new-output");
     assert!(ws.pane(a).has_new_output());
@@ -34,6 +48,115 @@ fn scrollback_copy_is_lease_independent() {
     ws.seed_attach_history(joiner, "later joiner history");
     assert!(ws.pane(joiner).copy_seeded_from_history());
     assert!(!ws.pane(joiner).required_created_flag());
+}
+
+#[tokio::test]
+async fn client_copy_path_emits_finalized_selection_as_osc52() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-copy", "native", "epoch-copy")
+        .expect("open terminal");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(FrameData {
+        cells: "copy"
+            .chars()
+            .map(|symbol| CellData {
+                symbol: symbol.to_string(),
+                fg: 0,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            })
+            .collect(),
+        width: 4,
+        height: 1,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes: PaneModes::default(),
+    }));
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("replace source");
+    ws.recv_pane_frame(pane).await.expect("receive frame");
+
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "copy");
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    chrome.mode = Mode::Copy;
+    let inner = chrome
+        .view
+        .pane_infos
+        .iter()
+        .find(|info| info.id == slot)
+        .expect("pane geometry")
+        .inner_rect;
+    let mouse = |kind, column| {
+        RawInputEvent::Mouse(MouseEvent {
+            kind,
+            column: inner.x + column,
+            row: inner.y,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    assert!(!route_mouse_selection(
+        &ws,
+        &mut chrome,
+        &mouse(MouseEventKind::Down(MouseButton::Left), 0),
+    ));
+    assert!(!route_mouse_selection(
+        &ws,
+        &mut chrome,
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 3),
+    ));
+    assert!(route_mouse_selection(
+        &ws,
+        &mut chrome,
+        &mouse(MouseEventKind::Up(MouseButton::Left), 3),
+    ));
+
+    let mut output = Vec::new();
+    assert!(copy_finalized_selection(&ws, &chrome, &mut output).expect("copy selection"));
+    assert_eq!(output, b"\x1b]52;c;Y29weQ==\x07");
+}
+
+#[test]
+fn client_copy_path_uses_attach_history_before_the_first_frame() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-history", "tmux", "epoch-history")
+        .expect("open terminal");
+    ws.seed_attach_history(pane, "joined from history");
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "history");
+    let mut selection = Selection::anchor(slot, 0, 0, None);
+    selection.force_dragging();
+    assert!(selection.finish());
+    chrome.selection = Some(selection);
+
+    let mut output = Vec::new();
+    assert!(copy_finalized_selection(&ws, &chrome, &mut output).expect("copy history"));
+    assert_eq!(output, b"\x1b]52;c;am9pbmVkIGZyb20gaGlzdG9yeQ==\x07");
+}
+
+#[test]
+fn client_paste_event_routes_through_terminal_paste() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-paste", "native", "epoch-paste")
+        .expect("open terminal");
+    ws.force_held(pane);
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "paste");
+
+    assert!(
+        route_paste_event(&mut ws, &chrome, &RawInputEvent::Paste("payload".into()),)
+            .expect("route paste")
+    );
+    let messages = ws.daemon().ws_sent();
+    let message = messages.last().expect("paste message");
+    assert_eq!(message["type"], "terminal_paste");
+    assert_eq!(message["text"], "payload");
 }
 
 #[test]
@@ -114,8 +237,24 @@ fn paste_is_lease_gated_and_bracketed() {
     let err = ws.paste_to_pty(pane, &oversize).unwrap_err();
     assert_eq!(err.code(), "paste_too_large");
 
+    ws.paste_to_pty(pane, "uncertain").unwrap();
+    let uncertain_seq = ws.daemon().last_paste_seq().unwrap();
+    ws.apply_ws(&json!({
+        "type": "terminal_write_outcome",
+        "terminal_id": "term-a",
+        "attachment_id": ws.pane(pane).attachment_id(),
+        "client_write_seq": uncertain_seq,
+        "outcome": "indeterminate",
+        "reason": "indeterminate_backend"
+    }))
+    .unwrap();
+    assert!(ws.pane(pane).is_uncertain_readonly());
+    let after_indeterminate = ws.daemon().pty_mutation_count();
+    assert!(ws.paste_to_pty(pane, "must-not-resend").is_err());
+    assert_eq!(ws.daemon().pty_mutation_count(), after_indeterminate);
+
     ws.enter_copy_search(pane);
-    ws.paste_local(pane, "query").unwrap();
+    ws.paste_to_pty(pane, "query").unwrap();
     assert_eq!(ws.pane(pane).search_buffer(), "query");
-    assert_eq!(ws.daemon().pty_mutation_count(), mutations);
+    assert_eq!(ws.daemon().pty_mutation_count(), after_indeterminate);
 }

@@ -13,6 +13,9 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
+pub use crate::teardown::shutdown;
+
+use crate::copy_mode::route_paste_event;
 use crate::daemon::{Daemon, DaemonError, Generation};
 use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
@@ -37,19 +40,6 @@ pub const RECONNECT_DELAYS: [Duration; 4] = [
 pub const MIN_RETRY_AFTER: Duration = Duration::from_millis(250);
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(4);
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
-
-/// Enter the async shutdown phase at most once for this workspace.
-pub async fn shutdown<D: Daemon>(
-    workspace: &mut Workspace<D>,
-    daemon: D,
-    deadline: Instant,
-) -> Result<(), DaemonError> {
-    if workspace.shutdown_started {
-        return Ok(());
-    }
-    workspace.shutdown_started = true;
-    daemon.close(deadline).await
-}
 
 /// Scripted carrier for the real select loop used by integration tests.
 pub async fn run_scripted_loop<B: Backend>(
@@ -113,6 +103,11 @@ fn route_scripted_input(
     event: &RawInputEvent,
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
+    if route_paste_event(workspace, chrome, event)
+        .map_err(|error| FrameError::Other(error.to_string()))?
+    {
+        return Ok(false);
+    }
     if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
         match resolve_chord(&chrome.keymap, &input.key, *prefix_armed) {
             Resolution::Prefix => {
@@ -120,6 +115,10 @@ fn route_scripted_input(
                 chrome.mode = Mode::Prefix;
             }
             Resolution::Action(Action::Quit) => return Ok(true),
+            Resolution::Action(Action::CopyMode) => {
+                *prefix_armed = false;
+                chrome.mode = Mode::Copy;
+            }
             Resolution::Action(_) => {
                 *prefix_armed = false;
                 chrome.mode = Mode::Terminal;
