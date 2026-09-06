@@ -52,14 +52,18 @@ class TestHandleAskUserResponse:
 
     @pytest.mark.asyncio
     async def test_calls_provide_answer_on_session(
-        self, host: ChatMixinHost, websocket: MockWebSocket
+        self,
+        host: ChatMixinHost,
+        websocket: MockWebSocket,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Handler should look up session and call provide_answer with answers."""
         session = MagicMock()
         session.has_pending_question = True
         session.provide_answer.return_value = True
         host._chat_sessions["conv-123"] = session
-        host._fire_lifecycle = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        fire_lifecycle = AsyncMock(return_value=None)
+        monkeypatch.setattr(host, "_fire_lifecycle", fire_lifecycle)
 
         data = {
             "type": "ask_user_response",
@@ -73,7 +77,7 @@ class TestHandleAskUserResponse:
         session.provide_answer.assert_called_once_with("tool-abc", {"Which auth?": "OAuth"})
         assert session.provide_answer.call_count == 1
         assert session.provide_answer.call_args is not None
-        host._fire_lifecycle.assert_awaited_once_with(
+        fire_lifecycle.assert_awaited_once_with(
             "conv-123",
             HookEventType.NOTIFICATION,
             {
@@ -123,12 +127,16 @@ class TestHandleAskUserResponse:
 class TestHandleToolApprovalResponse:
     @pytest.mark.asyncio
     async def test_exact_managed_response_resumes_lifecycle(
-        self, host: ChatMixinHost, websocket: MockWebSocket
+        self,
+        host: ChatMixinHost,
+        websocket: MockWebSocket,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         session = MagicMock()
         session.provide_approval.return_value = True
         host._chat_sessions["conv-approval"] = session
-        host._fire_lifecycle = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        fire_lifecycle = AsyncMock(return_value=None)
+        monkeypatch.setattr(host, "_fire_lifecycle", fire_lifecycle)
 
         await host._handle_tool_approval_response(
             websocket,
@@ -139,7 +147,7 @@ class TestHandleToolApprovalResponse:
             },
         )
 
-        host._fire_lifecycle.assert_awaited_once_with(
+        fire_lifecycle.assert_awaited_once_with(
             "conv-approval",
             HookEventType.NOTIFICATION,
             {
@@ -151,13 +159,17 @@ class TestHandleToolApprovalResponse:
 
     @pytest.mark.asyncio
     async def test_mismatched_managed_response_does_not_resolve_lifecycle(
-        self, host: ChatMixinHost, websocket: MockWebSocket
+        self,
+        host: ChatMixinHost,
+        websocket: MockWebSocket,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         session = MagicMock()
         session.provide_approval.return_value = False
         session.has_pending_approval = True
         host._chat_sessions["conv-approval"] = session
-        host._fire_lifecycle = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        fire_lifecycle = AsyncMock(return_value=None)
+        monkeypatch.setattr(host, "_fire_lifecycle", fire_lifecycle)
 
         await host._handle_tool_approval_response(
             websocket,
@@ -168,4 +180,4 @@ class TestHandleToolApprovalResponse:
             },
         )
 
-        host._fire_lifecycle.assert_not_awaited()
+        fire_lifecycle.assert_not_awaited()

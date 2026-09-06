@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -147,9 +147,29 @@ class CompletionEventRegistry:
         self._results[completion_id] = result
         event.set()
 
+        return await self.wake_sessions(
+            completion_id,
+            list(self._subscribers.get(completion_id, [])),
+            result,
+            message,
+        )
+
+    async def wake_sessions(
+        self,
+        completion_id: str,
+        session_ids: Sequence[str],
+        result: dict[str, Any],
+        message: str = "",
+    ) -> dict[str, bool]:
+        """Wake named sessions for a completion, independent of registry membership.
+
+        Callers holding durable subscriber rows use this to deliver after a
+        restart emptied the in-memory registry, so the wake path stays identical
+        whichever source supplied the session list.
+        """
         wake_payload = {**result, "completion_id": completion_id}
         delivery: dict[str, bool] = {}
-        for session_id in list(self._subscribers.get(completion_id, [])):
+        for session_id in session_ids:
             delivery[session_id] = False
             if self._wake_callback is None:
                 continue

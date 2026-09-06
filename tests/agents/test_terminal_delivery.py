@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -283,3 +284,106 @@ async def test_terminal_delivery_projects_persisted_task_close_payload() -> None
 
     assert registry.notifications == [("run-1", payload, "Task closed.")]
     assert marked == [["parent"]]
+
+
+class DurableDb(RecordingDb):
+    """RecordingDb that also serves durable completion_subscribers rows."""
+
+    def __init__(self, subscribers: list[str]) -> None:
+        super().__init__()
+        self.subscribers = subscribers
+        self.queried: list[tuple[str, tuple[object, ...]]] = []
+
+    def fetchall(self, sql: str, params: tuple[object, ...] = ()) -> list[dict[str, str]]:
+        self.queried.append((sql, params))
+        return [{"session_id": session_id} for session_id in self.subscribers]
+
+
+class DurableWakeRegistry(AcknowledgingCompletionRegistry):
+    """Registry fake exposing the wake_sessions surface the fallback needs."""
+
+    def __init__(
+        self,
+        delivery: dict[str, bool] | None,
+        wake_outcome: dict[str, bool] | None = None,
+    ) -> None:
+        super().__init__(delivery)
+        self.wake_outcome = wake_outcome or {}
+        self.woken: list[tuple[str, list[str], dict[str, object], str]] = []
+
+    async def wake_sessions(
+        self,
+        completion_id: str,
+        session_ids: Sequence[str],
+        result: dict[str, object],
+        message: str = "",
+    ) -> dict[str, bool]:
+        self.woken.append((completion_id, list(session_ids), result, message))
+        return {session_id: self.wake_outcome.get(session_id, True) for session_id in session_ids}
+
+
+async def test_terminal_delivery_wakes_durable_subscribers_when_registry_is_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = DurableDb(["session-a", "session-b"])
+    registry = DurableWakeRegistry(None)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.terminal_delivery"):
+        await _handler(db, completion_registry=registry).notify_terminal_completion(
+            "run-1",
+            result={"status": "completed"},
+            message="Agent terminal",
+        )
+
+    assert registry.woken == [
+        (
+            "run-1",
+            ["session-a", "session-b"],
+            {"status": "completed", "run_id": "run-1"},
+            "Agent terminal",
+        )
+    ]
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a", "session-b"]),
+        )
+    ]
+    assert "no in-memory completion subscribers" in caplog.text
+
+
+async def test_terminal_delivery_does_not_rewake_sessions_the_registry_attempted() -> None:
+    db = DurableDb(["session-a", "session-b"])
+    registry = DurableWakeRegistry({"session-a": True})
+
+    await _handler(db, completion_registry=registry).notify_terminal_completion(
+        "run-1",
+        result={"status": "completed"},
+        message="Agent terminal",
+    )
+
+    assert [woken[1] for woken in registry.woken] == [["session-b"]]
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a", "session-b"]),
+        )
+    ]
+
+
+async def test_terminal_delivery_retains_rows_for_undelivered_durable_sessions() -> None:
+    db = DurableDb(["session-a", "session-b"])
+    registry = DurableWakeRegistry(None, wake_outcome={"session-b": False})
+
+    await _handler(db, completion_registry=registry).notify_terminal_completion(
+        "run-1",
+        result={"status": "completed"},
+        message="Agent terminal",
+    )
+
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]

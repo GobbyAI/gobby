@@ -178,6 +178,69 @@ def detach_shielded_terminal_deliveries() -> list[str]:
     return detached
 
 
+async def _wake_durable_subscribers(
+    *,
+    db: HubDatabase,
+    completion_registry: CompletionEventRegistry,
+    run_id: str,
+    result: dict[str, Any],
+    message: str,
+    run_db: Callable[..., Awaitable[Any]],
+    registry_delivery: dict[str, bool] | None,
+) -> dict[str, bool] | None:
+    """Wake durable subscribers the in-memory registry did not attempt.
+
+    A daemon restart empties `CompletionEventRegistry`, and the startup sweep
+    only redelivers runs that were already terminal when it ran. A run preserved
+    across the restart therefore terminalizes with no in-memory subscribers and
+    no sweep left to catch it, stranding its durable `completion_subscribers`
+    rows. Reading those rows here closes that window; sessions the registry
+    already attempted are skipped so nobody is woken twice.
+    """
+    wake_sessions = getattr(completion_registry, "wake_sessions", None)
+    if not callable(wake_sessions):
+        return registry_delivery
+
+    try:
+        subscribers = await run_db(_read_durable_subscribers, db, run_id)
+    except Exception:
+        logger.warning(
+            "Failed to read durable completion subscribers for agent %s",
+            run_id,
+            exc_info=True,
+        )
+        return registry_delivery
+
+    attempted = set(registry_delivery or {})
+    pending = [session_id for session_id in subscribers if session_id not in attempted]
+    if not pending:
+        return registry_delivery
+
+    if not attempted:
+        logger.warning(
+            "Agent %s went terminal with no in-memory completion subscribers; "
+            "waking %d durable subscriber(s) directly",
+            run_id,
+            len(pending),
+        )
+    try:
+        durable_delivery = await wake_sessions(run_id, pending, result, message)
+    except Exception:
+        logger.warning(
+            "Durable completion wake failed for agent %s",
+            run_id,
+            exc_info=True,
+        )
+        return registry_delivery
+    return {**(registry_delivery or {}), **durable_delivery}
+
+
+def _read_durable_subscribers(db: HubDatabase, run_id: str) -> list[str]:
+    from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+
+    return CompletionSubscriberManager(db).get_completion_subscribers(run_id)
+
+
 async def deliver_and_cleanup_terminal_run(
     *,
     db: HubDatabase,
@@ -209,6 +272,15 @@ async def deliver_and_cleanup_terminal_run(
             notification_succeeded = True
         except Exception:
             logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
+        delivery = await _wake_durable_subscribers(
+            db=db,
+            completion_registry=completion_registry,
+            run_id=run_id,
+            result=payload,
+            message=message,
+            run_db=run_db,
+            registry_delivery=delivery,
+        )
 
     delivered_session_ids = (
         [session_id for session_id, delivered in delivery.items() if delivered]
