@@ -1,6 +1,11 @@
 use super::*;
 use crate::frame_source::{ProxyFrameSource, UnixSocketFrameSource};
 
+enum ProxyAttachOutcome {
+    Attached(Value, String, ProxyFrameSource),
+    Refused { code: String, reason: String },
+}
+
 impl Workspace<LiveDaemon> {
     pub fn live(daemon: LiveDaemon) -> Self {
         Self {
@@ -17,12 +22,17 @@ impl Workspace<LiveDaemon> {
                 entries: Vec::new(),
                 applied_seqs: Vec::new(),
             },
+            pending_attention: None,
             gobby_home: None,
             lifecycle: None,
             daemon_ready: false,
             daemon_error: None,
             event_rx: None,
             attached_generation: HashMap::new(),
+            pending_spawns: HashSet::new(),
+            status_message: None,
+            exit_reason: None,
+            shutdown_started: false,
         }
     }
 
@@ -101,18 +111,25 @@ impl Workspace<LiveDaemon> {
         self.roster_ids = ids;
     }
 
-    async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
+    pub(super) async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
         let snapshot = self.daemon.subscribe().0;
         if !snapshot.ready {
             return Ok(());
         }
         for pane_id in self.order.clone() {
-            if self.attached_generation.get(&pane_id) == Some(&snapshot.generation) {
+            if self.attached_generation.get(&pane_id) == Some(&snapshot.generation)
+                || self.panes[&pane_id].attached_generation() == Some(snapshot.generation)
+            {
                 continue;
             }
             let terminal_id = self.panes[&pane_id].terminal_id.clone();
             if self.panes[&pane_id].direct_available {
-                match self.request_direct_source(&terminal_id).await {
+                let request_id = uuid::Uuid::new_v4().to_string();
+                self.panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .begin_attaching(request_id.clone(), Transport::Direct, snapshot.generation);
+                match self.request_direct_source(&terminal_id, &request_id).await {
                     Ok((reply, attachment, locator, source)) => {
                         self.install_direct_source(pane_id, &reply, attachment, &locator, source);
                         self.attached_generation
@@ -128,24 +145,8 @@ impl Workspace<LiveDaemon> {
                     Err(_) => {}
                 }
             }
-            let attachment = self.request_proxy_source(&terminal_id).await;
-            let (reply, attachment, source) = match attachment {
-                Ok(attachment) => attachment,
-                Err(FrameError::Finalized { .. }) => {
-                    self.retire_pane_attachment(pane_id);
-                    self.attached_generation
-                        .insert(pane_id, snapshot.generation);
-                    continue;
-                }
-                Err(error) => {
-                    return Err(DaemonError::Protocol {
-                        detail: error.to_string(),
-                    });
-                }
-            };
-            self.install_proxy_source(pane_id, &reply, attachment, source);
-            self.attached_generation
-                .insert(pane_id, snapshot.generation);
+            self.begin_live_proxy_attach(pane_id, &terminal_id, snapshot.generation)
+                .await?;
         }
         Ok(())
     }
@@ -153,12 +154,13 @@ impl Workspace<LiveDaemon> {
     async fn request_direct_source(
         &self,
         terminal_id: &str,
+        request_id: &str,
     ) -> Result<(Value, String, AttachLocator, UnixSocketFrameSource), FrameError> {
         let reply = self
             .daemon
             .send(json!({
                 "type": "terminal_attach",
-                "request_id": uuid::Uuid::new_v4().to_string(),
+                "request_id": request_id,
                 "terminal_id": terminal_id,
                 "frame_delivery": "direct",
                 "encoding": "semantic_frame",
@@ -227,26 +229,39 @@ impl Workspace<LiveDaemon> {
         locator: &AttachLocator,
         source: UnixSocketFrameSource,
     ) {
+        let generation = self.daemon.subscribe().0.generation;
         let pane = self.panes.get_mut(&pane_id).expect("pane exists");
-        pane.attachment_id = attachment;
         if let Some(backend) = reply.get("backend").and_then(Value::as_str) {
             pane.backend = backend.to_string();
         }
         pane.expected_host_epoch = locator.frame_host_epoch.clone();
-        pane.lease_generation = reply
+        let lease_generation = reply
             .get("lease_generation")
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        pane.live = true;
-        pane.control = ControlState::Observe;
-        pane.install_frame_source(PaneFrameSource::Direct(source));
+        pane.install_attachment(
+            attachment,
+            Transport::Direct,
+            generation,
+            lease_generation,
+            PaneFrameSource::Direct(source),
+        );
     }
 
     pub async fn recv_live_frame(&mut self, pane_id: PaneId) -> Result<ServerMessage, FrameError> {
         let result = self.recv_pane_frame(pane_id).await;
-        let Err(error) = result else {
+        let Err(error) = &result else {
             return result;
         };
+        self.recover_live_frame_error(pane_id, error).await?;
+        result
+    }
+
+    pub(super) async fn recover_live_frame_error(
+        &mut self,
+        pane_id: PaneId,
+        error: &FrameError,
+    ) -> Result<(), FrameError> {
         match error {
             FrameError::Finalized { .. } => self.retire_pane_attachment(pane_id),
             FrameError::Eof
@@ -256,7 +271,7 @@ impl Workspace<LiveDaemon> {
             | FrameError::Protocol(_) => self.recover_proxy_source(pane_id).await?,
             FrameError::HostEpochChanged { .. } | FrameError::Other(_) => {}
         }
-        Err(error)
+        Ok(())
     }
 
     async fn recover_proxy_source(&mut self, pane_id: PaneId) -> Result<(), FrameError> {
@@ -268,83 +283,188 @@ impl Workspace<LiveDaemon> {
             return Ok(());
         }
         pane.fallback_in_flight = true;
+        pane.direct_available = false;
         let terminal_id = pane.terminal_id.clone();
-        let old_attachment = std::mem::take(&mut pane.attachment_id);
-        pane.live = false;
-        pane.control = ControlState::Observe;
-        pane.fragment = None;
-        let _ = pane.take_frame_source();
+        let (old_attachment, deadline) = pane
+            .begin_detaching(tokio::time::Instant::now())
+            .map(|(attachment, _)| {
+                let deadline = pane.detaching_deadline().expect("detaching deadline");
+                (attachment, deadline)
+            })
+            .unwrap_or_else(|| (String::new(), tokio::time::Instant::now()));
+        self.attached_generation.remove(&pane_id);
 
         if !old_attachment.is_empty() {
-            if let Err(error) = self
-                .daemon
-                .notify(json!({
-                    "type": "terminal_detach",
-                    "request_id": uuid::Uuid::new_v4().to_string(),
-                    "terminal_id": terminal_id,
-                    "attachment_id": old_attachment,
-                }))
-                .await
+            let daemon = self.daemon.clone();
+            let (_, mut receiver) = daemon.subscribe();
+            let detach = daemon.send(json!({
+                "type": "terminal_detach",
+                "request_id": uuid::Uuid::new_v4().to_string(),
+                "terminal_id": terminal_id,
+                "attachment_id": old_attachment,
+            }));
+            tokio::pin!(detach);
+            let reason = loop {
+                tokio::select! {
+                    reply = &mut detach => {
+                        let reply = reply?;
+                        if reply.get("success").and_then(Value::as_bool) != Some(true) {
+                            self.clear_fallback_flight(pane_id);
+                            return Err(FrameError::Protocol(
+                                reply.get("reason").and_then(Value::as_str)
+                                    .unwrap_or("terminal detach refused").to_string()
+                            ));
+                        }
+                        break reply.get("reason").and_then(Value::as_str).map(str::to_owned);
+                    }
+                    event = receiver.recv() => {
+                        match event {
+                            Ok(DaemonEvent::AttachmentFinalized { attachment_id, payload, .. })
+                                if attachment_id == old_attachment =>
+                            {
+                                break payload.get("reason").and_then(Value::as_str).map(str::to_owned);
+                            }
+                            Ok(_) => {}
+                            Err(_) => {
+                                let reply = tokio::time::timeout_at(deadline, &mut detach)
+                                    .await
+                                    .map_err(|_| FrameError::Other("detach deadline expired".into()))??;
+                                if reply.get("success").and_then(Value::as_bool) != Some(true) {
+                                    return Err(FrameError::Protocol("terminal detach refused".into()));
+                                }
+                                break reply.get("reason").and_then(Value::as_str).map(str::to_owned);
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep_until(deadline) => return Ok(()),
+                }
+            };
+            if !self
+                .panes
+                .get_mut(&pane_id)
+                .expect("pane exists")
+                .retire_attachment(&old_attachment, reason)
             {
                 self.clear_fallback_flight(pane_id);
-                return Err(error.into());
+                return Ok(());
             }
         }
 
-        let source = self.request_proxy_source(&terminal_id).await;
-        let (reply, attachment, source) = match source {
-            Ok(source) => source,
-            Err(error @ FrameError::Finalized { .. }) => {
-                self.retire_pane_attachment(pane_id);
-                return Err(error);
-            }
-            Err(error) => {
-                self.clear_fallback_flight(pane_id);
-                return Err(error);
-            }
-        };
-        self.install_proxy_source(pane_id, &reply, attachment, source);
-        self.attached_generation
-            .insert(pane_id, self.daemon.generation());
-        Ok(())
+        self.begin_live_proxy_attach(pane_id, &terminal_id, self.daemon.generation())
+            .await
+            .map_err(|error| FrameError::Other(error.to_string()))
     }
 
     async fn request_proxy_source(
         &self,
         terminal_id: &str,
-    ) -> Result<(Value, String, ProxyFrameSource), FrameError> {
+        request_id: &str,
+    ) -> Result<ProxyAttachOutcome, FrameError> {
         let (_, receiver) = self.daemon.subscribe();
         let reply = self
             .daemon
             .send(json!({
                 "type": "terminal_attach",
-                "request_id": uuid::Uuid::new_v4().to_string(),
+                "request_id": request_id,
                 "terminal_id": terminal_id,
                 "frame_delivery": "proxy",
                 "encoding": "semantic_frame",
             }))
             .await?;
         if reply.get("success").and_then(Value::as_bool) != Some(true) {
-            return Err(FrameError::Protocol(
-                reply
+            return Ok(ProxyAttachOutcome::Refused {
+                code: reply
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("attach_refused")
+                    .to_string(),
+                reason: reply
                     .get("reason")
                     .and_then(Value::as_str)
                     .unwrap_or("terminal attach refused")
                     .to_string(),
-            ));
+            });
         }
         let attachment = reply
             .get("attachment_id")
             .and_then(Value::as_str)
             .ok_or_else(|| FrameError::Protocol("attach result omitted attachment_id".into()))?
             .to_string();
-        let source = ProxyFrameSource::from_attachment(
+        let mut source = ProxyFrameSource::from_attachment(
             self.daemon.clone(),
             terminal_id,
             attachment.clone(),
             receiver,
         )?;
-        Ok((reply, attachment, source))
+        let rows = reply
+            .get("rows")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(24);
+        let cols = reply
+            .get("cols")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(80);
+        source
+            .send(&ClientMessage::SetViewport { rows, cols })
+            .await?;
+        Ok(ProxyAttachOutcome::Attached(reply, attachment, source))
+    }
+
+    async fn begin_live_proxy_attach(
+        &mut self,
+        pane_id: PaneId,
+        terminal_id: &str,
+        generation: Generation,
+    ) -> Result<(), DaemonError> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.panes
+            .get_mut(&pane_id)
+            .expect("pane exists")
+            .begin_attaching(request_id.clone(), Transport::Proxy, generation);
+        match self.request_proxy_source(terminal_id, &request_id).await {
+            Ok(ProxyAttachOutcome::Attached(reply, attachment, source)) => {
+                if self.panes[&pane_id].tombstones.contains(&attachment) {
+                    self.panes
+                        .get_mut(&pane_id)
+                        .expect("pane exists")
+                        .refuse_attach(
+                            "attachment_reused",
+                            "daemon reused a tombstoned attachment id",
+                        );
+                } else {
+                    self.install_proxy_source(pane_id, &reply, attachment, source);
+                }
+                self.attached_generation.insert(pane_id, generation);
+                self.clear_fallback_flight(pane_id);
+                Ok(())
+            }
+            Ok(ProxyAttachOutcome::Refused { code, reason }) => {
+                self.panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .refuse_attach(&code, &reason);
+                self.attached_generation.insert(pane_id, generation);
+                self.clear_fallback_flight(pane_id);
+                Ok(())
+            }
+            Err(FrameError::Finalized { code, reason }) => {
+                self.panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .refuse_attach(&code, &reason);
+                self.attached_generation.insert(pane_id, generation);
+                self.clear_fallback_flight(pane_id);
+                Ok(())
+            }
+            Err(error) => {
+                self.clear_fallback_flight(pane_id);
+                Err(DaemonError::Protocol {
+                    detail: error.to_string(),
+                })
+            }
+        }
     }
 
     fn install_proxy_source(
@@ -354,18 +474,22 @@ impl Workspace<LiveDaemon> {
         attachment: String,
         source: ProxyFrameSource,
     ) {
+        let generation = self.daemon.subscribe().0.generation;
         let pane = self.panes.get_mut(&pane_id).expect("pane exists");
-        pane.attachment_id = attachment;
         if let Some(backend) = reply.get("backend").and_then(Value::as_str) {
             pane.backend = backend.to_string();
         }
-        pane.lease_generation = reply
+        let lease_generation = reply
             .get("lease_generation")
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        pane.live = true;
-        pane.control = ControlState::Observe;
-        pane.install_frame_source(PaneFrameSource::Proxy(source));
+        pane.install_attachment(
+            attachment,
+            Transport::Proxy,
+            generation,
+            lease_generation,
+            PaneFrameSource::Proxy(source),
+        );
     }
 
     fn clear_fallback_flight(&mut self, pane_id: PaneId) {
@@ -376,12 +500,13 @@ impl Workspace<LiveDaemon> {
 
     fn retire_pane_attachment(&mut self, pane_id: PaneId) {
         if let Some(pane) = self.panes.get_mut(&pane_id) {
-            pane.attachment_id.clear();
-            pane.live = false;
-            pane.control = ControlState::Observe;
-            pane.fragment = None;
+            let attachment = pane.attachment_id().to_string();
+            if attachment.is_empty() {
+                pane.refuse_attach("attachment_finalized", "attachment finalized");
+            } else {
+                pane.retire_attachment(&attachment, Some("attachment finalized".into()));
+            }
             pane.fallback_in_flight = false;
-            let _ = pane.take_frame_source();
         }
     }
 
@@ -493,8 +618,10 @@ impl Workspace<LiveDaemon> {
                 self.daemon_ready = status.ready;
                 self.daemon_error = status.last_error.clone();
                 if !status.ready {
-                    self.daemon.reconnect(status.generation).await?;
-                    *receiver = self.daemon.subscribe().1;
+                    return Err(self
+                        .daemon_error
+                        .clone()
+                        .unwrap_or(DaemonError::Unavailable { retry_after: None }));
                 }
                 self.fetch_roster().await?;
                 self.fetch_attention().await?;
@@ -506,14 +633,18 @@ impl Workspace<LiveDaemon> {
             let current = self.daemon.subscribe().0;
             self.daemon_ready = current.ready;
             self.daemon_error = current.last_error;
-            if current.ready {
-                self.attach_ready_panes().await?;
+            if !current.ready {
+                return Err(self
+                    .daemon_error
+                    .clone()
+                    .unwrap_or(DaemonError::Unavailable { retry_after: None }));
             }
+            self.attach_ready_panes().await?;
             return Ok(());
         }
     }
 
-    async fn apply_live_event(&mut self, event: DaemonEvent) -> Result<(), DaemonError> {
+    pub(super) async fn apply_live_event(&mut self, event: DaemonEvent) -> Result<(), DaemonError> {
         match event {
             DaemonEvent::Terminal {
                 daemon_epoch,
@@ -545,7 +676,7 @@ impl Workspace<LiveDaemon> {
                             .unwrap_or_default();
                         self.ensure_live_pane(terminal_id, backend);
                     }
-                    Some("exited" | "terminated") => {
+                    Some("exited" | "killed" | "terminated") => {
                         self.roster_ids.retain(|id| id != terminal_id);
                         self.remove_terminal(terminal_id);
                     }
@@ -554,12 +685,45 @@ impl Workspace<LiveDaemon> {
                 self.advance_lifecycle(daemon_epoch, seq);
             }
             DaemonEvent::LeaseLost {
-                daemon_epoch, seq, ..
-            }
-            | DaemonEvent::AttachmentFinalized {
-                daemon_epoch, seq, ..
+                daemon_epoch,
+                seq,
+                payload,
             } => {
                 if self.accept_lifecycle(&daemon_epoch, seq) {
+                    if let Some(attachment_id) =
+                        payload.get("attachment_id").and_then(Value::as_str)
+                    {
+                        let lease_generation = payload
+                            .get("lease_generation")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        if let Some(pane) = self.pane_for_attachment_mut(attachment_id) {
+                            if lease_generation >= pane.lease_generation() {
+                                pane.set_lease_generation(lease_generation);
+                                pane.control = ControlState::LeaseLost;
+                                pane.take_back = true;
+                                pane.pending_input = None;
+                            }
+                        }
+                    }
+                    self.advance_lifecycle(daemon_epoch, seq);
+                } else if self
+                    .lifecycle
+                    .as_ref()
+                    .is_some_and(|pin| pin.daemon_epoch != daemon_epoch)
+                {
+                    self.fetch_roster().await?;
+                }
+            }
+            DaemonEvent::AttachmentFinalized {
+                daemon_epoch,
+                seq,
+                attachment_id,
+                payload,
+            } => {
+                if self.accept_lifecycle(&daemon_epoch, seq) {
+                    let reason = payload.get("reason").and_then(Value::as_str);
+                    self.retire_attachment(&attachment_id, reason);
                     self.advance_lifecycle(daemon_epoch, seq);
                 } else if self
                     .lifecycle
@@ -598,9 +762,8 @@ impl Workspace<LiveDaemon> {
                 self.attention.seq = seq;
                 self.attention.applied_seqs.push(seq);
             }
-            DaemonEvent::Disconnected { error, .. } => {
-                self.daemon_ready = false;
-                self.daemon_error = Some(error);
+            DaemonEvent::Disconnected { generation, error } => {
+                self.observe_daemon_disconnect(generation, error);
             }
             DaemonEvent::Lagged => {
                 self.fetch_roster().await?;
@@ -626,16 +789,13 @@ impl Workspace<LiveDaemon> {
     }
 
     pub async fn reconnect_daemon_ws(&mut self) -> Result<Generation, DaemonError> {
-        let observed = self.daemon.generation();
         for pane in self.panes.values_mut() {
-            pane.live = false;
-            pane.control = ControlState::Observe;
+            pane.clear_control("daemon disconnected");
         }
-        let generation = self.daemon.reconnect(observed).await?;
         self.reconcile_subscribe_first().await?;
         self.daemon_ready = true;
         self.daemon_error = None;
-        Ok(generation)
+        Ok(self.daemon.generation())
     }
 }
 

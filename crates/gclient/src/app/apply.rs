@@ -2,7 +2,6 @@
 
 use super::{ControlState, Workspace};
 use crate::daemon::DaemonError;
-use base64::Engine;
 use serde_json::Value;
 
 pub(super) fn apply(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
@@ -11,13 +10,50 @@ pub(super) fn apply(ws: &mut Workspace, message: &Value) -> Result<(), DaemonErr
         "attention" => ws.ingest_attention(message.clone()),
         "terminal_lease_lost" => apply_lease_lost(ws, message),
         "terminal_control_result" => apply_control_result(ws, message),
+        "terminal_attach_result" => ws.apply_scripted_attach_result(message),
         "terminal_attachment_finalized" => apply_finalized(ws, message),
-        "terminal_ws_fragment" => apply_fragment(ws, message),
+        "terminal_detach_result" => apply_detach_result(ws, message),
+        "terminal_ws_fragment" => Ok(()),
         "terminal_write_outcome" => apply_write_outcome(ws, message),
+        "terminal_kill_result" => apply_kill_result(ws, message),
         "terminal_event" => apply_event(ws, message),
         "terminal_output" | "terminal_attach_history" => Ok(()),
         _ => Ok(()),
     }
+}
+
+fn apply_kill_result(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
+    let Some(terminal_id) = message.get("terminal_id").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if message.get("success").and_then(Value::as_bool) == Some(true) {
+        if let Some(id) = ws.pane_for_terminal(terminal_id) {
+            if let Some(pane) = ws.panes.get_mut(&id) {
+                pane.terminating = true;
+                pane.control = ControlState::Observe;
+                pane.pending_input = None;
+            }
+        }
+    } else {
+        ws.status_message = Some(
+            message
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("terminate refused")
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn apply_detach_result(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
+    if message.get("success").and_then(Value::as_bool) != Some(true) {
+        return Ok(());
+    }
+    let Some(attachment) = message.get("attachment_id").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    ws.advance_scripted_detach(attachment)
 }
 
 fn apply_lease_lost(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
@@ -29,12 +65,13 @@ fn apply_lease_lost(ws: &mut Workspace, message: &Value) -> Result<(), DaemonErr
         .and_then(Value::as_u64)
         .unwrap_or(0);
     if let Some(pane) = ws.pane_for_attachment_mut(attachment) {
-        if gen < pane.lease_generation {
+        if gen < pane.lease_generation() {
             return Ok(());
         }
-        pane.lease_generation = gen;
+        pane.set_lease_generation(gen);
         pane.control = ControlState::LeaseLost;
         pane.take_back = true;
+        pane.pending_input = None;
     }
     Ok(())
 }
@@ -51,17 +88,26 @@ fn apply_control_result(ws: &mut Workspace, message: &Value) -> Result<(), Daemo
         .get("granted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let mut pending = None;
     if let Some(pane) = ws.pane_for_attachment_mut(attachment) {
-        if gen < pane.lease_generation {
+        if gen < pane.lease_generation() {
             return Ok(());
         }
-        pane.lease_generation = gen;
+        pane.set_lease_generation(gen);
         pane.control = if granted {
             ControlState::Held
         } else {
             ControlState::Observe
         };
         pane.take_back = !granted;
+        if granted {
+            pending = pane.pending_input.take().map(|data| (pane.id, data));
+        } else {
+            pane.pending_input = None;
+        }
+    }
+    if let Some((pane_id, data)) = pending {
+        ws.send_input(pane_id, &data)?;
     }
     Ok(())
 }
@@ -70,38 +116,7 @@ fn apply_finalized(ws: &mut Workspace, message: &Value) -> Result<(), DaemonErro
     let Some(attachment) = message.get("attachment_id").and_then(Value::as_str) else {
         return Ok(());
     };
-    if let Some(pane) = ws.pane_for_attachment_mut(attachment) {
-        pane.live = false;
-        pane.fragment = None;
-        pane.control = ControlState::Observe;
-    }
-    Ok(())
-}
-
-fn apply_fragment(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
-    let Some(attachment) = message.get("attachment_id").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let Some(pane) = ws.pane_for_attachment_mut(attachment) else {
-        return Ok(());
-    };
-    if !pane.live {
-        return Ok(());
-    }
-    let index = message
-        .get("fragment_index")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as u32;
-    let payload = message.get("payload").and_then(Value::as_str).unwrap_or("");
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .unwrap_or_default();
-    let acc = pane.fragment.get_or_insert_with(Default::default);
-    acc.parts.insert(index, bytes);
-    if message.get("more").and_then(Value::as_bool) == Some(false) {
-        pane.fragment = None;
-        pane.frames_rendered += 1;
-    }
+    ws.retire_attachment(attachment, message.get("reason").and_then(Value::as_str));
     Ok(())
 }
 
@@ -137,10 +152,37 @@ fn apply_write_outcome(ws: &mut Workspace, message: &Value) -> Result<(), Daemon
 }
 
 fn apply_event(ws: &mut Workspace, message: &Value) -> Result<(), DaemonError> {
-    if message.get("event").and_then(Value::as_str) == Some("exited") {
-        if let Some(terminal_id) = message.get("terminal_id").and_then(Value::as_str) {
+    let event = message.get("event").and_then(Value::as_str).unwrap_or("");
+    let terminal = message.get("terminal").unwrap_or(message);
+    let terminal_id = message
+        .get("terminal_id")
+        .or_else(|| terminal.get("terminal_id"))
+        .or_else(|| terminal.get("id"))
+        .and_then(Value::as_str);
+    match event {
+        "created" => {
+            let Some(terminal_id) = terminal_id else {
+                return Ok(());
+            };
+            ws.pending_spawns.remove(terminal_id);
+            if ws.pane_for_terminal(terminal_id).is_none() {
+                let backend = terminal
+                    .get("backend")
+                    .and_then(Value::as_str)
+                    .unwrap_or("native");
+                ws.open_terminal(terminal_id, backend, "")
+                    .map_err(|error| DaemonError::Protocol {
+                        detail: error.to_string(),
+                    })?;
+            }
+        }
+        "exited" | "killed" | "terminated" => {
+            let Some(terminal_id) = terminal_id else {
+                return Ok(());
+            };
             ws.remove_terminal(terminal_id);
         }
+        _ => {}
     }
     Ok(())
 }

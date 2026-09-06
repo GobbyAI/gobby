@@ -15,7 +15,7 @@ use crate::copy_mode::{paste_payload, PASTE_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -349,9 +349,9 @@ struct ScriptedState {
 }
 
 /// Deterministic in-memory daemon used by reducer tests.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScriptedDaemon {
-    state: Mutex<ScriptedState>,
+    state: Arc<Mutex<ScriptedState>>,
     events: broadcast::Sender<DaemonEvent>,
 }
 
@@ -365,7 +365,7 @@ impl ScriptedDaemon {
     pub fn new() -> Self {
         let (events, _) = broadcast::channel(BROADCAST_CAPACITY);
         Self {
-            state: Mutex::new(ScriptedState {
+            state: Arc::new(Mutex::new(ScriptedState {
                 rest: Vec::new(),
                 ws_out: Vec::new(),
                 attention_inbox: VecDeque::new(),
@@ -383,9 +383,14 @@ impl ScriptedDaemon {
                 pty_mutations: 0,
                 last_pty_write: None,
                 last_paste_seq: None,
-            }),
+            })),
             events,
         }
+    }
+
+    /// Publish an event through the same subscription path as the live daemon.
+    pub fn publish_event(&self, event: DaemonEvent) {
+        let _ = self.events.send(event);
     }
 
     fn state(&self) -> MutexGuard<'_, ScriptedState> {

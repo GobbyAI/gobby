@@ -1,9 +1,15 @@
 //! Workspace reducer: roster, focus-follows-control, attach, spawn.
 
 mod apply;
+mod attach;
+mod attention;
 mod live;
+mod live_loop;
 mod pane;
+pub mod run_loop;
 
+pub use attach::AttachState;
+pub use live_loop::run_live_loop;
 pub use pane::{ControlState, Pane, PaneId};
 
 use crate::copy_mode::PASTE_MAX_BYTES;
@@ -40,12 +46,17 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     next_pane: u32,
     roster_ids: Vec<String>,
     attention: AttentionState,
+    pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
     lifecycle: Option<Snapshot>,
     daemon_ready: bool,
     daemon_error: Option<DaemonError>,
     event_rx: Option<EventReceiver>,
     attached_generation: HashMap<PaneId, Generation>,
+    pending_spawns: HashSet<String>,
+    status_message: Option<String>,
+    exit_reason: Option<String>,
+    shutdown_started: bool,
 }
 
 impl Workspace {
@@ -64,12 +75,17 @@ impl Workspace {
                 entries: Vec::new(),
                 applied_seqs: Vec::new(),
             },
+            pending_attention: None,
             gobby_home: None,
             lifecycle: None,
             daemon_ready: true,
             daemon_error: None,
             event_rx: None,
             attached_generation: HashMap::new(),
+            pending_spawns: HashSet::new(),
+            status_message: None,
+            exit_reason: None,
+            shutdown_started: false,
         }
     }
 
@@ -96,11 +112,11 @@ impl Workspace {
     pub fn set_daemon_reachable(&mut self, reachable: bool) {
         self.daemon.set_reachable(reachable);
         if !reachable {
-            for pane in self.panes.values_mut() {
-                if pane.control == ControlState::Held {
-                    pane.control = ControlState::Observe;
-                }
-            }
+            let generation = Daemon::subscribe(&self.daemon).0.generation;
+            self.observe_daemon_disconnect(
+                generation,
+                DaemonError::Unavailable { retry_after: None },
+            );
         }
     }
 
@@ -168,7 +184,8 @@ impl Workspace {
     pub fn fetch_roster(&mut self) -> Result<(), DaemonError> {
         let project = self.project_id.clone().unwrap_or_default();
         let mut cursor: Option<String> = None;
-        self.roster_ids.clear();
+        let mut rows = Vec::new();
+        let mut roster_ids = Vec::new();
         loop {
             let page = self
                 .daemon
@@ -180,8 +197,9 @@ impl Workspace {
                         .or_else(|| item.get("terminal_id"))
                         .and_then(Value::as_str)
                         .unwrap_or_default();
-                    if !id.is_empty() && !self.roster_ids.iter().any(|known| known == id) {
-                        self.roster_ids.push(id.to_string());
+                    if !id.is_empty() && !roster_ids.iter().any(|known| known == id) {
+                        roster_ids.push(id.to_string());
+                        rows.push(item.clone());
                     }
                 }
             }
@@ -190,6 +208,48 @@ impl Workspace {
                 _ => break,
             }
         }
+        self.reconcile_terminal_rows(&rows, roster_ids)?;
+        Ok(())
+    }
+
+    fn reconcile_terminal_rows(
+        &mut self,
+        rows: &[Value],
+        roster_ids: Vec<String>,
+    ) -> Result<(), DaemonError> {
+        let removed: Vec<String> = self
+            .order
+            .iter()
+            .map(|id| self.panes[id].terminal_id.clone())
+            .filter(|id| !roster_ids.contains(id))
+            .collect();
+        for terminal_id in removed {
+            self.remove_terminal(&terminal_id);
+        }
+        for row in rows {
+            let terminal_id = row
+                .get("terminal_id")
+                .or_else(|| row.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if terminal_id.is_empty() {
+                continue;
+            }
+            self.pending_spawns.remove(terminal_id);
+            if self.pane_for_terminal(terminal_id).is_none() {
+                let backend = row
+                    .get("backend")
+                    .and_then(Value::as_str)
+                    .unwrap_or("native");
+                self.open_terminal(terminal_id, backend, "")
+                    .map_err(|error| DaemonError::Protocol {
+                        detail: error.to_string(),
+                    })?;
+            }
+        }
+        self.pending_spawns
+            .retain(|terminal_id| roster_ids.contains(terminal_id));
+        self.roster_ids = roster_ids;
         Ok(())
     }
 
@@ -212,13 +272,14 @@ impl Workspace {
     }
 
     pub fn attach_frames(&mut self, id: PaneId) -> Result<(), FrameError> {
+        self.ensure_requests_allowed()
+            .map_err(|error| FrameError::Other(error.to_string()))?;
         let locator = self.locator_for(id);
         let pane = self.panes.get_mut(&id).expect("pane");
         pane.scripted_source_mut()
             .ok_or_else(|| FrameError::Protocol("pane does not have a scripted source".into()))?
             .connect(&locator, 80, 24)?;
-        pane.live = true;
-        let attachment = pane.attachment_id.clone();
+        let attachment = pane.attachment_id().to_string();
         let terminal_id = pane.terminal_id.clone();
         let _ = self.daemon.send_ws(json!({
             "type": "terminal_attach",
@@ -251,6 +312,7 @@ impl Workspace {
     }
 
     pub fn focus_pane(&mut self, id: PaneId) -> Result<(), DaemonError> {
+        self.ensure_requests_allowed()?;
         if let Some(prev) = self.focus {
             if prev != id {
                 self.release_control(prev)?;
@@ -267,15 +329,16 @@ impl Workspace {
     }
 
     pub fn take_control(&mut self, id: PaneId) -> Result<(), DaemonError> {
+        self.ensure_requests_allowed()?;
         let pane = self.panes.get(&id).expect("pane");
-        if !pane.live {
+        if !pane.is_live() {
             return Err(DaemonError::new(
                 409,
                 "stale_attachment",
                 "attachment is not live",
             ));
         }
-        let attachment = pane.attachment_id.clone();
+        let attachment = pane.attachment_id().to_string();
         let terminal_id = pane.terminal_id.clone();
         if !self.daemon.reachable() {
             return Err(DaemonError::new(503, "unreachable", "daemon unreachable"));
@@ -289,13 +352,14 @@ impl Workspace {
         let pane = self.panes.get_mut(&id).expect("pane");
         pane.control = ControlState::Held;
         pane.take_back = false;
-        pane.lease_generation = pane.lease_generation.max(1);
+        pane.set_lease_generation(pane.lease_generation().max(1));
         Ok(())
     }
 
     pub fn release_control(&mut self, id: PaneId) -> Result<(), DaemonError> {
+        self.ensure_requests_allowed()?;
         let pane = self.panes.get(&id).expect("pane");
-        let attachment = pane.attachment_id.clone();
+        let attachment = pane.attachment_id().to_string();
         let terminal_id = pane.terminal_id.clone();
         if self.daemon.ws_connected() && self.daemon.reachable() {
             let _ = self.daemon.send_ws(json!({
@@ -311,15 +375,54 @@ impl Workspace {
     }
 
     pub fn send_keys(&mut self, id: PaneId, data: &str) -> Result<(), DaemonError> {
-        let pane = self.panes.get_mut(&id).expect("pane");
-        if !pane.writable() {
-            return Err(DaemonError::new(403, "held", "pane is not writable"));
+        self.send_input(id, data.as_bytes())
+    }
+
+    pub fn send_input(&mut self, id: PaneId, data: &[u8]) -> Result<(), DaemonError> {
+        self.ensure_requests_allowed()?;
+        if !self.panes[&id].writable() {
+            let pane = self.panes.get_mut(&id).expect("pane");
+            if !pane.is_live() {
+                return Err(DaemonError::new(
+                    409,
+                    "stale_attachment",
+                    "attachment is not live",
+                ));
+            }
+            if matches!(
+                pane.control,
+                ControlState::LeaseLost | ControlState::UncertainReadOnly
+            ) {
+                return Err(DaemonError::new(
+                    403,
+                    "read_only",
+                    "pane requires explicit control recovery",
+                ));
+            }
+            if pane.pending_input.is_some() {
+                return Err(DaemonError::new(
+                    409,
+                    "control_pending",
+                    "a take-control request is already pending",
+                ));
+            }
+            pane.pending_input = Some(data.to_vec());
+            let attachment = pane.attachment_id().to_string();
+            let terminal_id = pane.terminal_id.clone();
+            return self.daemon.send_ws(json!({
+                "type": "terminal_take_control",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment,
+                "takeover": false
+            }));
         }
+        let pane = self.panes.get_mut(&id).expect("pane");
         pane.client_write_seq += 1;
         let seq = pane.client_write_seq;
         pane.in_flight_write = Some(seq);
-        let attachment = pane.attachment_id.clone();
+        let attachment = pane.attachment_id().to_string();
         let terminal_id = pane.terminal_id.clone();
+        let data = String::from_utf8_lossy(data);
         self.daemon.send_ws(json!({
             "type": "terminal_input",
             "terminal_id": terminal_id,
@@ -330,6 +433,7 @@ impl Workspace {
     }
 
     pub fn paste_to_pty(&mut self, id: PaneId, text: &str) -> Result<(), DaemonError> {
+        self.ensure_requests_allowed()?;
         if text.len() > PASTE_MAX_BYTES {
             return Err(DaemonError::new(400, "paste_too_large", "paste_too_large"));
         }
@@ -344,7 +448,7 @@ impl Workspace {
         pane.client_write_seq += 1;
         let seq = pane.client_write_seq;
         pane.in_flight_write = Some(seq);
-        let attachment = pane.attachment_id.clone();
+        let attachment = pane.attachment_id().to_string();
         let terminal_id = pane.terminal_id.clone();
         self.daemon.send_ws(json!({
             "type": "terminal_paste",
@@ -372,7 +476,6 @@ impl Workspace {
 
     pub fn force_held(&mut self, id: PaneId) {
         let pane = self.panes.get_mut(&id).expect("pane");
-        pane.live = true;
         pane.control = ControlState::Held;
         pane.take_back = false;
     }
@@ -385,6 +488,8 @@ impl Workspace {
     }
 
     pub fn set_scroll_offset(&mut self, id: PaneId, rows: u32) -> Result<(), FrameError> {
+        self.ensure_requests_allowed()
+            .map_err(|error| FrameError::Other(error.to_string()))?;
         let backend = self.panes[&id].backend.clone();
         if backend == "native" {
             self.panes
@@ -422,36 +527,42 @@ impl Workspace {
     }
 
     pub fn kill_frame_stream(&mut self, id: PaneId) -> Result<(), DaemonError> {
-        let pane = self.panes.get(&id).expect("pane");
-        let attachment = pane.attachment_id.clone();
-        let terminal_id = pane.terminal_id.clone();
+        self.ensure_requests_allowed()?;
+        let (attachment, terminal_id) = {
+            let pane = self.panes.get_mut(&id).expect("pane");
+            let Some((attachment, _)) = pane.begin_detaching(tokio::time::Instant::now()) else {
+                return Ok(());
+            };
+            (attachment, pane.terminal_id.clone())
+        };
         self.daemon.send_ws(json!({
             "type": "terminal_detach",
             "request_id": format!("req-detach-{attachment}"),
             "terminal_id": terminal_id,
             "attachment_id": attachment
         }))?;
-        let pane = self.panes.get_mut(&id).expect("pane");
-        pane.live = false;
-        pane.control = ControlState::Observe;
-        pane.fragment = None;
         Ok(())
     }
 
     pub fn reattach_frames(&mut self, id: PaneId) -> Result<(), FrameError> {
+        self.ensure_requests_allowed()
+            .map_err(|error| FrameError::Other(error.to_string()))?;
         let locator = self.locator_for(id);
         let mut source = ScriptedFrameSource::new(Transport::Proxy);
         source.set_welcome_epoch(locator.frame_host_epoch.clone());
         source.connect(&locator, 80, 24)?;
         let attachment = uuid::Uuid::new_v4().to_string();
         let terminal_id = self.panes[&id].terminal_id.clone();
+        let generation = Daemon::subscribe(&self.daemon).0.generation;
         {
             let pane = self.panes.get_mut(&id).expect("pane");
-            pane.attachment_id = attachment.clone();
-            pane.live = true;
-            pane.control = ControlState::Observe;
-            pane.lease_generation = 0;
-            pane.install_frame_source(PaneFrameSource::Scripted(source));
+            pane.install_attachment(
+                attachment.clone(),
+                Transport::Proxy,
+                generation,
+                0,
+                PaneFrameSource::Scripted(source),
+            );
         }
         self.daemon.send_ws(json!({
             "type": "terminal_attach",
@@ -467,18 +578,29 @@ impl Workspace {
 
     pub fn drop_daemon_ws(&mut self) {
         self.daemon.set_ws_connected(false);
+        let generation = Daemon::subscribe(&self.daemon).0.generation;
+        self.observe_daemon_disconnect(generation, DaemonError::Unavailable { retry_after: None });
     }
 
     pub fn reconnect_daemon_ws(&mut self) -> Result<(), DaemonError> {
+        self.ensure_not_exiting()?;
         self.daemon.set_ws_connected(true);
+        self.daemon_ready = true;
+        self.daemon_error = None;
+        let generation = Daemon::subscribe(&self.daemon).0.generation;
         let ids: Vec<PaneId> = self.order.clone();
         for id in ids {
+            let attachment = uuid::Uuid::new_v4().to_string();
             let pane = self.panes.get_mut(&id).expect("pane");
-            pane.live = false;
-            pane.control = ControlState::Observe;
-            pane.attachment_id = uuid::Uuid::new_v4().to_string();
-            pane.live = true;
-            let attachment = pane.attachment_id.clone();
+            let mut source = ScriptedFrameSource::new(Transport::Direct);
+            source.set_welcome_epoch(pane.expected_host_epoch.clone());
+            pane.install_attachment(
+                attachment.clone(),
+                Transport::Direct,
+                generation,
+                0,
+                PaneFrameSource::Scripted(source),
+            );
             let terminal_id = pane.terminal_id.clone();
             self.daemon.send_ws(json!({
                 "type": "terminal_attach",
@@ -492,30 +614,51 @@ impl Workspace {
     }
 
     pub fn respond(&mut self, entry_id: &str, body: Value) -> Result<Value, DaemonError> {
+        self.ensure_requests_allowed()?;
         self.daemon.respond(entry_id, body)
     }
 
-    pub fn spawn_agent(&mut self, body: Value) -> Result<PaneId, FrameError> {
+    pub fn spawn_agent(&mut self, body: Value) -> Result<String, FrameError> {
+        self.ensure_requests_allowed()
+            .map_err(|error| FrameError::Other(error.to_string()))?;
         let result = self
             .daemon
             .spawn_agent(body)
             .map_err(|err| FrameError::Other(err.to_string()))?;
+        if result.get("success").and_then(Value::as_bool) == Some(false) {
+            let reason = result
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("spawn refused");
+            self.status_message = Some(reason.to_string());
+            return Err(FrameError::Other(reason.to_string()));
+        }
         let terminal_id = result
             .get("terminal_id")
             .and_then(Value::as_str)
-            .unwrap_or("term-spawn");
-        self.open_terminal(terminal_id, "native", "epoch-a")
+            .unwrap_or_default()
+            .to_string();
+        if terminal_id.is_empty() {
+            return Err(FrameError::Other("spawn returned no terminal id".into()));
+        }
+        if self.pane_for_terminal(&terminal_id).is_none() {
+            self.pending_spawns.insert(terminal_id.clone());
+        }
+        Ok(terminal_id)
     }
 
     pub fn terminate_terminal(&mut self, terminal_id: &str) -> Result<(), DaemonError> {
+        self.ensure_requests_allowed()?;
         self.daemon.send_ws(json!({
             "type": "terminal_kill",
-            "request_id": "req-kill-1",
+            "request_id": uuid::Uuid::new_v4().to_string(),
             "terminal_id": terminal_id
         }))
     }
 
     pub fn restore_project(&mut self, project_id: &str) -> Result<(), FrameError> {
+        self.ensure_requests_allowed()
+            .map_err(|error| FrameError::Other(error.to_string()))?;
         self.select_project(project_id);
         let home = self.gobby_home.clone().unwrap_or_default();
         let snapshot: WorkspaceSnapshot =
@@ -531,11 +674,88 @@ impl Workspace {
     }
 
     pub fn apply_ws(&mut self, message: &Value) -> Result<(), DaemonError> {
+        if self.exit_reason.is_some() {
+            return Ok(());
+        }
         apply::apply(self, message)
     }
 }
 
 impl<D: Daemon> Workspace<D> {
+    pub fn retire_indeterminate_control(
+        &mut self,
+        pane_id: PaneId,
+        now: tokio::time::Instant,
+    ) -> Option<(String, String, Generation)> {
+        let pane = self.panes.get_mut(&pane_id)?;
+        let terminal_id = pane.terminal_id.clone();
+        let (attachment_id, generation) = pane.begin_detaching(now)?;
+        pane.clear_control("control result indeterminate");
+        Some((terminal_id, attachment_id, generation))
+    }
+
+    pub fn observe_daemon_disconnect(&mut self, _generation: Generation, error: DaemonError) {
+        self.daemon_ready = false;
+        for pane in self.panes.values_mut() {
+            pane.clear_control(error.to_string());
+        }
+        self.daemon_error = Some(error);
+    }
+
+    pub fn submit_expired_detaches(
+        &mut self,
+        supervisor: &mut run_loop::ReconnectSupervisor,
+        now: tokio::time::Instant,
+    ) -> usize {
+        if self.exit_reason.is_some() {
+            return 0;
+        }
+        let mut submitted = 0;
+        for pane in self.panes.values_mut() {
+            if let Some(generation) = pane.take_expired_detach_generation(now) {
+                drop(supervisor.request(generation));
+                submitted += 1;
+            }
+        }
+        submitted
+    }
+
+    fn ensure_requests_allowed(&self) -> Result<(), DaemonError> {
+        self.ensure_not_exiting()?;
+        if !self.daemon_ready {
+            return Err(self
+                .daemon_error
+                .clone()
+                .unwrap_or(DaemonError::Unavailable { retry_after: None }));
+        }
+        Ok(())
+    }
+
+    fn ensure_not_exiting(&self) -> Result<(), DaemonError> {
+        if self.exit_reason.is_some() {
+            return Err(DaemonError::Protocol {
+                detail: "client exit is latched".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn latch_exit(&mut self, reason: impl Into<String>) -> bool {
+        if self.exit_reason.is_some() {
+            return false;
+        }
+        self.exit_reason = Some(reason.into());
+        true
+    }
+
+    pub fn exit_reason(&self) -> Option<&str> {
+        self.exit_reason.as_deref()
+    }
+
+    pub fn status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
+    }
+
     pub fn pane(&self, id: PaneId) -> &Pane {
         &self.panes[&id]
     }
@@ -550,7 +770,7 @@ impl<D: Daemon> Workspace<D> {
     pub fn pane_by_attachment(&self, attachment_id: &str) -> Option<&Pane> {
         self.panes
             .values()
-            .find(|pane| pane.attachment_id == attachment_id)
+            .find(|pane| !attachment_id.is_empty() && pane.attachment_id() == attachment_id)
     }
 
     pub fn replace_frame_source(
@@ -567,16 +787,13 @@ impl<D: Daemon> Workspace<D> {
     }
 
     pub async fn recv_pane_frame(&mut self, id: PaneId) -> Result<ServerMessage, FrameError> {
-        let mut source = self
+        let result = self
             .panes
             .get_mut(&id)
-            .and_then(Pane::take_frame_source)
-            .ok_or_else(|| FrameError::Protocol("pane has no frame source".into()))?;
-        let result = source.recv().await;
-        self.panes
-            .get_mut(&id)
-            .expect("pane exists while receiving")
-            .install_frame_source(source);
+            .and_then(Pane::frame_source_mut)
+            .ok_or_else(|| FrameError::Protocol("pane has no frame source".into()))?
+            .recv()
+            .await;
         if let Ok(message) = &result {
             self.record_source_message(id, message);
         }
@@ -586,9 +803,14 @@ impl<D: Daemon> Workspace<D> {
     fn record_source_message(&mut self, id: PaneId, message: &ServerMessage) {
         let pane = self.panes.get_mut(&id).expect("pane exists");
         match message {
-            ServerMessage::Frame(_)
-            | ServerMessage::Terminal(_)
-            | ServerMessage::Graphics { .. } => {
+            ServerMessage::Frame(frame) => {
+                pane.latest_frame = Some(frame.clone());
+                pane.frames_rendered = pane.frames_rendered.saturating_add(1);
+                if pane.scroll_offset > 0 {
+                    pane.new_output = true;
+                }
+            }
+            ServerMessage::Terminal(_) | ServerMessage::Graphics { .. } => {
                 pane.frames_rendered = pane.frames_rendered.saturating_add(1);
                 if pane.scroll_offset > 0 {
                     pane.new_output = true;
@@ -627,10 +849,17 @@ impl<D: Daemon> Workspace<D> {
     pub(super) fn pane_for_attachment_mut(&mut self, attachment_id: &str) -> Option<&mut Pane> {
         self.panes
             .values_mut()
-            .find(|pane| pane.attachment_id == attachment_id)
+            .find(|pane| pane.is_live() && pane.attachment_id() == attachment_id)
+    }
+
+    pub(super) fn retire_attachment(&mut self, attachment_id: &str, reason: Option<&str>) -> bool {
+        self.panes
+            .values_mut()
+            .any(|pane| pane.retire_attachment(attachment_id, reason.map(ToOwned::to_owned)))
     }
 
     pub(super) fn remove_terminal(&mut self, terminal_id: &str) {
+        self.pending_spawns.remove(terminal_id);
         let ids: Vec<PaneId> = self
             .order
             .iter()

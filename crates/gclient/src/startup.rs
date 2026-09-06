@@ -2,7 +2,6 @@
 
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
 use serde::Deserialize;
-use std::io::IsTerminal;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -229,10 +228,6 @@ pub fn run() -> anyhow::Result<()> {
         token: gobby_core::local_token::read_local_cli_token().ok(),
     };
     let health = HttpHealthClient::new();
-    if std::io::stdout().is_terminal() {
-        let (ready, _guard) = start_session(args, env, &health, CrosstermBackend)?;
-        return crate::views::run_ready(ready);
-    }
-    let ready = prepare(&args, env, &health)?;
+    let (ready, _guard) = start_session(args, env, &health, CrosstermBackend)?;
     crate::views::run_ready(ready)
 }

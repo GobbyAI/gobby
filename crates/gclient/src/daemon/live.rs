@@ -526,8 +526,6 @@ impl Daemon for LiveDaemon {
                         .clone()
                         .unwrap_or(DaemonError::Unavailable { retry_after: None }));
                 }
-            } else if state.ready {
-                return Ok(state.generation);
             } else if let Some(flight) = &state.reconnect {
                 (Some(flight.result_rx.clone()), None)
             } else {
