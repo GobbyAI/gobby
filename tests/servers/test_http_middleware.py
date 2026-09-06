@@ -321,18 +321,8 @@ class TestLifespan:
 
         assert server._running is False
 
-        watchdog = MagicMock()
-        with (
-            patch(
-                "gobby.servers._app_lifecycle.EventLoopLagWatchdog",
-                return_value=watchdog,
-            ),
-            TestClient(server.app),
-        ):
+        with TestClient(server.app):
             assert server._running is True
-            watchdog.start.assert_called_once_with()
-
-        watchdog.stop.assert_called_once_with()
 
     def test_lifespan_initializes_hook_manager(self, session_storage: SessionManager) -> None:
         """Test that lifespan initializes HookManager."""

@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from gobby.servers.event_loop_watchdog import EventLoopLagWatchdog
-
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -315,20 +313,13 @@ def create_lifespan(
         except Exception as e:
             logger.warning("Failed to start SessionLivenessMonitor: %s", e)
 
-        event_loop_watchdog = EventLoopLagWatchdog(asyncio.get_running_loop())
-        app.state.event_loop_lag_watchdog = event_loop_watchdog
-        event_loop_watchdog.start()
-        try:
-            if mcp_app is not None:
-                async with mcp_app.router.lifespan_context(app):
-                    logger.debug("MCP server lifespan initialized")
-                    yield
-                    logger.debug("MCP server lifespan shutdown complete")
-            else:
+        if mcp_app is not None:
+            async with mcp_app.router.lifespan_context(app):
+                logger.debug("MCP server lifespan initialized")
                 yield
-        finally:
-            await asyncio.to_thread(event_loop_watchdog.stop)
-            del app.state.event_loop_lag_watchdog
+            logger.debug("MCP server lifespan shutdown complete")
+        else:
+            yield
 
         logger.debug("Shutting down Gobby HTTP server")
         if hasattr(app.state, "session_change_listener") and server.session_manager is not None:
