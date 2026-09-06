@@ -5,7 +5,7 @@ mod manifest;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
@@ -523,7 +523,7 @@ fn validate_receipt_path(path: &Path, receipt: &Receipt) -> anyhow::Result<()> {
     if path.exists() {
         let file = File::open(path)?;
         manifest::require_private_file(&file)?;
-        let previous: Receipt = serde_json::from_reader(file)?;
+        let previous: Receipt = serde_json::from_reader(BufReader::new(file))?;
         ensure!(
             previous.manifest_digest == receipt.manifest_digest
                 && previous.backends == receipt.backends
@@ -541,8 +541,12 @@ fn write_receipt(path: &Path, receipt: &Receipt) -> anyhow::Result<()> {
     validate_receipt_path(path, receipt)?;
     let parent = path.parent().context("receipt requires parent")?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    serde_json::to_writer(file.as_file_mut(), receipt)?;
-    file.write_all(b"\n")?;
+    {
+        let mut writer = BufWriter::new(file.as_file_mut());
+        serde_json::to_writer(&mut writer, receipt)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+    }
     file.as_file().sync_all()?;
     file.persist(path).map_err(|error| error.error)?;
     File::open(parent)?.sync_all()?;
