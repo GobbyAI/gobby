@@ -174,10 +174,13 @@ def test_ownership_and_handoff_pressure_scenario_stays_inside_one_task() -> None
         "record_finding",
         "fix_finding",
         "set_handoff_compact",
+        "close_current_task",
         "set_handoff_clear",
         "respond",
     )
     assert "create_task" not in result.loaded.action_names
     assert "checkpoint_file" not in result.loaded.action_names
     assert "readable current state" in result.loaded.combined_text
+    assert "closing the current task" in result.loaded.combined_text
+    assert "moving to another task" in result.loaded.combined_text
     assert "cumulative history" not in result.loaded.combined_text

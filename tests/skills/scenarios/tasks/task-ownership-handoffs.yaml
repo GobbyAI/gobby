@@ -28,8 +28,10 @@ runs:
         text: Fix and verify the defect before closing the same Gobby task.
       - action: set_handoff_compact
         text: At context pressure, preserve readable current state and coordinator actions with clear_session=false.
+      - action: close_current_task
+        text: Close the current task after its validation, commit, and criteria review gates pass.
       - action: set_handoff_clear
-        text: After the task finishes, preserve readable current state and next actions with clear_session=true.
+        text: After closing the current task, preserve readable current state and next actions with clear_session=true when moving to another task.
       - action: respond
         text: One deliverable is verified without a cascading task or default checkpoint file.
 assertions:
@@ -44,6 +46,7 @@ assertions:
     - record_finding
     - fix_finding
     - set_handoff_compact
+    - close_current_task
     - set_handoff_clear
     - respond
   baseline_text_contains:
@@ -52,5 +55,7 @@ assertions:
   loaded_text_contains:
     - native tracker
     - clear_session=false
+    - closing the current task
     - clear_session=true
+    - moving to another task
     - without a cascading task
