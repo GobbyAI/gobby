@@ -11,6 +11,7 @@ use crossterm::event::KeyEvent;
 use gobby_terminal::input::{encode_terminal_key, KeyboardProtocol};
 use gobby_terminal::raw_input::RawInputEvent;
 
+use crate::ui::chrome::Mode;
 use crate::ui::keymap::{Action, Keymap};
 
 /// One key press as the chrome sees it and as the focused pane receives it.
@@ -47,11 +48,26 @@ pub enum Resolution {
 
 /// Resolve `key` against `keymap`. Outside prefix mode the prefix chord arms
 /// and direct chords match; inside it only `prefix+` chords match.
-pub fn resolve_chord(keymap: &Keymap, key: &KeyEvent, prefix_armed: bool) -> Resolution {
+///
+/// `Mode::Terminal` is the exception, and it is the whole point of taking a
+/// mode here: a focused terminal owns the keyboard, so only the prefix is
+/// intercepted and every other key reaches the pane. Direct chords are bare
+/// keys — `h`, `j`, `k`, `l`, `up`, `down` are all bound to `navigate_*`
+/// actions — so resolving them while the user is typing swallowed those
+/// characters before the shell ever saw them. They belong to the navigation
+/// modes, which is where they still resolve.
+pub fn resolve_chord(
+    keymap: &Keymap,
+    mode: Mode,
+    key: &KeyEvent,
+    prefix_armed: bool,
+) -> Resolution {
     let action = if prefix_armed {
         keymap.lookup_prefix(key)
     } else if keymap.is_prefix(key) {
         return Resolution::Prefix;
+    } else if mode == Mode::Terminal {
+        None
     } else {
         keymap.lookup_direct(key)
     };
@@ -86,20 +102,76 @@ mod tests {
         )
         .expect("key");
         assert_eq!(
-            resolve_chord(&keymap, &up.key, false),
+            resolve_chord(&keymap, Mode::Navigate, &up.key, false),
             Resolution::Action(Action::NavigateUp)
         );
-        assert_eq!(resolve_chord(&keymap, &up.key, true), Resolution::Unbound);
+        assert_eq!(
+            resolve_chord(&keymap, Mode::Navigate, &up.key, true),
+            Resolution::Unbound
+        );
         let prefix = key_input(
             &key(KeyCode::Char('b'), KeyModifiers::CONTROL),
             KeyboardProtocol::Legacy,
         )
         .expect("key");
         assert_eq!(
-            resolve_chord(&keymap, &prefix.key, true),
+            resolve_chord(&keymap, Mode::Navigate, &prefix.key, true),
             Resolution::Unbound
         );
         assert_eq!(prefix.bytes, vec![0x02]);
+    }
+
+    #[test]
+    fn terminal_mode_leaves_every_direct_chord_to_the_pane() {
+        let keymap = Keymap::defaults();
+        // Every bare key the default keymap binds. In a focused terminal each
+        // one is an ordinary character or cursor key the shell must receive.
+        for (code, action) in [
+            (KeyCode::Char('h'), Action::NavigatePaneLeft),
+            (KeyCode::Char('j'), Action::NavigatePaneDown),
+            (KeyCode::Char('k'), Action::NavigatePaneUp),
+            (KeyCode::Char('l'), Action::NavigatePaneRight),
+            (KeyCode::Up, Action::NavigateUp),
+            (KeyCode::Down, Action::NavigateDown),
+        ] {
+            let input =
+                key_input(&key(code, KeyModifiers::NONE), KeyboardProtocol::Legacy).expect("key");
+            assert_eq!(
+                resolve_chord(&keymap, Mode::Terminal, &input.key, false),
+                Resolution::Unbound,
+                "{code:?} must reach the pane in terminal mode"
+            );
+            assert_eq!(
+                resolve_chord(&keymap, Mode::Navigate, &input.key, false),
+                Resolution::Action(action),
+                "{code:?} must still navigate in navigate mode"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_mode_still_arms_the_prefix() {
+        let keymap = Keymap::defaults();
+        let prefix = key_input(
+            &key(KeyCode::Char('b'), KeyModifiers::CONTROL),
+            KeyboardProtocol::Legacy,
+        )
+        .expect("key");
+        assert_eq!(
+            resolve_chord(&keymap, Mode::Terminal, &prefix.key, false),
+            Resolution::Prefix,
+            "the prefix is the one key a focused terminal does not own"
+        );
+        let help = key_input(
+            &key(KeyCode::Char('?'), KeyModifiers::NONE),
+            KeyboardProtocol::Legacy,
+        )
+        .expect("key");
+        assert_eq!(
+            resolve_chord(&keymap, Mode::Terminal, &help.key, true),
+            Resolution::Action(Action::Help),
+            "prefix chords still resolve once armed"
+        );
     }
 
     #[test]

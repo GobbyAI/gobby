@@ -325,7 +325,7 @@ fn input_requests_exit(chrome: &Chrome, event: &RawInputEvent, prefix_armed: &mu
     let Some(input) = key_input(event, KeyboardProtocol::Legacy) else {
         return false;
     };
-    match resolve_chord(&chrome.keymap, &input.key, *prefix_armed) {
+    match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
         Resolution::Prefix => {
             *prefix_armed = true;
             false
@@ -555,7 +555,7 @@ async fn route_live_input(
                 .map_err(FrameError::from)?;
             return Ok(false);
         }
-        match resolve_chord(&chrome.keymap, &input.key, *prefix_armed) {
+        match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
             Resolution::Prefix => {
                 *prefix_armed = true;
                 chrome.mode = Mode::Prefix;

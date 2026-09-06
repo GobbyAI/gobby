@@ -109,7 +109,7 @@ fn route_scripted_input(
         return Ok(false);
     }
     if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
-        match resolve_chord(&chrome.keymap, &input.key, *prefix_armed) {
+        match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
             Resolution::Prefix => {
                 *prefix_armed = true;
                 chrome.mode = Mode::Prefix;

@@ -5,6 +5,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use gobby_client::key_input::{key_input, resolve_chord, text_bytes, KeyInput, Resolution};
 use gobby_client::theme::{Theme, ThemeKind};
+use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::{render_workspace, Action, Chrome, Keymap};
 use gobby_client::Workspace;
 use gobby_terminal::input::{KeyboardProtocol, TextCommit};
@@ -31,26 +32,32 @@ fn raw_input_events_drive_the_keymap_and_pane_bytes() {
     assert_eq!(prefix.key.code, KeyCode::Char('b'));
     assert_eq!(prefix.key.modifiers, KeyModifiers::CONTROL);
     assert_eq!(
-        resolve_chord(&keymap, &prefix.key, false),
+        resolve_chord(&keymap, Mode::Terminal, &prefix.key, false),
         Resolution::Prefix
     );
 
     let help = single_key(b"?");
     assert_eq!(
-        resolve_chord(&keymap, &help.key, true),
+        resolve_chord(&keymap, Mode::Terminal, &help.key, true),
         Resolution::Action(Action::Help)
     );
 
     let plain = single_key(b"x");
     assert_eq!(
-        resolve_chord(&keymap, &plain.key, false),
+        resolve_chord(&keymap, Mode::Terminal, &plain.key, false),
         Resolution::Unbound
     );
     assert_eq!(plain.bytes, b"x".to_vec());
 
+    // The same host bytes resolve differently by mode: a focused terminal owns
+    // the arrow, the navigation modes bind it.
     let up = single_key(b"\x1b[A");
     assert_eq!(
-        resolve_chord(&keymap, &up.key, false),
+        resolve_chord(&keymap, Mode::Terminal, &up.key, false),
+        Resolution::Unbound
+    );
+    assert_eq!(
+        resolve_chord(&keymap, Mode::Navigate, &up.key, false),
         Resolution::Action(Action::NavigateUp)
     );
 

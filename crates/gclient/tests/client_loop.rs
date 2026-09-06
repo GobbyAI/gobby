@@ -2764,3 +2764,62 @@ async fn prefix_help_and_settings_open_their_modes_in_the_live_loop() {
         mock.shutdown().await;
     }
 }
+
+/// The bare keys the default keymap binds to `navigate_*` are ordinary
+/// characters and cursor keys inside a focused terminal. They were resolving
+/// as chords and dying in the action dispatcher, so `echo GCLIENT-OK` reached
+/// the shell as `eco GCLIENT-OK`. Drive the real loop, not just the resolver:
+/// the seam was already correct in isolation, and only routing was wrong.
+#[tokio::test(start_paused = true)]
+async fn bare_navigation_keys_reach_a_focused_terminal() {
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-typing", "native", "epoch-typing")
+        .expect("open terminal");
+    ws.force_held(pane);
+
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "typing");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async move {
+        tokio::task::yield_now().await;
+        for code in [
+            KeyCode::Char('h'),
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+            KeyCode::Char('l'),
+            KeyCode::Up,
+            KeyCode::Down,
+        ] {
+            input_tx
+                .send(RawInputEvent::Key(TerminalKey::new(
+                    code,
+                    KeyModifiers::NONE,
+                )))
+                .await
+                .expect("typed key");
+        }
+        tokio::task::yield_now().await;
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_scripted_loop(&mut ws, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("loop exits cleanly");
+
+    let typed: String = ws
+        .daemon()
+        .ws_sent()
+        .iter()
+        .filter(|message| message.get("type").and_then(Value::as_str) == Some("terminal_input"))
+        .filter_map(|message| message.get("data")?.as_str().map(str::to_string))
+        .collect();
+    assert_eq!(
+        typed, "hjkl\u{1b}[A\u{1b}[B",
+        "every bare key must reach the pane verbatim"
+    );
+}
