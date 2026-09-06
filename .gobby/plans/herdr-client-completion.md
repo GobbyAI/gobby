@@ -1951,15 +1951,18 @@ herdr at the pinned commit carries 147 render tests under `src/ui` and `src/ui.r
 render into a `TestBackend` and assert row text. 21 belong to the dropped `mobile.rs`,
 `onboarding.rs`, `release_notes.rs`, and `menus.rs`, and 13 more live in keep-set
 modules but render surfaces 3.1 drops — worktree dialogs, the sidebar's worktree and
-git-space workspace grouping, and mobile layouts — leaving a ported keep-set of 113
-(`sidebar.rs` 35, `ui.rs` 31, `panes.rs` 17, `sidebar/tokens.rs` 6, `navigator.rs` 5,
+git-space workspace grouping, and mobile layouts — and 3 more (D4) assert surfaces 3.1
+redesigned or omitted: the toast's diagnostic dodge (the toast is pinned bottom-right,
+away from the top-right diagnostic bar), the tab-bar position setting, and sidebar
+drag-reorder — leaving a ported keep-set of 109
+(`sidebar.rs` 33, `ui.rs` 29, `panes.rs` 17, `sidebar/tokens.rs` 6, `navigator.rs` 5,
 `tabs.rs` 5, `dialogs.rs` 4, `status.rs` 4, `keybind_help.rs` 2, `tab_surface.rs` 2,
 `text.rs` 2). Port every keep-set test with its row-text
 expectations verbatim; `fixtures.rs` maps herdr state 1:1 onto Gobby state (agent →
 roster entry / terminal row, workspace → gclient workspace, attention → attention
 prompt); `token_map.rs` normalises colours so glyphs, layout, truncation, and focus
 junctions must match while theme values are the one allowed divergence. Tests of dropped
-modules and the 13 pinned dropped-surface tests are not ported and are listed in
+modules and the 17 pinned dropped-surface tests are not ported and are listed in
 `UPSTREAM.md`.
 
 `parity/upstream_tests.txt` is the completeness oracle, and an oracle the same leaf
@@ -1974,12 +1977,16 @@ rule: take every path from `git ls-tree -r <commit> -- src/ui src/ui.rs`, drop
 attribute and the name of the `fn` it precedes (allowing intervening attributes and the
 `pub` and `async` qualifiers — `tab_surface.rs`'s render tests are all `#[tokio::test]`,
 so a rule matching only `#[test]` would silently port none of them); emit one
-`<source_path>::<test_name>` per line, remove the 13 pinned dropped-surface identities
+`<source_path>::<test_name>` per line, remove the 17 pinned dropped-surface identities
 below — keep-set-file tests of the worktree, git-space-grouping, and mobile surfaces
-3.1 drops, pinned by exact name because a pattern rule would silently widen — and sort
+3.1 drops, plus the three D4 surfaces (toast diagnostic dodge, tab-bar position,
+sidebar drag-reorder, roster-row token truncation), pinned by exact name because a pattern rule would silently
+widen — and sort
 ascending, newline-terminated:
 
 - `src/ui.rs::configured_mobile_width_threshold_controls_layout_switch`
+- `src/ui.rs::desktop_tab_bar_position_controls_geometry_and_mode_bar_placement`
+- `src/ui.rs::desktop_toast_hit_area_still_offsets_for_config_diagnostic`
 - `src/ui.rs::mobile_background_tabs_use_mobile_terminal_area`
 - `src/ui.rs::mobile_config_diagnostic_keeps_command_visible`
 - `src/ui.rs::mobile_width_uses_header_and_full_width_terminal`
@@ -1988,14 +1995,16 @@ ascending, newline-terminated:
 - `src/ui/sidebar.rs::desktop_worktree_connector_uses_full_list_at_viewport_boundary`
 - `src/ui/sidebar.rs::desktop_worktree_tree_aligns_parents_and_marks_children`
 - `src/ui/sidebar.rs::linked_only_worktree_members_do_not_form_parentless_group`
+- `src/ui/sidebar.rs::narrow_agent_rows_preserve_later_tab_tokens`
+- `src/ui/sidebar.rs::packed_workspace_drag_indicator_overlays_an_internal_boundary`
 - `src/ui/sidebar.rs::space_row_gap_preserves_compact_worktree_children`
 - `src/ui/sidebar.rs::workspace_list_entries_group_multiple_workspaces_in_same_git_space`
 - `src/ui/sidebar.rs::workspace_list_entries_group_non_contiguous_explicit_members`
 - `src/ui/tab_surface.rs::mobile_full_app_semantic_frame_is_characterized`
 
 Run
-against that commit this yields 113 lines whose SHA-256 is
-`6d3cb09874a9c2b47a0b6982b4a1ccb920c77e435933bfada7e26d9ef116d412`, recorded here at plan
+against that commit this yields 109 lines whose SHA-256 is
+`654b542316d6b354962c43f40a8d8a608904b10bcaee5f61202b88cf4fec3e14`, recorded here at plan
 revision time from the pinned tree. `mod.rs` asserts that digest over the committed
 `upstream_tests.txt` before comparing anything, then compares the exact set of ported
 `source_path::test_name` identities against it and reports the per-module counts recorded
@@ -2023,7 +2032,7 @@ the three artifacts can no longer agree with each other while disagreeing with u
 **Acceptance:**
 
 - 4.1.1 - Every keep-set render test exists under `crates/gclient/tests/parity/` with unchanged row-text expectations and passes. test: `crates/gclient/tests/parity.rs`.
-- 4.1.2 - `parity/upstream_tests.txt` has 113 lines and SHA-256 `6d3cb09874a9c2b47a0b6982b4a1ccb920c77e435933bfada7e26d9ef116d412`, the ported identity set equals it exactly, and its per-module counts equal `UPSTREAM.md`. Omitting a keep-set identity fails even when the inventory and `UPSTREAM.md` are edited together to match the shortened port, because the digest no longer matches the pinned tree; removing, duplicating, or substituting a test fails even when the total count is unchanged. test: `crates/gclient/tests/parity/mod.rs::ported_set_matches_upstream_inventory`.
+- 4.1.2 - `parity/upstream_tests.txt` has 109 lines and SHA-256 `654b542316d6b354962c43f40a8d8a608904b10bcaee5f61202b88cf4fec3e14`, the ported identity set equals it exactly, and its per-module counts equal `UPSTREAM.md`. Omitting a keep-set identity fails even when the inventory and `UPSTREAM.md` are edited together to match the shortened port, because the digest no longer matches the pinned tree; removing, duplicating, or substituting a test fails even when the total count is unchanged. test: `crates/gclient/tests/parity/mod.rs::ported_set_matches_upstream_inventory`.
 - 4.1.3 - A glyph or alignment change in an imported module fails its parity test while a theme-value change does not. file: `crates/gclient/tests/parity/token_map.rs`.
 
 ### 4.2 gclient screen goldens [category: test] (depends: 3.3, 4.1)
