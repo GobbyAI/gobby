@@ -14,8 +14,8 @@ use gobby_client::app::run_loop::{
 };
 use gobby_client::app::{run_live_loop, AttachState};
 use gobby_client::daemon::{
-    Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, LiveDaemon, Page,
-    RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
+    Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
+    Page, RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
     WsMessage, WsReply, CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
@@ -2142,16 +2142,23 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         500,
         json!({"code": "reconcile_failed", "message": "roster unavailable"}),
     );
-    mock.enqueue(
+    mock.enqueue_with_event(
         "GET",
         "/api/terminals?",
-        200,
         json!({
             "items": [
                 {"terminal_id": "terminal-loss", "backend": "native", "state": "live"}
             ],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-loss", "seq": 1}
+        }),
+        json!({
+            "type": "terminal_event",
+            "event": "updated",
+            "terminal_id": "terminal-loss",
+            "daemon_epoch": "epoch-loss",
+            "seq": 2,
+            "timestamp": "2026-01-01T00:00:00Z"
         }),
     );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
@@ -2210,6 +2217,9 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         .replace_frame_source(pane_id, PaneFrameSource::Direct(direct))
         .expect("install direct frame source");
 
+    let observed_daemon = workspace.daemon().clone();
+    let observed_generation = observed_daemon.generation();
+    let (_, mut observed_events) = observed_daemon.subscribe();
     let reconnect_gate = mock.pause_next_websocket();
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
@@ -2217,6 +2227,24 @@ async fn daemon_loss_renders_read_only_until_recovery() {
     let driver = async {
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         mock.drop_websockets();
+        let disconnected_error = timeout(Duration::from_secs(1), async {
+            loop {
+                match observed_events.recv().await.expect("daemon loss event") {
+                    DaemonEvent::Disconnected { generation, error }
+                        if generation == observed_generation =>
+                    {
+                        break error;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("initial generation disconnect deadline");
+        assert!(matches!(
+            disconnected_error,
+            DaemonError::Unavailable { retry_after: None }
+        ));
         timeout(Duration::from_secs(1), async {
             while mock.websocket_handshakes() < 2 {
                 tokio::task::yield_now().await;
@@ -2269,6 +2297,20 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        let mut initial_generation_disconnects = 1;
+        while let Ok(event) = observed_events.try_recv() {
+            if matches!(
+                event,
+                DaemonEvent::Disconnected { generation, .. }
+                    if generation == observed_generation
+            ) {
+                initial_generation_disconnects += 1;
+            }
+        }
+        assert_eq!(
+            initial_generation_disconnects, 1,
+            "one dropped socket emits one disconnect for its generation"
+        );
         drop(frame_tx);
         drop(input_tx);
     };
@@ -2297,6 +2339,172 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         .collect();
     assert_eq!(take_attachments.len(), 2);
     assert_ne!(take_attachments[0], take_attachments[1]);
+    let recovery_activity = mock.activity();
+    let relist = recovery_activity
+        .iter()
+        .rposition(|entry| entry.starts_with("GET /api/terminals?"))
+        .expect("recovery roster request");
+    let fresh_attach = recovery_activity
+        .iter()
+        .rposition(|entry| entry == "WS terminal_attach")
+        .expect("fresh recovery attachment");
+    let fresh_take = recovery_activity
+        .iter()
+        .rposition(|entry| entry == "WS terminal_take_control")
+        .expect("fresh recovery control");
+    assert!(
+        relist < fresh_attach && fresh_attach < fresh_take,
+        "the loop must relist and replay before fresh attachment and control"
+    );
+    mock.shutdown().await;
+
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "terminal-exhaustion", "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-exhaustion", "seq": 1}
+        }),
+    );
+    for _ in 0..3 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            500,
+            json!({"code": "reconcile_failed", "message": "roster unavailable"}),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect budget-exhaustion daemon");
+    mock.fail_next_websocket();
+    mock.fail_next_websocket();
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let observed_daemon = workspace.daemon().clone();
+    let observed_generation = observed_daemon.generation();
+    let (_, mut observed_events) = observed_daemon.subscribe();
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        mock.drop_websockets();
+        let disconnected_error = timeout(Duration::from_secs(1), async {
+            loop {
+                match observed_events.recv().await.expect("budget daemon event") {
+                    DaemonEvent::Disconnected { generation, error }
+                        if generation == observed_generation =>
+                    {
+                        break error;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("budget disconnect deadline");
+        assert!(matches!(
+            disconnected_error,
+            DaemonError::Unavailable { retry_after: None }
+        ));
+
+        timeout(Duration::from_secs(1), async {
+            while mock.websocket_handshakes() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("first socket failure");
+        for _ in 0..128 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::pause();
+
+        for (expected_handshakes, expected_roster_reads) in [(3, 1), (4, 2), (5, 3), (6, 4)] {
+            for _ in 0..8 {
+                let roster_reads = mock
+                    .requests()
+                    .iter()
+                    .filter(|request| {
+                        request.method == "GET" && request.target.starts_with("/api/terminals?")
+                    })
+                    .count();
+                if mock.websocket_handshakes() >= expected_handshakes
+                    && roster_reads >= expected_roster_reads
+                {
+                    break;
+                }
+                tokio::time::advance(Duration::from_secs(2)).await;
+                for _ in 0..256 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            assert_eq!(mock.websocket_handshakes(), expected_handshakes);
+            assert_eq!(
+                mock.requests()
+                    .iter()
+                    .filter(|request| {
+                        request.method == "GET" && request.target.starts_with("/api/terminals?")
+                    })
+                    .count(),
+                expected_roster_reads
+            );
+        }
+
+        let mut initial_generation_disconnects = 1;
+        while let Ok(event) = observed_events.try_recv() {
+            if matches!(
+                event,
+                DaemonEvent::Disconnected { generation, .. }
+                    if generation == observed_generation
+            ) {
+                initial_generation_disconnects += 1;
+            }
+        }
+        assert_eq!(
+            initial_generation_disconnects, 1,
+            "the shared retry episode originates from exactly one disconnect"
+        );
+        tokio::time::resume();
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    drop(input_tx);
+    result.expect("budget exhaustion exits the live loop cleanly");
+    let exit_reason = workspace.exit_reason();
+    assert_eq!(
+        exit_reason,
+        Some("daemon unavailable"),
+        "the shared socket-and-roster retry budget must latch the live-loop exit"
+    );
+    assert_eq!(mock.websocket_handshakes(), 6);
+    assert_eq!(
+        mock.requests()
+            .iter()
+            .filter(|request| {
+                request.method == "GET" && request.target.starts_with("/api/terminals?")
+            })
+            .count(),
+        4,
+        "one startup roster plus three failed reconnect rosters share the budget"
+    );
+    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 1);
+    assert_eq!(
+        websocket_requests(&mock, "terminal_take_control").len(),
+        1,
+        "failed reconciliation never restores writable control"
+    );
     mock.shutdown().await;
 }
 
