@@ -834,13 +834,16 @@ class MailboxService:
             async with asyncio.timeout_at(deadline):
                 result = await self._wake(session_id)
         except TimeoutError:
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": None,
-                "indeterminate": True,
-                "error": "wake_timeout",
-                "error_code": "wake_timeout",
-                "error_message": "Live wake timed out before delivery could be confirmed.",
-            }
+            return self._normalize_wake_result(
+                session_id,
+                {
+                    "session_id": session_id,
+                    "delivered": False,
+                    "method": None,
+                    "indeterminate": True,
+                    "error": "wake_timeout",
+                    "error_code": "wake_timeout",
+                    "error_message": "Live wake timed out before delivery could be confirmed.",
+                },
+            )
         return self._normalize_wake_result(session_id, result)

@@ -279,6 +279,7 @@ class TestMailboxDirectSend:
                 }
             else:
                 assert wake["delivered"] is False
+                assert wake["session_status"] == "active"
                 assert wake["error_code"] == "wake_timeout"
                 assert "timed out" in wake["error_message"]
         assert dispatcher.finished == set(recipients)
