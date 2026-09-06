@@ -87,6 +87,26 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
         &[],
     )?.get(0);
     assert_eq!(baseline_receipts, 1);
+    let revision_table: Option<String> = client
+        .query_one(
+            "SELECT to_regclass('public.session_summary_revisions')::text",
+            &[],
+        )?
+        .get(0);
+    assert!(revision_table.is_none());
+    let revision_column: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'sessions'
+                  AND column_name = 'summary_revision_id'
+            )",
+            &[],
+        )?
+        .get(0);
+    assert!(!revision_column);
 
     let second = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!second.baseline_applied);

@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 420;
 pub const BASELINE_CHECKSUM: &str =
-    "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55";
+    "fe53091877b1e22cd14ad2a871ad9c15530e4406b15e3e38220cdac092b333a9";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -63,6 +63,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         filename: "426_retire_legacy_wiki.sql",
         checksum: "b390c1b8350fa4ec28fa40204db6ae8fbc25f4ad622595dd06e1b3ef64a5b7f4",
         sql: include_str!("../../assets/schema/migrations/426_retire_legacy_wiki.sql"),
+    },
+    EmbeddedMigration {
+        version: 427,
+        filename: "427_remove_session_summary_revisions.sql",
+        checksum: "829e195fc554c07504341c9184b6f8357053c49dab5a7cffdfa9edb59ea569f2",
+        sql: include_str!(
+            "../../assets/schema/migrations/427_remove_session_summary_revisions.sql"
+        ),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

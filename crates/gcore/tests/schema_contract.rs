@@ -13,20 +13,23 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 420);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"
+        "fe53091877b1e22cd14ad2a871ad9c15530e4406b15e3e38220cdac092b333a9"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 426);
-    assert_eq!(identity.latest_asset.filename, "426_retire_legacy_wiki.sql");
+    assert_eq!(identity.latest_asset.version, 427);
+    assert_eq!(
+        identity.latest_asset.filename,
+        "427_remove_session_summary_revisions.sql"
+    );
     assert_eq!(
         identity.latest_asset.checksum,
-        "b390c1b8350fa4ec28fa40204db6ae8fbc25f4ad622595dd06e1b3ef64a5b7f4"
+        "829e195fc554c07504341c9184b6f8357053c49dab5a7cffdfa9edb59ea569f2"
     );
     assert_eq!(
         identity.root_hash,
-        "dca9ad0b0c97c67352fd10d3f369ff935d27ef42f452c56893fc713c6fdcacad"
+        "9465c147ae237582c47f80478fd56b0de18a7bfcf4c9b413cee3389304667609"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

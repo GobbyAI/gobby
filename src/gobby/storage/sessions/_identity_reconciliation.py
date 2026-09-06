@@ -26,7 +26,6 @@ _HISTORY_FIELDS = (
     "summary_path",
     "summary_markdown",
     "handoff_markdown",
-    "summary_revision_id",
     "summary_source_context_hash",
     "summary_generation_mode",
     "summary_generated_at",

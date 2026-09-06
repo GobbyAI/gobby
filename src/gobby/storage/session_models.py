@@ -53,7 +53,6 @@ class Session:
     # writes — the trustworthy idle-decision timestamp (updated_at is not).
     last_activity: datetime | None = None
     handoff_markdown: str | None = None
-    summary_revision_id: str | None = None
     summary_source_context_hash: str | None = None
     summary_generation_mode: str | None = None
     summary_generated_at: datetime | None = None
@@ -144,7 +143,6 @@ class Session:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             last_activity=cls._get_optional(row, "last_activity"),
-            summary_revision_id=cls._get_optional(row, "summary_revision_id"),
             summary_source_context_hash=cls._get_optional(row, "summary_source_context_hash"),
             summary_generation_mode=cls._get_optional(row, "summary_generation_mode"),
             summary_generated_at=cls._get_optional(row, "summary_generated_at"),
@@ -287,7 +285,6 @@ class Session:
             "summary_path": self.summary_path,
             "summary_markdown": self.summary_markdown,
             "handoff_markdown": self.handoff_markdown,
-            "summary_revision_id": self.summary_revision_id,
             "summary_source_context_hash": self.summary_source_context_hash,
             "summary_generation_mode": self.summary_generation_mode,
             "summary_generated_at": self.summary_generated_at,
@@ -354,7 +351,6 @@ class Session:
             "title_source": self.title_source,
             "status": self.status,
             "git_branch": self.git_branch,
-            "summary_revision_id": self.summary_revision_id,
             "summary_generation_mode": self.summary_generation_mode,
             "summary_generated_at": self.summary_generated_at,
             "model": self.model,

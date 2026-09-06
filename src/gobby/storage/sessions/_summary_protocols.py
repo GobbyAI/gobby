@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from gobby.storage.session_models import Session
 
@@ -26,8 +25,6 @@ class SummaryUpdateHost(Protocol):
         summary_markdown: str,
         generation_mode: str,
         source_context_hash: str | None = None,
-        previous_revision_id: str | None = None,
-        metadata_json: Mapping[str, Any] | None = None,
         summary_path: str | None | UnsetType = UNSET,
     ) -> Session | None: ...
 

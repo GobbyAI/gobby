@@ -84,7 +84,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "candidate_limit: 'int' = 1) -> 'Session | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
-    "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
     "get_session_id": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None' = None, session_type: 'str' = 'terminal') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
@@ -103,8 +102,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "'list[Session]'",
     "lookup_session_id": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None', session_type: 'str' = 'terminal') -> 'str | None'",
-    "list_summary_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
-    "'list[dict[str, Any]]'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
     "mark_session_expired": (
         "(self, session_id: 'str', *, cause: 'ContestedExpiryCause') -> 'bool'"
@@ -114,8 +111,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
     "generation_mode: 'str', source_context_hash: 'str | None' = None, "
-    "previous_revision_id: 'str | None' = None, "
-    "metadata_json: 'Mapping[str, Any] | None' = None, "
     "summary_path: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",

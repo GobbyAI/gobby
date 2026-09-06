@@ -3398,18 +3398,6 @@ CREATE TABLE session_stop_signals (
     acknowledged_at timestamp with time zone
 );
 
-CREATE TABLE session_summary_revisions (
-    id uuid NOT NULL,
-    session_id uuid NOT NULL,
-    summary_markdown text NOT NULL,
-    generation_mode text NOT NULL,
-    source_context_hash text,
-    previous_revision_id uuid,
-    metadata_json jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT session_summary_revisions_generation_mode_valid CHECK ((generation_mode = ANY (ARRAY['agent_authored'::text, 'full'::text, 'noop'::text])))
-);
-
 CREATE TABLE session_tasks (
     id integer NOT NULL,
     session_id uuid NOT NULL,
@@ -3462,7 +3450,6 @@ CREATE TABLE sessions (
     summary_path text,
     summary_markdown text,
     handoff_markdown text,
-    summary_revision_id uuid,
     summary_source_context_hash text,
     summary_generation_mode text,
     summary_generated_at timestamp with time zone,
@@ -4563,12 +4550,6 @@ ALTER TABLE ONLY session_skills
 ALTER TABLE ONLY session_stop_signals
     ADD CONSTRAINT session_stop_signals_pkey PRIMARY KEY (session_id);
 
-ALTER TABLE ONLY session_summary_revisions
-    ADD CONSTRAINT session_summary_revisions_id_session_id_unique UNIQUE (id, session_id);
-
-ALTER TABLE ONLY session_summary_revisions
-    ADD CONSTRAINT session_summary_revisions_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY session_tasks
     ADD CONSTRAINT session_tasks_pkey PRIMARY KEY (id);
 
@@ -5125,10 +5106,6 @@ CREATE INDEX idx_session_skills_session ON session_skills USING btree (session_i
 
 CREATE UNIQUE INDEX idx_session_skills_unique ON session_skills USING btree (session_id, skill_name);
 
-CREATE INDEX idx_session_summary_revisions_previous ON session_summary_revisions USING btree (previous_revision_id);
-
-CREATE INDEX idx_session_summary_revisions_session_created ON session_summary_revisions USING btree (session_id, created_at DESC);
-
 CREATE INDEX idx_session_tasks_session ON session_tasks USING btree (session_id);
 
 CREATE INDEX idx_session_tasks_task ON session_tasks USING btree (task_id);
@@ -5162,8 +5139,6 @@ CREATE INDEX idx_sessions_spawned_by ON sessions USING btree (spawned_by_agent_i
 CREATE INDEX idx_sessions_status ON sessions USING btree (status);
 
 CREATE INDEX idx_sessions_status_last_activity ON sessions USING btree (status, last_activity);
-
-CREATE INDEX idx_sessions_summary_revision ON sessions USING btree (summary_revision_id);
 
 CREATE UNIQUE INDEX idx_sessions_unique ON sessions USING btree (external_id, source, project_id, session_type) NULLS NOT DISTINCT;
 
@@ -5661,12 +5636,6 @@ ALTER TABLE ONLY session_skills
 ALTER TABLE ONLY session_stop_signals
     ADD CONSTRAINT session_stop_signals_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
 
-ALTER TABLE ONLY session_summary_revisions
-    ADD CONSTRAINT session_summary_revisions_previous_same_session_fk FOREIGN KEY (previous_revision_id, session_id) REFERENCES session_summary_revisions(id, session_id) ON DELETE SET NULL (previous_revision_id) DEFERRABLE;
-
-ALTER TABLE ONLY session_summary_revisions
-    ADD CONSTRAINT session_summary_revisions_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
-
 ALTER TABLE ONLY session_tasks
     ADD CONSTRAINT session_tasks_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
 
@@ -5690,9 +5659,6 @@ ALTER TABLE ONLY sessions
 
 ALTER TABLE ONLY sessions
     ADD CONSTRAINT sessions_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) DEFERRABLE;
-
-ALTER TABLE ONLY sessions
-    ADD CONSTRAINT sessions_summary_revision_fk FOREIGN KEY (summary_revision_id, id) REFERENCES session_summary_revisions(id, session_id) ON DELETE SET NULL (summary_revision_id) DEFERRABLE;
 
 ALTER TABLE ONLY skill_files
     ADD CONSTRAINT skill_files_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE DEFERRABLE;
@@ -6422,8 +6388,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_skills TO gobby_daemon_runtim
 GRANT ALL ON SEQUENCE session_skills_id_seq TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_stop_signals TO gobby_daemon_runtime;
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_summary_revisions TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE session_tasks TO gobby_daemon_runtime;
 

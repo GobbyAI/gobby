@@ -23,7 +23,7 @@ from gobby.sessions.analyzer_turns import (
 from gobby.sessions.handoff_records import latest_delivered_clear_handoff
 from gobby.sessions.handoff_summary import (
     build_handoff_summary,
-    find_handoff_summary_revision,
+    find_current_handoff_summary,
 )
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
@@ -96,7 +96,6 @@ class SessionManagerProtocol(Protocol):
         summary_markdown: str,
         generation_mode: str,
         source_context_hash: str | None = ...,
-        metadata_json: dict[str, Any] | None = ...,
         summary_path: str | None = ...,
     ) -> Any: ...
 
@@ -368,15 +367,16 @@ async def _generate_delivered_handoff_summary(
         db=resolved_db,
         run_db=db_runner,
     )
-    existing_revision = await _run_db(
+    existing_summary = await _run_db(
         db_runner,
-        find_handoff_summary_revision,
+        find_current_handoff_summary,
         resolved_db,
         session.id,
         summary.source_hash,
+        summary.markdown,
     )
-    if existing_revision is not None:
-        markdown = existing_revision
+    if existing_summary is not None:
+        markdown = existing_summary
         generation_mode = "noop"
     else:
         markdown = summary.markdown
@@ -389,20 +389,13 @@ async def _generate_delivered_handoff_summary(
                 summary_markdown=markdown,
                 generation_mode=generation_mode,
                 source_hash=summary.source_hash,
-                metadata=summary.metadata,
             )
-    evidence = summary.metadata["evidence"]
     return _GeneratedSummary(
         markdown=markdown,
         generation_mode=generation_mode,
         generation_error=None,
         source_hash=summary.source_hash,
-        context_summary={
-            "has_active_task": bool(evidence["active_task_id"]),
-            "files_modified_count": len(evidence["file_paths"]),
-            "git_commits_count": len(evidence["commit_shas"]),
-            "has_initial_goal": False,
-        },
+        context_summary=summary.context_summary,
     )
 
 
@@ -457,7 +450,6 @@ async def _generate_transcript_summary(
             summary_markdown=markdown,
             generation_mode="full",
             source_hash=source.source_hash,
-            metadata={"generation_error": generation_error},
         )
     return _GeneratedSummary(
         markdown=markdown,

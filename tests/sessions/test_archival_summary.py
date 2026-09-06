@@ -16,6 +16,7 @@ from gobby.sessions.handoff_records import (
     record_handoff_delivery,
 )
 from gobby.sessions.summarize import generate_session_summaries
+from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -84,16 +85,13 @@ async def test_missing_transcript_leaves_archival_summary_empty(
     session = manager.get(session_id)
     assert session is not None
     assert session.summary_markdown is None
-    revision_count = temp_db.fetchone(
-        "SELECT COUNT(*) AS count FROM session_summary_revisions WHERE session_id = %s",
-        (session_id,),
-    )
-    assert revision_count is not None
-    assert revision_count["count"] == 0
+    assert session.summary_source_context_hash is None
+    assert session.summary_generation_mode is None
+    assert session.summary_generated_at is None
 
 
 @pytest.mark.asyncio
-async def test_transcript_fallback_persists_summary_revision(
+async def test_transcript_fallback_persists_current_summary(
     isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
 ) -> None:
     root = Path(__file__).resolve().parents[2]
@@ -119,14 +117,9 @@ async def test_transcript_fallback_persists_summary_revision(
     assert result["success"] is True
     assert result["generation_mode"] == "full"
     assert session.summary_markdown
-    revision = temp_db.fetchone(
-        "SELECT generation_mode, source_context_hash FROM session_summary_revisions "
-        "WHERE session_id = %s",
-        (session_id,),
-    )
-    assert revision is not None
-    assert revision["generation_mode"] == "full"
-    assert revision["source_context_hash"]
+    assert session.summary_generation_mode == "full"
+    assert session.summary_source_context_hash
+    assert session.summary_generated_at is not None
 
 
 @pytest.mark.asyncio
@@ -197,7 +190,7 @@ async def test_delivered_clear_handoff_builds_evidence_summary_without_llm(
             ],
         },
     )
-    handoff_id, handoff_markdown = _record_handoff(
+    _handoff_id, handoff_markdown = _record_handoff(
         temp_db,
         manager,
         session_id,
@@ -240,30 +233,41 @@ async def test_delivered_clear_handoff_builds_evidence_summary_without_llm(
     assert "error preview: exact unresolved failure" in session.summary_markdown
     assert "full error: get_variable" in session.summary_markdown
     assert not llm.call_feature.called
+    assert session.summary_generation_mode == "agent_authored"
+    assert session.summary_source_context_hash is not None
+    assert len(session.summary_source_context_hash) == 64
+    assert session.summary_generated_at is not None
 
-    revisions = temp_db.fetchall(
-        "SELECT generation_mode, source_context_hash, metadata_json "
-        "FROM session_summary_revisions WHERE session_id = %s",
-        (session_id,),
+    expected_markdown = session.summary_markdown
+    reused = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=manager,
+        llm_service=llm,
+        db=temp_db,
     )
-    assert len(revisions) == 1
-    revision = revisions[0]
-    assert revision["generation_mode"] == "agent_authored"
-    raw_metadata = revision["metadata_json"]
-    metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
-    assert metadata["source_kind"] == "session_handoff"
-    assert metadata["source_handoff_id"] == handoff_id
-    assert metadata["handoff_payload_version"] == 1
-    assert metadata["continuation_session_id"] == session_id
-    assert metadata["evidence"] == {
-        "active_task_id": task.id,
-        "commit_shas": [commit_sha],
-        "file_paths": ["evidence.txt"],
-        "open_tool_error_ids": metadata["evidence"]["open_tool_error_ids"],
-    }
-    assert len(metadata["evidence"]["open_tool_error_ids"]) == 1
-    assert metadata["evidence_omissions"] == ["transcript_commit_evidence_unavailable"]
-    assert len(revision["source_context_hash"]) == 64
+    unchanged = manager.get(session_id)
+    assert reused["generation_mode"] == "noop"
+    assert unchanged is not None
+    assert unchanged.summary_markdown == expected_markdown
+
+    altered_markdown = expected_markdown + "\n\nAdditional valid material."
+    assert is_summary_markdown_valid(altered_markdown)
+    temp_db.execute(
+        "UPDATE sessions SET summary_markdown = %s WHERE id = %s",
+        (altered_markdown, session_id),
+    )
+
+    regenerated = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=manager,
+        llm_service=llm,
+        db=temp_db,
+    )
+
+    refreshed = manager.get(session_id)
+    assert regenerated["generation_mode"] == "agent_authored"
+    assert refreshed is not None
+    assert refreshed.summary_markdown == expected_markdown
 
 
 @pytest.mark.asyncio
