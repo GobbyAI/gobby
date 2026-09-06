@@ -259,7 +259,7 @@ class ProxyHooksMixin:
             await _terminate_process(process)
             raise
 
-        if code != 0:
+        if code not in {0, 3}:
             detail_bytes = stderr or stdout
             detail = detail_bytes[:512].decode("utf-8", errors="replace").strip()
             logger.debug(

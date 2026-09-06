@@ -292,12 +292,14 @@ async def test_rtk_rewrite_logs_at_debug(
     assert [record.levelno for record in transformed] == [logging.DEBUG]
 
 
-async def test_rtk_rewrite_returns_the_complete_tool_input(
+async def test_rtk_ask_rewrite_returns_the_complete_tool_input(
     db: HubDatabase,
     manager: RuleDefinitionManager,
     fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Claude applies ``updatedInput`` wholesale, so the rewrite carries every field."""
+    monkeypatch.setenv("FAKE_RTK_MODE", "ask")
     _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
     event = _event()
     event.data["tool_input"] = {
@@ -315,6 +317,7 @@ async def test_rtk_rewrite_returns_the_complete_tool_input(
         "description": "Show status",
         "run_in_background": False,
     }
+    assert response.permission_decision is None
     assert response.auto_approve is False
 
 
@@ -515,7 +518,7 @@ async def test_unknown_handler_fails_open(
     assert response.modified_input is None
 
 
-@pytest.mark.parametrize("mode", ["ask", "unexpected"])
+@pytest.mark.parametrize("mode", ["pass", "deny", "unexpected"])
 async def test_rtk_nonzero_exit_falls_back_to_original_command(
     mode: str,
     db: HubDatabase,
