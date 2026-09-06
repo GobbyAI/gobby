@@ -1,221 +1,146 @@
 # Legacy wiki retirement receipt
 
-Retirement is **in progress**. The original scoped backup, isolated deletion,
-canonical migration and exact restoration/repeat are verified. Final state audits
-found persisted wiki configuration and retained code-index content that must join
-the bounded retirement. A refreshed inventory/rehearsal, live purge, registry
-archive, landing, installation and daemon restart remain pending.
+The removal, retained code-index cleanup and runtime cutover are complete on
+`0.5.0`. This final execution receipt supersedes the earlier checkpoint history;
+the approved plan and linked task history remain accessible.
 
-## Execution identity
+The user retained the Git archive and explicitly waived preservation, backup,
+recovery and further rehearsal of wiki data and generated files. Canonical session
+records, original sources, memories, project records, unrelated code-index state
+and explicit grants remain protected. Replacement planning is separate work.
 
-Epic #21771 uses `/Users/josh/.gobby/worktrees/gobby/wt-epic-21771` and branch
-`wt-epic-21771`. Its base is `0.5.0` at
-`53e862d53d40027173ba2d74d86858d44fbc88f4`. The annotated archive tag
-`legacy-wiki-before-retirement-21771` was verified at that base.
+## Source and runtime
 
-The approved plan is `retire-legacy-wiki.md`. Task #21840 owns operational
-verification; #21772 owns backlog retirement and the plan-registry archive.
-Preserve canonical summaries and revisions, handoffs, transcripts, memories,
-projects, original files outside wiki storage, gcode services and explicit grants.
+- Epic: #21771; integration: #21840; sessions: #11777, #11967 and #11969.
+- Removal worktree: `wt-epic-21771`, based on `0.5.0` at
+  `53e862d53d40027173ba2d74d86858d44fbc88f4`.
+- Annotated Git tag: `legacy-wiki-before-retirement-21771`, verified at that base.
+- Managed removal merge: `3e5662c996eaa325e7e632b180aa781d6b6e28a4`.
+- Main cutover commit: `f772e7b1a16cc83dfd45a98d0e73c1b74b4a4cd9`.
+- Native retirement fixes: `b520be379071ffe7ac5cada46d1fe2923e30fe08`
+  and `0db8bf5ea11fe52e33efa5f79756a711afda057c`; managed landings
+  `f62d578c8a7d50b9f4237f98caa6adb7b06e633a` and
+  `a8b82e9d968a822382c6a157fe3e663fd466cdb4`.
+- Main daemon restored at schema 426; installed/source/live schema identities agree.
+- All five surviving native binaries rebuilt and installed through the canonical
+  promotion path using new inodes. `gterm` includes its `vt-engine` feature.
 
-## Implementation evidence
+The wiki crate, Python services, MCP registration, HTTP routes, CLI/install wiring,
+configuration, UI/settings/navigation, writers and session-summary mirrors are
+removed. Terminal redaction, attachment forwarding and Mermaid utilities now live
+with their surviving consumers. Canonical summary generation, revisions, handoffs
+and transcript processing continue independently.
 
-| Work | Task and commit evidence | Current disposition |
-| --- | --- | --- |
-| Shared utilities, Python, Rust and schema retirement | #21783, #21784, #21787, #21778, #21796, #21803 | Committed and validated |
-| Wiki UI and saved-tab fallback | #21816, #21828; `200d7aa050`, `3312725c36`, `ae8dfd7999` | Closed and memory-reviewed |
-| Installer removal and shared release transport | #21834; `faef8aad4c` | Closed and memory-reviewed |
-| Guidance and release workflows | #21835; `c03ed6aa03`, `28ab42162d`, `dda4cb5bf1` | Committed; child reviews pending |
-| Actionlint evidence classifier | #21839; `6301c6e97b` | Closed and memory-reviewed |
-| Inventory, backup, restore and purge procedure | #21836; `e2a18c5b83` | Closed and memory-reviewed |
-| Real daemon retirement verification | #21846; `5920dcefdd` | Closed and memory-reviewed |
-| Guarded isolated maintenance profiles | #21853; `90fa28cae3` | Closed; actual rehearsal follow-through in #21859 |
-| Atomic isolated registry-reference recovery | #21857; `65b7708504` | Closed and memory-reviewed |
-| Maintenance claim admission | #21863; `136f611533` | Committed and tested |
-| Epoch-bound rehearsal identity admission | #21864; `a6397eb4f9` | Committed and tested |
-| Canonical FalkorDB rehearsal mount | #21868; `175abd188d` | Committed, tested and used successfully |
-| Active documentation retirement | #21861, #21862; `57008b1c5c`, `f22d0ae7ba` | Committed and tested |
+## Data deletion
 
-Root-session verification passed 506 focused Python tests across 21 named files
-in 49.45 seconds, 10 Rust workflow/security tests, and Actionlint on both changed
-workflows. The final classifier check passed 243 focused tests in 5.32 seconds.
-Exact commands and static-check results are recorded on the corresponding tasks.
-The full pytest suite was not run.
+The immutable direct inventory is
+`~/.gobby/retirement/f7b3c8517e45fd4ddba044d64d4cb78cabc3d276ac6d28bc57c213c46141d897/inventory.json`.
+It identifies 21 filesystem roots, 28 datastore/registry targets and 11,343 exact
+code-index paths across three projects. The initial direct apply completed 36,217
+items with no errors before deferred schema and code-index work.
 
-Additional root verification passed 182 focused preservation and real-daemon tests
-in 47.01 seconds, then 57 procedure, daemon, skill-parity and manifest tests in
-71.94 seconds. Summary revisions, handoffs, transcript archives, attachment
-forwarding and redaction remain covered. Final procedure verification passed
-44 tests in 15.63 seconds. Maintenance verification passed 184 tests in 0.84
-seconds after the real-lock and epoch-binding corrections. The exact named daemon test passed in
-38.62 seconds. A locked release build of all five surviving binaries passed.
+All 21 wiki roots are absent, including both Gobby-owned installed `gwiki` binaries.
+Imported copies, generated pages, vaults, manifests, exports, mirrors and discovery
+registrations were deleted within the inventory's ownership boundaries. Original
+files outside those roots were preserved. A final check also removed 25 stale
+wiki bytecode files; `src/gobby/wiki` and `crates/gwiki` are absent. Evidence is
+`~/.gobby/retirement/21840-wiki-bytecode-cleanup.json`. The five dedicated PostgreSQL tables,
+five wiki Qdrant collections and exact `gobby_wiki` graph are absent; wiki settings,
+discovery rows, rule, variable and 17 jobs are removed.
 
-A read-only merge rehearsal against `0.5.0` at `88e5cd8b66` found no conflicts and
-preserved main's transcript, gzip, task-review and terminal changes. Final
-integration verification will use the actual landed source identity.
+Canonical maintenance epoch `c34ececc-ffc7-4a19-af31-23ac638190c0` completed migration
+425→426. Its existing shared-hub backup passed all five archive/restore verifiers;
+this is the platform migration safeguard, not a wiki recovery requirement. Two
+focused fixes (`e69da8aaeb`, `61254d8e98`) allow older incompatible backup manifests
+to remain while fully validating the newest selected backup.
 
-Managed sync from `0.5.0` at `53e9e6581c` completed as `62014bce512a` without
-conflicts. After rebuilding the debug daemon for those sources, 322 focused
-preservation/runtime/schema/manifest/classifier tests passed in 77.96 seconds.
-The final maintenance suite passed 185 tests in 0.77 seconds. Full `src/` Ruff,
-format and mypy checks passed. The frontend production build and 33 focused
-navigation/settings/shortcut tests passed. The full pytest suite was not run.
+Two inventory-bound graph addenda removed 102,666 exact edges and 25,604 selected
+nodes across Gobby and Gobby Web. Complete selected-path absence checks passed;
+the final pass preserved all 3,555 other endpoints. Receipts beneath the inventory
+root are `legacy-unversioned-graph-apply.json` and `remaining-gcode-graph-apply.json`.
+A separate exact-ID cleanup removed 6,394 unlisted historical vectors, verifying
+all 8,362 native-listed full points unchanged before native retirement. Its receipt
+is `~/.gobby/retirement/21840-qdrant-extras-cleanup-20260905T231958218338Z.json`.
 
-## Isolated rehearsal resources
+The original inventory is unchanged. An endpoint-supersession receipt records the
+corrected canonical Qdrant URL with identical physical backend identity. Earlier
+refusals and partial results remain recorded. Native preflight performance was
+corrected in `b520be3790`; receipt reads and writes were buffered in `0db8bf5ea1`
+while retaining explicit flush, file sync, atomic persist and directory sync.
+The rebuilt `gcode` was promoted through a new signed inode. New promotion evidence
+is `~/.gobby/retirement/21840-gcode-promotion-20260906T010904Z.json`; the earlier
+`21840-final-gcode-promotion.json` receipt remains unchanged.
 
-The following containers use the installed services' image IDs, without host data
-mounts. Each has labels `gobby.retirement.epic=21771` and
-`gobby.retirement.role=rehearsal`.
+All three immutable native receipts are complete with zero errors:
 
-| Container | Loopback port | Initial check |
-| --- | --- | --- |
-| `gobby-wiki-retirement-21771-postgres` | 60893 | `pg_isready` passed |
-| `gobby-wiki-retirement-21771-qdrant` | 6338 | `/readyz` passed |
-| `gobby-wiki-retirement-21771-falkordb` | 16389 | `PING` passed |
+- Gobby: 6,798 paths and 6,781 versions absent.
+- Gobby Web: 4,067 paths and 4,041 versions absent.
+- Retirement worktree overlay: 478 paths and 483 versions absent.
 
-The worker's isolated Falkor DUMP/RESTORE probe preserved nodes, an edge and
-properties. Complete inventory-bound deletion and restoration remain pending.
-The coordinator will remove these containers after their evidence is accepted.
+The receipts are `<project-id>.native.json` under the inventory root's
+`code-index-apply-receipts/` directory. A whole-inventory retry stopped before
+native mutation after an unrelated inventoried Game Goblins worktree had been
+removed. The immutable native manifests then completed directly with their source
+digest, project, machine, backend, symlink, ownership and reappearance guards intact.
+No blanket database, vector or graph reset was used.
 
-## Outstanding operational evidence
+## Preservation and validation
 
-Shutdown, installed-runtime proof, guarded migration 426 completion and final
-preservation comparisons remain pending. Main still runs schema 425 and the wiki.
+`~/.gobby/retirement/21840-canonical-verify-20260905T222846455895Z.json`
+verified zero missing or changed records among 3,780 memories, seven projects,
+313 handoffs, 11,743 summary revisions and 9,900 canonical session records. Reserved
+grants were unchanged. Thirty reviewed wiki-guidance memory corrections occurred afterward under
+#21772, preserving memory identity and metadata.
 
-Task #21772 records all 38 old-task dispositions. Shared #21577 and #21586 retain
-their gcode obligations. Old-task closure retries and #21837's Actionlint review
-await deployment of committed validator fixes. The old plan will be archived
-through the registry after landing; replacement planning is a separate session.
+Focused checks passed; the full pytest suite was not run:
 
-## Inventory and rehearsal checkpoint
+- Session preservation, forwarding, redaction, shutdown/lifecycle and schema tests,
+  including the final 131-test retirement run and 160-test lifecycle run.
+- Final native retirement/graph/GC run: 69 passed in 36.800 seconds, including
+  interrupted/completed retry, recreated projections, null identities, late-batch
+  unknown edges and invalid records beyond 10,000 results. Final backup-selector
+  tests: six Rust and 22 Python passed.
+- Final receipt-I/O regression run: 14 native `retire_files` tests passed in
+  26.052 seconds with all ignored endpoint fixtures enabled. `cargo fmt`, full
+  gobby-code Clippy with warnings denied and the release build passed. The focused
+  direct-retirement Python check passed 11 tests in 2.54 seconds.
+- Full `src/` Ruff, format and mypy checks; scoped script checks, Rust Clippy,
+  release builds, schema-contract checks and Actionlint on changed workflows.
+- Explicit whole-file deletion is exempt from plan size lint (`b372908c3d`);
+  regression coverage retains the size safeguards for edits.
+- Frontend production build and 33 focused navigation/settings/shortcut tests.
+- Installed-binary isolated daemon test passed in 33.66 seconds: fresh sessions
+  receive no wiki injection, restarts do not regenerate content, original files
+  and prior session data survive.
+- Live health returned 200; five retired wiki endpoints matched the ordinary
+  missing-route 404 response. MCP discovery exposed 26 servers and 434 tools with
+  no wiki server or tools. PostgreSQL, Qdrant and FalkorDB remained healthy.
+- Live `gcode` symbol search found `SessionManager`; its surviving module graph
+  returned 85 nodes and 26 edges. The private graph receipt is
+  `~/.gobby/retirement/21840-gcode-surviving-graph.json`.
 
-The first complete inventory had digest
-`e6c4ea9667fa8b54f01a62fd6ee51432093ad93826a22868730e3a43e4e295ff`.
-Its private record is under `~/.gobby/retirement/<digest>/inventory.json`, outside
-repository indexing and wiki discovery. It found 21 filesystem roots, including
-the Cargo-owned Gobby wiki binary, and 26 datastore/registry targets: the five-table
-wiki schema (78,390 rows), five Qdrant collections, the dedicated Falkor graph,
-one rule, one variable and 17 jobs. No writer process was detected.
+Task records contain the exact commands and commit-linked validation evidence.
+The static test-quality auditor flags three explicit fixture-only Rust ignores;
+all three executed successfully through `--run-ignored all`. Their endpoint
+safety guards and the audit baseline were preserved.
 
-That backup refused on a changed Falkor fingerprint. Consecutive read-only captures
-showed nondeterministic raw DUMP bytes. Task #21836 fixed comparison to use semantic
-graph content while retaining the exact DUMP artifact for recovery.
+## Registry and cleanup
 
-The valid inventory digest is
-`4be9c482d6072359bbac4eb5a13b93844fa16b70eb25b83982c1511acdedac86`.
-Its owner-only `inventory.json` and complete `backup.json` live under
-`~/.gobby/retirement/<digest>/`; the backup contains 33,802 artifacts. The inventory
-contains 21 filesystem roots and 26 datastore/registry targets, including 78,390
-wiki PostgreSQL rows. All backup artifacts were checked against this inventory.
+All 38 user-listed obsolete tasks are closed as `obsolete` and unclaimed.
+The `wiki-output-design` plan was archived through its registry at 23:00:13 UTC
+on 2026-09-05, preserving its content hash. The byte-identical archived plan and
+retired coverage record are committed as `ea82ce1e49`. Shared #21577 and #21586
+remain open with only their gcode obligations. Historical task records, linked
+commits and explicit grants remain intact.
 
-Task #21859 owns the canonical rehearsal at private home
-`~/.gobby/retirement/gobby-rehearsal-21771-225eec02`. Its exact owned containers use
-PostgreSQL 60894, Qdrant 6339 and FalkorDB 16390, with no source-data mounts.
-Scoped restoration passed after #21857 fixed project-scoped registry references.
-Deferred deletion passed with 36,216 completed entries and one exact PostgreSQL
-intent. The first canonical backup refused its own maintenance PID; #21863 fixed
-that boundary. Resume then reached the active PostgreSQL login fence during
-profile identity admission; #21864 added canonical epoch discovery and binding.
-The next backup identified an incorrect rehearsal FalkorDB mount. #21868 corrected
-it to the installed image's `/var/lib/falkordb/data`, preserving the prior owned
-container, volume and exact RDB. The archive symlink guard remained unchanged.
+The earlier wiki recovery copies were discarded: 67,614 owned entries and seven
+rehearsal containers/volumes. Private receipts are
+`~/.gobby/retirement/21771-discard-recovery-data.json` and
+`~/.gobby/retirement/21771-discard-rehearsals.json`. Three isolated native-test
+containers recreated for final validation and their exclusive PostgreSQL volume
+were removed by exact recorded IDs. All five unrelated container IDs remain
+running. Final evidence is
+`~/.gobby/retirement/21840-fixture-cleanup-20260906T013647Z.json`.
 
-Canonical `hub-maintenance resume` completed the existing campaign at 18:51:26 UTC.
-Epoch `93d04846-1436-43fd-b9a3-0f63a7f64923` was released after the verified full
-backup and guarded 425→426 migration. All five wiki tables were absent before
-the scoped recovery exercise. Exact restoration passed in 46.9 seconds; repeat
-passed in 3.7 seconds with an unchanged receipt. The receipt records 36,244 completed
-items and 27 restored targets, with no errors. All 62 prior unrelated rows across
-eight tables survived unchanged. Root checked the artifact hashes, epoch match,
-completion state and five archive/restore verifier results.
-
-The authoritative private summary is
-`~/.gobby/retirement/gobby-rehearsal-21771-225eec02/21859-completion.json`.
-The rehearsal receipt SHA-256 is
-`abf68fcf3ae850cbce70ce3b943b0119c0c5251a1f48dc879bf1cf33b5afa8b3`.
-No live content has been deleted.
-
-A private read-only preservation baseline is recorded alongside the inventory as
-`21840-preservation-before-20260905T180743Z.json`. It fingerprints 11,704 summary
-revisions, 300 handoffs, 3,779 memories, seven projects and 9,875 canonical session
-records. The reserved gcode SELECT grants on project `id`, `name` and `deleted_at`
-were verified. A final comparison must account for ordinary concurrent updates
-and the explicitly approved memory-guidance corrections.
-
-Task #21772 now records 12 old tasks closed obsolete and 26 still open. All 38
-are unclaimed and unavailable for automation. Its readable record contains the
-remaining leaves-first closure order and the exact later plan-archive operation.
-Shared #21577 and #21586 remain open with gcode-only obligations.
-
-Main is `b5f7d2fa23`. Session #11789 owns the preceding restart and observation
-window; retirement landing and schema apply wait for that coordination. Session
-#11776 confirmed that its later migrations 427/428 will remain unlanded until
-retirement 426 and the preservation receipt are complete.
-
-Main subsequently advanced to `53e9e6581c`; #11789 deferred its announced restart
-to finish its own found work. The lifecycle/schema hold remains, while task RPC
-and isolated work have resumed. No retirement binaries have been installed.
-
-## Final state audit follow-through
-
-#21871 is closed at `17c9b45796`. Its exact persisted configuration and discovery
-cleanup covers three wiki settings and 14 tool-schema hashes. Root verification
-passed 56 focused tests in 16.26 seconds plus Ruff, format and mypy checks. Cleanup
-compares the inventoried values before mutation, preserves unrelated settings and
-secrets, and advances the configuration revision through the supported manager.
-The live audit found both writer switches already false. No live settings or
-discovery rows have been removed.
-
-#21872 owns inventory-scoped retained code-index cleanup. Read-only inspection
-matched 6,301 Gobby wiki paths and 4,041 Gobby Web wiki paths to the original
-inventory; 1,374 Web files had symbols. Existing missing-file indexing removes
-active selectors but retains content versions/projections. Project-wide prune and
-orphan cleanup are too broad for this task. The bounded path will reuse existing
-per-project locking and exact content/projection deletion, with manifest checks,
-remaining-machine-reference refusal and partial-result receipts.
-
-The refreshed inventory must include both corrections and receive scoped backup
-and isolated recovery evidence before live application. The original successful
-rehearsal remains valid evidence for its exact inventory, not for new targets.
-Memory corrections are drafted as 22 compare-before-update proposals on #21772;
-no memories have changed. Their application follows the live preservation check.
-
-## Expanded rehearsal preparation
-
-The expanded rehearsal has a separate private home,
-`~/.gobby/retirement/gobby-rehearsal-21771-875d8f04`, with PostgreSQL 60896,
-Qdrant 6340 and FalkorDB 16391. Owner-only setup and profile records bind the
-container, image, volume and PostgreSQL system identities. Canonical schema 425
-initialization and profile admission passed. The image's preexisting probe database
-was preserved as `gobby_image_probe`; the rehearsal uses a separate fresh database
-with the canonical PostgreSQL extensions. The earlier successful rehearsal is intact.
-
-The private grant broker is prepared on HTTP 60897 and WebSocket 60898 with a
-separate tmux socket and machine identity. Its configuration disables indexing,
-task automation and memory dreaming. It has not started; startup follows canonical
-426 and scoped project admission during the recovery exercise.
-
-#21872 adds exact native content-version and projection cleanup; #21874 binds it
-to the inventory, backup and recovery procedure. Root's initial native run passed
-34 tests in 5.500 seconds. The worker's final run passed 35 tests in 5.793 seconds,
-including a real linked-worktree identity without fabricated primary-checkout rows.
-Root review and the final combined adapter verification are pending.
-
-The read-only path census selected 6,779 paths in the canonical Gobby index
-(6,301 vault paths and 478 deleted tracked files), 4,041 vault paths in the Web
-index, and 478 deleted tracked files in this worktree's synthetic index. None of
-these selected paths has another machine's selector. Private recovery preserves
-the source UUIDs using isolated ordinary projects; the native regression separately
-verifies production synthetic-index admission. The final census also checks for
-projection-only artifacts before freezing the expanded inventory.
-
-Main advanced to `c497d184ba`. Session #11789 restored the shared daemon as PID
-62410, then took ownership of installer execution-permission and shutdown-ordering
-findings. Retirement landing remains held for its next restart and observation
-window. No retirement source, binaries, schema or live deletion has been deployed.
-
-An obsolete close review for #19777 generated 837,323 prompt characters from 1,748
-session command records, exceeding its 256,000-character limit. Session #11789
-owns the bounded-evidence fix in #21879. Further obsolete submissions are paused
-while that fix is completed. Review `836904fe-4256-485e-b75a-9c765af3e229` remains
-historically recorded; a later background notification reported #19777 closed.
+This receipt is landed through the managed worktree service. The worktree is then
+deleted with the default safe flags; task #21840 records that final lifecycle event.
