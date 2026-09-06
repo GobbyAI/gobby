@@ -325,6 +325,7 @@ class _TranscriptSession:
     transcript_path: str
     source: str = "codex"
     id: str = "session-id"
+    machine_id: str = ""
 
 
 class _AnalysisError(RuntimeError):
@@ -335,8 +336,12 @@ type _AnalysisRunner = Callable[[Path], Coroutine[Any, Any, object]]
 
 
 async def _build_summary_source(path: Path) -> object:
+    from gobby.utils.machine_id import get_machine_id
+
+    machine_id = get_machine_id()
+    assert machine_id is not None
     return await summarize_module.build_summary_source_context(
-        _TranscriptSession(str(path)),
+        _TranscriptSession(str(path), machine_id=machine_id),
         db=None,
         session_manager=SimpleNamespace(db=None),
         session_summary_config=None,
@@ -397,6 +402,8 @@ async def test_transcript_analysis_paths_keep_work_off_loop_and_propagate_errors
 
     pending: asyncio.Task[object] = asyncio.create_task(runner(transcript))
     while not reconstruction_started.is_set():
+        if pending.done():
+            await pending
         await asyncio.sleep(0)
     reconstruction_release.set()
 
@@ -430,6 +437,8 @@ async def test_transcript_analysis_paths_propagate_cancellation(
 
     pending: asyncio.Task[object] = asyncio.create_task(runner(transcript))
     while not reconstruction_started.is_set():
+        if pending.done():
+            await pending
         await asyncio.sleep(0)
     pending.cancel()
     reconstruction_release.set()

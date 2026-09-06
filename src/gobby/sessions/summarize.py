@@ -11,9 +11,9 @@ import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
 from typing import Any, NamedTuple, Protocol
 
+from gobby.app_context import get_app_context
 from gobby.config.feature_base import FeatureCandidateInput
 from gobby.sessions.analyzer import HandoffContext, TranscriptAnalyzer
 from gobby.sessions.analyzer_turns import (
@@ -43,9 +43,9 @@ from gobby.sessions.summary_transcripts import (
     TranscriptWindow,
     _format_transcript_summary,
     _read_first_user_goal,
-    _read_transcript_window,
 )
 from gobby.sessions.summary_validity import is_summary_markdown_valid
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import TranscriptReadError
 from gobby.sessions.workspace_context import enrich_git_context as _enrich_git_context
@@ -98,6 +98,10 @@ class SessionManagerProtocol(Protocol):
         source_context_hash: str | None = ...,
         summary_path: str | None = ...,
     ) -> Any: ...
+
+    def reset_transcript_processing_failures(
+        self, session_id: str, *, expected_session: Any = None
+    ) -> None: ...
 
     def update_status(self, session_id: str, status: str) -> Any: ...
 
@@ -178,18 +182,25 @@ async def build_summary_source_context(
     session_manager: Any,
     session_summary_config: Any,
     run_db: Any = None,
+    transcript_reader: TranscriptReader | None = None,
 ) -> SummarySourceContext | None:
     """Build the canonical transcript-derived source payload for a summary."""
     transcript_path = getattr(session, "transcript_path", None)
-    path = Path(transcript_path) if transcript_path else None
-    if path is None or not path.exists():
-        return None
-    source = getattr(session, "source", None)
-    window = await _read_transcript_window(
-        path,
-        source=source or "",
-        max_records=SUMMARY_ANALYZER_MAX_RECORDS,
+    if transcript_reader is None:
+        ctx = get_app_context()
+        shared_reader = ctx.transcript_reader if ctx is not None else None
+        transcript_reader = (
+            shared_reader
+            if isinstance(shared_reader, TranscriptReader)
+            else TranscriptReader(session_manager)
+        )
+    records = await transcript_reader.get_summary_records(
+        session, max_records=SUMMARY_ANALYZER_MAX_RECORDS
     )
+    if records is None:
+        return None
+    path, window = records
+    source = getattr(session, "source", None)
     parser_source = _summary_parser_source(source, window.turns)
     parser = get_parser(
         parser_source,
@@ -268,6 +279,7 @@ async def _generate_session_summary_core(
     session_summary_config: SessionSummaryConfigProtocol | None,
     db: HubDatabase | None,
     run_db: Callable[..., Awaitable[Any]] | None,
+    transcript_reader: TranscriptReader | None = None,
 ) -> _SummaryCoreResult:
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
     session = await _run_db(db_runner, session_manager.get, session_id)
@@ -294,8 +306,13 @@ async def _generate_session_summary_core(
                 session_manager=session_manager,
                 session_summary_config=session_summary_config,
                 run_db=db_runner,
+                transcript_reader=transcript_reader,
             )
         except TranscriptReadError as exc:
+            return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
+        except ValueError as exc:
+            if not str(exc).startswith("Unsupported transcript source:"):
+                raise
             return _SummaryCoreResult({"success": False, "error": str(exc)}, "")
         if source is None:
             return _SummaryCoreResult(
@@ -322,6 +339,13 @@ async def _generate_session_summary_core(
     generation_error = generated_summary.generation_error
 
     valid = is_summary_markdown_valid(full_markdown)
+    if valid:
+        await _run_db(
+            db_runner,
+            session_manager.reset_transcript_processing_failures,
+            session_id,
+            expected_session=session,
+        )
     result: dict[str, Any] = {
         "success": valid,
         "session_id": session_id,
@@ -441,7 +465,10 @@ async def _generate_transcript_summary(
         prompt_template=source.prompt_template,
         project_path=str(cwd),
     )
-    markdown = generated or _format_transcript_summary(source.handoff_ctx)
+    if generated is None and llm_service is not None:
+        markdown = ""
+    else:
+        markdown = generated or _format_transcript_summary(source.handoff_ctx)
     if is_summary_markdown_valid(markdown):
         await _persist_summary_markdown(
             session_id=session_id,

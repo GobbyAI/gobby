@@ -4469,6 +4469,22 @@
       "definition": "boolean|bool|YES|false|NEVER"
     },
     {
+      "name": "sessions.transcript_processing_failure_count",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "sessions.transcript_processing_last_error",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "sessions.transcript_processing_last_error_code",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "sessions.transcript_processing_last_failed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
       "name": "sessions.turn_count",
       "definition": "integer|int4|YES|0|NEVER"
     },
@@ -7639,6 +7655,10 @@
       "definition": "CHECK (startup_claim_state = ANY (ARRAY['idle'::text, 'claimed'::text, 'committed'::text, 'invalidated'::text]))"
     },
     {
+      "name": "sessions.sessions_transcript_processing_failure_count_check",
+      "definition": "CHECK (transcript_processing_failure_count >= 0)"
+    },
+    {
       "name": "sessions.sessions_workspace_generation_nonnegative",
       "definition": "CHECK (workspace_generation >= 0)"
     },
@@ -8199,6 +8219,10 @@
     {
       "name": "refresh_task_state_bucket_from_task()",
       "definition": "CREATE OR REPLACE FUNCTION $schema.refresh_task_state_bucket_from_task()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    PERFORM refresh_task_state_bucket(NEW.id);\n    RETURN NEW;\nEND;\n$function$"
+    },
+    {
+      "name": "reset_transcript_processing_on_recovery()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.reset_transcript_processing_on_recovery()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.source IS DISTINCT FROM OLD.source\n       OR NEW.transcript_path IS DISTINCT FROM OLD.transcript_path\n       OR NEW.external_id IS DISTINCT FROM OLD.external_id\n       OR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('active', 'paused'))\n    THEN\n        NEW.transcript_processed := FALSE;\n        NEW.transcript_processing_failure_count := 0;\n        NEW.transcript_processing_last_error_code := NULL;\n        NEW.transcript_processing_last_error := NULL;\n        NEW.transcript_processing_last_failed_at := NULL;\n    END IF;\n    RETURN NEW;\nEND;\n$function$"
     },
     {
       "name": "touch_chat_attachments_updated_at()",
@@ -9300,7 +9324,7 @@
     },
     {
       "name": "idx_sessions_pending_transcript",
-      "definition": "CREATE INDEX idx_sessions_pending_transcript ON $schema.sessions USING btree (status, transcript_processed) WHERE ((status = 'expired'::text) AND (transcript_processed = false))"
+      "definition": "CREATE INDEX idx_sessions_pending_transcript ON $schema.sessions USING btree (machine_id, created_at, id) WHERE ((status = 'expired'::text) AND (transcript_processed = false) AND (transcript_processing_failure_count < 3))"
     },
     {
       "name": "idx_sessions_project_id",
@@ -10099,6 +10123,10 @@
     {
       "name": "chat_attachments.trg_chat_attachments_updated_at_touch",
       "definition": "CREATE TRIGGER trg_chat_attachments_updated_at_touch BEFORE UPDATE ON chat_attachments FOR EACH ROW EXECUTE FUNCTION touch_chat_attachments_updated_at()"
+    },
+    {
+      "name": "sessions.sessions_transcript_processing_recovery",
+      "definition": "CREATE TRIGGER sessions_transcript_processing_recovery BEFORE UPDATE OF source, transcript_path, external_id, status ON sessions FOR EACH ROW EXECUTE FUNCTION reset_transcript_processing_on_recovery()"
     },
     {
       "name": "task_stage_states.task_stage_states_state_bucket_ad",

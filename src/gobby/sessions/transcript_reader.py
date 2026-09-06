@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.gzip_seek_index import (
@@ -27,6 +29,7 @@ from gobby.sessions.gzip_seek_index import (
 )
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.observation_tracker import ObservationTracker
+from gobby.sessions.summary_transcripts import TranscriptWindow, _read_transcript_window
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_index import (
     SOURCE_SAMPLE_LINES,
@@ -330,6 +333,26 @@ class TranscriptReader:
     # Snapshot resolution
     # ------------------------------------------------------------------ #
 
+    async def get_summary_records(
+        self, session: Session, *, max_records: int
+    ) -> tuple[Path, TranscriptWindow] | None:
+        """Read a bounded raw-record tail from the live source or its gzip archive."""
+        require_local_session_ownership(session)
+        path = session.transcript_path
+        if not path or not await asyncio.to_thread(_summary_source_exists, Path(path)):
+            path = await self._get_live_transcript_path(session.id, session)
+        if not path and session.external_id:
+            archive = get_archive_dir(self._archive_dir) / f"{session.external_id}.jsonl.gz"
+            if await asyncio.to_thread(_summary_source_exists, archive):
+                path = str(archive)
+        if not path:
+            return None
+        resolved = Path(path)
+        window = await _read_transcript_window(
+            resolved, source=session.source or "", max_records=max_records
+        )
+        return resolved, window
+
     async def _resolve_windowable(self, session: Session, session_id: str) -> _Windowable:
         """Resolve the current transcript snapshot and its cached boundary index.
 
@@ -589,3 +612,11 @@ def _collect_flat_dicts(
             if len(out) >= cap:
                 return out
     return out
+
+
+def _summary_source_exists(path: Path) -> bool:
+    """Treat absent sources as deterministic; propagate access and device failures."""
+    try:
+        return stat.S_ISREG(path.stat().st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return False

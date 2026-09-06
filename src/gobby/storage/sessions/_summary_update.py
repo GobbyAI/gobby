@@ -33,6 +33,10 @@ class _SummaryUpdateMixin:
                     summary_source_context_hash = %s,
                     summary_generation_mode = %s,
                     summary_generated_at = %s,
+                    transcript_processing_failure_count = 0,
+                    transcript_processing_last_error_code = NULL,
+                    transcript_processing_last_error = NULL,
+                    transcript_processing_last_failed_at = NULL,
                     updated_at = %s
                 WHERE id = %s
                 """,

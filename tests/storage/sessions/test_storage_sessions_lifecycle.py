@@ -1553,8 +1553,7 @@ class TestSessionManagerLifecycle:
 
         assert revived is not None
         assert revived.status == "active"
-        assert updated is not None
-        assert updated.status == "active"
+        assert updated is None
         row = session_manager.db.fetchone(
             "SELECT transcript_processed FROM sessions WHERE id = %s",
             (session.id,),

@@ -1352,7 +1352,13 @@ class TestRestoreTranscript:
 
         assert response.status_code == 200
         assert response.json()["size"] == 123
-        mock_server.run_db.assert_awaited_once_with(mock_server.session_manager.get, "sess-abc123")
+        assert mock_server.run_db.await_args_list == [
+            call(mock_server.session_manager.get, "sess-abc123"),
+            call(mock_server.session_manager.reset_transcript_processed, "sess-abc123"),
+        ]
+        mock_server.session_manager.reset_transcript_processed.assert_called_once_with(
+            "sess-abc123"
+        )
         assert len(worker_thread_ids) == 2
         assert all(thread_id != event_loop_thread_ids[0] for thread_id in worker_thread_ids)
 
