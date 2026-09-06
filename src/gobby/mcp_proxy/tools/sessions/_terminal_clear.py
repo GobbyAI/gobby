@@ -549,7 +549,11 @@ async def deliver_staged_clear_session(
             thread_id=codex_thread_id,
             baseline=banner_baseline,
         ):
-            return _pending_timeout(resolved_session_id, attempt_id, reused_attempt=False)
+            logger.warning(
+                "Codex omitted the thread-end banner for session %s after /clear; "
+                "scheduling the continuation from the successful command delivery",
+                resolved_session_id,
+            )
         if not schedule_handoff_continuation(
             session,
             build_handoff_continue_prompt(),

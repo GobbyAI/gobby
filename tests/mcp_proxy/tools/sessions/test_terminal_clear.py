@@ -307,8 +307,8 @@ async def test_codex_clear_types_continuation_once_thread_end_banner_appears() -
     restore.assert_not_called()
 
 
-async def test_codex_clear_without_thread_end_banner_keeps_the_attempt_pending() -> None:
-    """A delivered /clear is never rolled back: the successor may still bind late."""
+async def test_codex_clear_without_thread_end_banner_types_continuation_once() -> None:
+    """A successful /clear write advances even when Codex omits its legacy banner."""
     session = _terminal_session()
     pane = _Pane(_IDLE_PANE)
     restore = MagicMock(return_value=True)
@@ -326,39 +326,45 @@ async def test_codex_clear_without_thread_end_banner_keeps_the_attempt_pending()
         ),
     )
 
-    assert result["success"] is False
-    assert result["error_code"] == "clear_acknowledgment_timeout"
-    assert result["command_sent"] is True
-    assert result["attempt_restored"] is False
-    assert result["attempt_pending"] is True
-    assert "Do not call set_handoff again" in result["guidance"]
+    assert result["success"] is True
+    assert result["acknowledged_by"] == "successor_binding"
+    schedule.assert_called_once_with(
+        session,
+        build_handoff_continue_prompt(),
+        delay_seconds=_terminal_clear._CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+    )
+    acknowledgment.assert_awaited_once()
     restore.assert_not_called()
-    schedule.assert_not_called()
-    acknowledgment.assert_not_awaited()
 
 
-async def test_codex_clear_ignores_thread_end_banner_already_on_the_pane() -> None:
-    """A banner from an earlier resume of the same thread never proves this /clear."""
+async def test_codex_clear_stale_thread_end_banner_does_not_block_continuation() -> None:
+    """A stale banner cannot suppress continuation after a successful /clear write."""
     session = _terminal_session()
     pane = _Pane(f"$ codex resume {_THREAD_ID}\n" + _THREAD_END_BANNER + _IDLE_PANE)
     restore = MagicMock(return_value=True)
     schedule = MagicMock(return_value=True)
+    acknowledgment = AsyncMock(return_value=("successor-1", "successor_binding"))
 
     result = await _run_clear(
         _clear_patches(
             session,
             _clear_that_leaves_the_pane(),
             pane=pane,
-            acknowledgment=AsyncMock(),
+            acknowledgment=acknowledgment,
             restore_failed_attempt=restore,
             schedule_continuation=schedule,
         ),
     )
 
-    assert result["error_code"] == "clear_acknowledgment_timeout"
-    assert result["attempt_pending"] is True
+    assert result["success"] is True
+    assert result["acknowledged_by"] == "successor_binding"
+    schedule.assert_called_once_with(
+        session,
+        build_handoff_continue_prompt(),
+        delay_seconds=_terminal_clear._CODEX_CLEAR_CONTINUE_DELAY_SECONDS,
+    )
+    acknowledgment.assert_awaited_once()
     restore.assert_not_called()
-    schedule.assert_not_called()
 
 
 async def test_codex_clear_counts_only_a_banner_printed_after_the_command() -> None:
