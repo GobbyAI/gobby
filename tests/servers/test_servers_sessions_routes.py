@@ -907,7 +907,7 @@ class TestStopSignalEdgeCases:
             session_manager=session_storage,
         )
         with TestClient(server.app) as test_client:
-            del test_client.app.state.hook_manager
+            del server.app.state.hook_manager
             response = test_client.get("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
@@ -924,7 +924,7 @@ class TestStopSignalEdgeCases:
             session_manager=session_storage,
         )
         with TestClient(server.app) as test_client:
-            del test_client.app.state.hook_manager
+            del server.app.state.hook_manager
             response = test_client.delete("/api/sessions/test-session/stop")
 
         assert response.status_code == 503

@@ -371,7 +371,6 @@ fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
                 | "summary_generation_mode"
                 | "summary_markdown"
                 | "summary_path"
-                | "summary_revision_id"
                 | "summary_source_context_hash"
                 | "terminal_context"
                 | "title_source"

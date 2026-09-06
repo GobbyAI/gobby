@@ -40,7 +40,7 @@ class TaskEvidence:
 class HandoffSummary:
     markdown: str
     source_hash: str
-    metadata: dict[str, Any]
+    context_summary: dict[str, Any]
 
 
 async def build_handoff_summary(
@@ -51,8 +51,6 @@ async def build_handoff_summary(
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> HandoffSummary:
     """Append bounded repository evidence to an authored handoff."""
-    omissions: list[str] = []
-
     try:
         task_evidence = await _run_db(
             run_db,
@@ -62,39 +60,29 @@ async def build_handoff_summary(
             handoff.authored_at,
         )
     except Exception:
-        omissions.append("session_task_history_unavailable")
         task_evidence = TaskEvidence(None, None, ())
 
     try:
         transcript_commits = await _load_transcript_commit_shas(session)
     except Exception:
-        omissions.append("transcript_commit_evidence_unavailable")
         transcript_commits = ()
     commit_shas = _ordered_unique((*task_evidence.commit_shas, *transcript_commits))
 
     try:
         file_paths = await _run_db(run_db, _load_session_file_paths, db, handoff.session_id)
     except Exception:
-        omissions.append("session_file_attribution_unavailable")
         file_paths = ()
 
     try:
         file_statuses = await _load_file_statuses(session, file_paths)
     except Exception:
-        omissions.append("session_file_status_unavailable")
         file_statuses = tuple((path, "unknown") for path in file_paths)
 
     try:
         open_errors = await _run_db(run_db, load_open_tool_errors, db, handoff.session_id)
     except Exception:
-        omissions.append("open_tool_errors_unavailable")
         open_errors = []
 
-    error_ids = tuple(
-        str(record["error_id"])
-        for record in open_errors
-        if isinstance(record, Mapping) and isinstance(record.get("error_id"), str)
-    )
     sections = (
         _render_section("Active Task", (task_evidence.active_task_line,)),
         _render_section("Commits", tuple(f"`{sha}`" for sha in commit_shas)),
@@ -105,51 +93,45 @@ async def build_handoff_summary(
         _render_error_section(open_errors),
     )
     markdown = handoff.payload.rendered_markdown + "\n\n" + "\n\n".join(sections)
-    metadata = {
-        "source_kind": "session_handoff",
-        "source_handoff_id": handoff.id,
-        "handoff_payload_version": 1,
-        "handoff_content_sha256": handoff.payload.content_sha256,
-        "continuation_session_id": handoff.continuation_session_id,
-        "evidence": {
-            "active_task_id": task_evidence.active_task_id,
-            "commit_shas": list(commit_shas),
-            "file_paths": list(file_paths),
-            "open_tool_error_ids": list(error_ids),
-        },
-        "evidence_omissions": omissions,
-    }
     return HandoffSummary(
         markdown=markdown,
         source_hash=handoff_summary_source_hash(handoff),
-        metadata=metadata,
+        context_summary={
+            "has_active_task": task_evidence.active_task_id is not None,
+            "files_modified_count": len(file_paths),
+            "git_commits_count": len(commit_shas),
+            "has_initial_goal": False,
+        },
     )
 
 
-def find_handoff_summary_revision(
+def find_current_handoff_summary(
     db: HubDatabase,
     session_id: str,
     source_hash: str,
+    expected_markdown: str,
 ) -> str | None:
-    """Return a valid prior revision for the same immutable handoff source."""
-    rows = db.fetchall(
+    """Return the matching valid current summary for an immutable handoff source."""
+    row = db.fetchone(
         """
-        SELECT summary_markdown
-        FROM session_summary_revisions
-        WHERE session_id = %s
-          AND generation_mode = 'agent_authored'
-          AND source_context_hash = %s
-        ORDER BY created_at DESC, id DESC
+        SELECT summary_markdown, summary_generation_mode, summary_source_context_hash
+        FROM sessions
+        WHERE id = %s
         """,
-        (session_id, source_hash),
+        (session_id,),
     )
     from gobby.sessions.summary_validity import is_summary_markdown_valid
 
-    for row in rows:
-        markdown = row["summary_markdown"]
-        if isinstance(markdown, str) and is_summary_markdown_valid(markdown):
-            return markdown
-    return None
+    if row is None:
+        return None
+    if (
+        row["summary_source_context_hash"] != source_hash
+        or row["summary_generation_mode"] != "agent_authored"
+        or row["summary_markdown"] != expected_markdown
+        or not is_summary_markdown_valid(expected_markdown)
+    ):
+        return None
+    return expected_markdown
 
 
 def _load_task_evidence(

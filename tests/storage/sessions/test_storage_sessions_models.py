@@ -245,6 +245,7 @@ class TestSessionManagerModelFields:
         assert "transcript_path" in d
         assert "summary_path" in d
         assert "summary_markdown" in d
+        assert "summary_revision_id" not in d
         assert "git_branch" in d
         assert "parent_session_id" in d
         assert "agent_depth" in d
@@ -255,3 +256,62 @@ class TestSessionManagerModelFields:
         assert "original_prompt" in d
         assert "created_at" in d
         assert "updated_at" in d
+
+    def test_persist_summary_state_updates_current_fields_together(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="current-summary",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.persist_summary_state(
+            session.id,
+            summary_markdown="# Current summary",
+            generation_mode="full",
+            source_context_hash="a" * 64,
+            summary_path="/summary.md",
+        )
+
+        assert updated is not None
+        assert updated.summary_path == "/summary.md"
+        assert updated.summary_markdown == "# Current summary"
+        assert updated.summary_source_context_hash == "a" * 64
+        assert updated.summary_generation_mode == "full"
+        assert updated.summary_generated_at is not None
+
+    def test_update_summary_explicit_none_clears_current_summary_state(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="clear-current-summary",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.persist_summary_state(
+            session.id,
+            summary_markdown="# Current summary",
+            generation_mode="agent_authored",
+            source_context_hash="b" * 64,
+            summary_path="/summary.md",
+        )
+
+        cleared = session_manager.update_summary(
+            session.id,
+            summary_path=None,
+            summary_markdown=None,
+        )
+
+        assert cleared is not None
+        assert cleared.summary_path is None
+        assert cleared.summary_markdown is None
+        assert cleared.summary_source_context_hash is None
+        assert cleared.summary_generation_mode is None
+        assert cleared.summary_generated_at is None

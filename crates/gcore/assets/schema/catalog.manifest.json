@@ -4181,38 +4181,6 @@
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "session_summary_revisions.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "session_summary_revisions.generation_mode",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "session_summary_revisions.id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "session_summary_revisions.metadata_json",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "session_summary_revisions.previous_revision_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "session_summary_revisions.session_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "session_summary_revisions.source_context_hash",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "session_summary_revisions.summary_markdown",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
       "name": "session_tasks.action",
       "definition": "text|text|NO||NEVER"
     },
@@ -4471,10 +4439,6 @@
     {
       "name": "sessions.summary_path",
       "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "sessions.summary_revision_id",
-      "definition": "uuid|uuid|YES||NEVER"
     },
     {
       "name": "sessions.summary_source_context_hash",
@@ -7591,26 +7555,6 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
-      "name": "session_summary_revisions.session_summary_revisions_generation_mode_valid",
-      "definition": "CHECK (generation_mode = ANY (ARRAY['agent_authored'::text, 'full'::text, 'noop'::text]))"
-    },
-    {
-      "name": "session_summary_revisions.session_summary_revisions_id_session_id_unique",
-      "definition": "UNIQUE (id, session_id)"
-    },
-    {
-      "name": "session_summary_revisions.session_summary_revisions_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "session_summary_revisions.session_summary_revisions_previous_same_session_fk",
-      "definition": "FOREIGN KEY (previous_revision_id, session_id) REFERENCES session_summary_revisions(id, session_id) ON DELETE SET NULL (previous_revision_id) DEFERRABLE"
-    },
-    {
-      "name": "session_summary_revisions.session_summary_revisions_session_id_fkey",
-      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
-    },
-    {
       "name": "session_tasks.session_tasks_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -7693,10 +7637,6 @@
     {
       "name": "sessions.sessions_startup_claim_state_valid",
       "definition": "CHECK (startup_claim_state = ANY (ARRAY['idle'::text, 'claimed'::text, 'committed'::text, 'invalidated'::text]))"
-    },
-    {
-      "name": "sessions.sessions_summary_revision_fk",
-      "definition": "FOREIGN KEY (summary_revision_id, id) REFERENCES session_summary_revisions(id, session_id) ON DELETE SET NULL (summary_revision_id) DEFERRABLE"
     },
     {
       "name": "sessions.sessions_workspace_generation_nonnegative",
@@ -9323,14 +9263,6 @@
       "definition": "CREATE UNIQUE INDEX idx_session_skills_unique ON $schema.session_skills USING btree (session_id, skill_name)"
     },
     {
-      "name": "idx_session_summary_revisions_previous",
-      "definition": "CREATE INDEX idx_session_summary_revisions_previous ON $schema.session_summary_revisions USING btree (previous_revision_id)"
-    },
-    {
-      "name": "idx_session_summary_revisions_session_created",
-      "definition": "CREATE INDEX idx_session_summary_revisions_session_created ON $schema.session_summary_revisions USING btree (session_id, created_at DESC)"
-    },
-    {
       "name": "idx_session_tasks_session",
       "definition": "CREATE INDEX idx_session_tasks_session ON $schema.session_tasks USING btree (session_id)"
     },
@@ -9397,10 +9329,6 @@
     {
       "name": "idx_sessions_status_last_activity",
       "definition": "CREATE INDEX idx_sessions_status_last_activity ON $schema.sessions USING btree (status, last_activity)"
-    },
-    {
-      "name": "idx_sessions_summary_revision",
-      "definition": "CREATE INDEX idx_sessions_summary_revision ON $schema.sessions USING btree (summary_revision_id)"
     },
     {
       "name": "idx_sessions_unique",
@@ -9917,14 +9845,6 @@
     {
       "name": "session_stop_signals_pkey",
       "definition": "CREATE UNIQUE INDEX session_stop_signals_pkey ON $schema.session_stop_signals USING btree (session_id)"
-    },
-    {
-      "name": "session_summary_revisions_id_session_id_unique",
-      "definition": "CREATE UNIQUE INDEX session_summary_revisions_id_session_id_unique ON $schema.session_summary_revisions USING btree (id, session_id)"
-    },
-    {
-      "name": "session_summary_revisions_pkey",
-      "definition": "CREATE UNIQUE INDEX session_summary_revisions_pkey ON $schema.session_summary_revisions USING btree (id)"
     },
     {
       "name": "session_tasks_pkey",

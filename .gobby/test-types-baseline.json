@@ -7141,16 +7141,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/test_servers_sessions_routes.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 910,
-      "message": "\"Callable[[MutableMapping[str, Any], Callable[[], Awaitable[MutableMapping[str, Any]]], Callable[[MutableMapping[str, Any]], Awaitable[None]]], Awaitable[None]]\" has no attribute \"state\"",
-      "occurrences": 2,
-      "path": "tests/servers/test_servers_sessions_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/test_session_control.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 374,
@@ -9517,16 +9507,6 @@
       "message": "Argument 1 to \"Session\" has incompatible type \"**dict[str, list[str] | dict[str, str] | int | str | None]\"; expected \"str\"",
       "occurrences": 11,
       "path": "tests/storage/test_session_models.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/test_sessions_import.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 198,
-      "message": "Argument 1 to \"signature\" has incompatible type \"object\"; expected \"Callable[..., Any]\"",
-      "occurrences": 1,
-      "path": "tests/storage/test_sessions_import.py",
       "severity": "high",
       "test_name": ""
     },

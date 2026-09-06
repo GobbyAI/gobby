@@ -176,9 +176,10 @@ the persisted title verbatim after terminal ownership checks.
 For an expired session, the newest validated handoff with a clear delivery receipt is
 the archival narrative without an LLM call. Deterministic sections append Active Task,
 task-linked or transcript-explicit Commits, session-attributed Files Changed, and exact
-bounded Unresolved Errors with retrieval IDs. Evidence lookup failures are recorded as
-metadata omissions and do not discard the handoff. The revision is `agent_authored` and
-idempotent by its immutable handoff source hash.
+bounded Unresolved Errors with retrieval IDs. Evidence lookup failures leave that section
+empty and do not discard the handoff. The summary is `agent_authored`; regeneration is a
+no-op only while the current summary still matches the handoff's immutable source hash
+and rendered markdown.
 
 Staged, compact-only, malformed, imported-without-receipt, and absent handoffs retain the
 full-transcript/LLM fallback. Missing transcripts may therefore still leave

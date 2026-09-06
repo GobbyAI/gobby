@@ -64,6 +64,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "b390c1b8350fa4ec28fa40204db6ae8fbc25f4ad622595dd06e1b3ef64a5b7f4",
         sql: include_str!("../../assets/schema/migrations/426_retire_legacy_wiki.sql"),
     },
+    EmbeddedMigration {
+        version: 427,
+        filename: "427_remove_session_summary_revisions.sql",
+        checksum: "a766908d0dbfac143765e98530a8dd16b25b4060a2b9039d31c309269fb9b140",
+        sql: include_str!(
+            "../../assets/schema/migrations/427_remove_session_summary_revisions.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

@@ -507,7 +507,6 @@ _SESSION_RUNTIME_COLUMNS = frozenset(
         "summary_generation_mode",
         "summary_markdown",
         "summary_path",
-        "summary_revision_id",
         "summary_source_context_hash",
         "terminal_context",
         "title_source",

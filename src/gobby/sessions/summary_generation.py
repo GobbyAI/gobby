@@ -76,7 +76,6 @@ async def _persist_summary_markdown(
     summary_markdown: str,
     generation_mode: str,
     source_hash: str,
-    metadata: dict[str, Any],
 ) -> None:
     persist_summary_state = getattr(session_manager, "persist_summary_state", None)
     has_concrete_persist = callable(getattr(type(session_manager), "persist_summary_state", None))
@@ -89,7 +88,6 @@ async def _persist_summary_markdown(
             summary_markdown=summary_markdown,
             generation_mode=generation_mode,
             source_context_hash=source_hash,
-            metadata_json=metadata,
         )
         return
     await run_db(

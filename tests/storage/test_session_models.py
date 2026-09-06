@@ -120,6 +120,7 @@ class TestSessionToBrief:
         assert "context_injected" not in brief
         assert "terminal_context" not in brief
         assert "chat_mode" not in brief
+        assert "summary_revision_id" not in brief
 
     def test_to_brief_ref_fallback_without_seq_num(self) -> None:
         """to_brief ref falls back to truncated UUID when seq_num is None."""
