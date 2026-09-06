@@ -441,8 +441,8 @@ describe("ToolCallCard rendering", () => {
     expect(screen.getByText("Result")).toBeInTheDocument();
     expect(resultPanel).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
 
-    // The bash envelope renders verbatim as terminal text (gsqz wrapper
-    // parsing was retired, so no metadata strip is synthesized).
+    // The bash envelope renders verbatim as terminal text because no
+    // wrapper metadata strip is synthesized.
     expect(container.textContent).toContain("Chunk ID: 21a8f9");
 
     // Body text renders without leaking the JSON envelope key.

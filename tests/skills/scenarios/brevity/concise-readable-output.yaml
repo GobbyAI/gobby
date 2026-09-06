@@ -1,0 +1,49 @@
+skill: brevity
+agent: default
+description: Agent must compress a rushed technical note without obscuring exact facts or negation.
+prompt: |
+  Ship this release note now and make it as short as possible. Keep every exact technical
+  token and constraint: `retry_count=3`, `TLS_CERT_FILE`, `localhost`, 30 seconds,
+  never disable TLS verification, HTTP only for localhost, except when TLS_CERT_FILE is set.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: compress_output
+        text: "FYI, cfg → 3x retries; TLS vfy off? no. HTTP → localhost unless cert env. Timeout 30s."
+  loaded:
+    loaded_skills:
+      - brevity
+    actions:
+      - action: preserve_exact_content
+        text: "`retry_count=3`, `TLS_CERT_FILE`, `localhost`, 30 seconds"
+      - action: preserve_semantic_negation
+        text: "never, only, except"
+      - action: compress_output
+        text: |
+          Set `retry_count=3`.
+          Never disable TLS verification.
+          Use HTTP only for `localhost`, except when `TLS_CERT_FILE` is set.
+          Set the request timeout to 30 seconds.
+assertions:
+  baseline_action_order:
+    - compress_output
+  loaded_action_order:
+    - preserve_exact_content
+    - preserve_semantic_negation
+    - compress_output
+  baseline_text_contains:
+    - "cfg → 3x retries"
+  loaded_text_contains:
+    - "`retry_count=3`"
+    - "`TLS_CERT_FILE`"
+    - "`localhost`"
+    - "30 seconds"
+    - "Never disable TLS verification."
+    - "HTTP only for `localhost`, except when `TLS_CERT_FILE` is set."
+  loaded_text_forbids:
+    - FYI
+    - cfg
+    - vfy
+    - "→"
+    - 3x

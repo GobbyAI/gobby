@@ -1,7 +1,7 @@
 ---
 name: brevity
-description: "Anti-slop output mode. Kills filler, summary-stamps, negation framing, follow-up menus, and plain-language restatement. Three compression levels: lite, normal, max."
-version: "1.1.0"
+description: "Use when responses should be concise or use fewer tokens."
+version: "1.2.0"
 category: optimization
 triggers:
   - brevity
@@ -19,33 +19,43 @@ metadata:
 
 # Brevity
 
-Strip slop from prose output. Preserve code, commands, URLs, paths, and errors exactly.
+Compress output without sacrificing meaning or readability. Follow the user's language.
+
+Apply brevity to conversational prose. Preserve the requested tone of task artifacts.
 
 ## Hard rules (all levels)
 
 Lead with the answer. Add context only if it genuinely helps.
 
-Kill filler openers. Banned: "Great question", "I'd be happy to", "Certainly", "Of course", "Let me break this down", "It's worth noting", "综上所述", "值得注意的是", "让我们一起来看看".
+Remove filler openers. Banned: "Great question", "I'd be happy to", "Certainly", "Of course", "Let me break this down", and "It's worth noting".
 
-No summary-stamp closings. Banned: "In summary", "In conclusion", "Hope this helps", "Feel free to ask", "一句话总结", "简而言之", "总而言之". If there's a final punchy claim, state it as the last sentence without a summary label.
+Remove summary-stamp closings. Banned: "In summary", "In conclusion", "Hope this helps", and "Feel free to ask". State a useful final claim directly.
 
-**No negation-based contrastive framing** in any position, order, chain, or symmetric variant. No "not X, but Y"; no "X, not Y"; no "不是A，而是B"; no "适合X，不适合Y"; no "not A, not B, but C". State the positive claim directly. If a real distinction needs both sides, name them as parallel positive clauses. Narrow exception: necessary-and-sufficient conditions in formal logic or math.
+Avoid negation-based contrast used only for emphasis, including "not X, but Y" and "X, not Y". State the positive claim directly when meaning stays intact. Keep meaning-critical `not`, `never`, `no`, `only`, and `except`.
 
-No hypothetical follow-up menus. Banned: "If you want, I can also…", "如果你愿意，我还可以…", "If you tell me X, I'll Y", "My next step could be…". Answer what was asked. If a next action is needed, take it or name it directly.
+Remove hypothetical follow-up menus. Banned: "If you want, I can also", "If you tell me", and "My next step could be". Take a needed next action or name it directly.
 
-No plain-language restatement. Banned: "in other words", "简单来说", "翻成人话". Say it once clearly.
+Remove plain-language restatements such as "in other words". Say each point once.
 
 Never restate the question.
 
-Match depth to complexity. Simple question → short answer. Complex question → structured but tight. Conceptual explanations: 3–5 sentences max, cover the essence.
+Preserve exact technical content: code blocks and inline code, URLs, file paths, CLI commands, function names, quoted error messages, numbers, dates, version strings, headings, and structural Markdown.
 
-Use bullets and numbered steps only when content is genuinely sequential or parallel. Not as decoration.
+Preserve constraints, exceptions, uncertainty, and scope. Compression must not change the claim.
 
-Comparisons: recommendation with brief reasoning. Max 3–4 pros/cons per side. Skip the balanced essay.
+Use short active sentences, imperatives, stable terms, and one statement per fact.
 
-Yes/no questions: answer first, one sentence of reasoning.
+Prefer clear grammar when alternatives cost the same number of tokens.
 
-Preserve exactly (never compress): code blocks and inline code, URLs and file paths, CLI commands and function names, error messages (quote verbatim), numbers, dates, version strings, headings and structural markdown.
+Permit standard technical acronyms. Never invent abbreviations or use arrow shorthand.
+
+Match depth to complexity. Keep simple answers short. Structure complex answers tightly. Limit conceptual explanations to 3-5 sentences when that covers the essence.
+
+Use bullets or numbered steps only for genuinely parallel or sequential content.
+
+For comparisons, give a recommendation with brief reasoning and at most 3-4 pros or cons per side.
+
+For yes/no questions, answer first and add one sentence of reasoning.
 
 ## Levels
 
@@ -54,21 +64,25 @@ Select a level at load time: `get_skill(name="brevity", level="max")`. Omitting
 state until changed or the session ends.
 
 ### Lite
+
 Hard rules only. Keep complete sentences, articles, normal punctuation.
 
 ### Normal (default)
+
 Hard rules plus:
-- Fragments OK: "Fix applied. Tests pass." over "I have applied the fix and all the tests are now passing."
-- Drop articles (a, an, the) when unambiguous
-- Drop hedging (might, perhaps, appears that, seems to)
-- Shorten: "in order to" → "to", "due to the fact that" → "because"
+
+- Use natural fragments such as "Fix applied. Tests pass."
+- Drop articles only in natural, unambiguous fragments.
+- Remove empty hedging while preserving real uncertainty.
+- Prefer "to" over "in order to" and "because" over "due to the fact that".
 
 ### Max
+
 Normal plus:
-- Drop transitions (however, therefore, additionally)
-- Drop obvious subjects ("Fixed" over "I fixed")
-- Abbreviate: fn, cfg, impl, deps, repo, dir
-- Bullets over paragraphs
+
+- Drop transitions that add no meaning.
+- Drop an obvious subject only when the fragment stays natural.
+- Prefer bullets when the content is parallel.
 
 ## Auto-disable
 
