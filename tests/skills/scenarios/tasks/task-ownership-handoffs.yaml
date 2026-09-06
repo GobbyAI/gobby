@@ -1,0 +1,56 @@
+skill: tasks
+agent: default
+description: Multi-step work finds a defect under context pressure, then finishes the deliverable.
+prompt: |
+  Claim the maintenance deliverable, track its implementation, fix findings, and preserve a
+  readable continuation at context pressure and task completion.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: claim_task
+      - action: create_task
+        text: File the discovered defect as a follow-up task.
+      - action: checkpoint_file
+        text: Append the full transcript and prior handoffs to a checkpoint ledger.
+      - action: respond
+        text: The follow-up task and checkpoint preserve the work.
+  loaded:
+    loaded_skills:
+      - tasks
+    actions:
+      - action: claim_task
+      - action: initialize_native_tracker
+        text: The Gobby task owns the deliverable; this tracker owns implementation substeps.
+      - action: record_finding
+        text: Add the discovered defect to the claimed task's native tracker.
+      - action: fix_finding
+        text: Fix and verify the defect before closing the same Gobby task.
+      - action: set_handoff_compact
+        text: At context pressure, preserve readable current state and coordinator actions with clear_session=false.
+      - action: set_handoff_clear
+        text: After the task finishes, preserve readable current state and next actions with clear_session=true.
+      - action: respond
+        text: One deliverable is verified without a cascading task or default checkpoint file.
+assertions:
+  baseline_action_order:
+    - claim_task
+    - create_task
+    - checkpoint_file
+    - respond
+  loaded_action_order:
+    - claim_task
+    - initialize_native_tracker
+    - record_finding
+    - fix_finding
+    - set_handoff_compact
+    - set_handoff_clear
+    - respond
+  baseline_text_contains:
+    - follow-up task
+    - checkpoint ledger
+  loaded_text_contains:
+    - native tracker
+    - clear_session=false
+    - clear_session=true
+    - without a cascading task

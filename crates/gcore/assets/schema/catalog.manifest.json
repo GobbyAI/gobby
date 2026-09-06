@@ -7472,7 +7472,7 @@
     },
     {
       "name": "session_handoff_deliveries.session_handoff_deliveries_boundary_kind_valid",
-      "definition": "CHECK (boundary_kind = ANY (ARRAY['compact'::text, 'clear'::text]))"
+      "definition": "CHECK (boundary_kind = ANY (ARRAY['compact'::text, 'clear'::text, 'agent_end'::text]))"
     },
     {
       "name": "session_handoff_deliveries.session_handoff_deliveries_handoff_id_fkey",

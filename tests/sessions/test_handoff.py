@@ -19,6 +19,7 @@ from gobby.sessions.clear_continuation import (
     CLEAR_ATTEMPT_VARIABLE,
     clear_failed_attempt,
     stage_clear_attempt,
+    take_clear_handoff_marker,
 )
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
@@ -34,7 +35,12 @@ from gobby.sessions.handoff import (
     staged_handoff_rejection,
     write_feedback_batch,
 )
-from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
+from gobby.sessions.handoff_records import (
+    build_handoff_payload,
+    get_agent_end_handoff,
+    record_handoff_delivery,
+    stage_agent_end_handoff,
+)
 from gobby.sessions.title_lifecycle import (
     apply_clear_successor_title,
     clear_successor_title,
@@ -90,6 +96,31 @@ def _registered_session(manager: SessionManager) -> Session:
     session = manager.get(str(row["id"]))
     assert session is not None
     return session
+
+
+def _agent_boundary(
+    manager: SessionManager,
+    *,
+    suffix: str,
+    parent: Session | None = None,
+) -> tuple[Session, Session, str]:
+    parent_session = parent or _registered_session(manager)
+    child_id = manager.register_session(
+        external_id=f"agent-child-{suffix}",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=parent_session.project_id,
+        parent_session_id=parent_session.id,
+    )
+    child = manager.get(child_id)
+    assert child is not None
+    run = LocalAgentRunManager(manager.db).create(
+        parent_session_id=parent_session.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt=f"agent handoff {suffix}",
+    )
+    return parent_session, child, run.id
 
 
 def _title(manager: SessionManager, session_id: str) -> str | None:
@@ -656,6 +687,186 @@ def test_delivery_receipt_is_idempotent_and_prevents_compensation(
     assert row is not None
 
 
+def test_agent_end_staging_is_first_successful_payload_wins(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    parent, child, run_id = _agent_boundary(session_manager, suffix="retry")
+    first_payload = build_handoff_payload(
+        current_state="Implementation complete.",
+        next_steps=["Review the result."],
+    )
+    retry_payload = build_handoff_payload(
+        current_state="A retry tried to replace the result.",
+        next_steps=["Ignore the first payload."],
+    )
+
+    first = stage_agent_end_handoff(
+        temp_db,
+        agent_run_id=run_id,
+        child_session_id=child.id,
+        parent_session_id=parent.id,
+        payload=first_payload,
+    )
+    retried = stage_agent_end_handoff(
+        temp_db,
+        agent_run_id=run_id,
+        child_session_id=child.id,
+        parent_session_id=parent.id,
+        payload=retry_payload,
+    )
+
+    assert retried.id == first.id
+    assert retried.payload == first_payload
+    persisted = get_agent_end_handoff(temp_db, run_id)
+    assert persisted is not None and persisted.id == first.id
+    handoff_count = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_handoffs WHERE session_id = %s",
+        (child.id,),
+    )
+    receipt_count = temp_db.fetchone(
+        """
+        SELECT COUNT(*) AS count
+        FROM session_handoff_deliveries
+        WHERE attempt_id = %s AND boundary_kind = 'agent_end'
+        """,
+        (run_id.replace("-", ""),),
+    )
+    assert handoff_count is not None and handoff_count["count"] == 1
+    assert receipt_count is not None and receipt_count["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_targeted_agent_end_handoff_is_parent_only_and_idempotent(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    parent, child, run_id = _agent_boundary(session_manager, suffix="targeted")
+    payload = build_handoff_payload(
+        current_state="Review completed.",
+        next_steps=["Apply the review verdict."],
+    )
+    staged = stage_agent_end_handoff(
+        temp_db,
+        agent_run_id=run_id,
+        child_session_id=child.id,
+        parent_session_id=parent.id,
+        payload=payload,
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    with session_context_for_test(parent.id):
+        first = await registry.call("get_handoff", {"agent_run_id": run_id})
+        second = await registry.call("get_handoff", {"agent_run_id": run_id})
+
+    expected = {
+        "success": True,
+        "found": True,
+        "handoff_id": staged.id,
+        "agent_run_id": run_id,
+        "session_id": child.id,
+        "boundary_kind": "agent_end",
+        "handoff": payload.rendered_markdown,
+    }
+    assert first == expected
+    assert second == expected
+
+    unrelated_id = session_manager.register_session(
+        external_id="agent-handoff-unrelated",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=parent.project_id,
+    )
+    with session_context_for_test(unrelated_id):
+        denied = await registry.call("get_handoff", {"agent_run_id": run_id})
+    assert denied["success"] is False
+    assert denied["error_code"] == "access_denied"
+
+
+@pytest.mark.asyncio
+async def test_targeted_agent_end_handoff_reports_unknown_and_not_authored(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    parent, _child, run_id = _agent_boundary(session_manager, suffix="missing")
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    with session_context_for_test(parent.id):
+        missing = await registry.call("get_handoff", {"agent_run_id": run_id})
+        unknown = await registry.call("get_handoff", {"agent_run_id": str(uuid4())})
+
+    assert missing == {
+        "success": True,
+        "found": False,
+        "handoff_id": None,
+        "agent_run_id": run_id,
+        "session_id": None,
+        "boundary_kind": "agent_end",
+        "handoff": "",
+    }
+    assert unknown["success"] is False
+    assert unknown["error_code"] == "run_not_found"
+
+
+@pytest.mark.asyncio
+async def test_targeted_agent_end_handoffs_survive_parent_clear_and_stay_independent(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    parent, first_child, first_run_id = _agent_boundary(session_manager, suffix="first")
+    _, second_child, second_run_id = _agent_boundary(
+        session_manager,
+        suffix="second",
+        parent=parent,
+    )
+    first = stage_agent_end_handoff(
+        temp_db,
+        agent_run_id=first_run_id,
+        child_session_id=first_child.id,
+        parent_session_id=parent.id,
+        payload=build_handoff_payload(current_state="First done.", next_steps=["Read second."]),
+    )
+    second = stage_agent_end_handoff(
+        temp_db,
+        agent_run_id=second_run_id,
+        child_session_id=second_child.id,
+        parent_session_id=parent.id,
+        payload=build_handoff_payload(current_state="Second done.", next_steps=["Continue."]),
+    )
+    successor_id = session_manager.register_session(
+        external_id="agent-parent-successor",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=parent.project_id,
+        parent_session_id=parent.id,
+    )
+    clear_attempt_id = uuid4().hex
+    stage_clear_attempt(
+        temp_db,
+        parent.id,
+        attempt_id=clear_attempt_id,
+        handoff=build_handoff_payload(current_state="Clearing.", next_steps=["Continue."]),
+        terminal_context=None,
+        chat_context=None,
+    )
+    assert take_clear_handoff_marker(
+        temp_db,
+        parent.id,
+        attempt_id=clear_attempt_id,
+        successor_id=successor_id,
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    with session_context_for_test(successor_id):
+        first_result = await registry.call("get_handoff", {"agent_run_id": first_run_id})
+        second_result = await registry.call("get_handoff", {"agent_run_id": second_run_id})
+
+    assert first_result["handoff_id"] == first.id
+    assert first_result["session_id"] == first_child.id
+    assert second_result["handoff_id"] == second.id
+    assert second_result["session_id"] == second_child.id
+
+
 def test_staged_terminal_delivery_claim_requires_gate_and_is_deduplicated(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -856,6 +1067,13 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     assert properties["current_state"]["minLength"] == 1
     assert properties["next_steps"]["minItems"] == 1
     assert properties["next_steps"]["items"]["minLength"] == 1
+    get_schema = registry.get_tool_metadata("get_handoff")
+    assert get_schema is not None
+    assert get_schema.input_schema == {
+        "type": "object",
+        "properties": {"agent_run_id": {"type": "string"}},
+        "additionalProperties": False,
+    }
     feedback_schema = registry.get_tool_metadata("feedback")
     assert feedback_schema is not None
     disposition_description = feedback_schema.input_schema["properties"]["observations"]["items"][

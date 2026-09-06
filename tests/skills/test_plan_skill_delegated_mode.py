@@ -123,6 +123,16 @@ def test_lightweight_is_conversational_and_skips_artifact_workflow(body: str) ->
     assert "Write the decision-complete plan to" not in normalized
     assert "uv run gobby plans validate" not in section
     assert "build handoff" in normalized
+    assert "Before presenting, run a mechanism audit" in normalized
+    for mechanism in (
+        "new subsystem",
+        "dependency",
+        "abstraction",
+        "configuration surface",
+        "paid-operation loop",
+    ):
+        assert mechanism in normalized
+    assert "unnecessary for complete acceptance coverage" in normalized
 
 
 def test_explicit_commands_are_both_documented(body: str) -> None:

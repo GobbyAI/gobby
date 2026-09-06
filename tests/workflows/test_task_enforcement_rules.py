@@ -226,6 +226,25 @@ def _task_claim_event(
     )
 
 
+def _mcp_before_tool_event(server_name: str, tool_name: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "arguments": {},
+            },
+            "mcp_server": server_name,
+            "mcp_tool": tool_name,
+        },
+    )
+
+
 def _status_gate_variables(
     *,
     claimed_tasks: dict[str, str] | None = None,
@@ -262,8 +281,10 @@ async def _evaluate_close_event(
 TASK_ENFORCEMENT_RULES = {
     "block-cross-session-foreign-dirty-edit",
     "block-native-task-tools-unclaimed",
+    "block-spawned-agent-create-task",
     "block-native-todo-write",
     "block-reopen-task",
+    "nudge-native-tracker-after-claim",
     "require-tasks-skill-for-mutations",
     "require-task-before-edit",
     "require-task-before-commit",
@@ -444,6 +465,93 @@ class TestBlockNativeTaskToolsUnclaimed:
         assert body.when is not None
         assert "is_subagent" in body.when
         assert "task_claimed" in body.when
+
+
+class TestBlockSpawnedAgentCreateTask:
+    @staticmethod
+    def _engine(db: HubDatabase) -> RuleEngine:
+        _sync_bundled(db)
+        with db.transaction() as conn:
+            conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+            conn.execute(
+                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+                ("block-spawned-agent-create-task",),
+            )
+        return RuleEngine(db)
+
+    def test_rule_only_targets_create_task_with_immediate_parent_guidance(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("block-spawned-agent-create-task")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert row.priority == 5
+        assert body.when is not None
+        assert "is_spawned_agent" in body.when
+        assert body.effects is not None
+        assert body.effects[0].mcp_tools == ["gobby-tasks:create_task"]
+        reason = body.effects[0].reason or ""
+        assert "parent coordinator" in reason
+        assert "failing command" in reason
+        assert "diagnostics, paths, and impact" in reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "expected_decision"),
+        [
+            pytest.param("create_task", "block", id="create-blocked"),
+            pytest.param("claim_task", "allow", id="claim-available"),
+            pytest.param("update_task", "allow", id="update-available"),
+            pytest.param("close_task", "allow", id="close-available"),
+            pytest.param("validate_task", "allow", id="validation-available"),
+            pytest.param("submit_for_review", "allow", id="review-available"),
+        ],
+    )
+    async def test_spawned_worker_keeps_assigned_lifecycle_operations_available(
+        self,
+        db: HubDatabase,
+        tool_name: str,
+        expected_decision: str,
+    ) -> None:
+        server_name = "gobby-tasks-ops" if tool_name == "submit_for_review" else "gobby-tasks"
+        response = await self._engine(db).evaluate(
+            _mcp_before_tool_event(server_name, tool_name),
+            session_id=SESSION_ID,
+            variables={"is_spawned_agent": True},
+        )
+
+        assert response.decision == expected_decision
+
+
+class TestNativeTrackerClaimNudge:
+    @pytest.mark.asyncio
+    async def test_successful_claim_defines_deliverable_and_substep_ownership(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        with db.transaction() as conn:
+            conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+            conn.execute(
+                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+                ("nudge-native-tracker-after-claim",),
+            )
+
+        response = await RuleEngine(db).evaluate(
+            _task_claim_event(
+                "claim_task",
+                {"task_id": "#43"},
+                {"success": True, "task_id": CLAIM_TASK_ID},
+            ),
+            session_id=SESSION_ID,
+            variables={"claimed_tasks": {CLAIM_TASK_ID: "#43"}},
+        )
+
+        assert response.context is not None
+        assert "Gobby task = deliverable" in response.context
+        assert "provider-native tracker = implementation substeps" in response.context
+        assert "every owned finding" in response.context
 
 
 class TestBlockNativeTodoWrite:
@@ -2165,6 +2273,7 @@ class TestRequireTasksSkillOnMutationSchema:
         assert "task_mutation_requires_tasks_skill" in (body.when or "")
         assert "_agent_type" in (body.when or "")
         assert "not skill_loaded('tasks')" in (body.when or "")
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("tasks")
@@ -2211,6 +2320,7 @@ class TestTaskMutationSkillGateRoutes:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "skill_loaded('tasks')" in (body.when or "")
+        assert body.effects is not None
         assert body.effects[0].reason == _skill_fetch_template("tasks")
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
@@ -2248,7 +2358,7 @@ class TestTaskMutationSkillGateRoutes:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
+            variables={"_agent_type": "default", "loaded_skills": ["tasks", "restraint"]},
         )
 
         assert blocked.decision == "block"
@@ -2309,7 +2419,7 @@ class TestTaskMutationSkillGateRoutes:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"_agent_type": "default", "loaded_skills": ["tasks"]},
+            variables={"_agent_type": "default", "loaded_skills": ["tasks", "restraint"]},
         )
 
         assert blocked.decision == "block"

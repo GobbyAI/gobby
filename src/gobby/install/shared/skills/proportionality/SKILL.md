@@ -106,19 +106,19 @@ For each suspect piece of mechanism, ask four questions:
 4. **Explainable without the future?** Can you justify it using only what this
    plan/epic/leaf actually requires, with no appeal to "we might later…"?
 
-If **any** answer is "no" → it is a finding. **Name the simpler alternative
-explicitly** ("replace the `FooRegistry` with a module-level dict", "drop the
-`enable_x` flag and inline the behavior", "delete the base class and keep the
-one concrete class"). A proportionality finding that does not name the simpler
-form is incomplete.
+If **any** answer is "no", investigate the mechanism. A blocking finding must
+identify a concrete removable mechanism and a complete simpler replacement that
+preserves every acceptance case (for example, "replace the `FooRegistry` with a
+module-level dict"). Subjective or speculative concern without both parts is
+advisory, never blocking.
 
 ## Reporting a finding
 
-- **Severity is about structure, not size.** Reserve blocking severity for
-  structural Rube Goldbergs that should be simplified *before* the work
-  proceeds (e.g., a speculative subsystem the rest of the work would build on).
-  Use nit/advisory severity for ceremony and one-off knobs that are cheap to
-  fix in place.
+- **Severity is about actionable structure, not size.** Use blocking severity
+only when the review identifies a concrete mechanism that can be removed and a
+complete simpler replacement that preserves acceptance coverage. Use
+nit/advisory severity for subjective or speculative concern, ceremony, and
+one-off knobs without that proven replacement.
 - **Always name the consumer that is missing** and **the simpler form that
   replaces the mechanism.** "This is over-engineered" is not a finding;
   "`PlanEnhancerStrategyRegistry` has one strategy and no second is in scope —

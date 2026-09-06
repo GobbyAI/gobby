@@ -50,6 +50,25 @@ def _write_event(file_path: str = "/project/src/app.py") -> HookEvent:
     )
 
 
+def _mcp_event(server_name: str, tool_name: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": server_name,
+            "mcp_tool": tool_name,
+            "tool_input": {
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "arguments": {},
+            },
+        },
+    )
+
+
 @pytest.mark.parametrize(("rule_name", "skill_name"), GUIDANCE_RULES.items())
 def test_guidance_rule_structure(
     temp_db: HubDatabase,
@@ -115,3 +134,43 @@ async def test_guidance_gates_allow_loaded_and_non_source_writes(temp_db: HubDat
 
     assert loaded.decision == "allow"
     assert markdown.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server_name", "tool_name"),
+    [
+        pytest.param("gobby-tasks", "create_task", id="create-task"),
+        pytest.param("gobby-agents", "spawn_agent", id="spawn-agent"),
+        pytest.param("gobby-agents", "dispatch_batch", id="dispatch-batch"),
+    ],
+)
+async def test_root_graph_expansion_requires_restraint(
+    temp_db: HubDatabase,
+    server_name: str,
+    tool_name: str,
+) -> None:
+    _sync_only_guidance_rules(temp_db)
+    engine = RuleEngine(temp_db)
+    event = _mcp_event(server_name, tool_name)
+
+    blocked = await engine.evaluate(
+        event,
+        session_id=SESSION_ID,
+        variables={
+            "is_spawned_agent": False,
+            "loaded_skills": ["development-discipline"],
+        },
+    )
+    allowed = await engine.evaluate(
+        event,
+        session_id=SESSION_ID,
+        variables={
+            "is_spawned_agent": False,
+            "loaded_skills": list(GUIDANCE_RULES.values()),
+        },
+    )
+
+    assert blocked.decision == "block"
+    assert skill_fetch_directive("restraint") in (blocked.reason or "")
+    assert allowed.decision == "allow"

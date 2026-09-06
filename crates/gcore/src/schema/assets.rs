@@ -72,6 +72,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/427_remove_session_summary_revisions.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 428,
+        filename: "428_add_agent_end_handoff_boundary.sql",
+        checksum: "808ebf7df06829502e1334a228341c7ac9a7ae6fa04ec2c0e251eb78967149c4",
+        sql: include_str!("../../assets/schema/migrations/428_add_agent_end_handoff_boundary.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

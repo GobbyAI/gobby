@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1563,12 +1564,62 @@ class TestKillAgent:
 class TestEndAgentRun:
     """Tests for end_agent_run MCP tool."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_agent_end_handoff(self) -> Iterator[MagicMock]:
+        handoff = MagicMock(id="handoff-123")
+        with patch(
+            "gobby.mcp_proxy.tools.agents_lifecycle_tools.stage_agent_end_handoff",
+            return_value=handoff,
+        ) as staged:
+            yield staged
+
+    @staticmethod
+    def _handoff_args() -> dict[str, object]:
+        return {
+            "current_state": "Assigned work is complete.",
+            "next_steps": ["Continue the parent workflow."],
+        }
+
+    def test_schema_requires_structured_handoff(self) -> None:
+        registry = create_agents_registry(_make_runner_with_run_storage())
+
+        metadata = registry.get_tool_metadata("end_agent_run")
+
+        assert metadata is not None
+        assert metadata.input_schema["required"] == ["current_state", "next_steps"]
+        assert set(metadata.input_schema["properties"]) == {
+            "current_state",
+            "next_steps",
+            "what_was_accomplished",
+            "key_decisions",
+            "problems_encountered",
+            "what_didnt_work",
+            "blockers",
+            "notes",
+            "references",
+        }
+
+    @pytest.mark.asyncio
+    async def test_validates_handoff_before_resolving_or_mutating_run(self) -> None:
+        runner = _make_runner_with_run_storage()
+        registry = create_agents_registry(runner)
+
+        result = await registry._tools["end_agent_run"].func(
+            current_state=" ",
+            next_steps=[],
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "invalid_handoff"
+        runner.get_run.assert_not_called()
+        runner.complete_run.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_requires_active_session_context(self) -> None:
         runner = _make_runner_with_run_storage()
         registry = create_agents_registry(runner)
 
-        result = await registry._tools["end_agent_run"].func()
+        result = await registry._tools["end_agent_run"].func(**self._handoff_args())
 
         assert result["success"] is False
         assert "No active session context" in result["error"]
@@ -1607,9 +1658,14 @@ class TestEndAgentRun:
                 return_value={"success": True},
             ),
         ):
-            result = await registry._tools["end_agent_run"].func()
+            result = await registry._tools["end_agent_run"].func(**self._handoff_args())
 
-        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        assert result == {
+            "success": True,
+            "run_id": "run-123",
+            "status": "success",
+            "handoff_id": "handoff-123",
+        }
         runner.complete_run.assert_called_once_with("run-123", result=None)
         completion_registry.notify.assert_awaited_once_with(
             "run-123",
@@ -1647,12 +1703,20 @@ class TestEndAgentRun:
             ),
         ):
             registry = create_agents_registry(runner, db=temp_db)
-            result = await registry._tools["end_agent_run"].func()
+            result = await registry._tools["end_agent_run"].func(**self._handoff_args())
 
-        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        assert result == {
+            "success": True,
+            "run_id": "run-123",
+            "status": "success",
+            "handoff_id": "handoff-123",
+        }
 
     @pytest.mark.asyncio
-    async def test_kills_provider_before_terminalizing_run(self) -> None:
+    async def test_stages_handoff_before_killing_and_terminalizing_run(
+        self,
+        _stub_agent_end_handoff: MagicMock,
+    ) -> None:
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
             run_id="run-123",
@@ -1662,6 +1726,13 @@ class TestEndAgentRun:
         runner.run_storage.get_by_session.return_value = mock_run
         runner.get_run.return_value = mock_run
         events: list[tuple[str, str, bool | None]] = []
+        staged_handoff = MagicMock(id="handoff-123")
+
+        def stage_handoff(*args: Any, **kwargs: Any) -> MagicMock:
+            events.append(("handoff", str(kwargs["agent_run_id"]), None))
+            return staged_handoff
+
+        _stub_agent_end_handoff.side_effect = stage_handoff
 
         def complete_run(run_id: str, result: str | None = None) -> bool:
             events.append(("complete", run_id, None))
@@ -1685,10 +1756,45 @@ class TestEndAgentRun:
                 side_effect=kill_process,
             ),
         ):
-            result = await registry._tools["end_agent_run"].func()
+            result = await registry._tools["end_agent_run"].func(**self._handoff_args())
 
-        assert result == {"success": True, "run_id": "run-123", "status": "success"}
-        assert events == [("kill", "run-123", False), ("complete", "run-123", None)]
+        assert result == {
+            "success": True,
+            "run_id": "run-123",
+            "status": "success",
+            "handoff_id": "handoff-123",
+        }
+        assert events == [
+            ("handoff", "run-123", None),
+            ("kill", "run-123", False),
+            ("complete", "run-123", None),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_keeps_run_active(
+        self,
+        _stub_agent_end_handoff: MagicMock,
+    ) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        _stub_agent_end_handoff.side_effect = RuntimeError("database unavailable")
+        registry = create_agents_registry(runner)
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with session_context_for_test("sess-456"):
+            result = await registry._tools["end_agent_run"].func(**self._handoff_args())
+
+        assert result["success"] is False
+        assert result["error_code"] == "handoff_persistence_failed"
+        assert result["run_id"] == "run-123"
+        runner.complete_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_error_when_session_has_no_agent_run(self) -> None:
@@ -1699,7 +1805,7 @@ class TestEndAgentRun:
         from gobby.utils.session_context import session_context_for_test
 
         with session_context_for_test("sess-456"):
-            result = await registry._tools["end_agent_run"].func()
+            result = await registry._tools["end_agent_run"].func(**self._handoff_args())
 
         assert result["success"] is False
         assert "No agent found for session sess-456" == result["error"]
@@ -1741,9 +1847,14 @@ class TestEndAgentRun:
                 return_value={"success": True},
             ),
         ):
-            result = await registry._tools["end_agent_run"].func()
+            result = await registry._tools["end_agent_run"].func(**self._handoff_args())
 
-        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        assert result == {
+            "success": True,
+            "run_id": "run-123",
+            "status": "success",
+            "handoff_id": "handoff-123",
+        }
         assert ism_manager.list_messages("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001") == []
         assert not ism_manager.has_completion_notification(
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",

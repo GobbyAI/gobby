@@ -1,6 +1,21 @@
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
+  block-spawned-agent-create-task:
+    description: "Keep spawned findings inside the assigned deliverable"
+    event: before_tool
+    enabled: true
+    priority: 5
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        mcp_tools: ["gobby-tasks:create_task"]
+        reason: >-
+          Spawned workers cannot create Gobby tasks. Keep assigned-task claim, update,
+          validation, review, and close operations on the current deliverable. Route
+          findings to the parent coordinator via send_message with the failing command,
+          diagnostics, paths, and impact.
+
   block-native-task-tools-unclaimed:
     description: "Block CC native task tools when no Gobby task is claimed"
     event: before_tool

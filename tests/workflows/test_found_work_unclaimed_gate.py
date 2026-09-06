@@ -198,15 +198,11 @@ async def test_explicit_user_filing_instruction_exempts_unclaimed_tasks(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("is_spawned_agent", [False, True])
-async def test_bundled_rule_blocks_interactive_and_spawned_sessions(
-    temp_db: HubDatabase,
-    is_spawned_agent: bool,
-) -> None:
+async def test_bundled_rule_blocks_interactive_sessions(temp_db: HubDatabase) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,
-        "is_spawned_agent": is_spawned_agent,
+        "is_spawned_agent": False,
         "stop_attempts": 0,
     }
 
@@ -252,8 +248,8 @@ async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session
 
     response = await handler.evaluate_async(event)
 
-    assert response.decision == "block"
-    assert "#21484" in (response.reason or "")
+    assert response.decision == "allow"
+    assert response.reason is None
     analyze.assert_not_awaited()
     unclaimed.assert_called_once_with(
         session_id,

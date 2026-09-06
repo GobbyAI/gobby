@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.sessions.handoff_records import build_handoff_payload, stage_agent_end_handoff
 
 
 def register_agent_lifecycle_tools(
@@ -97,11 +98,36 @@ def register_agent_lifecycle_tools(
     @registry.tool(
         name="end_agent_run",
         description=(
-            "Signal that this agent run is complete and release its resources. "
-            "Always self-scoped to the caller."
+            "Persist a structured handoff, signal that this agent run is complete, and "
+            "release its resources. Always self-scoped to the caller."
         ),
     )
-    async def end_agent_run() -> dict[str, Any]:
+    async def end_agent_run(
+        current_state: str,
+        next_steps: list[str],
+        what_was_accomplished: list[str] | None = None,
+        key_decisions: list[str] | None = None,
+        problems_encountered: list[str] | None = None,
+        what_didnt_work: list[str] | None = None,
+        blockers: list[str] | None = None,
+        notes: list[str] | None = None,
+        references: list[str] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            payload = build_handoff_payload(
+                current_state=current_state,
+                next_steps=next_steps,
+                what_was_accomplished=what_was_accomplished or (),
+                key_decisions=key_decisions or (),
+                problems_encountered=problems_encountered or (),
+                what_didnt_work=what_didnt_work or (),
+                blockers=blockers or (),
+                notes=notes or (),
+                references=references or (),
+            )
+        except (TypeError, ValueError) as exc:
+            return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
+
         trusted_run_id = ctx.get_current_agent_run_id()
         current_session_id = ctx.get_current_session_id()
         if not current_session_id and not trusted_run_id:
@@ -129,12 +155,36 @@ def register_agent_lifecycle_tools(
                 "success": False,
                 "error": "Trusted agent run does not match the active session context",
             }
+        if not db_run.child_session_id or not db_run.parent_session_id:
+            return {
+                "success": False,
+                "error": "Agent run is missing its child or parent session boundary",
+                "error_code": "invalid_agent_boundary",
+            }
+
+        kill_db = ctx.db or ctx.agent_run_manager.db
+        try:
+            handoff = stage_agent_end_handoff(
+                kill_db,
+                agent_run_id=run_id,
+                child_session_id=db_run.child_session_id,
+                parent_session_id=db_run.parent_session_id,
+                payload=payload,
+            )
+        except Exception as exc:
+            facade().logger.exception("Failed to persist agent-end handoff for run %s", run_id)
+            return {
+                "success": False,
+                "run_id": run_id,
+                "error": str(exc),
+                "error_code": "handoff_persistence_failed",
+            }
         result = cast(
             dict[str, Any],
             await facade()._complete_self_terminated_run(
                 runner=ctx.runner,
                 run=db_run,
-                kill_db=ctx.db or ctx.agent_run_manager.db,
+                kill_db=kill_db,
                 completion_registry=ctx.completion_registry,
                 session_manager=ctx.session_manager,
             ),
@@ -153,6 +203,7 @@ def register_agent_lifecycle_tools(
             "success": True,
             "run_id": run_id,
             "status": result_status,
+            "handoff_id": handoff.id,
         }
 
     @registry.tool(

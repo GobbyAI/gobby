@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.sessions.handoff import (
     FEEDBACK_DISPOSITIONS,
     FEEDBACK_FREQUENCIES,
@@ -15,6 +16,7 @@ from gobby.sessions.handoff import (
     normalize_feedback_observations,
     write_feedback_batch,
 )
+from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
 from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
 
@@ -146,11 +148,59 @@ def register_handoff_tools(
         except ValueError:
             return None
 
-    async def get_handoff() -> dict[str, Any]:
-        """Consume the handoff staged for this compact or clear continuation."""
+    async def get_handoff(agent_run_id: str | None = None) -> dict[str, Any]:
+        """Consume a continuation handoff or read one agent run's final handoff."""
         session_id = _current_session_id()
         if session_id is None:
             return {"success": False, "error": "No session context available"}
+        if agent_run_id is not None:
+            try:
+                agent_run_attempt_id(agent_run_id)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Agent run {agent_run_id} not found",
+                    "error_code": "run_not_found",
+                }
+            run = session_manager.db.fetchone(
+                "SELECT id, parent_session_id FROM agent_runs WHERE id = %s",
+                (agent_run_id,),
+            )
+            if run is None:
+                return {
+                    "success": False,
+                    "error": f"Agent run {agent_run_id} not found",
+                    "error_code": "run_not_found",
+                }
+            parent_session_id = str(run["parent_session_id"])
+            if session_id != parent_session_id:
+                successor = resolve_clear_successor(session_manager.db, parent_session_id)
+                if successor != session_id:
+                    return {
+                        "success": False,
+                        "error": "Agent handoff is available only to the parent session",
+                        "error_code": "access_denied",
+                    }
+            delivered = get_agent_end_handoff(session_manager.db, agent_run_id)
+            if delivered is None:
+                return {
+                    "success": True,
+                    "found": False,
+                    "handoff_id": None,
+                    "agent_run_id": agent_run_id,
+                    "session_id": None,
+                    "boundary_kind": "agent_end",
+                    "handoff": "",
+                }
+            return {
+                "success": True,
+                "found": True,
+                "handoff_id": delivered.id,
+                "agent_run_id": agent_run_id,
+                "session_id": delivered.session_id,
+                "boundary_kind": "agent_end",
+                "handoff": delivered.payload.rendered_markdown,
+            }
         consumed = consume_pending_handoff(session_manager.db, session_id)
         if consumed is None:
             return {
@@ -213,12 +263,16 @@ def register_handoff_tools(
     registry.register(
         name="get_handoff",
         description=(
-            "Consume the one pending handoff created by set_handoff for this compact "
-            "continuation or direct clear predecessor. Returns an empty result for manual "
-            "provider compact/clear operations and on subsequent calls."
+            "With no arguments, consume the one pending compact/clear handoff. With "
+            "agent_run_id, idempotently read that child run's final agent_end handoff as "
+            "its parent session or a bound clear successor."
         ),
-        brief="Consume the pending structured handoff for this continuation.",
-        input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+        brief="Consume a continuation handoff or read a child run's final handoff.",
+        input_schema={
+            "type": "object",
+            "properties": {"agent_run_id": {"type": "string"}},
+            "additionalProperties": False,
+        },
         func=get_handoff,
     )
     registry.register(

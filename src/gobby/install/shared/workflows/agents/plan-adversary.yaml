@@ -445,7 +445,9 @@ step_workflow:
       description: "Self-terminate"
       status_message: >-
         Call mcp__gobby__call_tool with server_name="gobby-agents",
-        tool_name="end_agent_run", and arguments={} to finish the run.
+        tool_name="end_agent_run" with current_state summarizing the review verdict
+        and next_steps naming the coordinator's next action; add findings and
+        evidence references in optional structured fields.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

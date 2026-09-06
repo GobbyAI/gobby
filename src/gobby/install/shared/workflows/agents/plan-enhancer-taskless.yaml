@@ -65,8 +65,9 @@ prompts:
     ships. Send your structured result to the parent session with `send_message`
     using `message_type: "plan_enhancement"` — that exact type is what marks the
     round delivered, so use it on the result send and on no other message. Then
-    call `end_agent_run` to release resources promptly. The coordinator applies
-    any accepted suggestions and re-runs `uv run gobby plans validate`.
+    call `end_agent_run` with `current_state` summarizing the enhancement result and
+    `next_steps` telling the parent to evaluate the suggestions. The coordinator
+    applies any accepted suggestions and re-runs `uv run gobby plans validate`.
 
     Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
     `after_agent`, and `stop`; they are observation points, never task-mutation
@@ -161,8 +162,9 @@ step_workflow:
         paste the plan to you. Then read the parent context. Walk both lenses (Better,
         Bigger), run the proportionality test on each suggestion, and emit the
         structured `plan-enhance` result (converged + ranked suggestions) to the
-        parent via send_message, then call end_agent_run. Never edit the plan;
-        never approve or reject.
+        parent via send_message, then call end_agent_run with `current_state`
+        summarizing the result and `next_steps` naming the parent's evaluation
+        action. Never edit the plan; never approve or reject.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:create_task"
@@ -182,8 +184,8 @@ step_workflow:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:
-        # Delivering the result completes the round. `end_agent_run` takes no
-        # arguments, so the result must go out first; if the provider process
+# Delivering the result completes the round. `end_agent_run` requires a
+# structured handoff, but the full result must still go out first; if the provider process
         # then exits without that second call, no turn_end fires and the
         # stop gate cannot ask for it, which would record a delivered round as
         # a failed run. The message_type gate keeps mid-run messages (status
@@ -199,4 +201,3 @@ step_workflow:
           action: set_variable
           variable: enhance_complete
           value: true
-

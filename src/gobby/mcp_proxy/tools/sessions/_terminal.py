@@ -877,9 +877,10 @@ def register_terminal_tools(
     @registry.tool(
         name="capture_output",
         description=(
-            "Capture the last N lines of a session's tmux terminal output. "
-            "Useful for inspecting permission dialogs, trust prompts, or "
-            "other terminal state not visible through hooks."
+            "Take a one-shot diagnostic snapshot of the last N lines of a session's "
+            "terminal output. Useful for inspecting permission dialogs, trust prompts, "
+            "or other state not visible through hooks. For terminal-pattern waits, use "
+            "gobby-agents:wait_for_output instead of repeated capture_output calls."
         ),
     )
     async def capture_output(

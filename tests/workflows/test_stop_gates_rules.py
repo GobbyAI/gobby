@@ -98,7 +98,6 @@ STOP_GATES_RULES = {
     "block-found-work-permission-deferral",
     "block-terminal-validation-failure",
     "block-unclaimed-found-work",
-    "remind-found-work-after-close",
     "require-epic-tree-close",
     "require-task-close",
     "require-step-completion",
@@ -118,6 +117,7 @@ class TestStopGatesSync:
         rule_names = {r.name for r in rules}
 
         assert STOP_GATES_RULES.issubset(rule_names), f"Missing: {STOP_GATES_RULES - rule_names}"
+        assert "remind-found-work-after-close" not in rule_names
 
     def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All rules should have group='stop-gates'."""
@@ -143,7 +143,7 @@ class TestStopGatesSync:
                 for effect in body.resolved_effects:
                     assert effect.type in {"block", "inject_context", "set_variable"}
 
-    def test_unclaimed_found_work_rule_applies_to_spawned_agents(
+    def test_unclaimed_found_work_rule_excludes_spawned_agents(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
@@ -151,7 +151,7 @@ class TestStopGatesSync:
         row = _get_rule(manager, "block-unclaimed-found-work")
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
-        assert "is_spawned_agent" not in (body.when or "")
+        assert "is_spawned_agent" in (body.when or "")
 
 
 class TestStopAttemptsPlumbing:

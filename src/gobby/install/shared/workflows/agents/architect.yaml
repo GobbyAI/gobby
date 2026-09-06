@@ -144,8 +144,9 @@ step_workflow:
       status_message: |
         Read assigned_task_id with get_task, update only the architecture marker
         block with `## Architecture Brief` and `## Test Architecture` via update_task,
-        re-read it, then call end_agent_run. Escalate only for blocking missing
-        decisions.
+        re-read it, then call end_agent_run with current_state summarizing the brief
+        and next_steps telling the coordinator to continue the architecture stage.
+        Escalate only for blocking missing decisions.
       allowed_tools: "all"
       allowed_mcp_tools:
         - "gobby-tasks:get_task"

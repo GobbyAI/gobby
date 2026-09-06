@@ -15,15 +15,33 @@ rules:
         value: true
 
   require-restraint-skill:
-    description: "Block first code write/edit until restraint is loaded"
+    description: "Require restraint before first code write or root task-graph expansion"
     event: before_tool
     enabled: true
-    priority: 30
+    priority: 22
     when: >
       not skill_loaded('restraint')
       and not variables.get('restraint_disabled')
-      and event.data.get('canonical_tool_kind') == 'write'
-      and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
+      and (
+        (
+          event.data.get('canonical_tool_kind') == 'write'
+          and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
+        )
+        or (
+          not variables.get('is_spawned_agent')
+          and variables.get('_agent_type', 'default') == 'default'
+          and (
+            (
+              event.data.get('mcp_server') == 'gobby-tasks'
+              and event.data.get('mcp_tool') == 'create_task'
+            )
+            or (
+              event.data.get('mcp_server') == 'gobby-agents'
+              and event.data.get('mcp_tool') in ('spawn_agent', 'dispatch_batch')
+            )
+          )
+        )
+      )
     effects:
       - type: block
         reason: '{{ skill_fetch_directive("restraint") }}'

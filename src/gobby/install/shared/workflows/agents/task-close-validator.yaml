@@ -104,9 +104,10 @@ prompts:
     does not depend on evidence fidelity. Call
     submit_close_review(review_id=<exact launch review_id>, verdict=<object>).
     Correct any malformed-verdict response while the review remains running.
-    After a terminal closed, invalid, external_pending, stale, or error response, call the
-    zero-argument end_agent_run. Gobby delivers the persisted terminal payload
-    to the originating session automatically.
+    After a terminal closed, invalid, external_pending, stale, or error response,
+    call end_agent_run with current_state summarizing that result and next_steps
+    naming the originating coordinator's action. Gobby delivers the persisted
+    terminal payload to the originating session automatically.
 
     Lifecycle model:
     - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
@@ -131,7 +132,9 @@ step_workflow:
       description: "Perform the taskless read-only close review"
       status_message: |
         Inspect the task and repository, run focused validations as needed,
-        then submit the verdict and call end_agent_run.
+        then submit the verdict and call end_agent_run with `current_state`
+        summarizing the terminal result and `next_steps` naming the originating
+        coordinator's action.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:create_task"

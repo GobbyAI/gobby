@@ -9,3 +9,34 @@ rules:
     when: "event.data.get('mcp_tool') in ['claim_task', 'create_task'] and not event.data.get('error')"
     effects:
       - type: observe
+
+  nudge-native-tracker-after-claim:
+    description: "Define Gobby and provider-native task ownership after a successful claim"
+    event: after_tool
+    enabled: true
+    priority: 28
+    when: >
+      event.data.get('mcp_server') == 'gobby-tasks'
+      and event.data.get('mcp_tool') in ('claim_task', 'create_task')
+      and isinstance(event.data.get('tool_output'), dict)
+      and (
+        event.data.get('tool_output', {}).get('task_id')
+          in (variables.get('claimed_tasks') or {})
+        or event.data.get('tool_output', {}).get('id')
+          in (variables.get('claimed_tasks') or {})
+        or (
+          isinstance(event.data.get('tool_output', {}).get('result'), dict)
+          and (
+            event.data.get('tool_output', {}).get('result', {}).get('task_id')
+              in (variables.get('claimed_tasks') or {})
+            or event.data.get('tool_output', {}).get('result', {}).get('id')
+              in (variables.get('claimed_tasks') or {})
+          )
+        )
+      )
+    effects:
+      - type: inject_context
+        template: >-
+          Gobby task = deliverable; provider-native tracker = implementation substeps.
+          For multi-step work, initialize the native tracker now and keep every owned
+          finding there until it is fixed before this task closes.

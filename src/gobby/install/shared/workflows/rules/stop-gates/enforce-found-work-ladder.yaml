@@ -24,7 +24,8 @@ rules:
       - type: block
         delivery: on_receipt
         reason: >-
-          Found-work ladder: fix it now (create_task claim=true), hand it to its active owner via
+          Found-work ladder: add it to the claimed task's native tracker and fix it now,
+          hand it to its active owner via
           send_message, or — edge case — file it labeled needs-decision/clean-window with the
           reason. Don't ask, and don't go silent. This alert fires once per session — act on
           it, or stop again to proceed.
@@ -45,7 +46,7 @@ rules:
         reason: |
           Found-work ladder: terminal validation failure remains unresolved:
           {{ terminal_validation_failure_commands | join('\n') }}
-          Fix it now (create_task claim=true), hand a confined foreign failure to its active
+          Fix it inside the claimed task, hand a confined foreign failure to its active
           owner via send_message after a scoped green rerun, or file the edge case with a
           needs-decision/clean-window label and reason.
 
@@ -57,6 +58,7 @@ rules:
     when: >
       unclaimed_found_work
       and not variables.get('plan_mode')
+      and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
@@ -67,28 +69,3 @@ rules:
           its active owner via send_message, or — edge case only — label it
           needs-decision/clean-window with the reason in its description. Filing is not a terminal
           state.
-
-  remind-found-work-after-close:
-    description: "Prompt one found-work sweep after each successful task close"
-    event: after_tool
-    enabled: true
-    priority: 42
-    when: >
-      event.data.get('mcp_server') == 'gobby-tasks'
-      and event.data.get('mcp_tool') == 'close_task'
-      and tool_call_succeeded()
-      and isinstance(event.data.get('tool_output'), dict)
-      and (
-        event.data.get('tool_output', {}).get('closed') is True
-        or (
-          isinstance(event.data.get('tool_output', {}).get('result'), dict)
-          and event.data.get('tool_output', {}).get('result', {}).get('closed') is True
-        )
-      )
-    effects:
-      - type: inject_context
-        template: >-
-          Task closed. Found-work sweep before you stop: anything you noticed this session and didn't
-          act on? Fix it now (new claimed task), hand it to its active owner via send_message, or —
-          edge case only — file it labeled needs-decision/clean-window with the reason. Don't end
-          with should-I-fix.

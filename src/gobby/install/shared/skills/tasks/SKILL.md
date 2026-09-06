@@ -26,7 +26,9 @@ before the first call.
 
 Create or claim the deliverable task before editing files. Use lifecycle MCP
 tools; the `gobby tasks` CLI is an operator interface and does not update agent
-workflow state.
+workflow state. For multi-step work, initialize the provider's native task
+tracker immediately after the claim. One Gobby task owns the deliverable; the
+native tracker owns its implementation substeps.
 
 Required creation fields:
 
@@ -66,6 +68,8 @@ call_tool(
 
 Open `references/creation.md` when selecting task types, categories, priorities,
 labels, or writing expanded validation criteria.
+Open `references/handoffs.md` when context pressure approaches, when finishing a
+task, or when moving between epic children.
 
 ## Implementation
 
@@ -85,14 +89,21 @@ labels, or writing expanded validation criteria.
 A defect you find during any task — broken behavior, a failing check, an
 error in committed code — follows this ladder, in order:
 
-1. Fix it now: `create_task` with `claim=true`, fix, close. Finding it is
-   the authorization; an out-of-scope bug is never a scope change that
-   needs user approval.
+1. Fix it now: add the finding to the claimed task's native tracker, fix it,
+   and verify it before closing that same Gobby task. Finding it is the
+   authorization; an out-of-scope bug is never a scope change that needs user
+   approval. Create another Gobby task only when the user explicitly directs it
+   or step 3 applies.
 2. Surface owned by an active session — their uncommitted files, their
-   in-flight work: hand it off. Send the failing command, diagnostics, and
-   paths via `gobby-agents:send_message`; never touch their uncommitted
-   files. Handoff is a fix path, and a passing scoped rerun against owned
-   or clean paths clears your close gates.
+   in-flight work: hand it off. Send the failing command, diagnostics, paths,
+   and impact via `gobby-agents:send_message`; never touch their uncommitted
+   files. A spawned worker routes every finding to its parent coordinator with
+   those same details. Handoff is a fix path, and a passing scoped rerun against
+   owned or clean paths clears your close gates.
+   After `send_message`, wait event-first: use the applicable `wait_for_*`
+   primitive (`wait_for_agent` for spawned runs, `wait_for_output` for terminal
+   patterns) and yield the turn. Reserve sleeps, repeated status calls, and
+   repeated `capture_output` for bounded diagnostics.
 3. File for the user — last resort, edge cases only: the fix needs a
    genuine architecture or product decision, or has a blast radius that
    needs a clean window. Label the task `needs-decision` or `clean-window`
@@ -117,8 +128,8 @@ Closing a leaf task is an ordered checklist:
 | 4 | One bounded criteria review | Organizational parent (no open children) |
 
 An epic, or a parent that owns no work of its own, is closable when it has no
-open children. A claimed task or one with linked commits closes as a leaf even
-after it gains found-work children — its own gates apply.
+open children. A claimed task or one with linked commits closes as a leaf and
+its own gates apply.
 Closing the last child auto-closes eligible ancestors in the same call — do not
 walk the tree by hand. The walk stops at an ancestor that is claimed, has an
 open child, or still owes stage-manifest work; a claimed ancestor is in-flight
@@ -157,14 +168,17 @@ definitive exit code, rerun the command through a supported shell tool.
 Follow this order exactly:
 
 1. Finish all file edits.
-2. Run focused validation after the final edit.
-3. Fix every encountered error, warning, and failure; rerun validation to success.
-4. Stage specific files and commit with
+2. Sweep the native tracker and current transcript for owned findings; fix every
+   finding inside the same Gobby task unless the user explicitly directs another
+   task or `needs-decision`/`clean-window` applies.
+3. Run focused validation after the final edit.
+4. Fix every encountered error, warning, and failure; rerun validation to success.
+5. Stage specific files and commit with
    `[<project_name>-#<task_number>] <type>: <description>`.
-5. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
+6. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`. Include exact validation commands and results in `changes_summary`.
    A ready call links the commit and closes atomically.
-6. Call `review_task_memories` on the `gobby-memory` server after `closed=true`
+7. Call `review_task_memories` on the `gobby-memory` server after `closed=true`
    (`call_tool("gobby-memory", "review_task_memories", {...})`), passing the closed
    task and the same `changes_summary`; create, update, or delete only valuable
    durable facts.
@@ -221,6 +235,6 @@ Autonomous agents use the stage-specific tools on `gobby-tasks-ops`.
 ## Memory Rule
 
 Use `gobby-memory` for durable codebase facts, decisions, conventions, and stale
-memory cleanup. A bug you find becomes a claimed task you fix now — a task, never
-a memory. Task-specific review follows successful `close_task` because
+memory cleanup. A bug you find becomes an owned tracker item you fix now — work,
+never a memory. Task-specific review follows successful `close_task` because
 `gobby-memory:review_task_memories` requires a closed task.

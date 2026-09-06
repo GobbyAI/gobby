@@ -158,20 +158,18 @@ concrete consumer or stated requirement anywhere in the plan**:
 Apply the justification test per deliverable: is there a concrete consumer in
 *this* plan? is the simplest direct approach provably insufficient? does intent
 reach effect in ≤2–3 indirection hops? is it explainable without "we might
-later…"? Any "no" → emit an `over-engineering` finding and **name the simpler
-form explicitly** ("replace the `FooRegistry` with a module-level dict", "drop
-the `enable_x` flag and inline the behavior"). A finding that does not name the
-simpler alternative is incomplete.
+later…"? Any "no" warrants investigation. A blocking `over-engineering`
+finding must identify both the concrete removable mechanism and a complete
+simpler replacement that preserves every acceptance case.
 
 **Severity:**
 
-- `blocking` for a **structural** Rube Goldberg — a speculative subsystem,
-  framework, or abstraction the rest of the plan would build on. Simplify these
-  **before expansion**, because every downstream leaf inherits the over-built
-  shape.
-- `nit` for **ceremony** — a one-off knob, a single redundant wrapper, mild
-  gold-plating that is cheap to simplify in place and does not distort the rest
-  of the plan.
+- `blocking` only for a **concrete removable structural mechanism** with a
+complete simpler replacement. Simplify these **before expansion**, because
+every downstream leaf inherits the over-built shape.
+- `nit` or advisory for **subjective or speculative concern and ceremony** — a
+one-off knob, a redundant wrapper, or mild gold-plating without a proven
+complete replacement.
 
 **Do not over-flag.** A false over-engineering finding discourages legitimate
 ambition, which is the harm to avoid. A large-but-justified epic where every

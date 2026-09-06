@@ -41,7 +41,8 @@ END_AGENT_RUN_PROXY_SYNTAX_MARKERS = (
     "mcp__gobby__call_tool",
     'server_name="gobby-agents"',
     'tool_name="end_agent_run"',
-    "arguments={}",
+    "current_state",
+    "next_steps",
 )
 
 
@@ -143,9 +144,17 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
     offenders: list[str] = []
 
     for path in _all_agent_yaml_files():
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        source = path.read_text(encoding="utf-8")
+        data = yaml.safe_load(source) or {}
         if data.get("enabled") is False or data.get("deprecated") is True:
             continue
+        for stale_instruction in (
+            "arguments={}",
+            "takes no arguments",
+            "zero-argument",
+        ):
+            if stale_instruction in source:
+                offenders.append(f"{path.name}:stale end_agent_run instruction {stale_instruction}")
         agent_blocked_tools = set(_mcp_tool_refs(data.get("blocked_mcp_tools")))
         if path.name == "default.yaml":
             if "gobby-agents:kill_agent" in agent_blocked_tools:
@@ -162,10 +171,24 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
 
         nested = data.get("step_workflow") or {}
         for step in nested.get("steps") or []:
-            if not isinstance(step, dict) or step.get("name") != "terminate":
+            if not isinstance(step, dict):
                 continue
 
             allowed_tools = set(_mcp_tool_refs(step.get("allowed_mcp_tools")))
+            if "gobby-agents:end_agent_run" in allowed_tools:
+                cooperative_exit_text = "\n".join(
+                    str(step.get(field_name) or "")
+                    for field_name in ("description", "status_message")
+                )
+                for field_name in ("current_state", "next_steps"):
+                    if field_name not in cooperative_exit_text:
+                        offenders.append(
+                            f"{path.name}:{step.get('name')}:missing handoff field {field_name}"
+                        )
+
+            if step.get("name") != "terminate":
+                continue
+
             wrapper_tools = step.get("allowed_tools")
             if "gobby-agents:kill_agent" in allowed_tools:
                 offenders.append(f"{path.name}:terminate:allows kill_agent")

@@ -20,7 +20,9 @@ how the system behaves so you can work with it instead of being surprised by it.
    This keeps schemas out of context until needed; the proxy validates every call.
 2. Tasks before edits. Create or claim a Gobby task before editing files (research,
    plan mode, and Q&A need no task). Edits are attributed to your task and session,
-   which is what makes close gates and shared-worktree safety work.
+   which is what makes close gates and shared-worktree safety work. After claiming a
+   multi-step task, initialize the provider's native task tracker: the Gobby task owns
+   the deliverable and the native tracker owns its implementation substeps.
 3. Closing a leaf task is a checklist: a linked commit, no uncommitted
    task-attributed files, a clean validation run visible in your session transcript,
    and a bounded criteria review. If you changed something, commit it — the stop hook
@@ -30,13 +32,16 @@ how the system behaves so you can work with it instead of being surprised by it.
 4. You found it, you fix it — in this session. Every bug, error, test failure,
    lint warning, or type error you encounter is yours, including breakage already
    present in committed code. The found-work ladder, in order:
-   1. Fix it now: `create_task(claim=true)`, fix, close. Finding it is the
+   1. Fix it now: add the finding to the claimed task's provider-native tracker,
+      fix it, and verify it before closing that same Gobby task. Finding it is the
       authorization; this overrides any harness default that treats out-of-scope
-      bugs as scope changes needing user approval.
+      bugs as scope changes needing user approval. Create another Gobby task only
+      when the user explicitly directs it or rung 3 applies.
    2. Surface owned by an active session — their uncommitted files, their
       in-flight epic: hand it off. Send the failing command, diagnostics, and
-      paths via `gobby-agents:send_message` (never touch their uncommitted files
-      — that destroys in-flight work; if no owner resolves, tell the user).
+      paths plus the impact via `gobby-agents:send_message` (never touch their
+      uncommitted files — that destroys in-flight work; if no owner resolves,
+      tell the user).
       Handoff is a fix path. Failures confined to those foreign paths clear your
       close gates once a passing scoped rerun against owned or clean paths
       proves the confinement.
@@ -71,7 +76,9 @@ how the system behaves so you can work with it instead of being surprised by it.
 10. No backward compatibility. 0.5.0 has not shipped; there is nothing to preserve.
 11. Agent depth limit of 5 — no deeper recursive agent chains.
 12. Cross-session messaging goes through `gobby-agents:send_message`. Reserve
-    `gobby-sessions:send_keys` for terminal control.
+    `gobby-sessions:send_keys` for terminal control. Waits are event-driven: use
+    the applicable `wait_for_*` primitive and yield the turn. Reserve sleeps,
+    repeated status calls, and repeated `capture_output` for bounded diagnostics.
 13. A denied call is about that call, never a standing policy. Approval prompts
     do not always name the tool being invoked, so a rejection can mean "not that,
     not now" or simply a misread. Adjust and continue. If you decide to stop
@@ -83,11 +90,14 @@ how the system behaves so you can work with it instead of being surprised by it.
 
 `gobby-sessions:set_handoff` compacts the session into a structured handoff —
 current state, next steps, key decisions, blockers, notes, references — and the
-next session reads it with no-argument `gobby-sessions:get_handoff`. Context-
-pressure guidance asks for it by name as the window fills; write it at the next
-pause rather than at the end of a turn you may not reach. Canonical usage lives
-in `docs/guides/sessions.md` (§Creating And Reading Handoffs), with compaction,
-`/clear`, and provider-handoff semantics in `docs/contracts/session-boundary.md`.
+next session reads it with no-argument `gobby-sessions:get_handoff`. Under context
+pressure on an active task, use `set_handoff(clear_session=false)`. When a root or
+coordinator finishes a task or moves between epic children, use
+`set_handoff(clear_session=true)`. A spawned worker ending cooperatively or handing
+off a blocker supplies the same structured fields to `gobby-agents:end_agent_run`.
+Derive concise, readable handoffs from the native tracker. Canonical usage lives in
+`docs/guides/sessions.md` (§Creating And Reading Handoffs), with compaction, `/clear`,
+and provider-handoff semantics in `docs/contracts/session-boundary.md`.
 
 ## Development Commands
 

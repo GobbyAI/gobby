@@ -147,8 +147,9 @@ step_workflow:
       description: "Self-terminate via gobby-agents:end_agent_run"
       status_message: >-
         QA result saved and review verdict recorded. Call mcp__gobby__call_tool
-        with server_name="gobby-agents", tool_name="end_agent_run", and
-        arguments={} to finish the run.
+        with server_name="gobby-agents" and tool_name="end_agent_run". Pass
+        current_state summarizing the QA result and next_steps naming the
+        coordinator's next action, with relevant findings in optional fields.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -156,4 +157,3 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"
-

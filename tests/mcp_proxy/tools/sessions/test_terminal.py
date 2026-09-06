@@ -705,7 +705,12 @@ class TestRegisterTerminalTools:
         ):
             register_terminal_tools(registry, session_manager, MagicMock())
 
-        capture_output = registry.get_tool("capture_output")
+        capture_metadata = registry.get_tool_metadata("capture_output")
+        assert capture_metadata is not None
+        assert "one-shot diagnostic snapshot" in capture_metadata.description
+        assert "gobby-agents:wait_for_output" in capture_metadata.description
+        assert "instead of repeated capture_output calls" in capture_metadata.description
+        capture_output = capture_metadata.func
         assert capture_output is not None
 
         with patch(

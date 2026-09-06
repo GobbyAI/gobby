@@ -12,6 +12,10 @@ SKILL_PATH = Path("src/gobby/install/shared/skills/plan-review/SKILL.md")
 PLAN_SKILL_PATH = Path("src/gobby/install/shared/skills/plan/SKILL.md")
 TASKLESS_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml")
 STAGED_AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+TRACEABILITY_PATH = Path(
+    "src/gobby/install/shared/skills/plan-review/references/traceability-and-coverage.md"
+)
+PROPORTIONALITY_PATH = Path("src/gobby/install/shared/skills/proportionality/SKILL.md")
 
 
 def _normalized(path: Path) -> str:
@@ -155,3 +159,15 @@ def test_repair_class_section() -> None:
     assert "Design-class repairs never ride on `repairs`" in text
     assert "`apply_plan_review_repairs` is coordinator-only" in text
     assert "kind: add_targets" in text and "kind: add_acceptance" in text
+
+
+def test_proportionality_only_blocks_with_a_complete_simpler_replacement() -> None:
+    skill = _normalized(PROPORTIONALITY_PATH)
+    review = _normalized(TRACEABILITY_PATH)
+
+    for content in (skill, review):
+        assert "concrete removable" in content
+        assert "complete simpler replacement" in content
+        assert "every acceptance case" in content or "acceptance coverage" in content
+        assert "subjective or speculative" in content
+        assert "advisory" in content

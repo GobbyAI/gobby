@@ -365,7 +365,9 @@ step_workflow:
       description: "Safety net: self-terminate via gobby-agents:end_agent_run"
       status_message: >-
         Call mcp__gobby__call_tool with server_name="gobby-agents",
-        tool_name="end_agent_run", and arguments={} to terminate.
+        tool_name="end_agent_run" with current_state summarizing the merge result and
+        next_steps naming the orchestrator's next action. Include unresolved
+        conflicts, commands, diagnostics, paths, and impact for a failed merge.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers

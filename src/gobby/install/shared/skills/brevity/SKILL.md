@@ -75,6 +75,7 @@ Normal plus:
 Switch to normal prose for:
 
 - Plan contents
+- Structured session and agent handoffs
 - Security warnings or destructive-operation confirmations
 - Multi-step confirmation sequences
 - When the user says "stop brevity"

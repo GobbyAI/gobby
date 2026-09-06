@@ -8,13 +8,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
 HANDOFF_PAYLOAD_VERSION = 1
-HandoffBoundaryKind = Literal["compact", "clear"]
+HandoffBoundaryKind = Literal["compact", "clear", "agent_end"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +210,92 @@ def record_handoff_delivery(
         )
 
 
+def agent_run_attempt_id(agent_run_id: str) -> str:
+    """Return the stable delivery-attempt identity for one agent run."""
+    try:
+        return UUID(agent_run_id).hex
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("agent_run_id must be a UUID") from exc
+
+
+def get_agent_end_handoff(
+    db: HubDatabase,
+    agent_run_id: str,
+) -> DeliveredHandoff | None:
+    """Read an agent run's immutable final handoff without consuming it."""
+    attempt_id = agent_run_attempt_id(agent_run_id)
+    row = db.fetchone(
+        """
+        SELECT
+            h.*,
+            d.attempt_id,
+            d.continuation_session_id,
+            d.delivered_at
+        FROM session_handoffs AS h
+        JOIN session_handoff_deliveries AS d
+            ON d.handoff_id = h.id
+        WHERE d.attempt_id = %s
+          AND d.boundary_kind = 'agent_end'
+        LIMIT 1
+        """,
+        (attempt_id,),
+    )
+    return _delivered_handoff_from_row(row)
+
+
+def stage_agent_end_handoff(
+    db: HubDatabase,
+    *,
+    agent_run_id: str,
+    child_session_id: str,
+    parent_session_id: str,
+    payload: HandoffPayload,
+) -> DeliveredHandoff:
+    """Persist an agent-end handoff once; retries reuse the winning payload."""
+    attempt_id = agent_run_attempt_id(agent_run_id)
+    existing = get_agent_end_handoff(db, agent_run_id)
+    if existing is not None:
+        return _validate_agent_end_target(existing, child_session_id, parent_session_id)
+
+    try:
+        with db.transaction() as conn:
+            handoff_id, _authored_at = insert_handoff_record(conn, child_session_id, payload)
+            insert_delivery_receipt(
+                conn,
+                handoff_id=handoff_id,
+                attempt_id=attempt_id,
+                boundary_kind="agent_end",
+                continuation_session_id=parent_session_id,
+            )
+            row = conn.execute(
+                """
+                SELECT
+                    h.*,
+                    d.attempt_id,
+                    d.continuation_session_id,
+                    d.delivered_at
+                FROM session_handoffs AS h
+                JOIN session_handoff_deliveries AS d
+                    ON d.handoff_id = h.id
+                WHERE d.attempt_id = %s
+                  AND d.boundary_kind = 'agent_end'
+                LIMIT 1
+                """,
+                (attempt_id,),
+            ).fetchone()
+            staged = _delivered_handoff_from_row(row)
+            if staged is None:
+                raise RuntimeError("agent-end handoff could not be read after staging")
+            return _validate_agent_end_target(staged, child_session_id, parent_session_id)
+    except ValueError as exc:
+        if "delivery receipt conflicts" not in str(exc):
+            raise
+        winner = get_agent_end_handoff(db, agent_run_id)
+        if winner is None:
+            raise
+        return _validate_agent_end_target(winner, child_session_id, parent_session_id)
+
+
 def delete_undelivered_handoff(conn: Any, handoff_id: str, session_id: str) -> bool:
     """Delete staged content only while it has no successful receipt."""
     deleted = conn.execute(
@@ -249,6 +335,15 @@ def latest_delivered_clear_handoff(
         """,
         (session_id,),
     )
+    return _delivered_handoff_from_row(row)
+
+
+def handoff_summary_source_hash(handoff: DeliveredHandoff) -> str:
+    payload = f"session-handoff-summary-v1\0{handoff.id}\0{handoff.payload.content_sha256}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _delivered_handoff_from_row(row: Mapping[str, Any] | None) -> DeliveredHandoff | None:
     if row is None:
         return None
     payload = _payload_from_row(row)
@@ -269,9 +364,17 @@ def latest_delivered_clear_handoff(
     )
 
 
-def handoff_summary_source_hash(handoff: DeliveredHandoff) -> str:
-    payload = f"session-handoff-summary-v1\0{handoff.id}\0{handoff.payload.content_sha256}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _validate_agent_end_target(
+    handoff: DeliveredHandoff,
+    child_session_id: str,
+    parent_session_id: str,
+) -> DeliveredHandoff:
+    if (
+        handoff.session_id != child_session_id
+        or handoff.continuation_session_id != parent_session_id
+    ):
+        raise ValueError("agent-end handoff conflicts with the agent run boundary")
+    return handoff
 
 
 def _payload_from_row(row: Mapping[str, Any]) -> HandoffPayload | None:
