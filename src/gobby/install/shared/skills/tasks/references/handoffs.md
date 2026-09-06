@@ -5,8 +5,9 @@ handoff derived from the provider-native tracker.
 
 | Situation | Required action |
 | --- | --- |
+| Planning or review reaches context pressure | `set_handoff(clear_session=false)` |
 | Active task reaches context pressure | `set_handoff(clear_session=false)` |
-| Root/coordinator finishes a task or moves between epic children | `set_handoff(clear_session=true)` |
+| Root/coordinator has closed the current task and moves to another task or epic child | `set_handoff(clear_session=true)` |
 | Spawned worker finishes or completes a blocker handoff | Structured `end_agent_run(...)` |
 
 State what is true now and give the receiving coordinator concrete next actions.
@@ -18,6 +19,7 @@ or artificial shorthand. Do not create a checkpoint file by default; checkpoint
 files remain available only when the user explicitly requests one.
 
 `set_handoff` remains uncapped and its `clear_session` boolean is the boundary
-control. A spawned worker supplies nonblank `current_state` and at least one
+control. `clear_session=true` is reserved for moving between tasks after the current
+task closes. A spawned worker supplies nonblank `current_state` and at least one
 nonblank coordinator action in `next_steps` before cooperative success or a
 `task_blocker` exit. Forced kills and crashes may have no authored handoff.

@@ -106,10 +106,14 @@ def test_claimed_task_owns_native_substeps_and_found_work() -> None:
 def test_handoff_reference_selects_boundaries_and_readable_payloads() -> None:
     content = HANDOFFS_PATH.read_text()
 
+    assert "Planning or review reaches context pressure" in content
     assert "Active task reaches context pressure" in content
     assert "`set_handoff(clear_session=false)`" in content
-    assert "Root/coordinator finishes a task or moves between epic children" in content
+    assert "Root/coordinator has closed the current task" in content
+    assert "moves to another task or epic child" in content
     assert "`set_handoff(clear_session=true)`" in content
+    assert "reserved for moving between tasks" in content
+    assert "task closes" in content
     assert "Spawned worker finishes or completes a blocker handoff" in content
     assert "Structured `end_agent_run(...)`" in content
     assert "cumulative history, previous handoffs, raw logs, completed ledgers" in content

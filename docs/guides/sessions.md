@@ -319,14 +319,16 @@ pressure; background delivery failures stay gated for a `set_handoff` retry.
 call_tool("gobby-sessions", "get_handoff", {})
 ```
 
-`clear_session=false` compacts in place. `clear_session=true` creates a successor,
-preserves task claims, and binds that successor to the predecessor. The continuation
-prompt calls `get_handoff`, which consumes only the pending marker created by
-`set_handoff`. A second call is empty. Manual provider compact and `/clear` operations
-create no marker, so they also return an empty handoff. Persisted `handoff_markdown`
-remains visible in the UI after consumption. While that marker is pending, turn-start
-meta skill loads wait so the pull runs before `memory`, `loading-skills`, and
-`brevity` reloads.
+Use `clear_session=false` for planning, review, and ongoing task work; it compacts in
+place so the same session continues. Use `clear_session=true` only after closing the
+current task, when moving to another task or epic child. The clear path creates a
+successor, preserves task claims, and binds that successor to the predecessor. The
+continuation prompt calls `get_handoff`, which consumes only the pending marker created
+by `set_handoff`. A second call is empty. Manual provider compact and `/clear`
+operations create no marker, so they also return an empty handoff. Persisted
+`handoff_markdown` remains visible in the UI after consumption. While that marker is
+pending, turn-start meta skill loads wait so the pull runs before `memory`,
+`loading-skills`, and `brevity` reloads.
 
 For terminal sessions, the tool result reports `handoff_staged=true` and
 `delivery_pending=true` before Gobby touches provider input. The proxy strips the

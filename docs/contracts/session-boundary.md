@@ -20,6 +20,11 @@ marker. It accepts:
 
 References are deduplicated in caller order. Validation completes before state mutation.
 
+Planning, review, and ongoing task work use `clear_session=false`. The
+`clear_session=true` boundary is reserved for a root or coordinator that has closed the
+current task and is moving to another task or epic child. Before-tool rules enforce the
+compact boundary for autonomous sessions and whenever resolved `plan_mode` is true.
+
 ## Persisted State
 
 Authored payloads live in `session_handoffs`; `sessions.handoff_markdown` remains the

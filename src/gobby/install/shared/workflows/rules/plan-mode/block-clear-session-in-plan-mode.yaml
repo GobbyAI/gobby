@@ -1,0 +1,18 @@
+tags: [plan-mode, context-handoff, handoff, enforcement, gobby, default]
+
+rules:
+  block-clear-session-in-plan-mode:
+    description: "Keep Plan Mode handoffs in place"
+    event: before_tool
+    enabled: true
+    priority: 13
+    when: >
+      variables.get('plan_mode')
+      and ((tool_input.get('arguments') or tool_input) or {}).get('clear_session') is True
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-sessions:set_handoff"
+        reason: >-
+          Plan Mode handoffs compact in place. Call gobby-sessions:set_handoff with
+          clear_session=false, then continue planning or review in this session.
