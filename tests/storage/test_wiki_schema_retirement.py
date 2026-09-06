@@ -23,7 +23,6 @@ _WIKI_TABLES = (
 )
 _PRESERVED_TABLES = (
     "sessions",
-    "session_summary_revisions",
     "session_handoffs",
     "memories",
     "projects",

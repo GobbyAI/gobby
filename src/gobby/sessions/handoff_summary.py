@@ -124,16 +124,14 @@ def find_current_handoff_summary(
 
     if row is None:
         return None
-    markdown = row["summary_markdown"]
     if (
         row["summary_source_context_hash"] != source_hash
         or row["summary_generation_mode"] != "agent_authored"
-        or markdown != expected_markdown
-        or not isinstance(markdown, str)
-        or not is_summary_markdown_valid(markdown)
+        or row["summary_markdown"] != expected_markdown
+        or not is_summary_markdown_valid(expected_markdown)
     ):
         return None
-    return markdown
+    return expected_markdown
 
 
 def _load_task_evidence(

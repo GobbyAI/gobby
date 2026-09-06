@@ -1,6 +1,7 @@
--- gobby:destructive
 -- Session summary revision retirement (#21889). The current summary remains on
 -- sessions; structured handoffs and their delivery receipts are independent.
+-- Ordinary transactional migration: fresh installs execute it against the
+-- baseline@420 objects and existing hubs apply it at daemon startup.
 -- Qualify every target to the runner's schema. RESTRICT makes an unexpected
 -- dependency fail the transaction before any part of the retirement can persist.
 DO $remove_session_summary_revisions$

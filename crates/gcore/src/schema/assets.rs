@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 420;
 pub const BASELINE_CHECKSUM: &str =
-    "fe53091877b1e22cd14ad2a871ad9c15530e4406b15e3e38220cdac092b333a9";
+    "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -67,7 +67,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 427,
         filename: "427_remove_session_summary_revisions.sql",
-        checksum: "829e195fc554c07504341c9184b6f8357053c49dab5a7cffdfa9edb59ea569f2",
+        checksum: "a766908d0dbfac143765e98530a8dd16b25b4060a2b9039d31c309269fb9b140",
         sql: include_str!(
             "../../assets/schema/migrations/427_remove_session_summary_revisions.sql"
         ),
