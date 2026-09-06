@@ -131,6 +131,9 @@ pub enum Mode {
 #[derive(Debug, Clone)]
 pub struct SidebarState {
     pub collapsed: bool,
+    /// herdr `SidebarCollapsedModeConfig::Hidden`: a collapsed sidebar takes
+    /// no columns instead of the rail.
+    pub hide_when_collapsed: bool,
     pub width: u16,
     pub min_width: u16,
     pub max_width: u16,
@@ -146,6 +149,7 @@ impl Default for SidebarState {
     fn default() -> Self {
         Self {
             collapsed: false,
+            hide_when_collapsed: false,
             width: 26,
             min_width: 18,
             max_width: 36,
@@ -339,6 +343,9 @@ impl Chrome {
     /// Sidebar width for the current frame (herdr `compute_view` clamp).
     pub fn sidebar_width(&self, area: Rect) -> u16 {
         if self.sidebar.collapsed {
+            if self.sidebar.hide_when_collapsed {
+                return 0;
+            }
             return COLLAPSED_WIDTH.min(area.width);
         }
         let max = self.sidebar.max_width.min(area.width.saturating_sub(1));
@@ -367,10 +374,41 @@ impl Chrome {
         } else {
             (None, content)
         };
-        let (pane_infos, split_borders) = match self.active_tab() {
+        let (mut pane_infos, split_borders) = match self.active_tab() {
             Some(tab) => pane_layout::pane_geometry(tab, terminal_area, &self.prefs),
             None => (Vec::new(), Vec::new()),
         };
+        // herdr resolved the scrollbar lane in `compute_view`, so hit tests
+        // over `view.pane_infos` see the column the renderer draws into. Only
+        // panes reachable through the roster are read: `WorkspaceView::pane`
+        // panics on an unknown id.
+        let attached: Vec<PaneId> = ws
+            .roster_terminal_ids()
+            .iter()
+            .filter_map(|terminal| ws.pane_for_terminal(terminal))
+            .collect();
+        if let Some(tab) = self.active_tab() {
+            for info in &mut pane_infos {
+                let Some(pane) = tab
+                    .slots
+                    .get(&info.id)
+                    .filter(|id| attached.contains(id))
+                    .map(|id| ws.pane(*id))
+                else {
+                    continue;
+                };
+                let metrics = pane_layout::metrics_for(
+                    pane.scroll_offset,
+                    pane.max_scroll,
+                    info.inner_rect.height,
+                );
+                info.scrollbar_rect = pane_layout::scrollbar_gutter(
+                    pane_layout::pane_inner_rect(info.rect, info.borders),
+                    self.prefs.pane_scrollbars,
+                    metrics,
+                );
+            }
+        }
         let roster_len = ws.roster_terminal_ids().len();
         if roster_len > 0 && self.sidebar.selected >= roster_len {
             self.sidebar.selected = roster_len - 1;

@@ -30,7 +30,7 @@ pub fn pane_title(pane: &Pane) -> String {
 
 /// Border label for a pane: padded, truncated to the top edge, and marked
 /// with "▸" when focused.
-fn pane_border_title(label: &str, pane_width: u16, focused: bool) -> Option<String> {
+pub fn pane_border_title(label: &str, pane_width: u16, focused: bool) -> Option<String> {
     let label = label.trim();
     if label.is_empty() || pane_width <= 4 {
         return None;
@@ -109,10 +109,19 @@ pub fn render_panes<W: WorkspaceView>(
     );
 }
 
-/// Paint the selection background over the inner cells it covers. The
-/// selection stores screen-buffer rows, so `metrics` maps them onto the
-/// viewport the same way the scrollbar does.
-fn highlight_selection(
+/// One uniform style for every selected cell, so the selection reads the
+/// same over whatever the terminal drew there (herdr
+/// `automatic_selection_style`). herdr mixes the probed host background in;
+/// gclient hosts terminals on its own token map, so the palette alone fixes
+/// it: `text` on `surface1` is a contract-checked AA pair.
+pub fn selection_style(p: &Palette) -> Style {
+    Style::reset().fg(p.text).bg(p.surface1)
+}
+
+/// Paint the selection style over the inner cells it covers. The selection
+/// stores screen-buffer rows, so `metrics` maps them onto the viewport the
+/// same way the scrollbar does.
+pub fn highlight_selection(
     frame: &mut Frame,
     selection: &Selection,
     inner: Rect,
@@ -122,11 +131,12 @@ fn highlight_selection(
     if !selection.is_visible() {
         return;
     }
+    let style = selection_style(palette);
     let buf = frame.buffer_mut();
     for y in inner.y..inner.y + inner.height {
         for x in inner.x..inner.x + inner.width {
             if selection.contains(y - inner.y, x - inner.x, Some(metrics)) {
-                buf[(x, y)].set_bg(palette.surface1);
+                buf[(x, y)].set_style(style);
             }
         }
     }
@@ -169,7 +179,10 @@ struct LineCell {
     right: bool,
 }
 
-fn render_pane_borders(
+/// Draw pane borders as one line grid (junctions composed across panes and
+/// split dividers), the focused pane's lines in the accent, then each
+/// pane's border title.
+pub fn render_pane_borders(
     chrome: &Chrome,
     pane_infos: &[PaneInfo],
     split_borders: &[SplitBorder],

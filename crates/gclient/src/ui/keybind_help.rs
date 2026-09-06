@@ -33,9 +33,14 @@ pub struct KeybindHelpState {
 /// Help rows filtered by `query` (case-insensitive substring over name,
 /// description, and keys); reserved actions are already excluded.
 pub fn filtered_entries(keymap: &Keymap, query: &str) -> Vec<HelpEntry> {
+    filter_help_entries(keymap.help_entries(), query)
+}
+
+/// herdr `filter_keybind_help_groups` on one flat list: keep the entries whose
+/// name, description, or keys contain `query`, case-insensitively.
+pub fn filter_help_entries(entries: Vec<HelpEntry>, query: &str) -> Vec<HelpEntry> {
     let query = query.to_lowercase();
-    keymap
-        .help_entries()
+    entries
         .into_iter()
         .filter(|entry| {
             query.is_empty()
@@ -47,7 +52,7 @@ pub fn filtered_entries(keymap: &Keymap, query: &str) -> Vec<HelpEntry> {
 }
 
 /// Body rows: the prefix chord first, then every visible binding.
-fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
+pub fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
     let p = &chrome.palette;
     let key_style = Style::default().fg(p.mauve).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(p.text);

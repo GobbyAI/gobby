@@ -103,7 +103,7 @@ pub fn toast_cue(kind: ToastKind) -> (&'static str, &'static str) {
 }
 
 /// Cells the cue occupies ahead of the title: glyph, space, label, two spaces.
-fn toast_cue_width(kind: ToastKind) -> u16 {
+pub fn toast_cue_width(kind: ToastKind) -> u16 {
     let (glyph, label) = toast_cue(kind);
     display_width_u16(glyph)
         .saturating_add(display_width_u16(label))
@@ -201,7 +201,7 @@ pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome)
 }
 
 /// herdr `copy_feedback_rect`, bottom-centre.
-fn copy_feedback_rect(area: Rect, message: &str) -> Rect {
+pub fn copy_feedback_rect(area: Rect, message: &str) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::default();
     }

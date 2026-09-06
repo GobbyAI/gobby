@@ -34,19 +34,28 @@ fn tab_is_auto_named(tab: &Tab) -> bool {
     tab.title.trim().is_empty()
 }
 
-fn tab_width(tabs: &[Tab], tab_idx: usize) -> u16 {
+/// herdr `tab_width`: the chrome label plus padding, never under `MIN_TAB_WIDTH`.
+pub fn tab_width(tabs: &[Tab], tab_idx: usize) -> u16 {
     display_width_u16(&tab_chrome_label(tabs, tab_idx))
         .saturating_add(4)
         .max(MIN_TAB_WIDTH)
 }
 
+/// herdr `tab_display_name`: the custom title, or the 1-based position for an
+/// auto-named tab. `None` past the end of the strip. The zoom marker is chrome
+/// (see `tab_chrome_label`) and never part of the name.
+pub fn tab_display_name(tabs: &[Tab], tab_idx: usize) -> Option<String> {
+    let tab = tabs.get(tab_idx)?;
+    Some(if tab_is_auto_named(tab) {
+        (tab_idx + 1).to_string()
+    } else {
+        tab.title.trim().to_string()
+    })
+}
+
 fn tab_chrome_label(tabs: &[Tab], tab_idx: usize) -> String {
-    let tab = tabs.get(tab_idx);
-    let name = tab
-        .filter(|tab| !tab_is_auto_named(tab))
-        .map(|tab| tab.title.trim().to_string())
-        .unwrap_or_else(|| (tab_idx + 1).to_string());
-    if tab.is_some_and(|tab| tab.zoomed) {
+    let name = tab_display_name(tabs, tab_idx).unwrap_or_else(|| (tab_idx + 1).to_string());
+    if tabs.get(tab_idx).is_some_and(|tab| tab.zoomed) {
         format!("{name} Z")
     } else {
         name

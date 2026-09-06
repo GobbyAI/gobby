@@ -28,10 +28,14 @@ pub struct SidebarRow {
     /// Backend and control state for terminals; prompt kind for attention.
     pub detail: String,
     pub selected: bool,
+    /// The focused pane of the active tab shows this row's terminal (herdr
+    /// "active workspace": bold `text` title on `surface_dim`).
+    pub active: bool,
 }
 
 /// Terminal roster rows in roster order.
 pub fn roster_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
+    let focused = focused_terminal(ws, chrome);
     ws.roster_terminal_ids()
         .into_iter()
         .enumerate()
@@ -41,13 +45,15 @@ pub fn roster_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow>
             state: row_state(ws, &id),
             detail: terminal_detail(ws, &id, &chrome.palette),
             selected: index == chrome.sidebar.selected,
+            active: focused.as_deref() == Some(id.as_str()),
             id,
         })
         .collect()
 }
 
 /// Attention rows in arrival order.
-pub fn attention_rows<W: WorkspaceView>(ws: &W, _chrome: &Chrome) -> Vec<SidebarRow> {
+pub fn attention_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
+    let focused = focused_terminal(ws, chrome);
     ws.attention_entry_ids()
         .into_iter()
         .map(|entry| SidebarRow {
@@ -56,9 +62,17 @@ pub fn attention_rows<W: WorkspaceView>(ws: &W, _chrome: &Chrome) -> Vec<Sidebar
             state: RowState::Attention,
             detail: attention_kind(&entry).to_string(),
             selected: false,
+            active: focused.as_deref() == Some(attention_terminal(&entry)),
             id: entry,
         })
         .collect()
+}
+
+/// Terminal shown in the focused pane of the active tab.
+fn focused_terminal<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Option<String> {
+    chrome
+        .focused_pane()
+        .map(|id| ws.pane(id).terminal_id.clone())
 }
 
 /// `<backend> <control glyph> <control label>` for an attached terminal,
@@ -88,7 +102,7 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
     } else {
         Style::default()
     };
-    let title_style = if row.selected {
+    let title_style = if row.selected || row.active {
         Style::default().fg(p.text).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(p.subtext0)
@@ -96,7 +110,10 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
     let label_style = Style::default()
         .fg(state_label_color(row.state, p))
         .add_modifier(Modifier::DIM);
-    let detail_style = Style::default().fg(if row.selected { p.mauve } else { p.overlay0 });
+    // herdr's default agent token is `overlay0` + dim.
+    let detail_style = Style::default()
+        .fg(if row.selected { p.mauve } else { p.overlay0 })
+        .add_modifier(Modifier::DIM);
     let trailing = [
         (state_label(row.state), label_style),
         (row.detail.as_str(), detail_style),
@@ -115,9 +132,13 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
 
 /// herdr `resolved_token_spans`, reduced to the glyph + title + trailing
 /// shape: `" "` after the glyph, `" · "` between text tokens. Trailing tokens
-/// drop from the right until the whole title fits; the title truncates only
-/// when it stands alone. Empty tokens are elided with their separators.
-fn fitted_spans(
+/// are kept from the left while they fit beside the whole title and dropped
+/// from the right otherwise; the title truncates only once it stands alone.
+/// A roster row is identified by its terminal title, so the title outranks
+/// its state and detail tokens here — the tab-bar rule (truncate the tab's
+/// own title so its trailing tokens survive) does not apply to session
+/// titles. Empty tokens are elided with their separators.
+pub fn fitted_spans(
     glyph: (&str, Style),
     title: (&str, Style),
     trailing: &[(&str, Style)],
@@ -216,9 +237,15 @@ mod tests {
             state: RowState::Idle,
             detail: "native ○ observe".into(),
             selected: true,
+            active: false,
         };
         let wide = line_text(&row_line(&row, 60, &chrome));
         assert_eq!(wide, "▸○ term-alpha · idle · native ○ observe");
+        // The detail no longer fits beside the whole title, so it drops and
+        // the shorter state label stays.
+        let mid = line_text(&row_line(&row, 24, &chrome));
+        assert_eq!(mid, "▸○ term-alpha · idle");
+        // Narrower still: the title keeps its cells and the tokens go.
         let narrow = line_text(&row_line(&row, 14, &chrome));
         assert_eq!(narrow, "▸○ term-alpha");
         let tiny = line_text(&row_line(&row, 8, &chrome));

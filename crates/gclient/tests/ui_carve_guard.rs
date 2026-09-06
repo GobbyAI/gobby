@@ -233,6 +233,7 @@ fn render_workspace_composes_imported_chrome() {
         chrome.dialog = Some(Dialog::ConfirmClose {
             target: CloseTarget::Pane,
             title: "term-beta".to_string(),
+            panes: 1,
         });
         let area = Rect::new(0, 0, 120, 40);
         chrome.compute_view(&ws, area);

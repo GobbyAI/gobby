@@ -7,7 +7,7 @@
 //! around a `─` divider.
 
 use crate::theme::Palette;
-use crate::ui::chrome::{attention_terminal, Chrome, Mode, WorkspaceView};
+use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::sidebar_rows::{attention_rows, roster_rows, row_line, SidebarRow};
 use crate::ui::status::state_dot;
@@ -98,7 +98,6 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         return hits;
     }
 
-    let focused = focused_terminal(ws, chrome);
     for (index, row) in roster_rows(ws, chrome).iter().enumerate() {
         let y = roster_area.y + index as u16;
         if y >= roster_area.y + roster_area.height {
@@ -106,7 +105,7 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         }
         let (icon, icon_color) = state_dot(row.state, p);
         let selected = row.selected && is_navigating;
-        let active = focused.as_deref() == Some(row.id.as_str());
+        let active = row.active;
         let (row_style, num_style) = if selected {
             (
                 Style::default().bg(p.surface1),
@@ -123,8 +122,9 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         let rect = Rect::new(roster_area.x, y, roster_area.width, 1);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!("{}", index + 1), num_style),
-                Span::styled(" ", row_style),
+                // herdr pads single digits and keeps the dot at column 2 for
+                // two-digit positions (`10·`) instead of clipping it.
+                Span::styled(format!("{:<2}", index + 1), num_style),
                 Span::styled(icon, Style::default().fg(icon_color)),
             ]))
             .style(row_style),
@@ -197,14 +197,7 @@ fn render_roster<W: WorkspaceView>(
     let viewport = roster_body_rect(area, false).height;
     let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.scroll);
     let body = roster_body_rect(area, should_show_scrollbar(metrics));
-    let hits = render_rows(
-        frame,
-        body,
-        &rows,
-        metrics,
-        chrome,
-        focused_terminal(ws, chrome),
-    );
+    let hits = render_rows(frame, body, &rows, metrics, chrome);
     if should_show_scrollbar(metrics) {
         let track = scrollbar_track(area, body);
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
@@ -240,14 +233,7 @@ fn render_attention<W: WorkspaceView>(
     let viewport = attention_body_rect(area, false).height;
     let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.attention_scroll);
     let body = attention_body_rect(area, should_show_scrollbar(metrics));
-    let hits = render_rows(
-        frame,
-        body,
-        &rows,
-        metrics,
-        chrome,
-        focused_terminal(ws, chrome),
-    );
+    let hits = render_rows(frame, body, &rows, metrics, chrome);
     if should_show_scrollbar(metrics) {
         let track = scrollbar_track(area, body);
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
@@ -263,7 +249,6 @@ fn render_rows(
     rows: &[SidebarRow],
     metrics: ScrollMetrics,
     chrome: &Chrome,
-    focused: Option<String>,
 ) -> Vec<(String, Rect)> {
     let p = &chrome.palette;
     let mut hits = Vec::new();
@@ -280,10 +265,9 @@ fn render_rows(
         .enumerate()
     {
         let rect = Rect::new(body.x, body.y + offset as u16, body.width, 1);
-        let active = focused.as_deref() == Some(attention_terminal(&row.id));
         let row_style = if row.selected {
             Style::default().bg(p.surface1)
-        } else if active {
+        } else if row.active {
             Style::default().bg(p.surface_dim)
         } else {
             Style::default()
@@ -297,15 +281,8 @@ fn render_rows(
     hits
 }
 
-/// Terminal shown in the focused pane of the active tab.
-fn focused_terminal<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Option<String> {
-    chrome
-        .focused_pane()
-        .map(|id| ws.pane(id).terminal_id.clone())
-}
-
 /// herdr `workspace_list_scroll_metrics` for fixed one-line rows.
-fn list_metrics(len: usize, viewport: u16, requested: usize) -> ScrollMetrics {
+pub fn list_metrics(len: usize, viewport: u16, requested: usize) -> ScrollMetrics {
     let viewport = usize::from(viewport);
     let max_scroll = len.saturating_sub(viewport);
     let scroll = requested.min(max_scroll);
@@ -342,7 +319,7 @@ fn section_heights(total_h: u16, split: Option<u16>) -> (u16, u16) {
 }
 
 /// herdr `expanded_sidebar_sections`: content excludes the separator column.
-fn expanded_sections(area: Rect, split: Option<u16>) -> (Rect, Rect) {
+pub fn expanded_sections(area: Rect, split: Option<u16>) -> (Rect, Rect) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height == 0 {
         return (Rect::default(), Rect::default());
@@ -355,7 +332,7 @@ fn expanded_sections(area: Rect, split: Option<u16>) -> (Rect, Rect) {
 }
 
 /// herdr `collapsed_sidebar_sections`: roster, divider row, attention.
-fn collapsed_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
+pub fn collapsed_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height == 0 {
         return (Rect::default(), None, Rect::default());
@@ -377,7 +354,7 @@ fn collapsed_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
 }
 
 /// herdr `workspace_list_body_rect`: below the header, above the footer row.
-fn roster_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
+pub fn roster_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
     if area.width == 0 || area.height <= ROSTER_HEADER_ROWS {
         return Rect::default();
     }
@@ -392,7 +369,7 @@ fn roster_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
 }
 
 /// herdr `agent_panel_body_rect`.
-fn attention_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
+pub fn attention_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
     if area.width == 0 || area.height <= ATTENTION_HEADER_ROWS {
         return Rect::default();
     }
@@ -406,7 +383,7 @@ fn attention_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
 }
 
 /// herdr `expanded_sidebar_toggle_rect`.
-fn expanded_toggle_rect(area: Rect) -> Rect {
+pub fn expanded_toggle_rect(area: Rect) -> Rect {
     if area.width <= 1 || area.height == 0 {
         return Rect::default();
     }
@@ -419,7 +396,7 @@ fn expanded_toggle_rect(area: Rect) -> Rect {
 }
 
 /// herdr `collapsed_sidebar_toggle_rect`.
-fn collapsed_toggle_rect(area: Rect) -> Rect {
+pub fn collapsed_toggle_rect(area: Rect) -> Rect {
     let content_w = area.width.saturating_sub(1);
     if content_w == 0 || area.height == 0 {
         return Rect::default();
