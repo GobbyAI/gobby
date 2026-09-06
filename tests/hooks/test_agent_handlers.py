@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
@@ -183,7 +185,7 @@ class TestAfterAgentHandling:
 
 class TestStopHandling:
     def test_stop_without_normalized_terminal_evidence_keeps_session_status(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
