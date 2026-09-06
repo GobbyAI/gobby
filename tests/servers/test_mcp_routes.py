@@ -272,6 +272,7 @@ class FakeMCPManager:
         self.project_id = GLOBAL_PROJECT_ID
         self.last_project_id: str | None = None
         self._sessions: dict[str, FakeMCPSession] = {}
+        self.tool_infos: dict[tuple[str, str], dict[str, Any]] = {}
 
     def put(self, config: FakeServerConfig) -> FakeServerConfig:
         self._configs[config.name] = config
@@ -320,6 +321,13 @@ class FakeMCPManager:
     async def get_tool_input_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
         """Get tool input schema."""
         return {"type": "object", "properties": {}}
+
+    async def get_tool_info(self, server_id: str, tool_name: str) -> dict[str, Any]:
+        """Return a registered tool description, or fail like the real manager."""
+        try:
+            return self.tool_infos[(server_id, tool_name)]
+        except KeyError as exc:
+            raise ValueError(f"Tool not found: {tool_name}") from exc
 
     async def add_server(self, config: Any) -> dict[str, Any]:
         """Add a server configuration."""
@@ -1228,12 +1236,10 @@ class TestGetToolSchema:
         )
         mcp_manager = FakeMCPManager()
         mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
-        mcp_manager.get_tool_info = AsyncMock(
-            return_value={
-                "name": "get_item",
-                "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
-            }
-        )
+        mcp_manager.tool_infos[("external-server", "get_item")] = {
+            "name": "get_item",
+            "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
+        }
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
@@ -1256,7 +1262,6 @@ class TestGetToolSchema:
         )
         mcp_manager = FakeMCPManager()
         mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
-        mcp_manager.get_tool_info = AsyncMock(side_effect=ValueError("Tool not found"))
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
@@ -1334,12 +1339,10 @@ class TestGetToolSchema:
         )
         mcp_manager = FakeMCPManager()
         mcp_manager.put(FakeServerConfig(name="external-server"))
-        mcp_manager.get_tool_info = AsyncMock(
-            return_value={
-                "name": "get_item",
-                "inputSchema": {"type": "object"},
-            }
-        )
+        mcp_manager.tool_infos[("external-server", "get_item")] = {
+            "name": "get_item",
+            "inputSchema": {"type": "object"},
+        }
         server.mcp_manager = mcp_manager
         tool_proxy = MagicMock()
         tool_proxy.get_tool_schema = AsyncMock(
@@ -1386,7 +1389,6 @@ class TestGetToolSchema:
         )
         mcp_manager = FakeMCPManager()
         mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
-        mcp_manager.get_tool_info = AsyncMock(side_effect=ValueError("Tool not found"))
         server.mcp_manager = mcp_manager
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
 
