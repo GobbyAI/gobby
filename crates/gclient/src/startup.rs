@@ -418,6 +418,9 @@ pub fn run() -> anyhow::Result<()> {
         println!("{USAGE}");
         return Ok(());
     }
+    if let Err(error) = crate::logging::init() {
+        eprintln!("failed to initialize gclient logging: {error}");
+    }
     let env = resolve_probe_env(&args)?;
     let health = HttpHealthClient::new();
     let (ready, _guard) = start_session(args, env, &health, CrosstermBackend)?;

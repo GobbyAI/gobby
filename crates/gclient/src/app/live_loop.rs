@@ -1,5 +1,6 @@
 //! Interactive Tokio loop for the authenticated live daemon transport.
 
+use std::io::Write as _;
 use std::time::Duration;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -11,6 +12,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
+use crate::copy_mode::{copy_finalized_selection, route_mouse_selection, PASTE_MAX_BYTES};
 use crate::daemon::{
     Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
     SpawnOutcome, SpawnRequest,
@@ -517,6 +519,34 @@ async fn route_live_input(
     event: &RawInputEvent,
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
+    if let RawInputEvent::Paste(text) = event {
+        if let Some(pane_id) = chrome.focused_pane() {
+            if text.len() > PASTE_MAX_BYTES {
+                workspace
+                    .panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .status_message = Some("paste_too_large".into());
+            } else if workspace.pane(pane_id).copy_search {
+                workspace
+                    .panes
+                    .get_mut(&pane_id)
+                    .expect("pane exists")
+                    .search_buffer
+                    .push_str(text);
+            } else if workspace.pane(pane_id).writable() {
+                send_live_write(workspace, pane_id, text.as_bytes(), true).await?;
+            }
+        }
+        return Ok(false);
+    }
+    if route_mouse_selection(workspace, chrome, event) {
+        let mut output = std::io::stdout();
+        copy_finalized_selection(workspace, chrome, &mut output)?;
+        output.flush()?;
+        chrome.mode = Mode::Terminal;
+        return Ok(false);
+    }
     if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
         if chrome.mode == Mode::Respond {
             *prefix_armed = false;
@@ -574,6 +604,7 @@ async fn handle_live_action(
             }
         }
         Action::Respond => open_response_dialog(workspace, chrome).await?,
+        Action::CopyMode => chrome.mode = Mode::Copy,
         Action::ReleaseControl | Action::Detach => {
             if let Some(pane_id) = chrome.focused_pane() {
                 release_live_control(workspace, pane_id).await?;
@@ -701,7 +732,7 @@ async fn take_live_control(
         }
     };
     if let Some(data) = pending {
-        send_live_write(workspace, pane_id, &data).await?;
+        send_live_write(workspace, pane_id, &data, false).await?;
     }
     if !granted {
         return Err(FrameError::from(DaemonError::Protocol {
@@ -763,7 +794,7 @@ async fn send_live_input(
         return Ok(());
     }
     if workspace.pane(pane_id).writable() {
-        return send_live_write(workspace, pane_id, data).await;
+        return send_live_write(workspace, pane_id, data, false).await;
     }
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     if !pane.is_live() || pane.pending_input.is_some() {
@@ -777,6 +808,7 @@ async fn send_live_write(
     workspace: &mut Workspace<LiveDaemon>,
     pane_id: PaneId,
     data: &[u8],
+    paste: bool,
 ) -> Result<(), FrameError> {
     let message = {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
@@ -785,13 +817,14 @@ async fn send_live_write(
         }
         pane.client_write_seq += 1;
         pane.in_flight_write = Some(pane.client_write_seq);
-        json!({
-            "type": "terminal_input",
+        let mut message = json!({
+            "type": if paste { "terminal_paste" } else { "terminal_input" },
             "terminal_id": pane.terminal_id,
             "attachment_id": pane.attachment_id(),
-            "data": String::from_utf8_lossy(data),
             "client_write_seq": pane.client_write_seq,
-        })
+        });
+        message[if paste { "text" } else { "data" }] = json!(String::from_utf8_lossy(data));
+        message
     };
     match workspace.daemon().send(message).await {
         Ok(reply) => {

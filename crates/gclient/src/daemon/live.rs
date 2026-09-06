@@ -6,13 +6,14 @@ use super::{
     route_key, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome,
     Page, RosterEntry, RouteKey, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
 };
+use futures_util::future::{AbortHandle, Abortable};
 use reqwest::Url;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex as AsyncMutex, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Notify};
 use tokio::task::JoinHandle;
 use tokio::time::{timeout_at, Instant};
 use uuid::Uuid;
@@ -22,6 +23,13 @@ pub const CONTROL_REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 pub const BROADCAST_CAPACITY: usize = 256;
 
 type ReplySender = oneshot::Sender<Result<Value, DaemonError>>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CloseStage {
+    ReconnectJoin,
+    ReaderShutdown,
+    SinkClose,
+}
 
 #[derive(Debug)]
 pub(super) struct LiveState {
@@ -64,6 +72,7 @@ struct ReconnectFlight {
     result_tx: watch::Sender<Option<Result<Generation, DaemonError>>>,
     result_rx: watch::Receiver<Option<Result<Generation, DaemonError>>>,
     done: Arc<Notify>,
+    abort: AbortHandle,
 }
 
 #[derive(Debug)]
@@ -73,8 +82,12 @@ pub(super) struct LiveInner {
     pub(super) token: String,
     pub(super) state: Mutex<LiveState>,
     pub(super) events: broadcast::Sender<DaemonEvent>,
-    pub(super) reader: AsyncMutex<Option<JoinHandle<()>>>,
+    pub(super) reader: Mutex<Option<JoinHandle<()>>>,
     pub(super) closed_tx: watch::Sender<bool>,
+    pub(super) reader_active: AtomicBool,
+    pub(super) sink_active: AtomicBool,
+    reconnect_active: AtomicBool,
+    close_stall: Mutex<Option<CloseStage>>,
     owners: AtomicUsize,
 }
 
@@ -93,6 +106,17 @@ impl LiveInner {
         }
         for (_, waiter) in state.controls.drain() {
             let _ = waiter.send(Err(error.clone()));
+        }
+    }
+
+    pub(super) async fn stall_close_stage(&self, stage: CloseStage) {
+        let should_stall = self
+            .close_stall
+            .lock()
+            .expect("live daemon close-stall mutex poisoned")
+            .is_some_and(|configured| configured == stage);
+        if should_stall {
+            std::future::pending::<()>().await;
         }
     }
 }
@@ -122,8 +146,12 @@ impl LiveDaemon {
                 token,
                 state: Mutex::new(LiveState::default()),
                 events,
-                reader: AsyncMutex::new(None),
+                reader: Mutex::new(None),
                 closed_tx,
+                reader_active: AtomicBool::new(false),
+                sink_active: AtomicBool::new(false),
+                reconnect_active: AtomicBool::new(false),
+                close_stall: Mutex::new(None),
                 owners: AtomicUsize::new(1),
             }),
         };
@@ -159,6 +187,30 @@ impl LiveDaemon {
         )
     }
 
+    #[doc(hidden)]
+    pub fn inject_close_stall(&self, stage: &str) {
+        let stage = match stage {
+            "reconnect-join" => CloseStage::ReconnectJoin,
+            "reader-shutdown" => CloseStage::ReaderShutdown,
+            "sink-close" => CloseStage::SinkClose,
+            other => panic!("unknown live daemon close stage: {other}"),
+        };
+        *self
+            .inner
+            .close_stall
+            .lock()
+            .expect("live daemon close-stall mutex poisoned") = Some(stage);
+    }
+
+    #[doc(hidden)]
+    pub fn shutdown_resources(&self) -> (bool, bool, bool) {
+        (
+            self.inner.reconnect_active.load(Ordering::Acquire),
+            self.inner.reader_active.load(Ordering::Acquire),
+            self.inner.sink_active.load(Ordering::Acquire),
+        )
+    }
+
     pub async fn terminal(&self, terminal_id: &str) -> Result<TerminalRow, DaemonError> {
         self.inner.rest.terminal(terminal_id).await
     }
@@ -177,7 +229,11 @@ impl LiveDaemon {
             self.inner.closed_tx.subscribe(),
         )
         .await?;
-        let mut reader = self.inner.reader.lock().await;
+        let mut reader = self
+            .inner
+            .reader
+            .lock()
+            .expect("live daemon reader mutex poisoned");
         let (outbound, receiver) = mpsc::channel(256);
         let generation = {
             let mut state = self.inner.state();
@@ -376,15 +432,28 @@ impl Drop for LiveDaemon {
         if self.inner.owners.fetch_sub(1, Ordering::AcqRel) != 1 {
             return;
         }
-        {
+        let reader = self
+            .inner
+            .reader
+            .lock()
+            .expect("live daemon reader mutex poisoned")
+            .take();
+        let reconnect_abort = {
             let mut state = self.inner.state();
             state.closed = true;
             state.ready = false;
             state.outbound = None;
-        }
+            state.reconnect.as_ref().map(|flight| flight.abort.clone())
+        };
         self.inner.closed_tx.send_replace(true);
         self.inner
             .fail_waiters(DaemonError::Unavailable { retry_after: None });
+        if let Some(abort) = reconnect_abort {
+            abort.abort();
+        }
+        if let Some(reader) = reader {
+            reader.abort();
+        }
     }
 }
 
@@ -531,13 +600,15 @@ impl Daemon for LiveDaemon {
             } else {
                 let (result_tx, result_rx) = watch::channel(None);
                 let done = Arc::new(Notify::new());
+                let (abort, registration) = AbortHandle::new_pair();
                 state.reconnect = Some(ReconnectFlight {
                     observed,
                     result_tx: result_tx.clone(),
                     result_rx,
                     done: Arc::clone(&done),
+                    abort,
                 });
-                (None, Some((result_tx, done)))
+                (None, Some((result_tx, done, registration)))
             }
         };
         if let Some(receiver) = joiner.as_ref() {
@@ -555,7 +626,8 @@ impl Daemon for LiveDaemon {
                 .clone()
                 .unwrap_or(Err(DaemonError::Unavailable { retry_after: None }));
         }
-        let (result_tx, done) = owner.expect("reconnect owner or joiner");
+        let (result_tx, done, registration) = owner.expect("reconnect owner or joiner");
+        self.inner.reconnect_active.store(true, Ordering::Release);
         let mut owner_guard = ReconnectOwnerGuard {
             daemon: self,
             observed,
@@ -563,7 +635,9 @@ impl Daemon for LiveDaemon {
             done: Arc::clone(&done),
             armed: true,
         };
-        let mut result = self.open_connection(observed).await;
+        let mut result = Abortable::new(self.open_connection(observed), registration)
+            .await
+            .unwrap_or(Err(DaemonError::Unavailable { retry_after: None }));
         {
             let mut state = self.inner.state();
             if state.closed {
@@ -583,32 +657,44 @@ impl Daemon for LiveDaemon {
             }
         }
         done.notify_one();
+        self.inner.reconnect_active.store(false, Ordering::Release);
         owner_guard.armed = false;
         result
     }
 
     async fn close(&self, deadline: Instant) -> Result<(), DaemonError> {
-        let (outbound, reconnect_done) = {
+        let (outbound, reconnect, reader) = {
+            let mut reader_slot = self
+                .inner
+                .reader
+                .lock()
+                .expect("live daemon reader mutex poisoned");
             let mut state = self.inner.state();
             if state.closed {
                 return Ok(());
             }
-            if deadline <= Instant::now() {
-                return Err(DaemonError::Timeout);
-            }
             state.closed = true;
             state.ready = false;
-            let reconnect_done = state.reconnect.as_ref().map(|flight| {
+            let reconnect = state.reconnect.as_ref().map(|flight| {
                 flight
                     .result_tx
                     .send_replace(Some(Err(DaemonError::Unavailable { retry_after: None })));
-                Arc::clone(&flight.done)
+                (Arc::clone(&flight.done), flight.abort.clone())
             });
-            (state.outbound.take(), reconnect_done)
+            let reader = reader_slot.take();
+            (state.outbound.take(), reconnect, reader)
         };
-        self.inner.closed_tx.send_replace(true);
+        let mut resources = CloseResources {
+            inner: Arc::clone(&self.inner),
+            reader,
+            reconnect_abort: reconnect.as_ref().map(|(_, abort)| abort.clone()),
+            armed: true,
+        };
         self.inner
             .fail_waiters(DaemonError::Unavailable { retry_after: None });
+        if deadline <= Instant::now() {
+            return Err(DaemonError::Timeout);
+        }
         let close_result = if let Some(outbound) = outbound {
             let (done, done_rx) = oneshot::channel();
             match timeout_at(deadline, outbound.send(Outbound::Close { done })).await {
@@ -622,28 +708,46 @@ impl Daemon for LiveDaemon {
         } else {
             Ok(())
         };
-        let mut handle = timeout_at(deadline, self.inner.reader.lock())
-            .await
-            .map_err(|_| DaemonError::Timeout)?
-            .take();
-        if let Err(error) = close_result {
-            if let Some(handle) = handle {
-                handle.abort();
-            }
-            return Err(error);
-        }
-        if let Some(handle) = handle.as_mut() {
+        close_result?;
+        if let Some(handle) = resources.reader.as_mut() {
             if timeout_at(deadline, &mut *handle).await.is_err() {
-                handle.abort();
                 return Err(DaemonError::Timeout);
             }
         }
-        if let Some(done) = reconnect_done {
+        if let Some((done, abort)) = reconnect {
+            self.inner
+                .stall_close_stage(CloseStage::ReconnectJoin)
+                .await;
+            abort.abort();
             timeout_at(deadline, done.notified())
                 .await
                 .map_err(|_| DaemonError::Timeout)?;
         }
+        self.inner.closed_tx.send_replace(true);
+        resources.armed = false;
         Ok(())
+    }
+}
+
+struct CloseResources {
+    inner: Arc<LiveInner>,
+    reader: Option<JoinHandle<()>>,
+    reconnect_abort: Option<AbortHandle>,
+    armed: bool,
+}
+
+impl Drop for CloseResources {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.inner.closed_tx.send_replace(true);
+        if let Some(abort) = self.reconnect_abort.take() {
+            abort.abort();
+        }
+        if let Some(reader) = self.reader.take() {
+            reader.abort();
+        }
     }
 }
 
@@ -660,6 +764,10 @@ impl Drop for ReconnectOwnerGuard<'_> {
         if !self.armed {
             return;
         }
+        self.daemon
+            .inner
+            .reconnect_active
+            .store(false, Ordering::Release);
         let error = DaemonError::Unavailable { retry_after: None };
         {
             let mut state = self.daemon.inner.state();
