@@ -3,6 +3,7 @@
 //! shared by sidebar, navigator, and pane titles.
 
 use crate::app::ControlState;
+use crate::frame_source::Transport;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::text::display_width_u16;
@@ -93,6 +94,18 @@ pub fn control_glyph_label(control: ControlState, take_back: bool) -> (&'static 
 /// Kind cue for a toast: glyph plus label, so Info, Warning, Error, and
 /// Success stay apart with colour stripped. Gobby-specific; colour is the
 /// fourth signal after glyph, label, and title position.
+/// Label for the transport a pane's frames arrive over.
+///
+/// A pane with no attachment and no frame source has no transport to report,
+/// so the status line omits the field rather than naming a default it cannot
+/// stand behind — see `Pane::transport`.
+pub fn transport_label(transport: Transport) -> &'static str {
+    match transport {
+        Transport::Direct => "direct",
+        Transport::Proxy => "proxy",
+    }
+}
+
 pub fn toast_cue(kind: ToastKind) -> (&'static str, &'static str) {
     match kind {
         ToastKind::Info => ("◇", "info"),
@@ -301,6 +314,12 @@ pub fn render_status_line<W: WorkspaceView>(
                 format!(" │ {}", pane.terminal_id),
                 base.fg(p.text),
             ));
+            if let Some(transport) = pane.transport() {
+                spans.push(Span::styled(
+                    format!(" │ {}", transport_label(transport)),
+                    base.fg(p.subtext0),
+                ));
+            }
         }
         None => spans.push(Span::styled(" no pane", base.fg(p.overlay1))),
     }
@@ -381,6 +400,42 @@ mod tests {
             assert!(text.contains(needle), "status lacks {needle:?}: {text}");
         }
         assert!(!text.contains('!'));
+    }
+
+    #[test]
+    fn status_line_names_the_active_transport_per_pane() {
+        // A remote pane and a direct pane look identical otherwise, so the
+        // status line is the only place the operator learns which one they
+        // are typing into.
+        for (reattach_over_proxy, expected, unexpected) in
+            [(false, "direct", "proxy"), (true, "proxy", "direct")]
+        {
+            let mut ws = Workspace::scripted();
+            ws.daemon_mut().set_roster(json!({
+                "epoch": "e1",
+                "seq": 1,
+                "entries": []
+            }));
+            ws.reconcile_subscribe_first().unwrap();
+            ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+            let id = ws.pane_for_terminal("term-alpha").unwrap();
+            if reattach_over_proxy {
+                ws.reattach_frames(id).unwrap();
+            }
+            let mut chrome = Chrome::dark();
+            chrome.open_pane(id, "alpha");
+
+            let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+            terminal
+                .draw(|frame| render_status_line(frame, frame.area(), &ws, &chrome))
+                .unwrap();
+            let text = screen(&terminal);
+            assert!(text.contains(expected), "status lacks {expected:?}: {text}");
+            assert!(
+                !text.contains(unexpected),
+                "status names {unexpected:?}: {text}"
+            );
+        }
     }
 
     #[test]
