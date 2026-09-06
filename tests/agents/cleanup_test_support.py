@@ -24,6 +24,14 @@ class RecordingDb:
         self.executed.append((sql, params))
         return SimpleNamespace(rowcount=1)
 
+    def fetchall(self, sql: str, params: tuple[object, ...] = ()) -> list[dict[str, str]]:
+        """Serve an empty result so the durable-subscriber read runs for real.
+
+        Without this the read raises and is swallowed as "no rows", which would
+        let a zero-subscriber assertion pass for the wrong reason.
+        """
+        return []
+
     def bounded_transaction(self) -> nullcontext[None]:
         return nullcontext()
 
@@ -42,16 +50,19 @@ class AcknowledgingCompletionRegistry(RecordingCompletionRegistry):
         self.delivery = delivery
         self.events = events
         self.notifications: list[tuple[str, dict[str, object], str]] = []
+        self.durable_subscriber_counts: list[int] = []
 
     async def notify(
         self,
         completion_id: str,
         result: dict[str, object],
         message: str = "",
+        durable_subscriber_count: int = 0,
     ) -> dict[str, bool] | None:
         if self.events is not None:
             self.events.append("notify")
         self.notifications.append((completion_id, result, message))
+        self.durable_subscriber_counts.append(durable_subscriber_count)
         return self.delivery
 
     def cleanup(self, completion_id: str) -> None:
@@ -146,6 +157,7 @@ class _FailingNotifyRegistry(RecordingCompletionRegistry):
         completion_id: str,
         result: dict[str, object],
         message: str = "",
+        durable_subscriber_count: int = 0,
     ) -> dict[str, bool] | None:
         raise RuntimeError("subscriber notification failed")
 

@@ -11,6 +11,7 @@ class DeliveryRegistry:
     def __init__(self, delivery: dict[str, bool] | None) -> None:
         self._delivery = delivery
         self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
+        self.durable_subscriber_counts: list[int] = []
         self.cleanup_calls: list[str] = []
 
     async def notify(
@@ -19,8 +20,10 @@ class DeliveryRegistry:
         *,
         result: dict[str, Any] | None = None,
         message: str = "",
+        durable_subscriber_count: int = 0,
     ) -> dict[str, bool] | None:
         self.notify_calls.append((run_id, result, message))
+        self.durable_subscriber_counts.append(durable_subscriber_count)
         return self._delivery
 
     def cleanup(self, run_id: str) -> None:

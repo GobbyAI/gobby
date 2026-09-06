@@ -20,6 +20,7 @@ import asyncio
 import logging
 import threading
 import uuid
+from collections.abc import Callable, Sequence
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -32,7 +33,7 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.processor_lifecycle import SessionFlushResult
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
@@ -222,29 +223,47 @@ class TestAgentMessageCache:
         assert message is None
 
 
+def _live_session_lister(
+    sessions_by_status: dict[str, list[Any]],
+) -> Callable[..., list[Any]]:
+    """Serve the plural ``list(statuses=..., limit=...)`` contract from a status map.
+
+    The coordinator asks for every live status in one call. Honoring the
+    requested statuses rather than ignoring them keeps these tests able to fail
+    if it ever narrows the live set it re-registers.
+    """
+
+    def _list(statuses: Sequence[str], limit: int) -> list[Any]:
+        return [session for status in statuses for session in sessions_by_status.get(status, [])]
+
+    return _list
+
+
 class TestSessionLifecycleTransitions:
     """Test session lifecycle transitions."""
 
     def test_reregister_active_sessions(self) -> None:
         """Test re-registering active sessions from storage."""
         mock_session_storage = MagicMock()
-        mock_session_storage.list.side_effect = lambda status, limit: {
-            "active": [
-                MagicMock(
-                    id="session-1",
-                    transcript_path="/path/to/1.jsonl",
-                    source="claude",
-                    transcript_processed=False,
-                ),
-                MagicMock(
-                    id="session-2",
-                    transcript_path="/path/to/2.jsonl",
-                    source="qwen",
-                    transcript_processed=False,
-                ),
-            ],
-            "paused": [],
-        }[status]
+        mock_session_storage.list.side_effect = _live_session_lister(
+            {
+                "active": [
+                    MagicMock(
+                        id="session-1",
+                        transcript_path="/path/to/1.jsonl",
+                        source="claude",
+                        transcript_processed=False,
+                    ),
+                    MagicMock(
+                        id="session-2",
+                        transcript_path="/path/to/2.jsonl",
+                        source="qwen",
+                        transcript_processed=False,
+                    ),
+                ],
+                "paused": [],
+            }
+        )
 
         mock_message_processor = MagicMock()
 
@@ -265,9 +284,7 @@ class TestSessionLifecycleTransitions:
             source="claude",
         )
         session_storage = MagicMock()
-        session_storage.list.side_effect = lambda status, limit: (
-            [session] if status == "active" else []
-        )
+        session_storage.list.side_effect = _live_session_lister({"active": [session]})
         old_processor = MagicMock()
         rebuilt_processor = MagicMock()
         current: list[Any | None] = [old_processor]
@@ -296,10 +313,12 @@ class TestSessionLifecycleTransitions:
             transcript_processed=True,
         )
         mock_session_storage = MagicMock()
-        mock_session_storage.list.side_effect = lambda status, limit: {
-            "active": [active_session],
-            "paused": [],
-        }[status]
+        mock_session_storage.list.side_effect = _live_session_lister(
+            {
+                "active": [active_session],
+                "paused": [],
+            }
+        )
         mock_message_processor = MagicMock()
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
@@ -316,24 +335,26 @@ class TestSessionLifecycleTransitions:
     def test_reregister_includes_paused_sessions(self) -> None:
         """Test re-registration includes paused sessions."""
         mock_session_storage = MagicMock()
-        mock_session_storage.list.side_effect = lambda status, limit: {
-            "active": [
-                MagicMock(
-                    id="session-1",
-                    transcript_path="/path/to/1.jsonl",
-                    source="claude",
-                    transcript_processed=False,
-                ),
-            ],
-            "paused": [
-                MagicMock(
-                    id="session-2",
-                    transcript_path="/path/to/2.jsonl",
-                    source="claude",
-                    transcript_processed=False,
-                ),
-            ],
-        }[status]
+        mock_session_storage.list.side_effect = _live_session_lister(
+            {
+                "active": [
+                    MagicMock(
+                        id="session-1",
+                        transcript_path="/path/to/1.jsonl",
+                        source="claude",
+                        transcript_processed=False,
+                    ),
+                ],
+                "paused": [
+                    MagicMock(
+                        id="session-2",
+                        transcript_path="/path/to/2.jsonl",
+                        source="claude",
+                        transcript_processed=False,
+                    ),
+                ],
+            }
+        )
 
         mock_message_processor = MagicMock()
 
@@ -354,10 +375,12 @@ class TestSessionLifecycleTransitions:
     def test_reregister_skips_sessions_without_transcript_path(self) -> None:
         """Test re-registration skips sessions without transcript_path."""
         mock_session_storage = MagicMock()
-        mock_session_storage.list.side_effect = lambda status, limit: {
-            "active": [MagicMock(id="session-1", transcript_path=None, source="claude")],
-            "paused": [],
-        }[status]
+        mock_session_storage.list.side_effect = _live_session_lister(
+            {
+                "active": [MagicMock(id="session-1", transcript_path=None, source="claude")],
+                "paused": [],
+            }
+        )
 
         mock_message_processor = MagicMock()
 
@@ -374,23 +397,25 @@ class TestSessionLifecycleTransitions:
     def test_reregister_handles_errors_gracefully(self) -> None:
         """Test re-registration handles individual session errors."""
         mock_session_storage = MagicMock()
-        mock_session_storage.list.side_effect = lambda status, limit: {
-            "active": [
-                MagicMock(
-                    id="session-1",
-                    transcript_path="/path/1.jsonl",
-                    source="claude",
-                    transcript_processed=False,
-                ),
-                MagicMock(
-                    id="session-2",
-                    transcript_path="/path/2.jsonl",
-                    source="claude",
-                    transcript_processed=False,
-                ),
-            ],
-            "paused": [],
-        }[status]
+        mock_session_storage.list.side_effect = _live_session_lister(
+            {
+                "active": [
+                    MagicMock(
+                        id="session-1",
+                        transcript_path="/path/1.jsonl",
+                        source="claude",
+                        transcript_processed=False,
+                    ),
+                    MagicMock(
+                        id="session-2",
+                        transcript_path="/path/2.jsonl",
+                        source="claude",
+                        transcript_processed=False,
+                    ),
+                ],
+                "paused": [],
+            }
+        )
 
         mock_message_processor = MagicMock()
         mock_message_processor.register_session.side_effect = [
@@ -430,24 +455,26 @@ class TestSessionLifecycleTransitions:
         record = next(
             record
             for record in caplog.records
-            if record.getMessage() == "Failed to re-register active/paused sessions"
+            if record.getMessage() == "Failed to re-register live sessions"
         )
         assert record.__dict__["error"] == "storage unavailable"
 
     def test_reregister_does_not_reset_agent_context_flags(self) -> None:
         """Test re-registration only restores transcript processing."""
         mock_session_storage = MagicMock()
-        mock_session_storage.list.side_effect = lambda status, limit: {
-            "active": [
-                MagicMock(
-                    id="session-1",
-                    transcript_path="/path/to/1.jsonl",
-                    source="claude",
-                    transcript_processed=False,
-                ),
-            ],
-            "paused": [],
-        }[status]
+        mock_session_storage.list.side_effect = _live_session_lister(
+            {
+                "active": [
+                    MagicMock(
+                        id="session-1",
+                        transcript_path="/path/to/1.jsonl",
+                        source="claude",
+                        transcript_processed=False,
+                    ),
+                ],
+                "paused": [],
+            }
+        )
 
         mock_message_processor = MagicMock()
 
@@ -461,8 +488,7 @@ class TestSessionLifecycleTransitions:
 
         assert count == 1
         assert mock_session_storage.list.call_args_list == [
-            call(status="active", limit=1000),
-            call(status="paused", limit=1000),
+            call(statuses=LIVE_SESSION_STATUS_ORDER, limit=1000),
         ]
         mock_message_processor.register_session.assert_called_once_with(
             "session-1",
@@ -1110,8 +1136,7 @@ class TestAgentRunCompletion:
             "commit_sha=abc1234"
         )
         supplied_summary = (
-            "close_task was refused; the task is not definitively closed."
-            f"\n\n{completion_suffix}"
+            f"close_task was refused; the task is not definitively closed.\n\n{completion_suffix}"
         )
 
         run_manager = LocalAgentRunManager(temp_db)
@@ -1486,7 +1511,12 @@ class _GatedRegistry:
         self.started = asyncio.Event()
 
     async def notify(
-        self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
+        self,
+        run_id: str,
+        *,
+        result: dict[str, Any] | None = None,
+        message: str = "",
+        durable_subscriber_count: int = 0,
     ) -> dict[str, bool] | None:
         self.notify_calls.append((run_id, result, message))
         self.started.set()

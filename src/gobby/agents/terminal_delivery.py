@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
@@ -178,14 +178,36 @@ def detach_shielded_terminal_deliveries() -> list[str]:
     return detached
 
 
-async def _wake_durable_subscribers(
+async def _read_durable_subscribers_safely(
     *,
     db: HubDatabase,
+    run_id: str,
+    run_db: Callable[..., Awaitable[Any]],
+) -> list[str]:
+    """Read this run's durable subscriber rows, treating a read failure as none.
+
+    Delivery must still proceed on the in-memory path when the durable read
+    fails, so the failure is logged and reported as an empty set rather than
+    raised.
+    """
+    try:
+        return list(await run_db(_read_durable_subscribers, db, run_id))
+    except Exception:
+        logger.warning(
+            "Failed to read durable completion subscribers for agent %s",
+            run_id,
+            exc_info=True,
+        )
+        return []
+
+
+async def _wake_durable_subscribers(
+    *,
     completion_registry: CompletionEventRegistry,
     run_id: str,
     result: dict[str, Any],
     message: str,
-    run_db: Callable[..., Awaitable[Any]],
+    subscribers: Sequence[str],
     registry_delivery: dict[str, bool] | None,
 ) -> dict[str, bool] | None:
     """Wake durable subscribers the in-memory registry did not attempt.
@@ -194,21 +216,11 @@ async def _wake_durable_subscribers(
     only redelivers runs that were already terminal when it ran. A run preserved
     across the restart therefore terminalizes with no in-memory subscribers and
     no sweep left to catch it, stranding its durable `completion_subscribers`
-    rows. Reading those rows here closes that window; sessions the registry
+    rows. Waking from those rows here closes that window; sessions the registry
     already attempted are skipped so nobody is woken twice.
     """
     wake_sessions = getattr(completion_registry, "wake_sessions", None)
     if not callable(wake_sessions):
-        return registry_delivery
-
-    try:
-        subscribers = await run_db(_read_durable_subscribers, db, run_id)
-    except Exception:
-        logger.warning(
-            "Failed to read durable completion subscribers for agent %s",
-            run_id,
-            exc_info=True,
-        )
         return registry_delivery
 
     attempted = set(registry_delivery or {})
@@ -267,18 +279,27 @@ async def deliver_and_cleanup_terminal_run(
     notification_succeeded = False
     if result is not None:
         payload = result if "run_id" in result else {**result, "run_id": run_id}
+        durable_subscribers = await _read_durable_subscribers_safely(
+            db=db,
+            run_id=run_id,
+            run_db=run_db,
+        )
         try:
-            delivery = await completion_registry.notify(run_id, result=payload, message=message)
+            delivery = await completion_registry.notify(
+                run_id,
+                result=payload,
+                message=message,
+                durable_subscriber_count=len(durable_subscribers),
+            )
             notification_succeeded = True
         except Exception:
             logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
         delivery = await _wake_durable_subscribers(
-            db=db,
             completion_registry=completion_registry,
             run_id=run_id,
             result=payload,
             message=message,
-            run_db=run_db,
+            subscribers=durable_subscribers,
             registry_delivery=delivery,
         )
 

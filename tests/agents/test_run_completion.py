@@ -94,6 +94,7 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
         "run-123",
         result={"status": "success", "run_id": "run-123"},
         message="",
+        durable_subscriber_count=0,
     )
     completion_registry.cleanup.assert_called_once_with("run-123")
 
@@ -120,6 +121,7 @@ async def test_complete_and_notify_normalizes_a_copy_of_notify_result() -> None:
         "run-current",
         result={"status": "success", "run_id": "run-current"},
         message="",
+        durable_subscriber_count=0,
     )
 
 

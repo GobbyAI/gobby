@@ -95,6 +95,49 @@ class TestRegisterAndNotify:
         assert registry.get_result("nonexistent") is None
 
     @pytest.mark.asyncio
+    async def test_notify_unregistered_warns_when_durable_rows_are_owed(
+        self,
+        registry: CompletionEventRegistry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A lost registration that still owes durable deliveries is not silent.
+
+        This registry is in-memory only, so a daemon restart empties it while the
+        durable ``completion_subscribers`` rows survive. Notifying an ID the
+        registry no longer knows, while rows are still owed, is exactly the state
+        loss that stranded a waiter for 3.5 hours; it must be visible at WARNING.
+        """
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
+            result = await registry.notify(
+                COMPLETION_ID,
+                {"status": "completed"},
+                durable_subscriber_count=2,
+            )
+
+        assert result is None
+        records = [record for record in caplog.records if COMPLETION_ID in record.getMessage()]
+        assert [record.levelno for record in records] == [logging.WARNING]
+        assert "2 durable subscriber" in records[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_notify_unregistered_without_durable_rows_stays_debug(
+        self,
+        registry: CompletionEventRegistry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A duplicate notify after cleanup owes nobody, so it must not warn.
+
+        Keeping this case at DEBUG is what preserves the warning's signal: a
+        second delivery for an already-cleaned run is routine.
+        """
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
+            result = await registry.notify(COMPLETION_ID, {"status": "completed"})
+
+        assert result is None
+        records = [record for record in caplog.records if COMPLETION_ID in record.getMessage()]
+        assert [record.levelno for record in records] == [logging.DEBUG]
+
+    @pytest.mark.asyncio
     async def test_duplicate_notify_keeps_first_result_and_wakes_once(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

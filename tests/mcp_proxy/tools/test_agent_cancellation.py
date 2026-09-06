@@ -197,6 +197,7 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim(
             "error": None,
         },
         message="Agent run-123 cancelled",
+        durable_subscriber_count=0,
     )
 
 
@@ -231,7 +232,14 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
     notifications: list[tuple[str, dict[str, str], str]] = []
 
     class RecordingCompletionRegistry:
-        async def notify(self, run_id: str, result: dict[str, str], *, message: str) -> None:
+        async def notify(
+            self,
+            run_id: str,
+            result: dict[str, str],
+            *,
+            message: str,
+            durable_subscriber_count: int = 0,
+        ) -> None:
             notifications.append((run_id, result, message))
 
         def cleanup(self, _run_id: str) -> None:

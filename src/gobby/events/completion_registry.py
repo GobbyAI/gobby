@@ -122,6 +122,7 @@ class CompletionEventRegistry:
         completion_id: str,
         result: dict[str, Any],
         message: str = "",
+        durable_subscriber_count: int = 0,
     ) -> dict[str, bool] | None:
         """Signal completion and wake all subscribers.
 
@@ -129,10 +130,26 @@ class CompletionEventRegistry:
             completion_id: The completion event ID
             result: Result data to store and pass to wake callbacks
             message: Human-readable message for wake notifications
+            durable_subscriber_count: How many undelivered durable subscriber rows
+                the caller holds for this ID. This registry is in-memory only, so a
+                restart empties it: an unregistered ID that still owes durable
+                deliveries means the registration was LOST rather than never made,
+                and that warrants a warning. An unregistered ID with no durable rows
+                is the ordinary benign case -- a duplicate notify after cleanup --
+                and stays at debug so the warning keeps its signal.
         """
         event = self._events.get(completion_id)
         if event is None:
-            logger.debug("notify() called for unregistered ID %s - ignoring", completion_id)
+            if durable_subscriber_count > 0:
+                logger.warning(
+                    "notify() called for unregistered ID %s while %d durable subscriber "
+                    "row(s) are still owed; the in-memory registration was lost (daemon "
+                    "restart) and delivery must fall back to those durable rows",
+                    completion_id,
+                    durable_subscriber_count,
+                )
+            else:
+                logger.debug("notify() called for unregistered ID %s - ignoring", completion_id)
             return None
         if completion_id in self._results:
             logger.debug("notify() called for completed ID %s - ignoring duplicate", completion_id)

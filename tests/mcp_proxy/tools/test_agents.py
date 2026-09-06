@@ -1671,6 +1671,7 @@ class TestEndAgentRun:
             "run-123",
             result={"status": "success", "run_id": "run-123", "dirty_paths": []},
             message="Agent run-123 completed; dirty_paths=[]",
+            durable_subscriber_count=0,
         )
 
     @pytest.mark.asyncio

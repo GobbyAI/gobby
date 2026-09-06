@@ -159,6 +159,7 @@ class FailingCompletionRegistry(AcknowledgingCompletionRegistry):
         completion_id: str,
         result: dict[str, object],
         message: str = "",
+        durable_subscriber_count: int = 0,
     ) -> dict[str, bool] | None:
         raise RuntimeError(f"notify failed for {completion_id}: {result!r} {message}")
 
@@ -369,6 +370,39 @@ async def test_terminal_delivery_does_not_rewake_sessions_the_registry_attempted
             ("run-1", ["session-a", "session-b"]),
         )
     ]
+
+
+async def test_terminal_delivery_reports_owed_durable_row_count_to_notify() -> None:
+    """The count reaches notify() so the registry can warn about a lost registration.
+
+    The registry cannot see Postgres, so only this caller can distinguish a
+    restart-lost registration from a routine duplicate notify.
+    """
+    db = DurableDb(["session-a", "session-b"])
+    registry = DurableWakeRegistry(None)
+
+    await _handler(db, completion_registry=registry).notify_terminal_completion(
+        "run-1",
+        result={"status": "completed"},
+        message="Agent terminal",
+    )
+
+    assert registry.durable_subscriber_counts == [2]
+
+
+async def test_terminal_delivery_reports_zero_owed_rows_when_none_are_durable() -> None:
+    """No durable rows means no state was lost, so notify() must not be told otherwise."""
+    db = RecordingDb()
+    registry = DurableWakeRegistry({"session-1": True})
+
+    await _handler(db, completion_registry=registry).notify_terminal_completion(
+        "run-1",
+        result={"status": "completed"},
+        message="Agent terminal",
+    )
+
+    assert registry.durable_subscriber_counts == [0]
+    assert registry.woken == []
 
 
 async def test_terminal_delivery_retains_rows_for_undelivered_durable_sessions() -> None:
