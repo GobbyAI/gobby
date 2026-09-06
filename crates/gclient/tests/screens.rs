@@ -1,0 +1,301 @@
+//! 4.2.1: committed screen goldens for the whole gclient chrome.
+//!
+//! Four scripted workspace states render through the real `render_workspace`
+//! into a 120x40 `TestBackend`, then serialise one line per row: the glyphs,
+//! then the run-length-encoded style of every cell with each colour normalised
+//! to its `theme::Palette` role name.
+//!
+//! Naming the role rather than the value is the same normalisation the parity
+//! suite performs in `parity/token_map.rs`, for the same reason: a glyph,
+//! alignment, or repaint change moves the capture, while retuning a theme token
+//! moves the render and the expectation together and does not. Both sides read
+//! the roles off `Palette::entries`, which is the single source of truth.
+//!
+//! `render_workspace` paints empty pane bodies, so a capture is chrome only —
+//! terminal content never enters it and cannot make a golden flap.
+//!
+//! Regenerate with:
+//!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
+
+use gobby_client::theme::{Palette, Theme, ThemeKind};
+use gobby_client::ui::chrome::Mode;
+use gobby_client::ui::{render_workspace, Chrome};
+use gobby_client::Workspace;
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier};
+use ratatui::Terminal;
+use serde_json::json;
+use std::fmt::Write as _;
+use std::fs;
+use std::path::PathBuf;
+
+/// Every capture is taken at one size, so a golden diff is never a reflow.
+const WIDTH: u16 = 120;
+const HEIGHT: u16 = 40;
+
+const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
+
+/// Builds one scripted state: the workspace plus the chrome that frames it.
+type ScriptedState = fn() -> (Workspace, Chrome);
+
+/// The scripted states, in the order the plan names them.
+const STATES: [(&str, ScriptedState); 4] = [
+    ("empty_workspace", empty_workspace),
+    ("roster_attention", roster_attention),
+    ("split_live", split_live),
+    ("help_dialog", help_dialog),
+];
+
+// ---------------------------------------------------------------- the states
+
+/// Nothing open: the empty state, an empty roster, no tabs.
+fn empty_workspace() -> (Workspace, Chrome) {
+    (Workspace::scripted(), Chrome::dark())
+}
+
+/// A three-terminal roster with one attention prompt waiting on `term-alpha`.
+/// No pane is open in chrome, which isolates the sidebar from the tab surface.
+fn roster_attention() -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    for terminal_id in ["term-alpha", "term-beta", "term-gamma"] {
+        ws.open_terminal(terminal_id, "native", "epoch")
+            .expect("open terminal");
+    }
+    (ws, Chrome::dark())
+}
+
+/// Two live panes split in the first tab, with a second tab behind them.
+///
+/// `open_terminal` attaches direct and pushes the first frame, so both panes
+/// are already live; reattaching `term-beta` moves it to the proxy transport
+/// and focusing it puts that transport in the status line, which is the field
+/// that distinguishes the two attach paths.
+fn split_live() -> (Workspace, Chrome) {
+    let (mut ws, mut chrome) = roster_attention();
+    let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
+    let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");
+    ws.reattach_frames(beta).expect("reattach term-beta");
+
+    chrome.open_pane(alpha, "alpha");
+    chrome.open_pane(beta, "alpha");
+    chrome.open_tab(alpha, "second");
+    chrome.active_tab = 0;
+    assert!(chrome.focus_pane(beta), "focus term-beta");
+    (ws, chrome)
+}
+
+/// The keybind help dialog over the split. `render_workspace` dims the chrome
+/// behind the mode overlay, so this capture also pins the dimmed background.
+fn help_dialog() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = split_live();
+    chrome.mode = Mode::KeybindHelp;
+    (ws, chrome)
+}
+
+// ------------------------------------------------------------- the capture
+
+fn render(ws: &Workspace, chrome: &mut Chrome) -> Terminal<TestBackend> {
+    let area = Rect::new(0, 0, WIDTH, HEIGHT);
+    chrome.compute_view(ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
+    terminal
+        .draw(|frame| render_workspace(frame, ws, chrome))
+        .expect("draw frame");
+    terminal
+}
+
+/// `Palette::entries` resolved to the colours the render actually paints with.
+fn roles(theme: &Theme) -> Vec<(&'static str, Color)> {
+    Palette::entries(theme)
+        .into_iter()
+        .map(|(name, token)| (name, token.color()))
+        .collect()
+}
+
+/// The role a painted colour normalises to.
+///
+/// Several roles share one token — `mauve` is `subtext0`, `teal` is `blue`,
+/// `peach` is `yellow` — so the reverse lookup is genuinely ambiguous. First
+/// match in `Palette::entries` order wins, which is stable across runs and
+/// makes the capture name the earlier role of each pair.
+fn role_name(color: Color, roles: &[(&'static str, Color)]) -> String {
+    if color == Color::Reset {
+        return "-".to_string();
+    }
+    match roles.iter().find(|(_, value)| *value == color) {
+        Some((name, _)) => (*name).to_string(),
+        // A colour outside the contract is a finding, not a crash: name it by
+        // value so the diff says exactly what leaked into the render.
+        None => format!("{color:?}").to_lowercase(),
+    }
+}
+
+/// Modifier bits as stable letters, in declaration order.
+fn modifier_tag(modifier: Modifier) -> String {
+    const BITS: [(Modifier, char); 9] = [
+        (Modifier::BOLD, 'b'),
+        (Modifier::DIM, 'd'),
+        (Modifier::ITALIC, 'i'),
+        (Modifier::UNDERLINED, 'u'),
+        (Modifier::SLOW_BLINK, 's'),
+        (Modifier::RAPID_BLINK, 'r'),
+        (Modifier::REVERSED, 'v'),
+        (Modifier::HIDDEN, 'h'),
+        (Modifier::CROSSED_OUT, 'x'),
+    ];
+    BITS.iter()
+        .filter(|(bit, _)| modifier.contains(*bit))
+        .map(|(_, letter)| *letter)
+        .collect()
+}
+
+/// Run-length encodes one row's styles. The counts are what catch a shift that
+/// leaves every glyph and colour otherwise intact.
+fn style_runs(styles: &[String]) -> String {
+    let mut out = String::new();
+    let mut styles = styles.iter();
+    let Some(mut current) = styles.next() else {
+        return out;
+    };
+    let mut count = 1usize;
+    for style in styles {
+        if style == current {
+            count += 1;
+            continue;
+        }
+        write!(out, "{current}*{count} ").expect("write style run");
+        current = style;
+        count = 1;
+    }
+    write!(out, "{current}*{count}").expect("write style run");
+    out
+}
+
+/// Serialises the last drawn frame: a header, then a glyph line and a style
+/// line per row. The file is compared byte for byte and never parsed, so
+/// delimiters appearing inside rendered content are harmless.
+fn capture(name: &str, terminal: &Terminal<TestBackend>, theme: &Theme) -> String {
+    let roles = roles(theme);
+    let buffer = terminal.backend().buffer();
+    let mut out = format!(
+        "# gclient screen golden: {name}\n\
+         # {WIDTH}x{HEIGHT}, dark theme, colours normalised to theme::Palette roles\n"
+    );
+    for y in 0..buffer.area.height {
+        let mut glyphs = String::new();
+        let mut styles = Vec::with_capacity(usize::from(buffer.area.width));
+        for x in 0..buffer.area.width {
+            let cell = &buffer[(x, y)];
+            glyphs.push_str(cell.symbol());
+            let mut style = format!(
+                "{}/{}",
+                role_name(cell.fg, &roles),
+                role_name(cell.bg, &roles)
+            );
+            let tag = modifier_tag(cell.modifier);
+            if !tag.is_empty() {
+                style.push('+');
+                style.push_str(&tag);
+            }
+            styles.push(style);
+        }
+        writeln!(out, "{y:02} |{glyphs}|").expect("write glyph row");
+        writeln!(out, "{y:02} : {}", style_runs(&styles)).expect("write style row");
+    }
+    out
+}
+
+fn fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/screens")
+        .join(format!("{name}.txt"))
+}
+
+/// Names the first line that moved; a 40-row `assert_eq!` diff is unreadable.
+fn first_difference(rendered: &str, committed: &str) -> String {
+    for (index, (a, b)) in rendered.lines().zip(committed.lines()).enumerate() {
+        if a != b {
+            return format!("line {index}\n  committed: {b}\n  rendered:  {a}");
+        }
+    }
+    format!(
+        "line count: committed {}, rendered {}",
+        committed.lines().count(),
+        rendered.lines().count()
+    )
+}
+
+/// Captures a state twice and returns the bytes once both renders agree.
+///
+/// Determinism is a property of the capture, not of the file: a second render
+/// of the same state must serialise identically before the bytes are worth
+/// committing, and the byte comparison below then carries that guarantee
+/// across runs.
+fn deterministic_capture(name: &str, build: ScriptedState, theme: &Theme) -> String {
+    let (ws, mut chrome) = build();
+    let first = capture(name, &render(&ws, &mut chrome), theme);
+    let second = capture(name, &render(&ws, &mut chrome), theme);
+    assert!(
+        first == second,
+        "{name} capture is not deterministic\n{}",
+        first_difference(&second, &first)
+    );
+    first
+}
+
+// ----------------------------------------------------------------- the tests
+
+#[test]
+fn screens_match_committed_captures() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let update = std::env::var_os(UPDATE_ENV).is_some_and(|value| value == "1");
+
+    for (name, build) in STATES {
+        let rendered = deterministic_capture(name, build, &theme);
+        let path = fixture_path(name);
+
+        if update {
+            fs::create_dir_all(path.parent().expect("fixtures directory"))
+                .expect("create fixtures directory");
+            fs::write(&path, &rendered).expect("write capture");
+            continue;
+        }
+
+        let committed = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "{}: {error} — regenerate with {UPDATE_ENV}=1",
+                path.display()
+            )
+        });
+        assert!(
+            rendered == committed,
+            "{name} no longer matches its committed capture; \
+             regenerate with {UPDATE_ENV}=1 once the render change is deliberate\n{}",
+            first_difference(&rendered, &committed)
+        );
+    }
+}
+
+/// 4.2.1's second half. The tab bar is chrome and sits nowhere near a pane
+/// body, so renaming one tab by a single character must move the capture.
+#[test]
+fn a_chrome_change_outside_the_terminal_content_region_fails_the_capture() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let committed = deterministic_capture("split_live", split_live, &theme);
+
+    let (ws, mut chrome) = split_live();
+    chrome.tabs[1].title = "secont".to_string();
+    let moved = capture("split_live", &render(&ws, &mut chrome), &theme);
+
+    assert!(
+        moved != committed,
+        "a renamed tab left the capture unchanged, so chrome is escaping the golden"
+    );
+}

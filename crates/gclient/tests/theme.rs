@@ -264,3 +264,41 @@ fn tokens_match_design_contract_and_survive_monochrome() {
         assert!(tt.palette[..16].iter().all(Option::is_some));
     }
 }
+
+/// `Palette::entries` and `Palette::from_theme` are two hand-maintained lists
+/// of the same sixteen role-to-token bindings. `from_theme` is what the render
+/// paints with; `entries` is what a test reverse-maps a painted colour back
+/// through to name its role (`tests/screens.rs`). Drift between them would
+/// rename roles in a screen capture without moving a single pixel, and nothing
+/// else pins one list to the other.
+#[test]
+fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let theme = Theme::new(kind);
+        let palette = theme.palette();
+        for (name, token) in Palette::entries(&theme) {
+            let painted = match name {
+                "accent" => palette.accent,
+                "panel_bg" => palette.panel_bg,
+                "surface0" => palette.surface0,
+                "surface1" => palette.surface1,
+                "surface_dim" => palette.surface_dim,
+                "overlay0" => palette.overlay0,
+                "overlay1" => palette.overlay1,
+                "text" => palette.text,
+                "subtext0" => palette.subtext0,
+                "mauve" => palette.mauve,
+                "green" => palette.green,
+                "yellow" => palette.yellow,
+                "red" => palette.red,
+                "blue" => palette.blue,
+                "teal" => palette.teal,
+                "peach" => palette.peach,
+                // A seventeenth role has to be bound here too, or a capture
+                // would silently fall back to naming it by raw colour value.
+                other => panic!("{kind:?} palette role {other} has no field in this map"),
+            };
+            assert_eq!(painted, token.color(), "{kind:?} {name}");
+        }
+    }
+}
