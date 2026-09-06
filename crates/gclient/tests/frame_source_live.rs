@@ -1386,6 +1386,61 @@ async fn live_roster_prefers_direct_then_falls_back_once() {
     mock.shutdown().await;
 }
 
+/// A real tmux row names its pane, not a host terminal.
+///
+/// `TerminalManager.attach_locator` leaves `host_terminal_id` null for tmux —
+/// the pane locator is the identity, and the frame host ignores the host id
+/// entirely once one is present. Requiring it here matched no real tmux row, so
+/// the client never asked for direct and every tmux pane came through the proxy.
+#[tokio::test]
+async fn a_tmux_roster_row_still_asks_for_direct_first() {
+    let mock = mock_daemon::MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{
+                "terminal_id": "terminal-tmux-pane",
+                "backend": "tmux",
+                "state": "live",
+                "attach": {
+                    "backend": "tmux",
+                    "frame_host_epoch": "host-epoch",
+                    "host_socket": "/missing/test-owned-gterm-frames.sock",
+                    "host_terminal_id": null,
+                    "socket_path": "/missing/test-owned-tmux.sock",
+                    "pane_id": "%9",
+                    "server_pid": 4242,
+                    "server_start_time": 1717171717
+                }
+            }],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 0}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("reconcile workspace");
+
+    let attaches = terminal_attach_requests(&mock);
+    assert_eq!(attaches.len(), 2, "direct failure must have one fallback");
+    assert_eq!(attaches[0]["frame_delivery"], json!("direct"));
+    assert_eq!(attaches[1]["frame_delivery"], json!("proxy"));
+    let pane_id = workspace
+        .pane_for_terminal("terminal-tmux-pane")
+        .expect("tmux pane");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Proxy));
+    mock.shutdown().await;
+}
+
 fn terminal_attach_requests(mock: &mock_daemon::MockDaemon) -> Vec<serde_json::Value> {
     mock.requests()
         .into_iter()

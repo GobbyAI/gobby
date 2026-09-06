@@ -807,20 +807,43 @@ fn is_cursor_error(error: &DaemonError) -> bool {
     detail.contains("cursor_stale") || detail.contains("invalid cursor")
 }
 
+/// Whether a `/api/terminals` row advertises enough to attempt a direct attach.
+///
+/// The row's `attach` block is a flat `AttachLocator` (`asdict`, not
+/// `direct_block`), and identity in it is backend shaped: a native terminal is
+/// named by its `host_terminal_id`, while a tmux pane is named by its physical
+/// locator — socket, pane id, and the server generation that keeps a recycled
+/// pane id unambiguous. The frame host draws the same line: `embed::attach_frame`
+/// ignores `host_terminal_id` outright once a pane locator is present.
+///
+/// The daemon's row producer leaves `host_terminal_id` null for tmux, so
+/// demanding it here matched no real tmux row and silently downgraded every one
+/// of them to proxy.
 fn row_has_direct_locator(row: &TerminalRow) -> bool {
     let Some(attach) = row.fields.get("attach").and_then(Value::as_object) else {
         return false;
     };
-    matches!(
-        (
-            attach.get("backend").and_then(Value::as_str),
-            attach.get("frame_host_epoch").and_then(Value::as_str),
-            attach.get("host_socket").and_then(Value::as_str),
-            attach.get("host_terminal_id").and_then(Value::as_str),
-        ),
-        (Some("native" | "tmux"), Some(epoch), Some(socket), Some(host_id))
-            if !epoch.is_empty() && !socket.is_empty() && !host_id.is_empty()
-    )
+    let filled = |name: &str| {
+        attach
+            .get(name)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+    };
+    // `as_i64` rejects a JSON bool and a float, which is the generation check.
+    let generation = |name: &str| attach.get(name).and_then(Value::as_i64).is_some();
+    if !filled("frame_host_epoch") || !filled("host_socket") {
+        return false;
+    }
+    match attach.get("backend").and_then(Value::as_str) {
+        Some("native") => filled("host_terminal_id"),
+        Some("tmux") => {
+            filled("socket_path")
+                && filled("pane_id")
+                && generation("server_pid")
+                && generation("server_start_time")
+        }
+        _ => false,
+    }
 }
 
 fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {
@@ -875,6 +898,15 @@ fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {
             },
         )
         .transpose()?;
+    // Same split as `row_has_direct_locator`: a pane locator carries the
+    // identity on its own, and the frame host discards `host_terminal_id` the
+    // moment one is present. It stays required when there is no pane, because
+    // then it is the only thing naming the terminal.
+    let host_terminal_id = if pane.is_some() {
+        string("host_terminal_id").unwrap_or_default()
+    } else {
+        string("host_terminal_id")?
+    };
     Ok(AttachLocator {
         backend: reply
             .get("backend")
@@ -882,8 +914,12 @@ fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {
             .unwrap_or("native")
             .to_string(),
         frame_host_epoch: string("host_epoch")?,
-        host_terminal_id: string("host_terminal_id")?,
+        host_terminal_id,
         frame_socket_path: string("frame_socket_path")?,
         pane,
     })
 }
+
+#[cfg(test)]
+#[path = "live/tests.rs"]
+mod tests;
