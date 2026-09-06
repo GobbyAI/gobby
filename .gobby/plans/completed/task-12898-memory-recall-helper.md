@@ -345,8 +345,8 @@ instructions: |
                       "rationale": "<one short sentence>"}
      OMIT the `from_session` argument — the proxy auto-fills it from your
      session context (this is the runtime change made in 2.1). Note that
-     HEAD's `send_message` signature is `(from_session, target, content,
-     target_id=None, *, priority, include_wakeup, message_type, metadata)`,
+     HEAD's `send_message` signature is `(target, content, target_id=None,
+     from_session=None, *, project_id, priority, wake, message_type, metadata)`,
      so a session-scoped delivery requires `target="session"` AND
      `target_id=<parent_session_id>`. Do NOT use `to_session` — there is
      no such parameter on this tool. Each memory record MUST include `id`
@@ -456,13 +456,13 @@ async def send_message(
     target_id: str | None = None,
     *,
     priority: str = "normal",
-    include_wakeup: bool = False,
+    wake: bool = False,
     message_type: str = "message",
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
 ```
 
-`target` is an enum (`"all"`, `"session"`, …); `target_id` carries the specific session id when `target == "session"`. There is no `to_session` parameter. For a spawned helper, the helper does not know its own child session id at prompt-construction time (the spawn rule cannot capture `child_session_id` from the spawn return value because the spawn is `background: true`). We have two options: (a) ask the helper to look itself up at runtime, (b) make `from_session` optional at the tool boundary and default it from the proxy's `SessionContext` (which the MCP proxy already populates from the calling session's `X-Gobby-Session-Id` header — see the `mcp__gobby__call_tool` docstring: "Propagated to the daemon via X-Gobby-Session-Id header so tools can read it from the SessionContext ContextVar").
+`target` is an enum (`"global"`, `"project"`, `"session"`, …); `target_id` carries the specific session id when `target == "session"`. There is no `to_session` parameter. For a spawned helper, the helper does not know its own child session id at prompt-construction time (the spawn rule cannot capture `child_session_id` from the spawn return value because the spawn is `background: true`). We have two options: (a) ask the helper to look itself up at runtime, (b) make `from_session` optional at the tool boundary and default it from the proxy's `SessionContext` (which the MCP proxy already populates from the calling session's `X-Gobby-Session-Id` header — see the `mcp__gobby__call_tool` docstring: "Propagated to the daemon via X-Gobby-Session-Id header so tools can read it from the SessionContext ContextVar").
 
 Choose (b) — it generalizes to any future caller running through the proxy and matches the existing pattern used by other gobby MCP tools.
 
@@ -477,7 +477,7 @@ async def send_message(
     from_session: str | None = None,   # was: from_session: str (required positional)
     *,
     priority: str = "normal",
-    include_wakeup: bool = False,
+    wake: bool = False,
     message_type: str = "message",
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:

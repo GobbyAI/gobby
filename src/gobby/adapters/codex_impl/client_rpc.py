@@ -142,6 +142,8 @@ async def handle_incoming_request(client: CodexAppServerClient, message: dict[st
     request_id = message["id"]
     method = message["method"]
     params = message.get("params", {})
+    if isinstance(params, dict):
+        params = {**params, "_gobby_request_id": request_id}
 
     handler = client._request_handlers.get(method)
     if handler is None:

@@ -1,6 +1,6 @@
 """Unified transcript read layer: live transcript file -> gzip archive.
 
-Reads from live transcript files for active/paused sessions and falls back to
+Reads from live transcript files for all live sessions and falls back to
 gzip archives for expired sessions. Supported CLI transcripts are line-oriented,
 including Qwen's ``.json`` envelope files.
 

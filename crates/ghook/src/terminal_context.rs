@@ -55,6 +55,7 @@ pub fn enabled_for_hook(hook_type: &str) -> bool {
             | "preinvocation"
             | "sessionend"
             | "stop"
+            | "stopcancelled"
             | "afteragent"
             | "postinvocation"
             | "subagentstart"
@@ -366,6 +367,9 @@ mod tests {
             "session_end",
             "Stop",
             "stop",
+            "StopCancelled",
+            "stop-cancelled",
+            "stop_cancelled",
             "AfterAgent",
             "after-agent",
             "after_agent",

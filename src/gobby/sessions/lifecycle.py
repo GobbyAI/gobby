@@ -35,11 +35,11 @@ T = TypeVar("T")
 
 class SessionLifecycleManager(TranscriptProcessingMixin):
     """
-    Manages session lifecycle background jobs.
+        Manages session lifecycle background jobs.
 
-    Two independent jobs:
-    1. expire_stale_sessions - marks old active/paused sessions as expired
-    2. process_pending_transcripts - processes transcripts for expired sessions
+        Two independent jobs:
+    1. expire_stale_sessions - marks old live sessions as expired
+        2. process_pending_transcripts - processes transcripts for expired sessions
     """
 
     def __init__(
@@ -310,7 +310,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             logger.info("Pruned %s stale compact workflow instances", pruned_workflows)
         self.session_manager.cleanup_expired_session_state()
 
-        # Then expire sessions that have been paused/active for too long
+        # Then expire live sessions that have remained stale for too long.
         expired = self.session_manager.expire_stale_sessions(
             timeout_hours=config.stale_session_timeout_hours
         )

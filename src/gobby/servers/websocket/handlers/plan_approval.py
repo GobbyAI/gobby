@@ -17,6 +17,7 @@ from gobby.adapters.plan_keystrokes import (
     resolve_action_option_id,
 )
 from gobby.adapters.plan_options import get_plan_accept_option
+from gobby.hooks.events import HookEventType
 from gobby.servers.websocket.db import run_db
 from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils.json_helpers import json_dumps
@@ -69,6 +70,29 @@ def _clear_pending_plan_prompt(session: Any) -> None:
         return
     session._pending_plan_content = None
     session._pending_plan_allowed_prompts = None
+
+
+async def _resolve_managed_plan_lifecycle(
+    mixin: SessionControlMixin,
+    conversation_id: str,
+    session: Any,
+    resolution: str,
+) -> None:
+    """Resolve the exact plan wait after the managed decision is accepted."""
+    if getattr(session, "provider", None) == "agy":
+        return
+    token = getattr(session, "_pending_plan_lifecycle_token", None)
+    if not isinstance(token, str) or not token:
+        return
+    await mixin._fire_lifecycle(
+        conversation_id,
+        HookEventType.NOTIFICATION,
+        {
+            "interaction_id": token,
+            "_gobby_wait_resolution": resolution,
+        },
+    )
+    session._pending_plan_lifecycle_token = None
 
 
 async def _inject_turn(
@@ -450,6 +474,12 @@ async def handle_plan_approval_response(
                 return
             if not plan_auto_switch:
                 session.provide_plan_decision(None, "approve")
+            await _resolve_managed_plan_lifecycle(
+                mixin,
+                conversation_id,
+                session,
+                "resumed",
+            )
             logger.info(
                 "Plan approved (ExitPlanMode unblocked, option=%s) for conversation %s -> %s",
                 option.id if option else "-",
@@ -490,6 +520,12 @@ async def handle_plan_approval_response(
             session.approve_plan()
             _clear_pending_plan_prompt(session)
             await session.sync_sdk_permission_mode()
+            await _resolve_managed_plan_lifecycle(
+                mixin,
+                conversation_id,
+                session,
+                "resumed",
+            )
             await _send_mode_changed(
                 websocket,
                 conversation_id=conversation_id,
@@ -529,11 +565,23 @@ async def handle_plan_approval_response(
                 return
             if not plan_auto_switch:
                 session.provide_plan_decision(None, "request_changes")
+            await _resolve_managed_plan_lifecycle(
+                mixin,
+                conversation_id,
+                session,
+                "abandoned",
+            )
             logger.info(
                 "Plan changes requested (plan-exit tool denied) for conversation %s",
                 conversation_id[:8],
             )
         else:
+            await _resolve_managed_plan_lifecycle(
+                mixin,
+                conversation_id,
+                session,
+                "abandoned",
+            )
             await _send_mode_changed(
                 websocket,
                 conversation_id=conversation_id,

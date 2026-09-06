@@ -16,7 +16,11 @@ from gobby.sessions.status_events import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
-from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS, SYSTEM_SESSION_SOURCE
+from gobby.storage.sessions._constants import (
+    LIVE_SESSION_STATUS_ORDER,
+    SESSION_REVIVAL_HORIZON_HOURS,
+    SYSTEM_SESSION_SOURCE,
+)
 from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
 from gobby.utils.datetime import utc_now
 
@@ -138,7 +142,7 @@ def expire_stale_sessions(
             f"""
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-            WHERE status IN ('active', 'paused', 'awaiting_handoff')
+            WHERE status = ANY(%s)
             AND source != %s
             AND NOT ({tmux_target_sql})
             AND (
@@ -152,7 +156,13 @@ def expire_stale_sessions(
             )
             RETURNING *
             """,  # nosec B608 # cutoff expressions are selected by storage dialect.
-            (SYSTEM_SESSION_SOURCE, timeout_hours, timeout_hours, timeout_hours),
+            (
+                list(LIVE_SESSION_STATUS_ORDER),
+                SYSTEM_SESSION_SOURCE,
+                timeout_hours,
+                timeout_hours,
+                timeout_hours,
+            ),
         ).fetchall()
         if status_notifier is not None:
             for row in rows:
@@ -372,13 +382,13 @@ def expire_empty_sessions(
             f"""
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-            WHERE status IN ('active', 'paused')
+            WHERE status = ANY(%s)
             AND source != %s
             AND COALESCE(message_count, 0) = 0
             AND {inactive_stale_sql}
             RETURNING *
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_SOURCE, timeout_hours),
+            (list(LIVE_SESSION_STATUS_ORDER), SYSTEM_SESSION_SOURCE, timeout_hours),
         ).fetchall()
         if status_notifier is not None:
             for row in rows:

@@ -151,6 +151,16 @@ class TestDetectApprovalPrompt:
         )
         assert detector.detect_approval_prompt(output) is True
 
+    def test_detects_agy_artifact_review_action(self) -> None:
+        detector = PromptDetector(BundledDetectionRegistry(), "agy")
+        output = (
+            "Action required (1 left)\n"
+            "› □ new plan_create_plan1_txt.md   open  approve reject\n\n"
+            "Keyboard: ↑/↓ Navigate  y/n Approve/reject  shift+a Approve all  "
+            "p Preview  ctrl+g open in editor  esc Done\n"
+        )
+        assert detector.detect_approval_prompt(output) is True
+
     def test_no_match_without_approval_context(self) -> None:
         detector = make_detector()
         assert detector.detect_approval_prompt("Press Enter to continue\n") is False

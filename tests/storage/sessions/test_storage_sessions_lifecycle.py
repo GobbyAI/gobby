@@ -17,7 +17,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
 from gobby.terminal_ownership import (
     OwnershipReason,
     PaneOwnershipDecision,
@@ -251,10 +251,12 @@ class TestSessionManagerLifecycle:
 
         assert [transition.status for transition in transitions] == ["paused", "expired"]
 
-    def test_expire_if_active_expires_awaiting_handoff(
+    @pytest.mark.parametrize("live_status", LIVE_SESSION_STATUS_ORDER)
+    def test_expire_if_active_expires_every_live_status(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
+        live_status: str,
     ) -> None:
         session = session_manager.register(
             external_id="conditional-expiry-test",
@@ -262,7 +264,8 @@ class TestSessionManagerLifecycle:
             source="claude",
             project_id=sample_project["id"],
         )
-        session_manager.update_status(session.id, "awaiting_handoff")
+        if live_status != "active":
+            session_manager.update_status(session.id, live_status)
 
         expired = session_manager.expire_if_active(session.id)
 
@@ -1024,7 +1027,7 @@ class TestSessionManagerLifecycle:
         assert live is not None
         assert live.status == "active"
 
-    @pytest.mark.parametrize("owner_status", ["active", "paused", "awaiting_handoff"])
+    @pytest.mark.parametrize("owner_status", LIVE_SESSION_STATUS_ORDER)
     def test_validated_existing_interactive_owner_preserves_status(
         self,
         session_manager: SessionManager,

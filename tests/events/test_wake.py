@@ -66,6 +66,55 @@ class TestWakeDispatch:
     """Route wake messages based on session type."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status",
+        ["interrupted", "awaiting_input", "awaiting_approval", "awaiting_handoff"],
+    )
+    async def test_protected_session_wake_touches_no_live_channel(
+        self,
+        status: str,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=1,
+            terminal_context={"tmux_session": "gobby-agent-abc", "tmux_pane": "%7"},
+            status=status,
+        )
+        tmux_sender = AsyncMock()
+        pane_sender = AsyncMock()
+        sdk_resumer = AsyncMock()
+        web_registry = MagicMock()
+        web_registry.wake_session = AsyncMock()
+        terminal_manager = MagicMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+            tmux_pane_sender=pane_sender,
+            sdk_resumer=sdk_resumer,
+            web_chat_session_registry=web_registry,
+            terminal_manager=terminal_manager,
+        )
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result == {
+            "session_id": WAKE_SESSION_ID,
+            "session_status": status,
+            "delivered": False,
+            "method": None,
+            "skipped": f"session_{status}",
+            "error_code": f"session_{status}",
+        }
+        terminal_manager.get_live_for_session.assert_not_called()
+        tmux_sender.assert_not_awaited()
+        pane_sender.assert_not_awaited()
+        sdk_resumer.assert_not_awaited()
+        web_registry.wake_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_active_completion_uses_next_call_context(
         self,
         session_manager: MagicMock,
@@ -155,7 +204,7 @@ class TestWakeDispatch:
         result = await dispatcher.wake(WAKE_SESSION_ID, "done", {"status": "completed"})
 
         assert result["ism_persisted"] is True
-        assert offloaded == ["read_session", "persist_notification"]
+        assert offloaded == ["read_session", "persist_notification", "read_session"]
 
     @pytest.mark.asyncio
     async def test_live_wake_internal_timeout_returns_structured_failure(
@@ -983,7 +1032,14 @@ class TestWakeDispatch:
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=6,
         )
-        session_manager.get.side_effect = [first_session, second_session]
+        session_manager.get.side_effect = [
+            first_session,
+            first_session,
+            first_session,
+            second_session,
+            second_session,
+            second_session,
+        ]
 
         tmux_pane_sender = AsyncMock()
         dispatcher = WakeDispatcher(

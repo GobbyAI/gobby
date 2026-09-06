@@ -14,7 +14,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.event_handlers._agent import AgentEventHandlerMixin
 from gobby.hooks.event_handlers._misc import MiscEventHandlerMixin
@@ -22,6 +22,7 @@ from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.event_handlers._tool import EDIT_TOOLS, ToolEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
+from gobby.sessions.turn_lifecycle import SessionLifecycleStore, TurnLifecycleReducer
 
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
@@ -113,6 +114,11 @@ class EventHandlers(
             )
         manager = session_manager if session_manager is not None else session_storage
         self._session_manager = manager
+        self._turn_lifecycle = (
+            TurnLifecycleReducer(cast(SessionLifecycleStore, manager))
+            if manager is not None
+            else None
+        )
         self._liveness_monitor: SessionLivenessMonitor | None = None
         self._workflow_handler = workflow_handler
         self._session_task_manager = session_task_manager
@@ -163,6 +169,7 @@ class EventHandlers(
             HookEventType.PERMISSION_REQUEST: self.handle_permission_request,
             HookEventType.PERMISSION_DENIED: self.handle_permission_denied,
             HookEventType.STOP: self.handle_stop,
+            HookEventType.INTERRUPT: self.handle_interrupt,
             HookEventType.STOP_FAILURE: self.handle_stop_failure,
             HookEventType.TASK_CREATED: self.handle_task_created,
             HookEventType.TASK_COMPLETED: self.handle_task_completed,

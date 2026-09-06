@@ -75,6 +75,39 @@ def test_qwen_tool_outcome_hook_names_are_definitive(
     assert event.metadata["is_failure"] is is_failure
 
 
+@pytest.mark.parametrize("is_interrupt", [None, False, "true", 1])
+def test_qwen_interrupt_requires_exact_boolean_true(is_interrupt: object) -> None:
+    input_data: dict[str, object] = {
+        "session_id": "qwen-session",
+        "tool_name": "run_shell_command",
+    }
+    if is_interrupt is not None:
+        input_data["is_interrupt"] = is_interrupt
+
+    event = QwenAdapter().translate_to_hook_event(
+        {"hook_type": "PostToolUseFailure", "input_data": input_data}
+    )
+
+    assert event.event_type is HookEventType.AFTER_TOOL
+    assert event.turn_disposition == "unknown"
+
+
+def test_qwen_boolean_interrupt_is_whole_turn_interruption() -> None:
+    event = QwenAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PostToolUseFailure",
+            "input_data": {
+                "session_id": "qwen-session",
+                "tool_name": "run_shell_command",
+                "is_interrupt": True,
+            },
+        }
+    )
+
+    assert event.event_type is HookEventType.INTERRUPT
+    assert event.turn_disposition == "user_interrupted"
+
+
 def test_qwen_pre_tool_denial_uses_permission_decision_channel() -> None:
     result = QwenAdapter().translate_from_hook_response(
         HookResponse(decision="block", reason="policy"),

@@ -136,8 +136,10 @@ class TestBeforeAgentHandling:
 class TestAfterAgentHandling:
     """Test AFTER_AGENT handler edge cases."""
 
-    def test_after_agent_updates_session_status(self, mock_dependencies: dict) -> None:
-        """Test AFTER_AGENT updates session status to paused."""
+    def test_after_agent_without_terminal_evidence_keeps_session_status(
+        self, mock_dependencies: dict
+    ) -> None:
+        """AFTER_AGENT is a model boundary, not terminal evidence on its own."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_AGENT,
@@ -146,13 +148,7 @@ class TestAfterAgentHandling:
 
         handlers.handle_after_agent(event)
 
-        mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
-            "sess-123",
-            "paused",
-            activity_confirmed=True,
-        )
-        assert mock_dependencies["session_manager"].update_session_status.call_count == 1
-        assert mock_dependencies["session_manager"].update_session_status.call_args is not None
+        mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
     def test_after_agent_status_update_error(self, mock_dependencies: dict) -> None:
         """Test error updating session status is handled."""
@@ -180,6 +176,22 @@ class TestAfterAgentHandling:
         )
 
         response = handlers.handle_after_agent(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].update_session_status.assert_not_called()
+
+
+class TestStopHandling:
+    def test_stop_without_normalized_terminal_evidence_keeps_session_status(
+        self, mock_dependencies: dict
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.STOP,
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_stop(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()

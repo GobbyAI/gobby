@@ -313,7 +313,14 @@ class TestStatusUtils:
         msg = format_status_message(
             running=True,
             api_data={
-                "sessions": {"active": 2, "paused": 1},
+                "sessions": {
+                    "active": 2,
+                    "paused": 1,
+                    "interrupted": 1,
+                    "awaiting_input": 1,
+                    "awaiting_approval": 1,
+                    "awaiting_handoff": 1,
+                },
                 "agents": {"running": 1},
                 "pipelines": {"running": 1, "waiting_approval": 0},
             },
@@ -321,6 +328,10 @@ class TestStatusUtils:
         assert "Active Work:" in msg
         assert "2 active" in msg
         assert "1 paused" in msg
+        assert "1 interrupted" in msg
+        assert "1 awaiting input" in msg
+        assert "1 awaiting approval" in msg
+        assert "1 awaiting handoff" in msg
 
     def test_format_status_message_deps(self) -> None:
         msg = format_status_message(

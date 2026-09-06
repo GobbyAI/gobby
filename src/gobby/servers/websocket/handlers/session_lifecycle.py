@@ -10,6 +10,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.events import HookEventType
 from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.chat_attachment_cleanup import cleanup_conversation_attachments
 from gobby.servers.websocket.db import run_db
@@ -55,10 +56,20 @@ async def handle_stop_chat(
 
     if conversation_id:
         await mixin._cancel_active_chat(conversation_id)
+        await mixin._fire_lifecycle(
+            conversation_id,
+            HookEventType.INTERRUPT,
+            {"reason": "user_stop"},
+        )
     else:
         # Legacy: stop all active chats (backwards compatibility)
         for conv_id in list(mixin._active_chat_tasks.keys()):
             await mixin._cancel_active_chat(conv_id)
+            await mixin._fire_lifecycle(
+                conv_id,
+                HookEventType.INTERRUPT,
+                {"reason": "user_stop"},
+            )
 
 
 async def handle_clear_chat(

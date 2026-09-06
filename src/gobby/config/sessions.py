@@ -144,10 +144,10 @@ class MessageTrackingConfig(BaseModel):
 class SessionLifecycleConfig(BaseModel):
     """Configuration for session lifecycle management.
 
-    Handles:
-    - Pausing active sessions with no recent activity
-    - Expiring stale sessions (active/paused for too long)
-    - Background transcript processing for expired sessions
+        Handles:
+        - Pausing active sessions with no recent activity
+    - Expiring stale live sessions after prolonged inactivity
+        - Background transcript processing for expired sessions
     """
 
     active_session_pause_minutes: int = Field(

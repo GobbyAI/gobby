@@ -16,7 +16,7 @@ import logging
 import types
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from gobby.mcp_proxy.tools._background_task_lifecycle import internal_tool_background_loop
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
@@ -196,6 +196,8 @@ class InternalToolRegistry:
                 annotation = resolved_hints.get(param_name, param.annotation)
                 param_type = _get_json_schema_type(annotation)
                 prop: dict[str, Any] = {"type": param_type}
+                if get_origin(annotation) is Literal:
+                    prop["enum"] = list(get_args(annotation))
                 if param.default is not inspect.Parameter.empty and param.default is not None:
                     try:
                         json.dumps(param.default)

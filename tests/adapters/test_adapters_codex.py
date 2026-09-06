@@ -1666,6 +1666,75 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.event_type == HookEventType.AFTER_AGENT
         assert hook_event.session_id == "thr-abc"
         assert hook_event.data["status"] == "completed"
+        assert hook_event.turn_disposition == "completed"
+        assert hook_event.provider_turn_key == "turn-2"
+
+    @pytest.mark.parametrize(
+        ("status", "event_type", "disposition"),
+        [
+            ("failed", HookEventType.AFTER_AGENT, "ended_non_user"),
+            ("cancelled", HookEventType.AFTER_AGENT, "ended_non_user"),
+            ("interrupted", HookEventType.INTERRUPT, "user_interrupted"),
+        ],
+    )
+    def test_turn_completed_normalizes_terminal_disposition(
+        self,
+        status: str,
+        event_type: HookEventType,
+        disposition: str,
+    ) -> None:
+        event = CodexAdapter().translate_to_hook_event(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thr-terminal",
+                    "turn": {"id": "turn-terminal", "status": status},
+                },
+            }
+        )
+
+        assert event is not None
+        assert event.event_type is event_type
+        assert event.turn_disposition == disposition
+        assert event.provider_turn_key == "turn-terminal"
+
+    def test_request_resolution_and_status_flags_keep_exact_correlation(self) -> None:
+        adapter = CodexAdapter()
+        request = adapter._translate_approval_event(
+            "turn/requestUserInput",
+            {
+                "threadId": "thr-wait",
+                "turnId": "turn-wait",
+                "requestId": "request-input",
+            },
+        )
+        resolved = adapter.translate_to_hook_event(
+            {
+                "method": "serverRequest/resolved",
+                "params": {"threadId": "thr-wait", "requestId": "request-input"},
+            }
+        )
+        simultaneous = adapter.translate_to_hook_event(
+            {
+                "method": "thread/status/changed",
+                "params": {
+                    "threadId": "thr-wait",
+                    "requestId": "request-flags",
+                    "status": {"activeFlags": ["waiting_on_approval", "waiting_on_user_input"]},
+                },
+            }
+        )
+
+        assert request is not None
+        assert request.wait_kind == "input"
+        assert request.wait_token == "request-input"
+        assert request.provider_turn_key == "turn-wait"
+        assert resolved is not None
+        assert resolved.wait_token == "request-input"
+        assert resolved.wait_resolution == "ambiguous"
+        assert simultaneous is not None
+        assert simultaneous.wait_token == "request-flags"
+        assert simultaneous.wait_kind == "input"
 
     def test_item_completed_tool(self) -> None:
         """Translate item/completed for tool items to AFTER_TOOL."""
@@ -2018,6 +2087,9 @@ class TestCodexAdapterTranslateApprovalEvent:
         assert hook_event.data["tool_name"] == "Bash"
         assert hook_event.data["tool_input"] == "rm -rf /"
         assert hook_event.metadata["requires_response"] is True
+        assert hook_event.wait_kind == "approval"
+        assert hook_event.wait_token == "item-cmd"
+        assert hook_event.provider_turn_key == "turn-1"
 
     def test_file_change_approval(self) -> None:
         """Translate file change approval request."""
@@ -2642,6 +2714,27 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.STOP
+        assert hook_event.turn_disposition == "completed"
+
+    def test_translate_interrupt(self) -> None:
+        """Translate native Interrupt to confirmed user interruption."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Interrupt",
+                "input_data": {
+                    "session_id": "codex-session-123",
+                    "turn_id": "turn-456",
+                },
+                "source": "codex",
+            }
+        )
+
+        assert event is not None
+        assert event.event_type is HookEventType.INTERRUPT
+        assert event.turn_disposition == "user_interrupted"
+        assert event.provider_turn_key == "turn-456"
 
     def test_translate_subagent_stop_preserves_lifecycle_and_stop_metadata(self) -> None:
         """Translate SubagentStop with both transcript paths and recoverable stop metadata."""
@@ -2731,6 +2824,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
             "UserPromptSubmit",
             "SubagentStop",
             "Stop",
+            "Interrupt",
             "SessionEnd",
         }
         assert set(CodexHooksAdapter.EVENT_MAP.keys()) == expected

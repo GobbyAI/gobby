@@ -345,6 +345,11 @@ class ProxyHub:
                         await self.finalize_attachment(record.attachment_id, "host_loss")
                         return
                     continue
+                if mapped.get("type") == "terminal_output":
+                    observer = getattr(self._owner, "terminal_turn_observer", None)
+                    output = mapped.get("data")
+                    if observer is not None and isinstance(output, str):
+                        observer.observe_output(record.terminal_id, output)
                 try:
                     seq = self._owner._leases().next_message_seq(record.attachment_id)
                 except Exception:

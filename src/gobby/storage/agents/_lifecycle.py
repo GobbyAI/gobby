@@ -13,6 +13,7 @@ from gobby.storage.daemon_resume_keys import daemon_resume_consumed_condition
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import get_machine_id
 
@@ -232,21 +233,21 @@ class _AgentRunLifecycleMixin:
             """
             SELECT *
             FROM sessions
-            WHERE status IN ('active', 'paused')
+            WHERE status = ANY(%s)
               AND agent_run_id = %s
             FOR UPDATE
             """,
-            (run.id,),
+            (list(LIVE_SESSION_STATUS_ORDER), run.id),
         ).fetchall()
         cursor = self.db.execute(
             """
             UPDATE sessions
             SET status = %s,
                 updated_at = %s
-            WHERE status IN ('active', 'paused')
+            WHERE status = ANY(%s)
               AND agent_run_id = %s
             """,
-            (status, now, run.id),
+            (status, now, list(LIVE_SESSION_STATUS_ORDER), run.id),
         )
         if self._status_notifier is not None:
             for row in rows:
@@ -262,7 +263,7 @@ class _AgentRunLifecycleMixin:
         return _positive_rowcount(cursor)
 
     def expire_sessions_for_terminal_runs(self: _AgentRunLifecycleHost) -> int:
-        """Expire active/paused child sessions whose agent run is already terminal."""
+        """Expire live child sessions whose agent run is already terminal."""
         now = utc_now()
         consumed_sql = daemon_resume_consumed_condition(self.db, "ar.resume_metadata_json")
         with self.db.transaction() as conn:
@@ -271,7 +272,7 @@ class _AgentRunLifecycleMixin:
                 UPDATE sessions
                 SET status = 'expired',
                     updated_at = %s
-                WHERE status IN ('active', 'paused')
+                WHERE status = ANY(%s)
                   AND EXISTS (
                         SELECT 1
                         FROM agent_runs ar
@@ -284,7 +285,7 @@ class _AgentRunLifecycleMixin:
                   )
                 RETURNING *
                 """,
-                (now, list(TERMINAL_AGENT_RUN_STATUSES)),
+                (now, list(LIVE_SESSION_STATUS_ORDER), list(TERMINAL_AGENT_RUN_STATUSES)),
             ).fetchall()
             if self._status_notifier is not None:
                 for row in rows:

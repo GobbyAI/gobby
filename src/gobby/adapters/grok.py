@@ -19,7 +19,13 @@ from gobby.adapters.degradation import (
     persist_kwargs_from_hook_response,
     truncate_context_for_adapter,
 )
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+    correlate_hook_lifecycle,
+)
 from gobby.hooks.normalization import normalize_tool_outcome
 
 _GROK_STOP_HOOKS = frozenset({"stop", "subagent_stop"})
@@ -71,6 +77,10 @@ class GrokAdapter(ACPHookAdapter):
             "errorDetails": "error_details",
             "lastAssistantMessage": "last_assistant_message",
             "stopHookActive": "stop_hook_active",
+            "stopReason": "stop_reason",
+            "cancelledBy": "cancelled_by",
+            "interactionId": "interaction_id",
+            "interactionKind": "interaction_kind",
             "subagentId": "subagent_id",
             "subagentType": "subagent_type",
         }
@@ -106,6 +116,40 @@ class GrokAdapter(ACPHookAdapter):
                 explicit_success=False,
                 provenance="grok.hook:post_tool_use_failure",
             )
+        correlate_hook_lifecycle(event)
+        if canonical_hook == "stop":
+            reason = event.data.get("stop_reason", event.data.get("reason"))
+            event.turn_disposition = "completed" if reason == "end_turn" else "ended_non_user"
+        elif canonical_hook == "stop_cancelled":
+            reason = event.data.get("stop_reason", event.data.get("reason"))
+            cancelled_by = event.data.get("cancelled_by")
+            if reason == "user_interrupt" and cancelled_by == "user":
+                event.event_type = HookEventType.INTERRUPT
+                event.turn_disposition = "user_interrupted"
+            else:
+                event.turn_disposition = "ended_non_user"
+        elif canonical_hook == "pending_interaction" and event.wait_token:
+            interaction_kind = event.data.get(
+                "interaction_kind",
+                event.data.get("kind"),
+            )
+            if isinstance(interaction_kind, str):
+                normalized_kind = interaction_kind.casefold()
+                if normalized_kind in {
+                    "question",
+                    "elicitation",
+                    "mcp_elicitation",
+                    "request_user_input",
+                }:
+                    event.wait_kind = "input"
+                elif normalized_kind in {
+                    "approval",
+                    "permission",
+                    "plan_approval",
+                }:
+                    event.wait_kind = "approval"
+        elif canonical_hook == "interaction_resolved" and event.wait_token:
+            event.wait_resolution = "ambiguous"
         return event
 
     def _stop_keep_working_context(

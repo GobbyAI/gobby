@@ -77,11 +77,18 @@ describe("countActiveFilters", () => {
 });
 
 describe("serializeSessionsFilters", () => {
-  it("emits status_in=active,paused for the default Live state", () => {
+  it("emits every live status for the default Live state", () => {
     const params = serializeSessionsFilters(defaultSessionsFilters(), NOW);
     // The Live | Expired SegmentedControl is always set to one of two values,
-    // so the status filter is always emitted. Default = Live = {active, paused}.
-    expect(params.getAll("status_in").sort()).toEqual(["active", "paused"]);
+    // so the status filter is always emitted. Default includes every live lifecycle state.
+    expect(params.getAll("status_in").sort()).toEqual([
+      "active",
+      "awaiting_approval",
+      "awaiting_handoff",
+      "awaiting_input",
+      "interrupted",
+      "paused",
+    ]);
     // No other filter params for the default state.
     const nonStatus = [...params.entries()].filter(([k]) => k !== "status_in");
     expect(nonStatus).toEqual([]);
@@ -176,13 +183,25 @@ describe("serializeSessionsFilters", () => {
     expect(params.getAll("status_in")).toEqual(["expired"]);
   });
 
-  it("emits multi-status status_in when caller forces all three", () => {
+  it("emits every lifecycle status when caller selects all", () => {
     const f = defaultSessionsFilters();
-    f.statuses = new Set(["active", "paused", "expired"]);
+    f.statuses = new Set([
+      "active",
+      "paused",
+      "interrupted",
+      "awaiting_input",
+      "awaiting_approval",
+      "awaiting_handoff",
+      "expired",
+    ]);
     const params = serializeSessionsFilters(f, NOW);
     expect(params.getAll("status_in").sort()).toEqual([
       "active",
+      "awaiting_approval",
+      "awaiting_handoff",
+      "awaiting_input",
       "expired",
+      "interrupted",
       "paused",
     ]);
   });
@@ -489,7 +508,14 @@ describe("storage round-trip", () => {
       modes: ["interactive"],
     });
     const restored = deserializeFromStorage(stored);
-    expect([...restored.statuses].sort()).toEqual(["active", "paused"]);
+    expect([...restored.statuses].sort()).toEqual([
+      "active",
+      "awaiting_approval",
+      "awaiting_handoff",
+      "awaiting_input",
+      "interrupted",
+      "paused",
+    ]);
   });
 
   it("round-trips a non-default Expired status filter", () => {

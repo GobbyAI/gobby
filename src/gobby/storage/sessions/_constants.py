@@ -24,6 +24,9 @@ ALLOWED_SESSION_STATUSES = frozenset(
     {
         "active",
         "paused",
+        "interrupted",
+        "awaiting_input",
+        "awaiting_approval",
         "awaiting_handoff",
         "completed",
         "cancelled",
@@ -32,7 +35,18 @@ ALLOWED_SESSION_STATUSES = frozenset(
         "deleted",
     }
 )
-LIVE_SESSION_STATUSES = frozenset({"active", "paused", "awaiting_handoff"})
+PROTECTED_SESSION_STATUSES = frozenset(
+    {"interrupted", "awaiting_input", "awaiting_approval", "awaiting_handoff"}
+)
+LIVE_SESSION_STATUS_ORDER = (
+    "active",
+    "paused",
+    "interrupted",
+    "awaiting_input",
+    "awaiting_approval",
+    "awaiting_handoff",
+)
+LIVE_SESSION_STATUSES = frozenset(LIVE_SESSION_STATUS_ORDER)
 TERMINAL_SESSION_STATUSES = frozenset({"expired", "deleted"})
 
 

@@ -15,7 +15,10 @@ from gobby.sessions.contested_expiry import (
     contested_expiry_stamp,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
+from gobby.storage.sessions._constants import (
+    LIVE_SESSION_STATUS_ORDER,
+    SESSION_REVIVAL_HORIZON_HOURS,
+)
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
@@ -135,6 +138,7 @@ def release_task_claim(
     revival_cutoff = now - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
     params: list[Any] = [now, task_id, expected_owner_session_id]
     params.extend(live_session_params)
+    params.append(list(LIVE_SESSION_STATUS_ORDER))
     params.extend(
         (
             HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -170,7 +174,7 @@ def release_task_claim(
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
-                      AND s.status IN ('active', 'paused', 'awaiting_handoff')
+              AND s.status = ANY(%s)
                )
                AND NOT EXISTS (
                    -- A fresh compact-continue marker means the owner is
@@ -250,6 +254,7 @@ def sweep_stale_claims(
         "live-session",
     )
     params: list[Any] = list(live_session_params)
+    params.append(list(LIVE_SESSION_STATUS_ORDER))
     project_filter = ""
     if project_id is not None:
         project_filter = "AND tasks.project_id = %s"
@@ -270,7 +275,7 @@ def sweep_stale_claims(
            AND NOT EXISTS (
                SELECT 1 FROM sessions s
                 WHERE s.id = tasks.claimed_by_session_id
-                  AND s.status IN ('active', 'paused', 'awaiting_handoff')
+              AND s.status = ANY(%s)
            )
            {project_filter}
         """,  # nosec B608 # project_filter is static SQL selected above.

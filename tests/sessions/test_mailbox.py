@@ -27,7 +27,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.storage.tasks import LocalTaskManager
-from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
 
 pytestmark = pytest.mark.unit
 
@@ -216,12 +216,10 @@ async def _send_project_broadcast(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sender_id: str,
-    project_id: str,
 ) -> MailboxSendResult:
     return await _mailbox(temp_db, session_manager).send(
         from_session_id=sender_id,
         target="project",
-        target_id=project_id,
         content="Broadcast",
         message_type="announcement",
         metadata={"scope": "project-agents"},
@@ -248,10 +246,10 @@ class TestMailboxDirectSend:
         send_task = asyncio.create_task(
             _mailbox(temp_db, session_manager, dispatcher).send(
                 from_session_id=sender.id,
-                target="all" if fanout else "session",
+                target="project" if fanout else "session",
                 target_id=None if fanout else recipients[0],
                 content="Durable urgent notice",
-                include_wakeup=True,
+                wake=True,
             )
         )
         try:
@@ -277,6 +275,7 @@ class TestMailboxDirectSend:
                     "session_id": fast_recipient,
                     "delivered": True,
                     "method": "fake",
+                    "session_status": "active",
                 }
             else:
                 assert wake["delivered"] is False
@@ -305,9 +304,9 @@ class TestMailboxDirectSend:
         send_task = asyncio.create_task(
             _mailbox(temp_db, session_manager, dispatcher).send(
                 from_session_id=sender.id,
-                target="all",
+                target="project",
                 content="Persist before cancelled wake",
-                include_wakeup=True,
+                wake=True,
             )
         )
         try:
@@ -559,14 +558,19 @@ class TestMailboxDirectSend:
             priority="high",
             message_type="task_assignment",
             metadata={"task_id": "#14760"},
-            include_wakeup=True,
+            wake=True,
         )
 
         assert result.recipient_session_ids == [recipient.id]
         assert result.broadcast_id is None
         assert len(result.message_ids) == 1
         assert result.wake_results == [
-            {"session_id": recipient.id, "delivered": True, "method": "fake"}
+            {
+                "session_id": recipient.id,
+                "delivered": True,
+                "method": "fake",
+                "session_status": "active",
+            }
         ]
         assert wake_dispatcher.calls == [recipient.id]
 
@@ -701,7 +705,7 @@ class TestMailboxDirectSend:
             target="session",
             target_id=recipient.id,
             content="Wake me",
-            include_wakeup=True,
+            wake=True,
         )
 
         assert result.wake_results == [
@@ -712,6 +716,7 @@ class TestMailboxDirectSend:
                 "error": "wake_dispatcher_unavailable",
                 "error_code": "wake_dispatcher_unavailable",
                 "error_message": "Wake dispatcher is unavailable",
+                "session_status": "active",
             }
         ]
 
@@ -734,7 +739,7 @@ class TestMailboxDirectSend:
             target="session",
             target_id=recipient.id,
             content="Wake me",
-            include_wakeup=True,
+            wake=True,
         )
 
         assert result.wake_results == [
@@ -745,6 +750,7 @@ class TestMailboxDirectSend:
                 "error": f"wake failed for {recipient.id}",
                 "error_code": "wake_dispatch_failed",
                 "error_message": f"wake failed for {recipient.id}",
+                "session_status": "active",
             }
         ]
 
@@ -764,7 +770,6 @@ class TestMailboxBroadcast:
         result = await _mailbox(temp_db, session_manager).send(
             from_session_id=sender.id,
             target="project",
-            target_id=sample_project["id"],
             content="Broadcast",
         )
 
@@ -772,16 +777,17 @@ class TestMailboxBroadcast:
         assert result.message_ids == []
         assert result.broadcast_id
         assert result.target == "project"
-        assert result.target_id == sample_project["id"]
+        assert result.target_id is None
         assert result.to_dict()["success"] is False
         assert result.to_dict()["error_code"] == "no_recipients"
         assert result.to_dict()["error"] == "No recipients matched the target selector."
         assert result.to_dict()["selector_metadata"] == {
-            "target": "project",
-            "project_id": sample_project["id"],
-            "agent_run_status": ["pending", "running"],
-            "session_status": ["active", "paused"],
-            "exclude_session_id": sender.id,
+            "scope": {
+                "kind": "project",
+                "machine_id": sender.machine_id,
+                "project_id": sample_project["id"],
+            },
+            "recipient_states": [],
         }
         assert result.to_dict()["failed_broadcasts"] == []
         assert temp_db.fetchone("SELECT id FROM inter_session_messages LIMIT 1") is None
@@ -793,7 +799,7 @@ class TestMailboxBroadcast:
         )
         assert getattr(log_record, "from_session_id", None) == sender.id
         assert getattr(log_record, "target", None) == "project"
-        assert getattr(log_record, "target_id", None) == sample_project["id"]
+        assert getattr(log_record, "target_id", None) is None
         assert getattr(log_record, "broadcast_id", None) == result.broadcast_id
 
     @pytest.mark.asyncio
@@ -816,7 +822,6 @@ class TestMailboxBroadcast:
             temp_db,
             session_manager,
             ids["sender"],
-            sample_project["id"],
         )
 
         assert ids["child-pending"] in result.recipient_session_ids
@@ -846,7 +851,6 @@ class TestMailboxBroadcast:
             temp_db,
             session_manager,
             ids["sender"],
-            sample_project["id"],
         )
 
         assert ids["fallback-parent"] in result.recipient_session_ids
@@ -872,7 +876,6 @@ class TestMailboxBroadcast:
             temp_db,
             session_manager,
             ids["sender"],
-            sample_project["id"],
         )
 
         assert ids["other-project"] not in result.recipient_session_ids
@@ -900,7 +903,6 @@ class TestMailboxBroadcast:
             temp_db,
             session_manager,
             ids["sender"],
-            sample_project["id"],
         )
 
         rows = temp_db.fetchall(
@@ -912,17 +914,11 @@ class TestMailboxBroadcast:
         for payload in metadata_payloads:
             assert payload["scope"] == "project-agents"
             assert payload["broadcast"]["target"] == "project"
-            assert payload["broadcast"]["target_id"] == sample_project["id"]
-            assert payload["broadcast"]["selector"] == {
-                "target": "project",
-                "project_id": sample_project["id"],
-                "agent_run_status": ["pending", "running"],
-                "session_status": ["active", "paused"],
-                "exclude_session_id": ids["sender"],
-            }
+            assert payload["broadcast"]["target_id"] is None
+            assert payload["broadcast"]["selector"] == result.selector_metadata
 
     @pytest.mark.asyncio
-    async def test_all_target_rejects_target_id(
+    async def test_global_target_rejects_target_id(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -933,13 +929,13 @@ class TestMailboxBroadcast:
         with pytest.raises(ValueError, match="target_id is not allowed"):
             await _mailbox(temp_db, session_manager).send(
                 from_session_id=sender.id,
-                target="all",
+                target="global",
                 target_id=sample_project["id"],
                 content="Invalid",
             )
 
     @pytest.mark.asyncio
-    async def test_all_target_reaches_every_deliverable_non_system_session(
+    async def test_global_target_reaches_live_non_system_sessions_across_projects(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
@@ -950,36 +946,86 @@ class TestMailboxBroadcast:
         sender = _register_session(session_manager, sample_project["id"], "sender")
         active = _register_session(session_manager, sample_project["id"], "active")
         paused = _register_session(session_manager, sample_project["id"], "paused")
+        interrupted = _register_session(session_manager, sample_project["id"], "interrupted")
+        awaiting_input = _register_session(
+            session_manager,
+            sample_project["id"],
+            "awaiting-input",
+        )
+        awaiting_approval = _register_session(
+            session_manager,
+            sample_project["id"],
+            "awaiting-approval",
+        )
+        awaiting_handoff = _register_session(
+            session_manager,
+            sample_project["id"],
+            "awaiting-handoff",
+        )
         expired = _register_session(session_manager, sample_project["id"], "expired")
+        foreign_machine = _register_session(
+            session_manager,
+            sample_project["id"],
+            "foreign-machine",
+        )
         session_manager.update_status(paused.id, "paused")
+        session_manager.update_status(interrupted.id, "interrupted")
+        session_manager.update_status(awaiting_input.id, "awaiting_input")
+        session_manager.update_status(awaiting_approval.id, "awaiting_approval")
+        session_manager.update_status(awaiting_handoff.id, "awaiting_handoff")
         session_manager.update_status(expired.id, "expired")
         other_project_id = isolated_checkout_factory(
             project_manager.db, "other-all-project"
         ).project.id
         foreign = _register_session(session_manager, other_project_id, "foreign-active")
         remote_system = _register_session(session_manager, sample_project["id"], "remote-system")
+        foreign_machine_id = insert_isolated_machine(
+            temp_db,
+            "31000000-0000-4000-8000-000000000001",
+        )
         with temp_db.transaction() as conn:
             conn.execute(
                 "UPDATE sessions SET source = 'system' WHERE id = %s",
                 (remote_system.id,),
             )
+            conn.execute(
+                "UPDATE sessions SET machine_id = %s WHERE id = %s",
+                (foreign_machine_id, foreign_machine.id),
+            )
 
         result = await _mailbox(temp_db, session_manager).send(
             from_session_id=sender.id,
-            target="all",
+            target="global",
             content="Global notice",
         )
 
-        assert result.recipient_session_ids == [active.id, paused.id]
-        assert foreign.id not in result.recipient_session_ids
+        assert result.recipient_session_ids == [
+            active.id,
+            paused.id,
+            interrupted.id,
+            awaiting_input.id,
+            awaiting_approval.id,
+            awaiting_handoff.id,
+            foreign.id,
+        ]
         assert remote_system.id not in result.recipient_session_ids
+        assert foreign_machine.id not in result.recipient_session_ids
         assert result.broadcast_id
         assert result.selector_metadata == {
-            "target": "all",
-            "project_id": sample_project["id"],
-            "session_status": ["active", "paused"],
-            "exclude_session_id": sender.id,
-            "exclude_system_session": True,
+            "scope": {
+                "kind": "global",
+                "machine_id": sender.machine_id,
+                "project_id": None,
+            },
+            "recipient_states": [
+                {"session_id": active.id, "status": "active"},
+                {"session_id": paused.id, "status": "paused"},
+                {"session_id": interrupted.id, "status": "interrupted"},
+                {"session_id": awaiting_input.id, "status": "awaiting_input"},
+                {"session_id": awaiting_approval.id, "status": "awaiting_approval"},
+                {"session_id": awaiting_handoff.id, "status": "awaiting_handoff"},
+                {"session_id": foreign.id, "status": "active"},
+            ],
         }
 
     async def test_fanout_rolls_back_every_message_when_one_insert_fails(
@@ -1013,7 +1059,7 @@ class TestMailboxBroadcast:
         with pytest.raises(RuntimeError, match="fanout insert failed"):
             await mailbox.send(
                 from_session_id=sender.id,
-                target="all",
+                target="project",
                 content="transactional notice",
             )
 
@@ -1319,7 +1365,7 @@ class TestMailboxBroadcast:
             )
 
     @pytest.mark.asyncio
-    async def test_rejects_unknown_target_id(
+    async def test_project_target_rejects_target_id(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -1327,7 +1373,7 @@ class TestMailboxBroadcast:
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
 
-        with pytest.raises(ValueError, match="Project target not found"):
+        with pytest.raises(ValueError, match="target_id is not allowed"):
             await _mailbox(temp_db, session_manager).send(
                 from_session_id=sender.id,
                 target="project",
@@ -1347,6 +1393,6 @@ class TestMailboxBroadcast:
         with pytest.raises(ValueError, match="content is required"):
             await _mailbox(temp_db, session_manager).send(
                 from_session_id=sender.id,
-                target="all",
+                target="project",
                 content="  ",
             )

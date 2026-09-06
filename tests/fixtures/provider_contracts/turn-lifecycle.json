@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "capture_date": "2026-09-06",
+  "providers": [
+    {
+      "provider": "claude",
+      "version": "2.1.263",
+      "official_source": "Claude Code hook contract, release 2.1.263",
+      "capture_command": "claude --debug --output-format stream-json",
+      "cases": {
+        "normal_answer": {"raw_events": ["UserPromptSubmit(prompt_id=c1)", "Stop"], "evidence": "assistant answer", "required_absent": ["transcript:user_interrupt"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["UserPromptSubmit(prompt_id=c2)", "assistant: Which file?", "Stop"], "evidence": "plain assistant text", "required_absent": ["AskUserQuestion"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["UserPromptSubmit(prompt_id=c3)", "AskUserQuestion(tool_use_id=q1)"], "evidence": "question UI displayed for q1", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["PermissionRequest(tool_use_id=p1)"], "evidence": "permission UI displayed for p1", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["PermissionRequest(tool_use_id=p2)", "PostToolUse(tool_use_id=p2)"], "evidence": "matching tool resumed", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["PermissionRequest(tool_use_id=p3)", "PermissionDenied(tool_use_id=p3)"], "evidence": "matching transcript denial", "required_absent": ["transcript:user_interrupt"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
+        "user_interruption": {"raw_events": ["UserPromptSubmit(prompt_id=c7)", "transcript:user_interrupt(turn=c7)"], "evidence": "current transcript interrupt marker", "required_absent": ["Stop"], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["StopFailure(prompt_id=c8)"], "evidence": "failure without user marker", "required_absent": ["transcript:user_interrupt"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
+        "replacement_prompt_race": {"raw_events": ["AskUserQuestion(tool_use_id=old-q)", "UserPromptSubmit(prompt_id=c10)", "PermissionDenied(tool_use_id=old-q)"], "evidence": "late old-generation resolution", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["SessionEnd(reason=exit)"], "evidence": "bounded process exit", "required_absent": ["transcript:user_interrupt"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+      }
+    },
+    {
+      "provider": "codex",
+      "version": "0.153.2",
+      "official_source": "OpenAI Codex native-hook and app-server protocols, release 0.153.2",
+      "capture_command": "codex app-server --listen stdio",
+      "cases": {
+        "normal_answer": {"raw_events": ["BeforeAgent(turn_id=x1)", "Stop(turn_id=x1)"], "evidence": "native terminal hooks", "required_absent": ["Interrupt"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["turn/started(x2)", "assistant: Which target?", "turn/completed(status=completed,x2)"], "evidence": "complete app-server turn", "required_absent": ["requestUserInput"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["item/tool/requestUserInput(request_id=q2,turn_id=x3)"], "evidence": "request-user-input q2", "required_absent": ["turn/completed"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["item/commandExecution/requestApproval(request_id=p2,turn_id=x4)"], "evidence": "approval request p2", "required_absent": ["serverRequest/resolved(p2)"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["serverRequest/resolved(request_id=p2,outcome=approved)", "thread/status/changed(active=true)"], "evidence": "matching resolution and resumed work", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["serverRequest/resolved(request_id=p3,outcome=denied)"], "evidence": "matching denied request", "required_absent": ["Interrupt"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
+        "user_interruption": {"raw_events": ["Interrupt(turn_id=x7)", "turn/completed(status=interrupted,turn_id=x7)", "rollout:turn_aborted(x7)"], "evidence": "native, app-server, and rollout agree", "required_absent": [], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["turn/completed(status=failed,turn_id=x8)"], "evidence": "failed terminal status", "required_absent": ["Interrupt"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
+        "replacement_prompt_race": {"raw_events": ["requestApproval(request_id=old,turn_id=x9)", "turn/started(x10)", "serverRequest/resolved(request_id=old)"], "evidence": "old request remains bound to x9", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["thread/status/changed(shutdown=true)"], "evidence": "thread shutdown flag", "required_absent": ["Interrupt"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+      }
+    },
+    {
+      "provider": "droid",
+      "version": "0.190.0",
+      "official_source": "Factory Droid hooks and transcript contract, release 0.190.0",
+      "capture_command": "droid --output-format stream-json",
+      "cases": {
+        "normal_answer": {"raw_events": ["UserPromptSubmit(turn_id=d1)", "Stop(turn_id=d1)"], "evidence": "bounded hook sequence", "required_absent": ["idle_prompt(cancelled=true)"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["assistant: Should I continue?", "Stop(turn_id=d2)"], "evidence": "plain text followed by Stop", "required_absent": ["elicitation_notification"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["elicitation_notification(tool_call_id=q3)"], "evidence": "notification matches transcript tool q3", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["permission_notification(tool_call_id=p4)"], "evidence": "notification matches transcript tool p4", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["permission_notification(tool_call_id=p5)", "PostToolUse(tool_call_id=p5)"], "evidence": "matching tool resumed", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["permission_notification(tool_call_id=p6)", "transcript:tool_result(p6,denied)"], "evidence": "matching denial result", "required_absent": ["transcript:turn_cancelled"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
+        "user_interruption": {"raw_events": ["idle_prompt(reason=cancelled,turn_id=d7)", "transcript:turn_cancelled(turn_id=d7)"], "evidence": "cancel idle prompt plus transcript cancellation", "required_absent": ["Stop"], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["idle_prompt(reason=error,turn_id=d8)", "transcript:tool_failed(turn_id=d8)"], "evidence": "idle error lacks cancellation marker", "required_absent": ["transcript:turn_cancelled"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
+        "replacement_prompt_race": {"raw_events": ["permission_notification(tool_call_id=old)", "UserPromptSubmit(turn_id=d10)", "transcript:tool_result(old,denied)"], "evidence": "older transcript cursor", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["SessionEnd(reason=process_exit)"], "evidence": "bounded process exit", "required_absent": ["transcript:turn_cancelled"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+      }
+    },
+    {
+      "provider": "grok",
+      "version": "1.0.13",
+      "official_source": "Grok CLI hooks and pending-interaction protocol, release 1.0.13",
+      "capture_command": "grok --json-stream",
+      "cases": {
+        "normal_answer": {"raw_events": ["UserPromptSubmit(promptId=g1)", "Stop(reason=end_turn,promptId=g1)"], "evidence": "end_turn stop", "required_absent": ["StopCancelled"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["assistant: What next?", "Stop(reason=end_turn,promptId=g2)"], "evidence": "plain text followed by end_turn", "required_absent": ["pending_interaction"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["pending_interaction(kind=question,id=q4,promptId=g3)"], "evidence": "current interaction q4", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["pending_interaction(kind=permission,id=p7,promptId=g4)"], "evidence": "current interaction p7", "required_absent": ["interaction_resolved"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["interaction_resolved(id=p7,outcome=approved)", "tool_started(promptId=g4)"], "evidence": "matching resolution and resumed work", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["interaction_resolved(id=p8,outcome=denied)"], "evidence": "matching denial", "required_absent": ["StopCancelled(cancelledBy=user)"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
+        "user_interruption": {"raw_events": ["StopCancelled(reason=user_interrupt,cancelledBy=user,promptId=g7)"], "evidence": "current prompt explicit user cancellation", "required_absent": [], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["Stop(reason=channel_shutdown,promptId=g8)"], "evidence": "non-user terminal reason", "required_absent": ["cancelledBy=user"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "non_user_cancellation"}},
+        "replacement_prompt_race": {"raw_events": ["pending_interaction(id=old,promptId=g9)", "UserPromptSubmit(promptId=g10)", "StopCancelled(promptId=g9,cancelledBy=user)"], "evidence": "terminal result fenced by promptId", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["Stop(reason=channel_shutdown,promptId=g11)"], "evidence": "channel shutdown", "required_absent": ["cancelledBy=user"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+      }
+    },
+    {
+      "provider": "qwen",
+      "version": "0.23.0",
+      "official_source": "Qwen Code hook contract and installed release source, tag v0.23.0",
+      "capture_command": "qwen --debug",
+      "cases": {
+        "normal_answer": {"raw_events": ["BeforeAgent(turn=q1)", "Stop(turn=q1)"], "evidence": "bounded hook sequence", "required_absent": ["PostToolUseFailure(is_interrupt=true)"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["assistant: Which package?", "Stop(turn=q2)"], "evidence": "plain text followed by Stop", "required_absent": ["PermissionRequest"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["Notification(type=question,tool_use_id=q9)"], "evidence": "displayed notification correlated to current tool", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["PermissionRequest(tool_use_id=p9)", "Notification(type=permission,tool_use_id=p9)"], "evidence": "request and displayed notification", "required_absent": ["PostToolUse"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["PermissionRequest(tool_use_id=p10)", "PostToolUse(tool_use_id=p10)"], "evidence": "matching resumed tool", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["PermissionRequest(tool_use_id=p11)", "PostToolUseFailure(tool_use_id=p11,is_interrupt=false)"], "evidence": "boolean false is tool-local cancellation", "required_absent": ["PostToolUseFailure(is_interrupt=true)"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "tool_local_cancellation"}},
+        "user_interruption": {"raw_events": ["PostToolUseFailure(tool_use_id=t12,is_interrupt=true)"], "evidence": "exact boolean true", "required_absent": [], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["PostToolUseFailure(tool_use_id=t13,is_interrupt=false,is_timeout=true)", "StopFailure"], "evidence": "false interrupt bit and failure", "required_absent": ["is_interrupt=true"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
+        "replacement_prompt_race": {"raw_events": ["PermissionRequest(tool_use_id=old)", "BeforeAgent(turn=q10)", "PostToolUseFailure(tool_use_id=old,is_interrupt=true)"], "evidence": "old tool id and cursor", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["SessionEnd(reason=exit)"], "evidence": "bounded process exit", "required_absent": ["is_interrupt=true"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+      }
+    },
+    {
+      "provider": "agy",
+      "version": "1.1.27",
+      "official_source": "AGY hook and interactive terminal characterization, release 1.1.27",
+      "capture_command": "agy --output-format stream-json --print-timeout 3m",
+      "cases": {
+        "normal_answer": {"raw_events": ["PreInvocation(conversation_id=a1)", "PostInvocation(conversation_id=a1)", "Stop(conversation_id=a1)"], "evidence": "Stop accompanies completion", "required_absent": ["output:Interrupted"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
+        "prose_question": {"raw_events": ["assistant: Which artifact?", "PostInvocation(conversation_id=a2)", "Stop(conversation_id=a2)"], "evidence": "PostInvocation is only a model boundary", "required_absent": ["ask_question"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
+        "structured_question": {"raw_events": ["PreToolUse(tool_name=ask_question,tool_use_id=q12)"], "evidence": "structured ask_question UI", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
+        "permission_wait": {"raw_events": ["PreToolUse(tool_name=run_command,tool_use_id=p12)", "pane:permission approval screen(p12)"], "evidence": "approval screen tied to current tool", "required_absent": ["PostToolUse(p12)"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
+        "approval": {"raw_events": ["pane:permission approval screen(p13)", "PostToolUse(tool_use_id=p13)"], "evidence": "matching tool continued", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
+        "denial": {"raw_events": ["pane:artifact approval screen(p14)", "PostInvocation(conversation_id=a6)", "Stop(status=CANCELED)"], "evidence": "denial is not user interruption", "required_absent": ["output:Interrupted · What should Antigravity CLI do instead?"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "denied_resolution"}},
+        "user_interruption": {"raw_events": ["gobby_input:key=Ctrl-C,outcome=delivered", "output:Interrupted · What should Antigravity CLI do instead?"], "evidence": "same-turn mediated key and rolling output", "required_absent": ["Stop"], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
+        "non_user_failure": {"raw_events": ["PostInvocation(conversation_id=a8)", "result(status=ERROR,error=context canceled)"], "evidence": "failure lacks Gobby key correlation", "required_absent": ["gobby_input:key=Ctrl-C"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "non_user_cancellation"}},
+        "replacement_prompt_race": {"raw_events": ["gobby_input:key=Esc,outcome=indeterminate", "PreInvocation(conversation_id=a10)", "output:Interrupted · What should Antigravity CLI do instead?"], "evidence": "new lifecycle generation invalidates candidate", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
+        "session_exit": {"raw_events": ["gobby_input:key=Ctrl-C,outcome=delivered", "output:Press Ctrl-C again to exit", "process_exit(code=0)"], "evidence": "idle exit is not an in-flight turn interruption", "required_absent": ["Stop"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
+      }
+    }
+  ]
+}

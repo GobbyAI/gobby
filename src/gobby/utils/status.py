@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from gobby.storage.schema_divergence import SchemaHeads
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.dependency_requirements import STARTING_GRACE_SECONDS
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
@@ -612,15 +613,13 @@ def format_status_message(
         pipelines = data.get("pipelines", {})
 
         active_parts: list[tuple[str, str]] = []
-        s_active = sessions.get("active", 0)
-        s_paused = sessions.get("paused", 0)
-        if s_active or s_paused:
-            parts = []
-            if s_active:
-                parts.append(f"{s_active} active")
-            if s_paused:
-                parts.append(f"{s_paused} paused")
-            active_parts.append(("Sessions", ", ".join(parts)))
+        session_parts = [
+            f"{sessions.get(status, 0)} {status.replace('_', ' ')}"
+            for status in LIVE_SESSION_STATUS_ORDER
+            if sessions.get(status, 0)
+        ]
+        if session_parts:
+            active_parts.append(("Sessions", ", ".join(session_parts)))
 
         a_running = agents.get("running", 0)
         if a_running:

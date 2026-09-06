@@ -131,20 +131,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to register deferred Qwen transcript: %s", e)
 
-            # Update status to active (unless /clear or /exit)
+            # Start a fresh lifecycle generation (unless /clear or /exit).
             prompt_lower = stripped_prompt.lower()
-            if prompt_lower not in ("/clear", "/exit") and self._session_manager:
+            if prompt_lower not in ("/clear", "/exit"):
                 if not self._skip_session_status_update_during_shutdown(
                     "BEFORE_AGENT", session_id, "active"
                 ):
-                    try:
-                        self._session_manager.update_session_status(
-                            session_id,
-                            "active",
-                            activity_confirmed=True,
-                        )
-                    except Exception as e:
-                        self.logger.warning("Failed to update session status: %s", e)
+                    self._begin_turn_lifecycle(event)
 
             # Generate boundary summaries before clear/exit.
             if prompt_lower in ("/clear", "/exit"):
@@ -503,18 +496,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("AFTER_AGENT: session %s, cli=%s", session_id, cli_source)
-            if self._session_manager:
-                if not self._skip_session_status_update_during_shutdown(
+            if (
+                event.turn_disposition != "unknown"
+                and not self._skip_session_status_update_during_shutdown(
                     "AFTER_AGENT", session_id, "paused"
-                ):
-                    try:
-                        self._session_manager.update_session_status(
-                            session_id,
-                            "paused",
-                            activity_confirmed=True,
-                        )
-                    except Exception as e:
-                        self.logger.warning("Failed to update session status: %s", e)
+                )
+            ):
+                self._end_turn_lifecycle(event, event.turn_disposition)
         else:
             self.logger.debug("AFTER_AGENT: cli=%s", cli_source)
 
@@ -534,17 +522,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if session_id:
             self.logger.debug("STOP: session %s", session_id)
             if self._session_manager:
-                if not self._skip_session_status_update_during_shutdown(
-                    "STOP", session_id, "paused"
+                if (
+                    event.turn_disposition != "unknown"
+                    and not self._skip_session_status_update_during_shutdown(
+                        "STOP", session_id, "paused"
+                    )
                 ):
-                    try:
-                        self._session_manager.update_session_status(
-                            session_id,
-                            "paused",
-                            activity_confirmed=True,
-                        )
-                    except Exception as e:
-                        self.logger.warning("Failed to update session status: %s", e)
+                    self._end_turn_lifecycle(event, event.turn_disposition)
                 db = getattr(self._session_manager, "db", None)
                 if db is not None:
                     try:
@@ -564,6 +548,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
         )
         self._apply_debug_echo(response)
         return response
+
+    def handle_interrupt(self, event: HookEvent) -> HookResponse:
+        """Handle explicit whole-turn user interruption evidence."""
+        self._end_turn_lifecycle(event, "user_interrupted")
+        return HookResponse(decision="allow")
 
     def handle_pre_compact(self, event: HookEvent) -> HookResponse:
         """Handle PRE_COMPACT event."""

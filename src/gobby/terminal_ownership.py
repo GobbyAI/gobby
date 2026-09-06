@@ -13,8 +13,10 @@ from typing import Any, Literal, Protocol
 
 import psutil
 
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
+
 TerminalIdentity = tuple[str, str, str]
-TERMINAL_OWNER_STATUSES = ("active", "paused", "awaiting_handoff")
+TERMINAL_OWNER_STATUSES = LIVE_SESSION_STATUS_ORDER
 TERMINAL_INACTIVE_STATUSES = ("expired", "deleted")
 TERMINAL_TITLE_REPAIR_STATUSES = TERMINAL_OWNER_STATUSES + TERMINAL_INACTIVE_STATUSES
 OwnershipReason = Literal[
@@ -255,7 +257,7 @@ def _select_same_process_owner(
     """Pick the live session on one PID; fall back to requested, then newest."""
     requested = _non_empty_text(requested_session_id)
     live = [
-        session for session in sessions if getattr(session, "status", None) in {"active", "paused"}
+        session for session in sessions if getattr(session, "status", None) in LIVE_SESSION_STATUSES
     ]
     if len(live) == 1:
         return live[0]

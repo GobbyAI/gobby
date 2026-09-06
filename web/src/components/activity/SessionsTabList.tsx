@@ -6,7 +6,12 @@ import { SourceIcon } from "../shared/SourceIcon";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
-import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
+import {
+  ActivityRowStatusDot,
+  DashGlyph,
+  EyeGlyph,
+  LockGlyph,
+} from "./ActivityRowStatusDot";
 import { KebabIcon } from "./QuickMenu";
 import { type WatchingSessionEntry, renderBadges } from "./SessionsTab.helpers";
 
@@ -84,7 +89,27 @@ function SessionEntryRow({
   onMenuButtonClick,
   onSelect,
 }: SessionEntryRowProps) {
-  const isPaused = entry.status !== "active";
+  const isDimmed = ["paused", "interrupted", "expired"].includes(entry.status);
+  const statusKind =
+    entry.status === "active"
+      ? "active"
+      : entry.status === "expired"
+        ? "stopped"
+        : entry.status === "awaiting_input"
+          ? "info"
+          : entry.status === "awaiting_approval" ||
+              entry.status === "awaiting_handoff"
+            ? "warning"
+            : "paused";
+  const statusGlyph =
+    entry.status === "awaiting_input"
+      ? EyeGlyph
+      : entry.status === "awaiting_approval" ||
+          entry.status === "awaiting_handoff"
+        ? LockGlyph
+        : entry.status === "interrupted"
+          ? DashGlyph
+          : undefined;
   const displayLabel = getSessionDisplayTitle({
     title: entry.label,
   });
@@ -97,7 +122,7 @@ function SessionEntryRow({
         "session-entry flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between border-0 border-b border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
         isSelected &&
           "session-entry--active bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
-        isPaused && "session-entry--paused opacity-[0.55] hover:opacity-75",
+        isDimmed && "session-entry--paused opacity-[0.55] hover:opacity-75",
       )}
       onClick={() => onSelect(entry.id)}
       onKeyDown={(event) => {
@@ -109,17 +134,10 @@ function SessionEntryRow({
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <ActivityRowStatusDot
-          kind={
-            entry.status === "active"
-              ? "active"
-              : entry.status === "expired"
-                ? "stopped"
-                : entry.status === "paused"
-                  ? "paused"
-                  : "warning"
-          }
+          kind={statusKind}
           pulse={entry.status === "active"}
           label={`Session ${entry.status}`}
+          glyph={statusGlyph}
         />
         <SourceIcon source={entry.provider} size={14} />
         <span className="activity-row-title">{displayLabel}</span>

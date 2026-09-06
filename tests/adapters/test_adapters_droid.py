@@ -198,6 +198,98 @@ class TestDroidTranslateToHookEvent:
         assert "is_error" not in event.data
         assert "is_failure" not in event.metadata
 
+    @pytest.mark.parametrize(
+        ("notification_type", "expected_wait_kind"),
+        [("elicitation", "input"), ("permission_request", "approval")],
+    )
+    def test_typed_notification_requires_matching_transcript_tool_id(
+        self,
+        tmp_path: Path,
+        notification_type: str,
+        expected_wait_kind: str,
+    ) -> None:
+        transcript = tmp_path / "droid.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "tool-current"}],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        event = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "session_id": "droid-session",
+                    "notification_type": notification_type,
+                    "tool_call_id": "tool-current",
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+
+        assert event.wait_kind == expected_wait_kind
+        assert event.wait_token == "tool-current"
+
+        missing = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "session_id": "droid-session",
+                    "notification_type": notification_type,
+                    "tool_call_id": "tool-missing",
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+        assert missing.wait_kind is None
+
+    def test_cancelled_idle_prompt_requires_current_transcript_marker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "droid.jsonl"
+        transcript.write_text(
+            json.dumps({"type": "turn_cancelled", "turn_id": "turn-current"}) + "\n",
+            encoding="utf-8",
+        )
+        event = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "session_id": "droid-session",
+                    "notification_type": "idle_prompt",
+                    "reason": "cancelled",
+                    "turn_id": "turn-current",
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+
+        assert event.event_type is HookEventType.INTERRUPT
+        assert event.turn_disposition == "user_interrupted"
+
+        stale = DroidAdapter().translate_to_hook_event(
+            {
+                "hook_type": "Notification",
+                "input_data": {
+                    "session_id": "droid-session",
+                    "notification_type": "idle_prompt",
+                    "reason": "cancelled",
+                    "turn_id": "turn-next",
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+        assert stale.event_type is HookEventType.NOTIFICATION
+        assert stale.turn_disposition == "unknown"
+
 
 class TestDroidTranslateFromHookResponse:
     def test_allow_decision_omits_empty_hook_specific_output(self) -> None:

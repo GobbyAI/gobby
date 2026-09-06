@@ -102,8 +102,10 @@ class PromptDetector:
         return self._matches("loop_prompt", pane_output)
 
     def detect_approval_prompt(self, pane_output: str) -> bool:
-        """Return True when Enter is explicitly shown as an approval action."""
-        return self._matches("approval_prompt", pane_output)
+        """Return True when the pane displays a characterized approval action."""
+        return self._matches("approval_prompt", pane_output) or self._matches(
+            "artifact_approval", pane_output
+        )
 
     def detect_queued_message_prompt(self, pane_output: str) -> bool:
         """Return True when the CLI shows a queued-message editing prompt."""

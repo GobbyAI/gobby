@@ -412,8 +412,8 @@ class TestSubagentHandlerEdgeCases:
 class TestNotificationHandlerEdgeCases:
     """Test NOTIFICATION handler edge cases."""
 
-    def test_notification_updates_session_status(self, mock_dependencies: dict) -> None:
-        """Test NOTIFICATION updates session status to paused."""
+    def test_untyped_notification_keeps_session_status(self, mock_dependencies: dict) -> None:
+        """An unrelated notification cannot create a terminal transition."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.NOTIFICATION,
@@ -423,13 +423,7 @@ class TestNotificationHandlerEdgeCases:
 
         handlers.handle_notification(event)
 
-        mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
-            "sess-123",
-            "paused",
-            activity_confirmed=True,
-        )
-        assert mock_dependencies["session_manager"].update_session_status.call_count == 1
-        assert mock_dependencies["session_manager"].update_session_status.call_args is not None
+        mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
     def test_notification_status_update_error(self, mock_dependencies: dict) -> None:
         """Test error updating session status is handled."""

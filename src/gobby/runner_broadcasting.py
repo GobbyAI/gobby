@@ -184,6 +184,9 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
     # Set up output callbacks to broadcast via WebSocket
     async def broadcast_terminal_output(run_id: str, data: str) -> None:
         """Broadcast terminal output via WebSocket."""
+        observer = getattr(websocket_server, "terminal_turn_observer", None)
+        if observer is not None:
+            observer.observe_run_output(run_id, data)
         await _emit_pty_terminal_output(websocket_server, run_id, data)
 
     pty_manager.set_output_callback(broadcast_terminal_output)

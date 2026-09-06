@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.sessions.clear_continuation import resolve_clear_successor
+from gobby.sessions.mailbox_targets import resolve_broadcast_selection
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sessions import (
-    SYSTEM_SESSION_SOURCE,
+    LIVE_SESSION_STATUS_ORDER,
     ensure_system_session,
     system_session_id,
 )
@@ -38,8 +39,8 @@ if TYPE_CHECKING:
 
 
 ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
-DELIVERABLE_SESSION_STATUSES = ("active", "paused")
-MESSAGE_TARGETS = ("session", "agent", "project", "build", "all")
+DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
+MESSAGE_TARGETS = ("global", "project", "session", "agent", "build")
 AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
 AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
 MAILBOX_WAKE_TIMEOUT_SECONDS = 2.0
@@ -72,7 +73,8 @@ class MailboxSendResult:
 
     @property
     def success(self) -> bool:
-        return self.error_code is None and not self.failed_broadcasts
+        """Report durable mailbox persistence, independent of live side effects."""
+        return self.error_code is None
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -131,7 +133,7 @@ class MailboxService:
         content: str,
         target_id: str | None = None,
         message_id: str | None = None,
-        include_wakeup: bool = False,
+        wake: bool = False,
         priority: str = "normal",
         message_type: str = "message",
         metadata: Mapping[str, Any] | None = None,
@@ -144,18 +146,19 @@ class MailboxService:
         if not content.strip():
             raise ValueError("content is required")
 
-        resolution = self.resolve_target(
-            from_session_id=from_session_id,
-            target=target,
-            target_id=target_id,
-            project_id=project_id,
-        )
-        recipient_ids = resolution.recipient_session_ids
-        if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
-            raise ValueError("message_id requires exactly one direct recipient")
-        if resolution.fanout:
-            broadcast_id = str(uuid.uuid4())
-            if not recipient_ids:
+        messages = []
+        with self._db.transaction():
+            resolution = self.resolve_target(
+                from_session_id=from_session_id,
+                target=target,
+                target_id=target_id,
+                project_id=project_id,
+            )
+            recipient_ids = resolution.recipient_session_ids
+            if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
+                raise ValueError("message_id requires exactly one direct recipient")
+            broadcast_id = str(uuid.uuid4()) if resolution.fanout else None
+            if resolution.fanout and not recipient_ids:
                 logger.info(
                     "Mailbox target resolved no recipients",
                     extra={
@@ -174,14 +177,10 @@ class MailboxService:
                     error_code="no_recipients",
                     error="No recipients matched the target selector.",
                 )
-        else:
-            broadcast_id = None
 
-        if recipient_ids and from_session_id == system_session_id():
-            ensure_system_session(self._db)
+            if recipient_ids and from_session_id == system_session_id():
+                ensure_system_session(self._db)
 
-        messages = []
-        with self._db.transaction():
             for recipient_id in recipient_ids:
                 message_metadata = metadata
                 if (
@@ -211,7 +210,7 @@ class MailboxService:
                 )
 
         wake_results: list[dict[str, Any]] = []
-        if include_wakeup:
+        if wake:
             # Persistence is complete. Live wake is optional and all recipients
             # share one budget, including time waiting for their dispatch locks.
             deadline = asyncio.get_running_loop().time() + MAILBOX_WAKE_TIMEOUT_SECONDS
@@ -249,24 +248,22 @@ class MailboxService:
         if clean_target_id == "":
             clean_target_id = None
 
-        if normalized_target == "all":
+        if normalized_target in {"global", "project"}:
             if clean_target_id is not None:
-                raise ValueError("target_id is not allowed when target='all'")
-            resolved_project_id = self._resolve_project_id(from_session_id, project_id)
+                raise ValueError(f"target_id is not allowed when target='{normalized_target}'")
+            selection = resolve_broadcast_selection(
+                db=self._db,
+                session_store=self._session_manager,
+                target=normalized_target,
+                from_session_id=from_session_id,
+                project_id=project_id,
+                resolve_project_ref=self._resolve_project_ref,
+            )
             return MailboxTargetResolution(
                 target=normalized_target,
                 target_id=None,
-                recipient_session_ids=self._all_recipient_session_ids(
-                    from_session_id,
-                    resolved_project_id,
-                ),
-                selector_metadata={
-                    "target": "all",
-                    "project_id": resolved_project_id,
-                    "session_status": list(DELIVERABLE_SESSION_STATUSES),
-                    "exclude_session_id": from_session_id,
-                    "exclude_system_session": True,
-                },
+                recipient_session_ids=selection.recipient_session_ids,
+                selector_metadata=selection.selector_metadata,
                 fanout=True,
             )
 
@@ -294,23 +291,6 @@ class MailboxService:
                 from_session_id=from_session_id,
                 agent_run_id=clean_target_id,
                 project_id=project_id,
-            )
-
-        if normalized_target == "project":
-            resolved_project_id = self._resolve_project_ref(clean_target_id)
-            return MailboxTargetResolution(
-                target=normalized_target,
-                target_id=resolved_project_id,
-                recipient_session_ids=self._agent_recipient_session_ids(
-                    from_session_id=from_session_id,
-                    project_id=resolved_project_id,
-                ),
-                selector_metadata=self._agent_selector_metadata(
-                    target="project",
-                    project_id=resolved_project_id,
-                    exclude_session_id=from_session_id,
-                ),
-                fanout=True,
             )
 
         root_task_id, build_selector = self._resolve_build_target(
@@ -345,13 +325,12 @@ class MailboxService:
             fanout=True,
         )
 
-    @staticmethod
-    def _normalize_wake_result(session_id: str, result: Any) -> dict[str, Any]:
+    def _normalize_wake_result(self, session_id: str, result: Any) -> dict[str, Any]:
         if isinstance(result, dict):
-            return result
-        if isinstance(result, BaseException):
+            normalized = dict(result)
+        elif isinstance(result, BaseException):
             detail = str(result) or type(result).__name__
-            return {
+            normalized = {
                 "session_id": session_id,
                 "delivered": False,
                 "method": None,
@@ -359,7 +338,12 @@ class MailboxService:
                 "error_code": "wake_dispatch_failed",
                 "error_message": detail,
             }
-        return {"session_id": session_id, "delivered": False, "method": None}
+        else:
+            normalized = {"session_id": session_id, "delivered": False, "method": None}
+        session = self._session_manager.get(session_id)
+        normalized.setdefault("session_id", session_id)
+        normalized.setdefault("session_status", getattr(session, "status", None))
+        return normalized
 
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id is not None:
@@ -510,26 +494,6 @@ class MailboxService:
         while len(self._agent_cross_project_auth_cache) > AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE:
             self._agent_cross_project_auth_cache.popitem(last=False)
         return allowed
-
-    def _all_recipient_session_ids(
-        self,
-        from_session_id: str,
-        project_id: str,
-    ) -> list[str]:
-        status_placeholders = ",".join("%s" for _ in DELIVERABLE_SESSION_STATUSES)
-        rows = self._db.fetchall(
-            f"""
-            SELECT id
-              FROM sessions
-             WHERE status IN ({status_placeholders})
-               AND project_id = %s
-               AND source != %s
-               AND id != %s
-             ORDER BY created_at ASC, id ASC
-            """,
-            (*DELIVERABLE_SESSION_STATUSES, project_id, SYSTEM_SESSION_SOURCE, from_session_id),
-        )
-        return self._dedupe([str(row["id"]) for row in rows])
 
     def _agent_recipient_session_ids(
         self,

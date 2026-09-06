@@ -84,6 +84,31 @@ async def test_turn_completed_uses_top_level_epoch_seconds(tmp_path: Path) -> No
     assert snapshot.has_conclusive_turn_completed is True
 
 
+@pytest.mark.parametrize("stop_reason", ["user_interrupt", "channel_shutdown", "failed"])
+async def test_non_end_turn_completion_is_classified_as_aborted(
+    tmp_path: Path,
+    stop_reason: str,
+) -> None:
+    path = tmp_path / "aborted.jsonl"
+    _write(
+        path,
+        [
+            _update("user_message_chunk", content={"text": "continue"}),
+            _update(
+                "turn_completed",
+                method="_x.ai/session/update",
+                prompt_id="prompt-id",
+                stop_reason=stop_reason,
+            ),
+        ],
+    )
+
+    snapshot = await GrokTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.latest_turn_kind == "aborted"
+    assert snapshot.has_conclusive_turn_completed is False
+
+
 async def test_timestamp_falls_back_to_meta_epoch_milliseconds(tmp_path: Path) -> None:
     path = tmp_path / "meta-timestamp.jsonl"
     _write(

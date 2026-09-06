@@ -15,6 +15,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
+from gobby.sessions.turn_lifecycle import TurnDisposition, WaitKind, WaitResolution
+
 
 class HookIngressError(ValueError):
     """Raised when a normalized hook event violates the ingress contract."""
@@ -43,6 +45,7 @@ class HookEventType(str, Enum):
     BEFORE_AGENT = "before_agent"
     AFTER_AGENT = "after_agent"
     STOP = "stop"  # Agent is about to stop/exit
+    INTERRUPT = "interrupt"
     USER_PROMPT_EXPANSION = "user_prompt_expansion"
 
     # Tool lifecycle
@@ -155,6 +158,51 @@ class HookEvent:
     task_id: str | None = None
     workflow_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    turn_disposition: TurnDisposition = "unknown"
+    wait_kind: WaitKind | None = None
+    wait_token: str | None = None
+    wait_resolution: WaitResolution | None = None
+    provider_turn_key: str | None = None
+    request_id: str | None = None
+    protocol_cursor: str | int | None = None
+
+
+def correlate_hook_lifecycle(event: HookEvent) -> HookEvent:
+    """Populate common provider correlation fields from normalized event data."""
+
+    def first_text(*keys: str) -> str | None:
+        for key in keys:
+            value = event.data.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    event.provider_turn_key = event.provider_turn_key or first_text(
+        "turn_id",
+        "turnId",
+        "prompt_id",
+        "promptId",
+    )
+    event.request_id = event.request_id or first_text(
+        "request_id",
+        "requestId",
+        "interaction_id",
+        "interactionId",
+        "elicitation_id",
+        "elicitationId",
+        "item_id",
+        "itemId",
+        "tool_call_id",
+        "toolCallId",
+        "tool_use_id",
+        "toolUseId",
+    )
+    event.wait_token = event.wait_token or event.request_id
+    if event.protocol_cursor is None:
+        cursor = event.data.get("transcript_cursor", event.data.get("protocol_cursor"))
+        if isinstance(cursor, (str, int)):
+            event.protocol_cursor = cursor
+    return event
 
 
 def require_hook_machine_id(event: HookEvent) -> str:

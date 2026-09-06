@@ -20,7 +20,13 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.capabilities import ContextChannel
 from gobby.adapters.degradation import truncate_context_for_adapter
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+    correlate_hook_lifecycle,
+)
 from gobby.hooks.normalization import normalize_tool_outcome
 
 if TYPE_CHECKING:
@@ -81,6 +87,16 @@ class AgyAdapter(ACPHookAdapter):
                 provenance="agy.hook:PostToolUse",
             )
             event.data["_tool_outcome_locked"] = True
+        correlate_hook_lifecycle(event)
+        if event.event_type is HookEventType.STOP:
+            reason = event.data.get("termination_reason")
+            event.turn_disposition = (
+                "ended_non_user" if reason in {"error", "failure", "cancelled"} else "completed"
+            )
+        elif event.event_type is HookEventType.BEFORE_TOOL and event.wait_token:
+            tool_name = event.data.get("tool_name")
+            if tool_name == "ask_question":
+                event.wait_kind = "input"
         return event
 
     @staticmethod

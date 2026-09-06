@@ -246,6 +246,85 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
         assert hook.decision_style is ProviderDecisionStyle.NONE
 
 
+def test_grok_lifecycle_events_preserve_prompt_and_interaction_correlation() -> None:
+    adapter = GrokAdapter()
+    completed = adapter.translate_to_hook_event(
+        {
+            "hook_type": "Stop",
+            "input_data": {"sessionId": "grok-1", "promptId": "prompt-1", "stopReason": "end_turn"},
+        }
+    )
+    non_user = adapter.translate_to_hook_event(
+        {
+            "hook_type": "Stop",
+            "input_data": {
+                "sessionId": "grok-1",
+                "promptId": "prompt-1",
+                "stopReason": "channel_shutdown",
+            },
+        }
+    )
+    interrupted = adapter.translate_to_hook_event(
+        {
+            "hook_type": "StopCancelled",
+            "input_data": {
+                "sessionId": "grok-1",
+                "promptId": "prompt-1",
+                "stopReason": "user_interrupt",
+                "cancelledBy": "user",
+            },
+        }
+    )
+    question = adapter.translate_to_hook_event(
+        {
+            "hook_type": "PendingInteraction",
+            "input_data": {
+                "sessionId": "grok-1",
+                "promptId": "prompt-1",
+                "interactionId": "interaction-1",
+                "interactionKind": "mcp_elicitation",
+            },
+        }
+    )
+    resolved = adapter.translate_to_hook_event(
+        {
+            "hook_type": "InteractionResolved",
+            "input_data": {
+                "sessionId": "grok-1",
+                "promptId": "prompt-1",
+                "interactionId": "interaction-1",
+            },
+        }
+    )
+
+    assert completed.turn_disposition == "completed"
+    assert completed.provider_turn_key == "prompt-1"
+    assert non_user.turn_disposition == "ended_non_user"
+    assert interrupted.event_type is HookEventType.INTERRUPT
+    assert interrupted.turn_disposition == "user_interrupted"
+    assert question.wait_kind == "input"
+    assert question.wait_token == "interaction-1"
+    assert resolved.wait_token == "interaction-1"
+    assert resolved.wait_resolution == "ambiguous"
+
+
+def test_grok_stop_cancelled_requires_exact_user_interrupt_cause() -> None:
+    event = GrokAdapter().translate_to_hook_event(
+        {
+            "hook_type": "StopCancelled",
+            "input_data": {
+                "sessionId": "grok-1",
+                "promptId": "prompt-1",
+                "stopReason": "tool_cancelled",
+                "cancelledBy": "user",
+            },
+        }
+    )
+
+    assert event.event_type is HookEventType.STOP
+    assert event.turn_disposition == "ended_non_user"
+
+
 def test_unsupported_elicitation_fields_are_dropped_with_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

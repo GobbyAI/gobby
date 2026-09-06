@@ -11,6 +11,7 @@ from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.datetime import utc_now
 
 from ._constants import (
+    LIVE_SESSION_STATUSES,
     TERMINAL_SESSION_STATUSES,
     ensure_system_session,
     past_terminal_revival_horizon,
@@ -110,9 +111,10 @@ class _FieldUpdateMixin(
         session_id: str,
         status: str,
     ) -> Session | None:
-        """Persist an active or paused status backed by confirmed session activity."""
-        if status not in {"active", "paused"}:
-            raise ValueError("Confirmed activity status must be 'active' or 'paused'")
+        """Persist a live status backed by confirmed session activity."""
+        if status not in LIVE_SESSION_STATUSES:
+            allowed = ", ".join(sorted(LIVE_SESSION_STATUSES))
+            raise ValueError(f"Confirmed activity status must be one of: {allowed}")
 
         current = self.get(session_id)
         if current is not None and past_terminal_revival_horizon(current):

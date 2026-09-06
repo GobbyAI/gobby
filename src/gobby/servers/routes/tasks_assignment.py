@@ -107,7 +107,7 @@ class TaskAssignmentNotifier:
                 message_type="task_assignment",
                 metadata=metadata,
                 project_id=cast(str | None, task_dict.get("project_id")),
-                include_wakeup=True,
+                wake=True,
             )
         except Exception:
             logger.exception(

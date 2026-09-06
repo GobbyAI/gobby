@@ -21,6 +21,19 @@ Everything in this directory is a **template**, not active enforcement.
   that needs branch code (new handlers, new MCP tools) needs `gobby install` cutover
   from the worktree or the merge
 
+## Session Messaging Contract
+
+Cross-session message content has no wake semantics. `wake=true` explicitly requests
+immediate processing and may steer an active turn. Sessions that are interrupted,
+awaiting input, awaiting approval, or awaiting handoff retain the durable mailbox row
+without daemon input until provider evidence makes wake safe.
+
+Use a targetless `project` broadcast for coordination inside the current repository.
+Use targetless `global` only for machine-local coordination across projects. Direct
+`session`, `agent`, and `build` sends require `target_id`. Qwen and AGY sessions
+interrupted through direct tmux input remain unconfirmed and therefore active; positive
+hook or Gobby-mediated key/output evidence is required for protected interruption state.
+
 ## Configurability Convention
 
 Bundled templates are Gobby-owned, immutable source inputs. Their installed DB rows are

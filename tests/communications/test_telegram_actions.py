@@ -138,7 +138,7 @@ async def test_continue_callback_delivers_exact_answer_and_reports_live_wake() -
     send = mailbox.send.await_args.kwargs
     assert send["target_id"] == SESSION_ID
     assert send["content"] == "Continue"
-    assert send["include_wakeup"] is True
+    assert send["wake"] is True
     assert send["preserve_content"] is True
     assert send["metadata"]["action_kind"] == "button"
     manager.send_message.assert_awaited_once()

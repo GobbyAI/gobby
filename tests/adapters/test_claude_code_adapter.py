@@ -22,9 +22,6 @@ from gobby.adapters.claude_contract import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from tests.framing_corpus import (
-    SKILL_FETCH_REASON_TEMPLATE as _SKILL_FETCH_REASON_TEMPLATE,
-)
-from tests.framing_corpus import (
     bundled_before_tool_block_reasons as _bundled_before_tool_block_reasons,
 )
 
@@ -45,9 +42,7 @@ class TestBundledBlockReasonFraming:
         raw_reason: str,
     ) -> None:
         reason = (
-            skill_fetch_directive("python")
-            if rule_name == "require-claimed-task-required-skills"
-            else raw_reason
+            skill_fetch_directive("python") if rule_name == "require-python-skill" else raw_reason
         )
         agent_reason = f"Rule enforced by Gobby: [{rule_name}]\n{reason.rstrip()}"
         response = HookResponse(decision="block", reason=agent_reason)
@@ -60,9 +55,8 @@ class TestBundledBlockReasonFraming:
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == agent_reason
 
     def test_skill_fetch_template_renders_call_at_offset_zero(self) -> None:
-        assert (
-            _BUNDLED_BEFORE_TOOL_BLOCK_REASONS["require-claimed-task-required-skills"]
-            == _SKILL_FETCH_REASON_TEMPLATE
+        assert _BUNDLED_BEFORE_TOOL_BLOCK_REASONS["require-python-skill"] == (
+            '{{ skill_fetch_directive("python") }}'
         )
         assert skill_fetch_directive("python").startswith("Load and fully read the skill")
 
@@ -379,6 +373,7 @@ class TestTranslateToHookEvent:
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.STOP
+        assert event.turn_disposition == "completed"
 
     def test_pre_compact(self) -> None:
         adapter = ClaudeCodeAdapter()
@@ -411,10 +406,60 @@ class TestTranslateToHookEvent:
         adapter = ClaudeCodeAdapter()
         native = {
             "hook_type": "permission-request",
-            "input_data": {"session_id": "ext-perm"},
+            "input_data": {
+                "session_id": "ext-perm",
+                "tool_name": "Bash",
+                "tool_use_id": "tool-perm",
+            },
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.PERMISSION_REQUEST
+        assert event.wait_kind == "approval"
+        assert event.wait_token == "tool-perm"
+
+    def test_question_and_manual_rejection_have_distinct_lifecycle_evidence(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        question = adapter.translate_to_hook_event(
+            {
+                "hook_type": "permission-request",
+                "input_data": {
+                    "session_id": "ext-question",
+                    "tool_name": "AskUserQuestion",
+                    "tool_use_id": "tool-question",
+                },
+            }
+        )
+        rejected = adapter.translate_to_hook_event(
+            {
+                "hook_type": "permission-denied",
+                "input_data": {
+                    "session_id": "ext-question",
+                    "tool_use_id": "tool-question",
+                },
+            }
+        )
+
+        assert question.wait_kind == "input"
+        assert question.wait_token == "tool-question"
+        assert rejected.event_type is HookEventType.PERMISSION_DENIED
+        assert rejected.wait_kind == "approval"
+        assert rejected.wait_token == "tool-question"
+        assert rejected.wait_resolution == "abandoned"
+        assert rejected.turn_disposition == "unknown"
+
+    def test_typed_notification_without_interaction_id_is_lifecycle_neutral(self) -> None:
+        event = ClaudeCodeAdapter().translate_to_hook_event(
+            {
+                "hook_type": "notification",
+                "input_data": {
+                    "session_id": "ext-notification",
+                    "notification_type": "permission_prompt",
+                },
+            }
+        )
+
+        assert event.wait_token is None
+        assert event.wait_kind is None
 
     @pytest.mark.parametrize(
         ("hook_type", "event_type", "payload"),

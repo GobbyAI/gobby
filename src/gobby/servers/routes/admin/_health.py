@@ -22,6 +22,7 @@ from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
     database_operation_deadline,
 )
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -119,12 +120,8 @@ async def _collect_process_metrics() -> dict[str, Any]:
 
 async def _collect_session_stats(server: "HTTPServer") -> dict[str, Any]:
     status_counts = await server.run_db(server.session_manager.count_by_status)
-    return {
-        "total": sum(status_counts.values()),
-        "active": status_counts.get("active", 0),
-        "paused": status_counts.get("paused", 0),
-        "awaiting_handoff": status_counts.get("awaiting_handoff", 0),
-    }
+    live_counts = {status: status_counts.get(status, 0) for status in LIVE_SESSION_STATUS_ORDER}
+    return {"total": sum(status_counts.values()), **live_counts}
 
 
 async def _collect_task_stats(server: "HTTPServer") -> dict[str, Any]:

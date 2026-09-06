@@ -748,7 +748,7 @@ registry is the runtime side.
 
 | Tool | Description |
 | :--- | :--- |
-| `send_message` | Message a `session`, `agent`, `project`, `build`, or `all` target. |
+| `send_message` | Message a `global`, `project`, `session`, `agent`, or `build` target. |
 | `get_inter_session_message` | Retrieve one complete message as its sender or recipient. |
 | `get_inter_session_messages` | Read message history. |
 
@@ -758,12 +758,20 @@ lifecycle events. Provider/runtime hooks such as `before_agent`,
 `after_agent`, and `stop` are transport details. Agent termination is a
 separate runtime transition and still requires `end_agent_run`.
 
-`send_message` takes `from_session`, `target`, `content`, and optional
-`target_id`. Use `target="session"` with a session ref, `target="agent"` with
-an agent run id, `target="project"` with a project id or name, and
-`target="build"` with a build run id, build input ref, or root task ref.
-Use `target="all"` without `target_id` for every deliverable non-system
-session except the sender.
+`send_message` takes `target`, `content`, optional `from_session`, optional
+`target_id`, keyword-only `project_id`, and `wake=false` by default. Use targetless
+`project` for all other live non-system sessions in the sender's project and targetless
+`global` for the same machine-local population across projects. System-originated
+project sends require `project_id`; non-system project sends derive it from
+`from_session` and reject an override. Use `session`, `agent`, or `build` with an
+explicit `target_id`.
+
+Message content has no wake semantics. `wake=true` requests immediate trigger dispatch
+and may steer active work. Interrupted, input-waiting, approval-waiting, and
+handoff-waiting sessions keep the message queued without daemon input. Wake results
+describe trigger dispatch only; mailbox receipts remain the exact-once delivery
+acknowledgement. Direct tmux Qwen/AGY interruption remains active unless positive hook
+or Gobby-mediated key/output evidence confirms it.
 
 ### Example: Agent Spawning
 
@@ -799,6 +807,22 @@ call_tool("gobby-agents", "send_message", {
     "target": "build",
     "target_id": "#123",
     "content": "Pause work before merge validation.",
+})
+
+# Queue a repository-wide restart notice without touching composers
+call_tool("gobby-agents", "send_message", {
+    "from_session": "<your_session>",
+    "target": "project",
+    "content": "Daemon restart pending; save terminal drafts.",
+    "wake": False,
+})
+
+# Resume the repository after restart; active turns may be steered
+call_tool("gobby-agents", "send_message", {
+    "from_session": "<your_session>",
+    "target": "project",
+    "content": "Daemon restart complete; continue.",
+    "wake": True,
 })
 
 ```

@@ -13,7 +13,7 @@ from gobby.sessions.transcript_cursor import (
     CLAUDE_USER_REJECTED,
 )
 
-__all__ = ["turn_interrupt_initiated"]
+__all__ = ["lifecycle_interrupt_from_lines", "turn_interrupt_initiated"]
 
 _TRANSCRIPT_TAIL_BYTES = 256 * 1024
 _ClaudeRecordKind = Literal["assistant", "interrupt", "other", "prompt"]
@@ -97,6 +97,30 @@ def _claude_turn_interrupt_initiated(records: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _claude_lifecycle_interrupted(records: list[dict[str, Any]]) -> bool:
+    """Classify whole-turn markers without treating tool denial as interruption."""
+    for record in reversed(records):
+        if record.get("type") != "user":
+            continue
+        if record.get("toolDenialKind") == CLAUDE_USER_REJECTED:
+            return False
+        content = _claude_content(record)
+        if isinstance(content, str):
+            return content.startswith(CLAUDE_INTERRUPT_PREFIX)
+        if not isinstance(content, list):
+            continue
+        text_blocks = [
+            block for block in content if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        if any(
+            str(block.get("text", "")).startswith(CLAUDE_INTERRUPT_PREFIX) for block in text_blocks
+        ):
+            return True
+        if text_blocks:
+            return False
+    return False
+
+
 def _codex_marker(record: dict[str, Any]) -> _CodexMarker | None:
     payload = record.get("payload")
     if not isinstance(payload, dict):
@@ -130,6 +154,33 @@ def _codex_turn_interrupt_initiated(records: list[dict[str, Any]]) -> bool:
         if marker is not None:
             fallback_markers.append(marker)
     return len(fallback_markers) >= 2 and fallback_markers[-2:] == ["interrupt", "prompt"]
+
+
+def _codex_lifecycle_interrupted(records: list[dict[str, Any]]) -> bool:
+    for record in reversed(records):
+        marker = _codex_marker(record)
+        if marker == "interrupt":
+            return True
+        if marker == "prompt":
+            return False
+    return False
+
+
+def lifecycle_interrupt_from_lines(source: str | None, lines: list[str]) -> bool:
+    """Return current-batch whole-turn interruption evidence for lifecycle reduction."""
+    if source not in {SessionSource.CLAUDE.value, SessionSource.CODEX.value}:
+        return False
+    records: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    if source == SessionSource.CLAUDE.value:
+        return _claude_lifecycle_interrupted(records)
+    return _codex_lifecycle_interrupted(records)
 
 
 def turn_interrupt_initiated(

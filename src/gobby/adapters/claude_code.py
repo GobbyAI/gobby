@@ -29,7 +29,13 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+    correlate_hook_lifecycle,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -159,7 +165,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             )
         self._copy_platform_session_metadata(native_event, metadata)
 
-        return HookEvent(
+        event = HookEvent(
             event_type=event_type,
             session_id=session_id,
             source=self.source,
@@ -169,6 +175,43 @@ class ClaudeCodeAdapter(BaseAdapter):
             data=normalized_data,
             metadata=metadata,
         )
+        correlate_hook_lifecycle(event)
+        if hook_event_name == "Stop":
+            event.turn_disposition = "completed"
+        elif hook_event_name == "StopFailure":
+            event.turn_disposition = "ended_non_user"
+        elif hook_event_name == "PermissionRequest":
+            event.wait_kind = (
+                "input" if normalized_data.get("tool_name") == "AskUserQuestion" else "approval"
+            )
+        elif hook_event_name == "PermissionDenied":
+            event.wait_kind = "approval"
+            event.wait_resolution = "abandoned"
+        elif hook_event_name == "Elicitation":
+            event.wait_kind = "input"
+        elif hook_event_name == "ElicitationResult":
+            event.wait_kind = "input"
+            event.wait_resolution = "ambiguous"
+        elif hook_event_name == "Notification" and event.wait_token:
+            notification_kind = normalized_data.get(
+                "notification_type",
+                normalized_data.get("type"),
+            )
+            if isinstance(notification_kind, str):
+                normalized_kind = notification_kind.casefold()
+                if normalized_kind in {
+                    "ask_user_question",
+                    "elicitation",
+                    "elicitation_dialog",
+                }:
+                    event.wait_kind = "input"
+                elif normalized_kind in {
+                    "permission_prompt",
+                    "permission_request",
+                    "plan_approval",
+                }:
+                    event.wait_kind = "approval"
+        return event
 
     def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """Normalize Claude Code event data for CLI-agnostic processing.

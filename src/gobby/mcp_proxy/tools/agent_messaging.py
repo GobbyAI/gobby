@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Coroutine, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.storage.inter_session_messages import normalize_message_direction
+from gobby.storage.sessions import system_session_id
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -104,36 +105,39 @@ def add_messaging_tools(
     @registry.tool(
         name="send_message",
         description=(
-            "Send a message to an explicit target selector: session, agent, "
-            "project, build, or all. Session targets accept a full session UUID, "
+            "Send a durable message to global, project, session, agent, or build. "
+            "global reaches every live non-system session owned by this machine; "
+            "project reaches that population in the sender's project. Both exclude "
+            "the sender and forbid target_id. Session targets accept a full UUID, "
             "#N (caller project), or <project>-S#N (e.g. gobby-S#11265) for a "
             "session in another project. Messages are automatically injected "
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "
             "to agent_runs.result when sending to parent. Pass target_id for "
             "target='session' (session ref, forms above), target='agent' (agent run id), "
-            "target='project' (project id/name), and target='build' (build run id, "
-            "build input ref, or root task ref). target='project' fans out to active agent runs. "
-            "target='all' reaches every deliverable session in the project. "
-            "target='all' forbids target_id. "
-            "Pass project_id to scope project/build/agent selectors to a specific "
-            "project. "
+            "and target='build' (build run id, build input ref, or root task ref). "
+            "A non-system project send derives its project from from_session and rejects "
+            "project_id; a system-originated project send requires project_id. "
             "from_session defaults to the calling session's id from SessionContext "
             "when omitted. "
-            "Optional fields such as priority, message_type, metadata, and include_wakeup "
+            "Message content never causes wake behavior. wake=true requests immediate "
+            "processing and may steer active work; interrupted, awaiting-input, "
+            "awaiting-approval, and awaiting-handoff sessions retain queued content "
+            "without daemon input. Wake-result delivery means trigger dispatch, not "
+            "mailbox acknowledgement. Optional priority, message_type, metadata, and wake "
             "are keyword-only. For message_type='task_blocker', metadata.task_id must name "
-            "the blocked assigned task. include_wakeup=true is an explicit urgent terminal interrupt."
+            "the blocked assigned task."
         ),
     )
     async def send_message(
-        target: str,
+        target: Literal["global", "project", "session", "agent", "build"],
         content: str,
         target_id: str | None = None,
         from_session: str | None = None,
         *,
         project_id: str | None = None,
         priority: str = "normal",
-        include_wakeup: bool = False,
+        wake: bool = False,
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -155,34 +159,62 @@ def add_messaging_tools(
             if not content:
                 return {"success": False, "error": "content is required."}
             normalized_target = target.strip().lower()
-            if normalized_target == "all" and target_id is not None:
+            if normalized_target in {"global", "project"} and target_id is not None:
                 return {
                     "success": False,
-                    "error": "target_id is not allowed when target='all'.",
+                    "error": f"target_id is not allowed when target='{normalized_target}'.",
+                    "error_code": "target_id_forbidden",
                 }
-            if normalized_target == "session":
+            if normalized_target in {"session", "agent", "build"}:
                 if target_id is None or not target_id.strip():
                     return {
                         "success": False,
-                        "error": "target_id is required when target='session'.",
+                        "error": f"target_id is required when target='{normalized_target}'.",
+                        "error_code": "target_id_required",
                     }
 
             from_id = _resolve(from_session)
-            if project_id is None and normalized_target != "session":
+            if project_id is None and normalized_target in {"agent", "build"}:
                 project_id = get_context_project_id()
+
+            from_sess = session_manager.get(from_id)
+            if normalized_target == "global" and project_id is not None:
+                return {
+                    "success": False,
+                    "error": "project_id is not allowed when target='global'.",
+                    "error_code": "project_scope_forbidden",
+                }
+            if (
+                normalized_target == "project"
+                and from_id != system_session_id()
+                and project_id is not None
+            ):
+                return {
+                    "success": False,
+                    "error": "project_id is not allowed for session-originated project broadcasts.",
+                    "error_code": "project_scope_forbidden",
+                }
+            if (
+                normalized_target == "project"
+                and from_id == system_session_id()
+                and project_id is None
+            ):
+                return {
+                    "success": False,
+                    "error": "project_id is required for system-originated project broadcasts.",
+                    "error_code": "project_scope_required",
+                }
 
             resolved_target_id = target_id
             if normalized_target == "session":
                 assert target_id is not None
                 resolved_target_id = _resolve(target_id)
 
-            from_sess = session_manager.get(from_id)
-
             send_result = await mailbox.send(
                 from_session_id=from_id,
                 target=normalized_target,
                 target_id=resolved_target_id,
-                include_wakeup=include_wakeup,
+                wake=wake,
                 content=content,
                 priority=priority,
                 message_type=message_type,

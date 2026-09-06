@@ -811,7 +811,7 @@ describe("SessionsTab", () => {
     expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
   });
 
-  it("filters live vs expired, excludes handoff and pipeline sources, and searches", async () => {
+  it("filters all live states vs expired, excludes pipelines, and searches", async () => {
     render(
       <SessionsTab
         sessions={[
@@ -828,10 +828,10 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("Paused Terminal")).toBeInTheDocument();
       expect(screen.getByText("Live Terminal")).toBeInTheDocument();
+      expect(screen.getByText("Handoff Terminal")).toBeInTheDocument();
     });
 
     expect(screen.queryByText("Expired Terminal")).toBeNull();
-    expect(screen.queryByText("Handoff Terminal")).toBeNull();
     expect(screen.queryByText("Pipeline Session")).toBeNull();
 
     openSearch();
@@ -1001,10 +1001,22 @@ describe("SessionsTab", () => {
     expect(liveRadio).toHaveClass("bg-accent/15");
   });
 
-  it("renders active sessions with play status and paused sessions with pause status", async () => {
+  it("renders every live lifecycle state with accessible text and a distinct glyph", async () => {
+    const lifecycleSessions = [
+      LIVE_SESSION,
+      PAUSED_SESSION,
+      makeSession({ id: "interrupted-1", title: "Interrupted Terminal", status: "interrupted" }),
+      makeSession({ id: "input-1", title: "Input Terminal", status: "awaiting_input" }),
+      makeSession({
+        id: "approval-1",
+        title: "Approval Terminal",
+        status: "awaiting_approval",
+      }),
+      makeSession({ id: "handoff-1", title: "Handoff Terminal", status: "awaiting_handoff" }),
+    ];
     render(
       <SessionsTab
-        sessions={[LIVE_SESSION, PAUSED_SESSION]}
+        sessions={lifecycleSessions}
         focusSessionId="live-1"
       />,
     );
@@ -1012,6 +1024,10 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Live Terminal").length).toBeGreaterThan(0);
       expect(screen.getAllByText("Paused Terminal").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Interrupted Terminal").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Input Terminal").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Approval Terminal").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Handoff Terminal").length).toBeGreaterThan(0);
     });
 
     const statusDotForTitle = (title: string) => {
@@ -1046,6 +1062,19 @@ describe("SessionsTab", () => {
       "activity-row-status-dot__glyph--paused",
     );
     expect(pausedSvg?.querySelectorAll("rect")).toHaveLength(2);
+
+    const expected = [
+      ["Interrupted Terminal", "paused", "Session interrupted", "dash"],
+      ["Input Terminal", "info", "Session awaiting_input", "eye"],
+      ["Approval Terminal", "warning", "Session awaiting_approval", "lock"],
+      ["Handoff Terminal", "warning", "Session awaiting_handoff", "lock"],
+    ] as const;
+    for (const [title, kind, label, glyph] of expected) {
+      const dot = statusDotForTitle(title);
+      expect(dot).toHaveAttribute("data-kind", kind);
+      expect(dot).toHaveAttribute("aria-label", label);
+      expect(dot.querySelector("svg")).toHaveAttribute("data-glyph", glyph);
+    }
   });
 
   it("renders handoff fallback for a live session with no summary", async () => {

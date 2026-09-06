@@ -278,10 +278,36 @@ Coordination tools:
 - `get_inter_session_message`
 - `get_inter_session_messages`
 
-`send_message` uses explicit targets: `session`, `agent`, `project`, `build`,
-or `all`. Pass `target_id` for every target except `all`; `session` accepts a
-session ref, `agent` an agent run id, `project` a project id/name, and `build`
-a build run id, build input ref, or root task ref.
+`send_message` uses explicit targets: `global`, `project`, `session`, `agent`, and
+`build`. `global` reaches every other live non-system session owned by the sender's
+machine across projects. A targetless `project` send reaches the same population in
+the sender's project and is the default for repository coordination. System-originated
+project sends must provide `project_id`; ordinary sessions derive their project and
+must not override it. `session`, `agent`, and `build` require `target_id`.
+
+Message text never triggers a wake. Set `wake=true` only when immediate processing is
+intended; it may steer an active turn. Interrupted sessions and sessions awaiting input,
+approval, or handoff retain the durable message without daemon input. A later mailbox
+receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interruption in
+Qwen and AGY cannot be protected without positive provider or Gobby-mediated key/output
+evidence, so unconfirmed sessions remain active.
+
+For daemon restart coordination, queue the outage notice and explicitly wake after the
+daemon is back:
+
+```python
+send_message(
+    target="project",
+    content="Daemon restart pending; save terminal drafts.",
+    wake=False,
+)
+
+send_message(
+    target="project",
+    content="Daemon restart complete; continue.",
+    wake=True,
+)
+```
 
 ## Blocked Child Communication
 

@@ -82,6 +82,25 @@ class TestAgySingleLifecycleAuthority:
         )
 
     @pytest.mark.asyncio
+    async def test_plan_ready_enters_managed_approval_wait(self) -> None:
+        owner = _owner()
+        session = DroidManagedChatSession(conversation_id="conv-droid")
+        bind_session_lifecycle(owner, session, "conv-droid")
+
+        assert session._on_plan_ready is not None
+        await session._on_plan_ready("Do the work", {}, "plan-tool-1")
+
+        owner._fire_lifecycle.assert_awaited_once_with(
+            "conv-droid",
+            HookEventType.PERMISSION_REQUEST,
+            {
+                "interaction_id": "plan:plan-tool-1",
+                "permission_type": "plan",
+                "_gobby_wait_kind": "approval",
+            },
+        )
+
+    @pytest.mark.asyncio
     async def test_agy_bound_session_never_reaches_fire_lifecycle(self) -> None:
         owner = _owner()
         session = AgyManagedChatSession(conversation_id="conv-agy")
@@ -89,6 +108,17 @@ class TestAgySingleLifecycleAuthority:
 
         assert await session._apply_pre_tool_lifecycle("Write", {}) is None
         assert await session._apply_post_tool_lifecycle("Write", {}, "ok") is None
+        owner._fire_lifecycle.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_agy_plan_ready_does_not_create_managed_lifecycle_event(self) -> None:
+        owner = _owner()
+        session = AgyManagedChatSession(conversation_id="conv-agy")
+        bind_session_lifecycle(owner, session, "conv-agy")
+
+        assert session._on_plan_ready is not None
+        await session._on_plan_ready("Do the work", {}, "plan-tool-1")
+
         owner._fire_lifecycle.assert_not_awaited()
 
 

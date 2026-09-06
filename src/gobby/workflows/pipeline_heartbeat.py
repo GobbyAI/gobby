@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
+from gobby.storage.sessions._constants import PROTECTED_SESSION_STATUSES
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
@@ -261,7 +262,7 @@ class PipelineHeartbeat:
     def _is_session_alive(self, session_id: str) -> bool:
         """Check if a session is still alive.
 
-        Active and handoff-ready sessions are alive. Interactive sessions
+        Active and protected sessions are alive. Interactive sessions
         (agent_depth == 0) are also alive when paused (user is between prompts).
         A paused agent session with no active run is dead.
         """
@@ -271,7 +272,7 @@ class PipelineHeartbeat:
             session = self._session_manager.get(session_id)
             if session is None:
                 return False
-            if session.status in {"active", "awaiting_handoff"}:
+            if session.status == "active" or session.status in PROTECTED_SESSION_STATUSES:
                 return True
             if session.status == "paused":
                 # Agent sessions with no active run are dead (process exited)

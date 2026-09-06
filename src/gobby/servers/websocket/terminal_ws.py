@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import Mock
 
 from gobby.config.terminals import TerminalConfig
+from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_observation
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry, paste_oversize
@@ -326,7 +328,9 @@ class TerminalWsMixin:
                 []
                 if session_manager is None
                 else session_manager.list(
-                    statuses=("active", "paused"), machine_id=machine_id, limit=1000
+                    statuses=LIVE_SESSION_STATUS_ORDER,
+                    machine_id=machine_id,
+                    limit=1000,
                 )
             )
             return await sweep_tmux_terminals(
@@ -666,6 +670,14 @@ class TerminalWsMixin:
         finally:
             if isinstance(seq, int):
                 self._leases().complete_write(attachment_id, seq, outcome, reason)
+        record_turn_observation(
+            self,
+            terminal_id,
+            kind=kind,
+            payload=payload,
+            outcome=outcome,
+            seq=seq,
+        )
         await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
 
     async def _deliver_operator_write(
@@ -677,9 +689,9 @@ class TerminalWsMixin:
         payload: str,
         generation: int | None,
         seq: object = None,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[WriteOutcome, str | None]:
         """Deliver an admitted write to the backend; returns (outcome, reason)."""
-        outcome = "delivered"
+        outcome: WriteOutcome = "delivered"
         reason: str | None = None
         manager = getattr(self, "terminal_manager", None)
         row = None if manager is None else manager.get(terminal_id)

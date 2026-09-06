@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
+from gobby.events.live_wake import wake_state_failure
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 
 if TYPE_CHECKING:
@@ -42,6 +43,7 @@ PANE_WAKE_DEBOUNCE_SECONDS = 30.0
 LIVE_WAKE_TIMEOUT_SECONDS = 5.0
 
 RunDb = Callable[..., Awaitable[Any]]
+LifecycleRefresh = Callable[[str], Awaitable[None]]
 
 
 async def _default_run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -108,6 +110,7 @@ class WakeDispatcher:
         web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
         terminal_manager: LiveTerminalLookup | None = None,
         run_db: RunDb | None = None,
+        lifecycle_refresh: LifecycleRefresh | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -118,6 +121,7 @@ class WakeDispatcher:
         self._web_chat_session_registry = web_chat_session_registry
         self._terminal_manager = terminal_manager
         self._run_db = run_db or _default_run_db
+        self._lifecycle_refresh = lifecycle_refresh
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
@@ -201,7 +205,16 @@ class WakeDispatcher:
             lock = asyncio.Lock()
             self._live_wake_locks[session_id] = lock
         async with lock:
-            return await self._dispatch_live_wake_unlocked(session_id, session=session)
+            if self._lifecycle_refresh is not None:
+                try:
+                    await self._lifecycle_refresh(session_id)
+                except Exception:
+                    logger.warning(
+                        "Lifecycle refresh failed before waking session %s",
+                        session_id,
+                        exc_info=True,
+                    )
+            return await self._dispatch_live_wake_unlocked(session_id, session=None)
 
     async def _dispatch_live_wake_unlocked(
         self,
@@ -232,14 +245,9 @@ class WakeDispatcher:
         terminal_context = getattr(session, "terminal_context", None)
         session_type = getattr(session, "session_type", None)
         status = getattr(session, "status", None)
-
-        if status == "expired":
-            return self._live_wake_failure(
-                session_id,
-                method=None,
-                error_code="session_expired",
-                error_message=f"Session {session_id} is expired",
-            )
+        state_failure = wake_state_failure(session_id, status)
+        if state_failure is not None:
+            return state_failure
 
         if session_type == "web_chat":
             if not self._should_send_live_wake(session_id, session):
@@ -291,6 +299,11 @@ class WakeDispatcher:
             if not self._should_send_live_wake(session_id, session):
                 return self._live_wake_debounced_result(session_id, method="tmux_pane")
             tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
+            current, state_failure = await self._preflight_live_side_effect(session_id)
+            if state_failure is not None:
+                return state_failure
+            if current is not None:
+                session = current
             try:
                 await self._tmux_pane_sender(
                     tmux_pane,
@@ -342,6 +355,11 @@ class WakeDispatcher:
         if terminal_context and self._tmux_sender:
             wake_identity = self._parse_tmux_session(terminal_context)
             if wake_identity:
+                current, state_failure = await self._preflight_live_side_effect(session_id)
+                if state_failure is not None:
+                    return state_failure
+                if current is not None:
+                    session = current
                 try:
                     await self._tmux_sender(
                         wake_identity,
@@ -389,6 +407,11 @@ class WakeDispatcher:
             tmux_pane = self._parse_tmux_pane(terminal_context)
             if tmux_pane:
                 tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
+                current, state_failure = await self._preflight_live_side_effect(session_id)
+                if state_failure is not None:
+                    return state_failure
+                if current is not None:
+                    session = current
                 try:
                     await self._tmux_pane_sender(
                         tmux_pane,
@@ -425,6 +448,11 @@ class WakeDispatcher:
         if self._sdk_resumer:
             sdk_session_id = await self._resolve_sdk_session_id(session_id)
             if sdk_session_id:
+                current, state_failure = await self._preflight_live_side_effect(session_id)
+                if state_failure is not None:
+                    return state_failure
+                if current is not None:
+                    session = current
                 try:
                     await asyncio.wait_for(
                         self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL),
@@ -478,6 +506,26 @@ class WakeDispatcher:
             )
             return None
 
+    async def _preflight_live_side_effect(
+        self,
+        session_id: str,
+    ) -> tuple[Any | None, dict[str, Any] | None]:
+        """Re-read lifecycle state immediately before a wake side effect."""
+
+        def read_session() -> Any | None:
+            with self._session_manager.db.bounded_transaction():
+                return self._session_manager.get(session_id)
+
+        session = await self._run_db(read_session)
+        if session is None:
+            return None, self._live_wake_failure(
+                session_id,
+                method=None,
+                error_code="session_not_found",
+                error_message=f"Session {session_id} not found",
+            )
+        return session, wake_state_failure(session_id, getattr(session, "status", None))
+
     async def _send_managed_terminal_wake(
         self,
         session_id: str,
@@ -494,6 +542,11 @@ class WakeDispatcher:
         from gobby.terminals.runtime import AutomaticWriteDeclined, IndeterminateWrite
 
         terminal_id = str(terminal.id)
+        current, state_failure = await self._preflight_live_side_effect(session_id)
+        if state_failure is not None:
+            return state_failure
+        if current is not None:
+            session = current
         try:
             await send(
                 terminal_id,
@@ -568,6 +621,10 @@ class WakeDispatcher:
     async def _dispatch_web_chat_wake(self, session_id: str) -> dict[str, Any]:
         if self._web_chat_session_registry is None:
             return self._web_chat_no_live_result(session_id)
+
+        _session, state_failure = await self._preflight_live_side_effect(session_id)
+        if state_failure is not None:
+            return state_failure
 
         try:
             result = await asyncio.wait_for(

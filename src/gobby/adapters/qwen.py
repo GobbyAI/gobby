@@ -10,7 +10,7 @@ from gobby.adapters.qwen_contract import (
     QwenHookContract,
     get_qwen_contract,
 )
-from gobby.hooks.events import HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 
 class QwenAdapter(ClaudeCodeAdapter):
@@ -26,6 +26,17 @@ class QwenAdapter(ClaudeCodeAdapter):
     @classmethod
     def _get_hook_contract(cls, hook_type: str | None) -> QwenHookContract | None:
         return get_qwen_contract(hook_type)
+
+    def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
+        """Classify Qwen's exact boolean whole-turn interruption evidence."""
+        event = super().translate_to_hook_event(native_event)
+        hook_type = native_event.get("hook_type", "")
+        contract = self._get_hook_contract(hook_type)
+        hook_event_name = contract.hook_event_name if contract is not None else hook_type
+        if hook_event_name == "PostToolUseFailure" and event.data.get("is_interrupt") is True:
+            event.event_type = HookEventType.INTERRUPT
+            event.turn_disposition = "user_interrupted"
+        return event
 
     def translate_from_hook_response(
         self,

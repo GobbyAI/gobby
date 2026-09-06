@@ -81,18 +81,10 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("NOTIFICATION (%s): session %s", notification_type, session_id)
-            if self._session_manager:
-                if not self._skip_session_status_update_during_shutdown(
-                    "NOTIFICATION", session_id, "paused"
-                ):
-                    try:
-                        self._session_manager.update_session_status(
-                            session_id,
-                            "paused",
-                            activity_confirmed=True,
-                        )
-                    except Exception as e:
-                        self.logger.warning("Failed to update session status: %s", e)
+            if event.wait_resolution is not None:
+                self._resolve_turn_wait(event, event.wait_resolution)
+            elif event.wait_kind is not None:
+                self._enter_turn_wait(event, event.wait_kind)
         else:
             self.logger.debug("NOTIFICATION (%s)", notification_type)
 
@@ -106,6 +98,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("PERMISSION_REQUEST (%s): session %s", permission_type, session_id)
+            self._enter_turn_wait(event, "approval")
         else:
             self.logger.debug("PERMISSION_REQUEST (%s)", permission_type)
 
@@ -117,6 +110,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("BEFORE_MODEL: session %s", session_id)
+            self._resume_turn_lifecycle(event)
         else:
             self.logger.debug("BEFORE_MODEL")
 
@@ -196,6 +190,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
     def handle_permission_denied(self, event: HookEvent) -> HookResponse:
         """Handle PERMISSION_DENIED event (Claude Code only)."""
         self._log_observe_only_event("PERMISSION_DENIED", event)
+        self._resolve_turn_wait(event, "abandoned")
         return HookResponse(decision="allow")
 
     def handle_post_compact(self, event: HookEvent) -> HookResponse:
@@ -275,6 +270,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
     def handle_stop_failure(self, event: HookEvent) -> HookResponse:
         """Handle STOP_FAILURE event."""
         self._log_observe_only_event("STOP_FAILURE", event)
+        self._end_turn_lifecycle(event, "ended_non_user")
         return HookResponse(decision="allow")
 
     def handle_task_created(self, event: HookEvent) -> HookResponse:
@@ -441,9 +437,11 @@ class MiscEventHandlerMixin(EventHandlersBase):
     def handle_elicitation(self, event: HookEvent) -> HookResponse:
         """Handle ELICITATION event (Claude Code only)."""
         self._log_observe_only_event("ELICITATION", event)
+        self._enter_turn_wait(event, "input")
         return HookResponse(decision="allow")
 
     def handle_elicitation_result(self, event: HookEvent) -> HookResponse:
         """Handle ELICITATION_RESULT event (Claude Code only)."""
         self._log_observe_only_event("ELICITATION_RESULT", event)
+        self._resolve_turn_wait(event, event.wait_resolution or "ambiguous")
         return HookResponse(decision="allow")

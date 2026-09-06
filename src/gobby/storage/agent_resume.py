@@ -27,6 +27,7 @@ from gobby.storage.daemon_resume_keys import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.datetime import utc_now
 
 
@@ -366,10 +367,10 @@ def expire_parked_daemon_session(
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
               AND agent_run_id = %s
-              AND status IN ('active', 'paused', 'awaiting_handoff')
+              AND status = ANY(%s)
             RETURNING *
             """,
-            (child_session_id, original_run_id),
+            (child_session_id, original_run_id, list(LIVE_SESSION_STATUS_ORDER)),
         ).fetchone()
         if row is not None and status_notifier is not None:
             status_notifier(SessionStatusTransition.from_session(Session.from_row(row)))

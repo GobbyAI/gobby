@@ -42,7 +42,7 @@ from gobby.storage.hub.protocol import (
     WebChatSessionBootstrap,
 )
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, TERMINAL_SESSION_STATUSES
 from gobby.storage.sessions._lineage_guard import sanitize_parent_session_id
 from gobby.utils.datetime import utc_now
 
@@ -332,7 +332,7 @@ def _resolve_bound_unpulled_successor(
                AND child.project_id = %s
                AND child.machine_id = %s
                AND child.session_type = 'terminal'
-               AND child.status IN ('active', 'paused')
+               AND child.status = ANY(%s)
                AND child_vars.variables ? %s
                AND jsonb_typeof(parent_vars.variables -> %s) = 'object'
                AND (parent_vars.variables -> %s ->> 'consumed_by') = child.id::text
@@ -343,6 +343,7 @@ def _resolve_bound_unpulled_successor(
                 source,
                 project_id,
                 machine_id,
+                list(LIVE_SESSION_STATUS_ORDER),
                 HANDOFF_PULL_PENDING_VARIABLE,
                 CLEAR_ATTEMPT_VARIABLE,
                 CLEAR_ATTEMPT_VARIABLE,

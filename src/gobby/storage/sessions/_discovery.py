@@ -15,6 +15,7 @@ from gobby.terminal_ownership import (
     terminal_session_identity,
 )
 
+from ._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
 from ._discovery_helpers import (
     normalize_context_parent_pid,
     parse_terminal_context_value,
@@ -77,7 +78,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         live: list[Session] = [
             session
             for session in self.find_by_terminal_identity(identity)
-            if session.status in {"active", "paused"} and is_interactive_terminal_claim(session)
+            if session.status in LIVE_SESSION_STATUSES and is_interactive_terminal_claim(session)
         ]
         if not live:
             return None
@@ -144,15 +145,16 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         Returns:
             Most recently updated matching session, or None.
         """
+        status_placeholders = ",".join("%s" for _ in LIVE_SESSION_STATUS_ORDER)
         row = self.db.fetchone(
-            """
+            f"""
             SELECT * FROM sessions
             WHERE external_id = %s AND source = %s AND session_type = %s
-              AND status = 'active'
+              AND status IN ({status_placeholders})
             ORDER BY updated_at DESC
             LIMIT 1
-            """,
-            (external_id, source, session_type),
+            """,  # nosec B608 -- placeholders come from a fixed local constant.
+            (external_id, source, session_type, *LIVE_SESSION_STATUS_ORDER),
         )
         return Session.from_row(row) if row else None
 
@@ -266,22 +268,21 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         if not normalized_project_id or (normalized_parent_pid is None and not requested_context):
             return None
 
+        status_placeholders = ",".join("%s" for _ in LIVE_SESSION_STATUS_ORDER)
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT * FROM sessions
             WHERE project_id = %s
               AND session_type = %s
-              AND status IN (%s, %s, %s)
+              AND status IN ({status_placeholders})
               AND terminal_context IS NOT NULL
             ORDER BY updated_at DESC
             LIMIT %s
-            """,
+            """,  # nosec B608 -- placeholders come from a fixed local constant.
             (
                 normalized_project_id,
                 "terminal",
-                "active",
-                "paused",
-                "awaiting_handoff",
+                *LIVE_SESSION_STATUS_ORDER,
                 MAX_TERMINAL_SESSION_CANDIDATES,
             ),
         )

@@ -13,11 +13,19 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 
+from gobby.sessions.turn_lifecycle import (
+    SessionLifecycleStore,
+    TurnEvidence,
+    TurnLifecycleReducer,
+    WaitKind,
+    WaitResolution,
+)
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +73,7 @@ class PendingInteractionManager:
         self._run_db = run_db
         self._waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._timeouts: dict[str, asyncio.Task[None]] = {}
+        self._turn_lifecycle = TurnLifecycleReducer(cast(SessionLifecycleStore, SessionManager(db)))
 
     async def _run_database(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
@@ -123,6 +132,17 @@ class PendingInteractionManager:
         timeout_task = asyncio.create_task(self._timeout_handler(interaction_id, timeout_seconds))
         self._timeouts[interaction_id] = timeout_task
 
+        await self._run_database(
+            self._turn_lifecycle.enter_wait,
+            session_id,
+            kind=self._lifecycle_wait_kind(kind),
+            token=interaction_id,
+            evidence=TurnEvidence(
+                request_id=interaction_id,
+                source=f"pending_interaction:{provider}",
+            ),
+        )
+
         return interaction_id
 
     def _insert_pending(
@@ -170,6 +190,7 @@ class PendingInteractionManager:
         response: dict[str, Any] | None = None,
     ) -> bool:
         """Set decision, wake waiter, update DB. Returns False if expired/missing."""
+        interaction = await self._run_database(self._pending_context, interaction_id)
         # Update DB
         updated = await self._run_database(
             self._resolve_pending,
@@ -187,6 +208,9 @@ class PendingInteractionManager:
 
         # Set result and wake waiter
         self._wake_waiter(interaction_id, {"decision": decision, "response": response})
+
+        if interaction is not None:
+            await self._resolve_lifecycle_wait(interaction, interaction_id, decision)
 
         return True
 
@@ -206,8 +230,16 @@ class PendingInteractionManager:
             )
             return result.rowcount > 0
 
+    def _pending_context(self, interaction_id: str) -> dict[str, Any] | None:
+        row = self._db.fetchone(
+            "SELECT session_id, kind, provider FROM pending_interactions WHERE id = %s",
+            (interaction_id,),
+        )
+        return dict(row) if row is not None else None
+
     async def expire(self, interaction_id: str) -> None:
         """Mark expired in DB, wake waiter with timeout decision."""
+        interaction = await self._run_database(self._pending_context, interaction_id)
         updated = await self._run_database(self._expire_pending, interaction_id)
         if not updated:
             return
@@ -219,6 +251,50 @@ class PendingInteractionManager:
 
         # Set result and wake waiter
         self._wake_waiter(interaction_id, {"decision": "timeout"})
+        if interaction is not None:
+            await self._resolve_lifecycle_wait(interaction, interaction_id, "timeout")
+
+    @staticmethod
+    def _lifecycle_wait_kind(kind: str) -> WaitKind:
+        return "input" if kind in {"ask_user", "question", "input"} else "approval"
+
+    async def _resolve_lifecycle_wait(
+        self,
+        interaction: dict[str, Any],
+        interaction_id: str,
+        decision: str,
+    ) -> None:
+        kind = interaction.get("kind")
+        if decision == "timeout" or (
+            kind == "plan" and decision in {"abandon", "cancel", "decline", "deny", "reject"}
+        ):
+            resolution: WaitResolution = "abandoned"
+        elif decision in {
+            "answer",
+            "approve",
+            "approve_always",
+            "allow",
+            "decline",
+            "deny",
+            "reject",
+            "request_changes",
+            "submit",
+        }:
+            # A tool denial or answered elicitation is returned to the provider,
+            # which resumes the current turn. It is not plan abandonment.
+            resolution = "resumed"
+        else:
+            resolution = "ambiguous"
+        await self._run_database(
+            self._turn_lifecycle.resolve_wait,
+            interaction["session_id"],
+            token=interaction_id,
+            resolution=resolution,
+            evidence=TurnEvidence(
+                request_id=interaction_id,
+                source=f"pending_interaction:{interaction['provider']}",
+            ),
+        )
 
     def _wake_waiter(self, interaction_id: str, result: dict[str, Any]) -> None:
         """Resolve an in-memory waiter with a durable result."""
@@ -308,7 +384,14 @@ class PendingInteractionManager:
 
     async def expire_all_pending(self) -> None:
         """Mark all pending rows as expired. Called on daemon startup (fail-closed)."""
+        interactions = await self._run_database(self._all_pending_contexts)
         await self._run_database(self._expire_all_pending)
+        for interaction in interactions:
+            await self._resolve_lifecycle_wait(
+                interaction,
+                str(interaction["id"]),
+                "timeout",
+            )
 
         # Clear any orphaned in-memory state
         for interaction_id in list(self._waiters):
@@ -319,6 +402,13 @@ class PendingInteractionManager:
         if self._timeouts:
             await asyncio.gather(*self._timeouts.values(), return_exceptions=True)
         self._timeouts.clear()
+
+    def _all_pending_contexts(self) -> list[dict[str, Any]]:
+        rows = self._db.fetchall(
+            "SELECT id, session_id, kind, provider FROM pending_interactions "
+            "WHERE status = 'pending' ORDER BY created_at ASC, id ASC"
+        )
+        return [dict(row) for row in rows]
 
     def _expire_all_pending(self) -> None:
         with self._db.transaction() as conn:

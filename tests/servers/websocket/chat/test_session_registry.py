@@ -348,6 +348,44 @@ class TestWebChatLifecycle:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_fire_lifecycle_normalizes_managed_turn_evidence(self) -> None:
+        host = _LifecycleHost()
+        host._chat_sessions["conv-1"] = _web_chat_session()
+        captured: list[HookEvent] = []
+
+        def evaluate(event: HookEvent) -> HookResponse:
+            captured.append(event)
+            return HookResponse(decision="allow")
+
+        host.workflow_handler = MagicMock(evaluate=evaluate)
+
+        await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.BEFORE_TOOL,
+            {"tool_name": "AskUserQuestion", "tool_use_id": "question-1"},
+        )
+        await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.NOTIFICATION,
+            {
+                "tool_use_id": "question-1",
+                "_gobby_wait_resolution": "resumed",
+            },
+        )
+        await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.STOP,
+            {"reason": "completed"},
+        )
+
+        assert captured[0].wait_kind == "input"
+        assert captured[0].wait_token == "question-1"
+        assert captured[1].wait_resolution == "resumed"
+        assert captured[1].wait_token == "question-1"
+        assert captured[2].turn_disposition == "completed"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_mcp_gate_matches_cli_blocking_decision(self) -> None:
         host = _LifecycleHost()
         host._chat_sessions["conv-1"] = _web_chat_session()

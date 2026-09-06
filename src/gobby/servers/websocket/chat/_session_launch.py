@@ -72,6 +72,8 @@ def bind_session_lifecycle(owner: Any, session: ChatSessionProtocol, session_key
     async def _notify_plan_ready(
         content: str | None, input_data: dict[str, Any], tool_use_id: str | None
     ) -> None:
+        plan_wait_token = f"plan:{tool_use_id or 'review'}"
+        session._pending_plan_lifecycle_token = plan_wait_token
         session._pending_plan_content = content
         allowed_prompts = input_data.get("allowedPrompts")
         session._pending_plan_allowed_prompts = (
@@ -101,6 +103,16 @@ def bind_session_lifecycle(owner: Any, session: ChatSessionProtocol, session_key
                 await ws.send(msg)
             except (ConnectionClosed, ConnectionClosedError):
                 pass
+        if not uses_native_hook_authority(session):
+            await owner._fire_lifecycle(
+                session_key,
+                HookEventType.PERMISSION_REQUEST,
+                {
+                    "interaction_id": plan_wait_token,
+                    "permission_type": "plan",
+                    "_gobby_wait_kind": "approval",
+                },
+            )
 
     session._on_plan_ready = _notify_plan_ready
 

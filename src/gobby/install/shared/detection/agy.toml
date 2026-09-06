@@ -22,6 +22,17 @@ line_regex = [
 ]
 
 [[rules]]
+id = "artifact_approval"
+state = "blocked"
+reason = "approval"
+priority = 910
+region = "whole_recent"
+line_regex = [
+  '(?is)Action required\s*\(\d+ left\).*?\bnew\b.*?\bopen\s+approve\s+reject\b',
+  '(?i)Keyboard:.*\by/n\s+Approve/reject\b.*\besc\s+Done\b',
+]
+
+[[rules]]
 id = "approval_prompt"
 state = "blocked"
 reason = "approval"

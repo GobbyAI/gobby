@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from gobby.hooks.events import HookEventType
 from gobby.llm.claude_models import (
     DoneEvent,
     SessionAvailableCommandsEvent,
@@ -83,6 +84,19 @@ class ChatStreamEventHandler:
                 arguments=arguments,
             )
         )
+        fire_lifecycle = getattr(self.owner, "_fire_lifecycle", None)
+        session = getattr(self.owner, "_chat_sessions", {}).get(self.conversation_id)
+        if callable(fire_lifecycle) and getattr(session, "provider", None) != "agy":
+            await fire_lifecycle(
+                self.conversation_id,
+                HookEventType.PERMISSION_REQUEST,
+                {
+                    "tool_use_id": tool_use_id,
+                    "permission_type": "tool",
+                    "tool_name": tool_name,
+                    "_gobby_wait_kind": "approval",
+                },
+            )
 
     async def handle_event(self, event: Any, session: Any) -> bool:
         """Handle one backend event. Return False to stop streaming."""
@@ -447,6 +461,13 @@ class ChatStreamEventHandler:
             done_msg["sdk_session_id"] = sdk_sid
         await self.persistence.persist_sdk_session_id(session, sdk_sid)
         await self.transport.safe_send(done_msg)
+        fire_lifecycle = getattr(self.owner, "_fire_lifecycle", None)
+        if callable(fire_lifecycle) and getattr(session, "provider", None) != "agy":
+            await fire_lifecycle(
+                self.conversation_id,
+                HookEventType.STOP,
+                {"reason": "completed"},
+            )
         await self.persistence.persist_done_metadata(session, event)
         self.state.completed = True
         return True

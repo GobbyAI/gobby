@@ -22,6 +22,7 @@ from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
 from gobby.storage.session_models import Session
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -529,7 +530,7 @@ async def _list_live_sessions(services: Any) -> list[Session]:
     while True:
         result = await services.run_db(
             session_manager.list,
-            statuses=["active", "paused"],
+            statuses=list(LIVE_SESSION_STATUS_ORDER),
             limit=500,
             cursor_updated_at=cursor_updated_at,
             cursor_id=cursor_id,

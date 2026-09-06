@@ -61,6 +61,7 @@ class ChatSessionProtocol(Protocol):
     _last_plan_content: str | None
     _pending_plan_content: str | None
     _pending_plan_allowed_prompts: list[str] | None
+    _pending_plan_lifecycle_token: str | None
     _pending_post_plan_mode: str | None
     _pending_agent_name: str | None
     _plan_approval_completed: bool

@@ -15,6 +15,7 @@ import psycopg
 from gobby.sessions.message_stats import MessageStats, StatsRecord
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
+from gobby.sessions.transcript_interrupt import lifecycle_interrupt_from_lines
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts.base import (
@@ -24,6 +25,7 @@ from gobby.sessions.transcripts.base import (
     apply_adjustment,
     raw_lines_from_texts,
 )
+from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +254,25 @@ class ProcessorTranscriptMixin:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)
             raise
+
+        session_manager = self.session_manager
+        if session_manager is not None and lifecycle_interrupt_from_lines(parser_source, new_lines):
+
+            def reduce_transcript_interrupt() -> None:
+                lifecycle = TurnLifecycleReducer(session_manager)
+                current = lifecycle.get(session_id)
+                lifecycle.end_turn(
+                    session_id,
+                    "user_interrupted",
+                    TurnEvidence(
+                        source=f"{parser_source}.transcript",
+                        generation=current.generation,
+                        provider_turn_key=current.provider_turn_key,
+                        cursor=valid_offset,
+                    ),
+                )
+
+            await self._run_db(reduce_transcript_interrupt)
 
         appender = self._index_appenders.get(session_id)
         pending_appender = None

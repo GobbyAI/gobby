@@ -29,7 +29,17 @@ from gobby.adapters.droid_contract import (
     DroidDecisionStyle,
     get_droid_contract,
 )
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+    correlate_hook_lifecycle,
+)
+from gobby.sessions.transcripts.droid import (
+    droid_transcript_confirms_turn_cancellation,
+    droid_transcript_has_tool_id,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -114,7 +124,7 @@ class DroidAdapter(BaseAdapter):
             )
         self._copy_platform_session_metadata(native_event, metadata)
 
-        return HookEvent(
+        event = HookEvent(
             event_type=event_type,
             session_id=session_id,
             source=self.source,
@@ -126,6 +136,51 @@ class DroidAdapter(BaseAdapter):
             data=normalized_data,
             metadata=metadata,
         )
+        correlate_hook_lifecycle(event)
+        if hook_type == "Stop":
+            event.turn_disposition = "completed"
+        elif hook_type == "Notification" and event.wait_token:
+            notification_kind = normalized_data.get(
+                "notification_type",
+                normalized_data.get("type", normalized_data.get("kind")),
+            )
+            if isinstance(notification_kind, str):
+                normalized_kind = notification_kind.casefold()
+                transcript_path = normalized_data.get("transcript_path")
+                interaction_visible = droid_transcript_has_tool_id(
+                    transcript_path if isinstance(transcript_path, str) else None,
+                    event.wait_token,
+                )
+                if interaction_visible and normalized_kind in {
+                    "ask_user_question",
+                    "elicitation",
+                    "question",
+                }:
+                    event.wait_kind = "input"
+                elif interaction_visible and normalized_kind in {
+                    "permission_prompt",
+                    "permission_request",
+                    "approval",
+                }:
+                    event.wait_kind = "approval"
+        elif hook_type == "Notification":
+            notification_kind = normalized_data.get(
+                "notification_type",
+                normalized_data.get("type", normalized_data.get("kind")),
+            )
+            reason = normalized_data.get("reason")
+            transcript_path = normalized_data.get("transcript_path")
+            if (
+                notification_kind == "idle_prompt"
+                and reason in {"cancelled", "canceled", "user_interrupt"}
+                and droid_transcript_confirms_turn_cancellation(
+                    transcript_path if isinstance(transcript_path, str) else None,
+                    event.provider_turn_key,
+                )
+            ):
+                event.event_type = HookEventType.INTERRUPT
+                event.turn_disposition = "user_interrupted"
+        return event
 
     def _resolve_session_id(
         self,
@@ -155,6 +210,16 @@ class DroidAdapter(BaseAdapter):
 
         explicit_is_error = input_data.get("is_error")
         normalized_input = dict(input_data)
+        aliases = {
+            "transcriptPath": "transcript_path",
+            "notificationType": "notification_type",
+            "turnId": "turn_id",
+            "promptId": "prompt_id",
+            "toolCallId": "tool_call_id",
+        }
+        for native_name, canonical_name in aliases.items():
+            if native_name in normalized_input and canonical_name not in normalized_input:
+                normalized_input[canonical_name] = normalized_input[native_name]
         if normalized_input.get("tool_name") == "Execute":
             normalized_input["tool_name"] = "Bash"
         normalized = normalize_tool_fields(normalized_input)

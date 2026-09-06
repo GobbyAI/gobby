@@ -9,6 +9,13 @@ from typing import TYPE_CHECKING, Any
 from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
+from gobby.sessions.turn_lifecycle import (
+    TurnDisposition,
+    TurnEvidence,
+    TurnLifecycleReducer,
+    WaitKind,
+    WaitResolution,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
@@ -53,12 +60,95 @@ class EventHandlersBase:
     _event_loop: asyncio.AbstractEventLoop | None
     _agent_run_manager: LocalAgentRunManager | None
     _terminal_runtime_registry: Any | None
+    _turn_lifecycle: TurnLifecycleReducer | None
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 
     def get_session_manager(self) -> HookSessionManager | None:
         """Return the configured hook session manager, if available."""
         return self._session_manager
+
+    @staticmethod
+    def _turn_evidence(event: HookEvent) -> TurnEvidence:
+        return TurnEvidence(
+            source=event.source.value,
+            provider_turn_key=event.provider_turn_key,
+            request_id=event.request_id,
+            cursor=event.protocol_cursor,
+        )
+
+    def _begin_turn_lifecycle(self, event: HookEvent) -> None:
+        session_id = event.metadata.get("_platform_session_id")
+        if not isinstance(session_id, str) or not session_id or self._turn_lifecycle is None:
+            return
+        try:
+            self._turn_lifecycle.begin_turn(session_id, self._turn_evidence(event))
+        except Exception:
+            self.logger.warning("Failed to begin turn lifecycle", exc_info=True)
+
+    def _resume_turn_lifecycle(self, event: HookEvent) -> None:
+        session_id = event.metadata.get("_platform_session_id")
+        if not isinstance(session_id, str) or not session_id or self._turn_lifecycle is None:
+            return
+        try:
+            self._turn_lifecycle.resumed_work(session_id, self._turn_evidence(event))
+        except Exception:
+            self.logger.warning("Failed to resume turn lifecycle", exc_info=True)
+
+    def _end_turn_lifecycle(self, event: HookEvent, disposition: TurnDisposition) -> None:
+        session_id = event.metadata.get("_platform_session_id")
+        if not isinstance(session_id, str) or not session_id or self._turn_lifecycle is None:
+            return
+        try:
+            self._turn_lifecycle.end_turn(
+                session_id,
+                disposition,
+                self._turn_evidence(event),
+            )
+        except Exception:
+            self.logger.warning("Failed to end turn lifecycle", exc_info=True)
+
+    def _enter_turn_wait(self, event: HookEvent, kind: WaitKind) -> None:
+        session_id = event.metadata.get("_platform_session_id")
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or self._turn_lifecycle is None
+            or not event.wait_token
+        ):
+            return
+        try:
+            self._turn_lifecycle.enter_wait(
+                session_id,
+                kind=kind,
+                token=event.wait_token,
+                evidence=self._turn_evidence(event),
+            )
+        except Exception:
+            self.logger.warning("Failed to enter turn wait", exc_info=True)
+
+    def _resolve_turn_wait(
+        self,
+        event: HookEvent,
+        resolution: WaitResolution,
+    ) -> None:
+        session_id = event.metadata.get("_platform_session_id")
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or self._turn_lifecycle is None
+            or not event.wait_token
+        ):
+            return
+        try:
+            self._turn_lifecycle.resolve_wait(
+                session_id,
+                token=event.wait_token,
+                resolution=resolution,
+                evidence=self._turn_evidence(event),
+            )
+        except Exception:
+            self.logger.warning("Failed to resolve turn wait", exc_info=True)
 
     def _resolve_message_processor(self) -> Any | None:
         return self._message_processor_resolver()

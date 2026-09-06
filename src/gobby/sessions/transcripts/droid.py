@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
@@ -26,6 +27,11 @@ from gobby.sessions.transcripts.tool_activity import event_activity_by_user_inde
 
 logger = logging.getLogger(__name__)
 
+_LIFECYCLE_TAIL_BYTES = 256 * 1024
+_TOOL_ID_KEYS = frozenset({"id", "tool_call_id", "toolCallId", "tool_use_id", "toolUseId"})
+_TURN_ID_KEYS = frozenset({"prompt_id", "promptId", "turn_id", "turnId"})
+_TURN_CANCELLATION_TYPES = frozenset({"turn_cancelled", "turn_canceled", "turn_interrupted"})
+
 _INJECTED_BLOCK_PATTERN = re.compile(
     r"<(system-reminder|command-name|command-message)>.*?</\1>",
     re.DOTALL,
@@ -35,6 +41,75 @@ _INJECTED_BLOCK_PATTERN = re.compile(
 def _strip_injected_blocks(text: str) -> str:
     """Remove injected system/command blocks from user-visible text."""
     return _INJECTED_BLOCK_PATTERN.sub("", text).strip()
+
+
+def _tail_records(transcript_path: str | Path | None) -> list[dict[str, Any]]:
+    """Read a bounded, complete JSONL tail for lifecycle correlation."""
+    if transcript_path is None or not str(transcript_path).strip():
+        return []
+    try:
+        with Path(transcript_path).expanduser().open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            start = max(0, size - _LIFECYCLE_TAIL_BYTES)
+            stream.seek(start)
+            tail = stream.read(_LIFECYCLE_TAIL_BYTES)
+    except OSError:
+        return []
+    if start:
+        _, separator, tail = tail.partition(b"\n")
+        if not separator:
+            return []
+    records: list[dict[str, Any]] = []
+    for line in tail.splitlines():
+        try:
+            value = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def _nested_identifier_matches(value: object, keys: frozenset[str], expected: str) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (key in keys and item == expected) or _nested_identifier_matches(item, keys, expected)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_nested_identifier_matches(item, keys, expected) for item in value)
+    return False
+
+
+def droid_transcript_has_tool_id(
+    transcript_path: str | Path | None,
+    tool_id: str,
+) -> bool:
+    """Confirm that a displayed Droid interaction exists in the transcript tail."""
+    return bool(tool_id) and any(
+        _nested_identifier_matches(record, _TOOL_ID_KEYS, tool_id)
+        for record in _tail_records(transcript_path)
+    )
+
+
+def droid_transcript_confirms_turn_cancellation(
+    transcript_path: str | Path | None,
+    provider_turn_key: str | None,
+) -> bool:
+    """Require a whole-turn cancellation marker for the current Droid turn."""
+    for record in reversed(_tail_records(transcript_path)):
+        record_type = record.get("type", record.get("event_type"))
+        if record_type not in _TURN_CANCELLATION_TYPES:
+            continue
+        if provider_turn_key and not _nested_identifier_matches(
+            record,
+            _TURN_ID_KEYS,
+            provider_turn_key,
+        ):
+            continue
+        return True
+    return False
 
 
 def _parse_timestamp(raw: str | None) -> datetime:

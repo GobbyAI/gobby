@@ -295,16 +295,12 @@ class TestSendMessageBroadcast:
         )
         mock_db.fetchall.return_value = [
             {
-                "child_session_id": "s-child-1",
-                "child_status": "active",
-                "parent_session_id": "s-from",
-                "parent_status": "active",
+                "id": "s-child-1",
+                "status": "active",
             },
             {
-                "child_session_id": "s-child-2",
-                "child_status": "active",
-                "parent_session_id": "s-from",
-                "parent_status": "active",
+                "id": "s-child-2",
+                "status": "active",
             },
         ]
         mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
@@ -323,7 +319,6 @@ class TestSendMessageBroadcast:
             {
                 "from_session": "s-from",
                 "target": "project",
-                "target_id": "11111111-1111-4111-8111-111111110001",
                 "content": "hello agents",
             },
         )
@@ -403,7 +398,7 @@ class TestSendMessageBroadcast:
             },
         )
 
-        assert result["success"] is False
+        assert result["success"] is True
         assert result["failed_broadcasts"] == [mailbox_failure]
         assert result["failed_ws_broadcasts"] == [
             {"recipient_session_id": "s-to", "error": "socket down"}

@@ -133,6 +133,41 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
 
 
 @pytest.mark.asyncio
+async def test_final_preflight_suppresses_session_that_becomes_protected(
+    managed_chain: ManagedChain,
+) -> None:
+    session_manager = _session_manager(NATIVE_TERMINAL_CONTEXT)
+    session_manager.get.side_effect = [
+        FakeSession(
+            id=WAKE_SESSION_ID,
+            terminal_context=NATIVE_TERMINAL_CONTEXT,
+            status="active",
+        ),
+        FakeSession(
+            id=WAKE_SESSION_ID,
+            terminal_context=NATIVE_TERMINAL_CONTEXT,
+            status="awaiting_input",
+        ),
+    ]
+    pane_sender = AsyncMock()
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=pane_sender,
+        terminal_manager=managed_chain.store,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["error_code"] == "session_awaiting_input"
+    assert result["delivered"] is False
+    assert managed_chain.native.write_log == []
+    assert managed_chain.tmux.write_log == []
+    pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

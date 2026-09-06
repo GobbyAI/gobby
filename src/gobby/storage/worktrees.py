@@ -19,6 +19,7 @@ from gobby.storage.isolation_cleanup import (
     CLOSED_TASK_CLEANUP_PREDICATE,
     lock_isolation_for_cleanup,
 )
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.workspace_machine_scope import (
     get_owned_workspace_row,
     raise_if_foreign_workspace,
@@ -534,7 +535,7 @@ class LocalWorktreeManager:
         )
 
     def is_claimed_by_live_session(self, worktree_id: str) -> bool:
-        """Return True when the worktree owner is an active session."""
+        """Return True when the worktree owner is a live session."""
         machine_id = require_machine_id()
         owned = get_owned_workspace_row(
             self.db,
@@ -549,9 +550,11 @@ class LocalWorktreeManager:
             SELECT 1
             FROM worktrees wt
             JOIN sessions s ON s.id = wt.agent_session_id
-            WHERE wt.id = %s AND wt.machine_id = %s AND s.status IN ('active', 'paused')
+            WHERE wt.id = %s
+              AND wt.machine_id = %s
+              AND s.status = ANY(%s)
             """,
-            (worktree_id, machine_id),
+            (worktree_id, machine_id, list(LIVE_SESSION_STATUS_ORDER)),
         )
         return row is not None
 

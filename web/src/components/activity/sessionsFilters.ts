@@ -11,7 +11,14 @@
 export type SessionMode = "interactive" | "auto";
 export type TaskRefRole = "claimed" | "created" | "closed";
 export type DatePreset = "24h" | "7d" | "30d" | "all" | "custom";
-export type SessionStatus = "active" | "paused" | "expired";
+export type SessionStatus =
+  | "active"
+  | "paused"
+  | "interrupted"
+  | "awaiting_input"
+  | "awaiting_approval"
+  | "awaiting_handoff"
+  | "expired";
 
 const ALL_MODES: readonly SessionMode[] = ["interactive", "auto"];
 const ALL_TASK_REF_ROLES: readonly TaskRefRole[] = [
@@ -26,12 +33,24 @@ const ALL_DATE_PRESETS: readonly DatePreset[] = [
   "all",
   "custom",
 ];
-const ALL_STATUSES: readonly SessionStatus[] = ["active", "paused", "expired"];
+const ALL_STATUSES: readonly SessionStatus[] = [
+  "active",
+  "paused",
+  "interrupted",
+  "awaiting_input",
+  "awaiting_approval",
+  "awaiting_handoff",
+  "expired",
+];
 
 /** Default Live set — the SegmentedControl's "Live" option resolves here. */
 export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = [
   "active",
   "paused",
+  "interrupted",
+  "awaiting_input",
+  "awaiting_approval",
+  "awaiting_handoff",
 ];
 
 export interface SessionsFilters {

@@ -30,6 +30,7 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import TerminalAction
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -276,7 +277,7 @@ class SessionCoordinator:
         message_processor: Any | None = None,
     ) -> int:
         """
-        Re-register active and paused sessions with the message processor.
+        Re-register every live session with the message processor.
 
         Called during initialization to restore message processing
         for sessions that were active before a daemon restart.  Paused
@@ -299,10 +300,11 @@ class SessionCoordinator:
             return 0
 
         try:
-            # Query active and paused sessions from storage
-            active_sessions = self._session_manager.list(status="active", limit=limit)
-            paused_sessions = self._session_manager.list(status="paused", limit=limit)
-            all_sessions = active_sessions + paused_sessions
+            # Keep observing every live state, including protected waits.
+            all_sessions = self._session_manager.list(
+                statuses=LIVE_SESSION_STATUS_ORDER,
+                limit=limit,
+            )
             registered_count = 0
 
             for session in all_sessions:
@@ -325,7 +327,7 @@ class SessionCoordinator:
 
             if registered_count > 0:
                 self.logger.info(
-                    "Re-registered %s active/paused sessions with message processor",
+                    "Re-registered %s live sessions with message processor",
                     registered_count,
                 )
 
@@ -333,7 +335,7 @@ class SessionCoordinator:
 
         except Exception as e:
             self.logger.warning(
-                "Failed to re-register active/paused sessions",
+                "Failed to re-register live sessions",
                 extra={"error": str(e)},
             )
             return 0

@@ -355,7 +355,7 @@ class SessionManager(
 
         This wraps update_status() for hooks, routes, and other callers that
         only need True/False plus logging rather than the updated Session row.
-        Confirmed activity uses the guarded active/paused storage path.
+        Confirmed activity uses the guarded live-session storage path.
 
         Returns:
             True if updated successfully, False otherwise

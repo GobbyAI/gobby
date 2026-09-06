@@ -387,6 +387,11 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         event_publisher=publish_attention_metadata,
     )
 
+    async def refresh_wake_lifecycle(session_id: str) -> None:
+        processor = runner.message_processor
+        if processor is not None:
+            await processor.flush_session(session_id)
+
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
@@ -394,6 +399,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         tmux_pane_sender=_send_tmux_pane_wake,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
+        lifecycle_refresh=refresh_wake_lifecycle,
     )
 
     runner.completion_registry = CompletionEventRegistry(

@@ -1,11 +1,11 @@
 {
   "files": {
-    "AGENTS.md": "66a0b6696398dfad12eef52926b7d31214ee7cf750c23d2c75aa0df327384837",
+    "AGENTS.md": "f487b148902052910e2b121f8c7651887befb97772ce9d7265d2e16dce4d50b4",
     "CLAUDE.md": "573138e19d3359c451b7898112a03167e4e7bf356ecd698dc87d933d37de0b96",
     "config/bootstrap.yaml": "aec93adb04711f6b2e069deee37c511e0f9638a35900d1324ae91a962cf60bcb",
     "config/config.yaml": "8159707cc33fe36652e082e536cb67da3eceadcbbe9b1b6dd20ae458b28d0eca",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
-    "detection/agy.toml": "c1266201c5ad63cf7d0878ae0b62507fcf563a5ae6195c0cbe9fd5e49d3632ad",
+    "detection/agy.toml": "c6b2c5a53d040cf0b65d9ea5fbfee99da6430152b013b97077f9c9b1a83b7660",
     "detection/claude.toml": "ee375ecaea59e4250e1a4b58c882adc013dcff99c5b04280d0614ac3b541a81f",
     "detection/codex.toml": "f0fca814a3d06cfc769808986db9f9a5701fc8ecfaf086f9d0cd0b5fdddf391f",
     "detection/droid.toml": "76358b871b7792fc252929900ec57a3d22ecad2bec17b09f9153f020fbf80c1c",

@@ -311,6 +311,7 @@ CODEX_EVENT_MAP: dict[str, HookEventType] = {
     "PostCompact": HookEventType.POST_COMPACT,
     "SubagentStop": HookEventType.SUBAGENT_STOP,
     "Stop": HookEventType.STOP,
+    "Interrupt": HookEventType.INTERRUPT,
     "SessionEnd": HookEventType.SESSION_END,
 }
 
@@ -380,6 +381,9 @@ GROK_EVENT_MAP: dict[str, HookEventType] = {
     "stop_failure": HookEventType.STOP_FAILURE,
     "subagent_start": HookEventType.SUBAGENT_START,
     "subagent_stop": HookEventType.SUBAGENT_STOP,
+    "pending_interaction": HookEventType.NOTIFICATION,
+    "interaction_resolved": HookEventType.NOTIFICATION,
+    "stop_cancelled": HookEventType.STOP,
 }
 
 GROK_HOOK_ALIASES: dict[str, str] = {
@@ -399,6 +403,9 @@ GROK_HOOK_ALIASES: dict[str, str] = {
     "SubagentStop": "subagent_stop",
     "SubagentEnd": "subagent_stop",
     "subagent_end": "subagent_stop",
+    "PendingInteraction": "pending_interaction",
+    "InteractionResolved": "interaction_resolved",
+    "StopCancelled": "stop_cancelled",
 }
 
 GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"stop", "subagent_stop"})

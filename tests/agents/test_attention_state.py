@@ -353,6 +353,51 @@ async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
 
 
 @pytest.mark.asyncio
+async def test_agent_attention_wait_is_lifecycle_protected_until_provider_resumes(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _attention_manager(temp_db)
+    session = session_manager.register(
+        external_id="agent-attention-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="agy",
+        project_id=sample_project["id"],
+    )
+    run = _agent_run()
+    run.child_session_id = session.id
+
+    async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
+        return function(*args, **kwargs)
+
+    config = MagicMock()
+    config.auto_enter_approval_prompts = False
+    tracker = AgentAttentionTracker(
+        run_db=run_db,
+        prompt_detector=PromptDetector(DETECTION_REGISTRY),
+        stall_classifier=StallClassifier(DETECTION_REGISTRY),
+        tmux_config=config,
+        attention_manager=manager,
+        get_session_manager=lambda: session_manager,
+    )
+
+    await tracker.sync(run, APPROVAL_PANE)
+    waiting_session = session_manager.get(session.id)
+    assert waiting_session is not None
+    assert waiting_session.status == "awaiting_approval"
+
+    await tracker.clear_after_injection(run)
+    state = manager.get(f"session:{session.id}")
+    assert state is not None
+    waits = state.payload["turn_lifecycle"]["outstanding_wait_tokens"]
+    assert waits[0]["state"] == "resolving"
+    resolving_session = session_manager.get(session.id)
+    assert resolving_session is not None
+    assert resolving_session.status == "awaiting_approval"
+
+
+@pytest.mark.asyncio
 async def test_idle_handler_checks_attention_without_waiting_for_idle(
     temp_db: HubDatabase,
 ) -> None:
@@ -467,7 +512,8 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     session = _interactive_session(session_manager, sample_project)
     sessions = MagicMock()
     sessions.db = temp_db
-    sessions.get.side_effect = AssertionError("provider must come from listed session")
+    sessions.get.side_effect = session_manager.get
+    sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
     runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
     monitor = TmuxPaneMonitor(
@@ -487,6 +533,17 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     assert attention.state == "blocked"
     assert attention.reason == "approval"
     assert attention.payload["kind"] == "approval"
+    assert attention.payload["turn_lifecycle"]["outstanding_wait_tokens"] == [
+        {
+            "token": attention.fingerprint,
+            "kind": "approval",
+            "state": "open",
+            "request_id": None,
+        }
+    ]
+    waiting_session = session_manager.get(session.id)
+    assert waiting_session is not None
+    assert waiting_session.status == "awaiting_approval"
     assert runtime.write_log == []
 
 
@@ -501,6 +558,8 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     session = _interactive_session(session_manager, sample_project)
     sessions = MagicMock()
     sessions.db = temp_db
+    sessions.get.side_effect = session_manager.get
+    sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
     runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
     monitor = TmuxPaneMonitor(

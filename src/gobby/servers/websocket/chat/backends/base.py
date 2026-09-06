@@ -140,6 +140,7 @@ class ManagedChatSessionBase:
     _pending_plan_event: asyncio.Event | None = field(default=None, repr=False)
     _pending_plan_decision: str | None = field(default=None, repr=False)
     _pending_plan_allowed_prompts: list[str] | None = field(default=None, repr=False)
+    _pending_plan_lifecycle_token: str | None = field(default=None, repr=False)
     _pending_post_plan_mode: str | None = field(default=None, repr=False)
     _pending_agent_name: str | None = field(default=None, repr=False)
     _plan_approval_completed: bool = field(default=False, repr=False)

@@ -69,6 +69,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("BEFORE_TOOL: %s, session %s", tool_name, session_id)
+            if event.wait_kind is not None:
+                self._enter_turn_wait(event, event.wait_kind)
+            else:
+                self._resume_turn_lifecycle(event)
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
@@ -193,6 +197,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         status = "FAIL" if is_failure else "OK"
         if session_id:
             self.logger.debug("AFTER_TOOL [%s]: %s, session %s", status, tool_name, session_id)
+            self._resume_turn_lifecycle(event)
             if not is_wrapper_echo_event(event):
                 try:
                     db = getattr(self._session_manager, "db", None)

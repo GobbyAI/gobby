@@ -1,10 +1,11 @@
 """Tests for WebSocket chat message handlers (ChatMixin)."""
 
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.hooks.events import HookEventType
 from gobby.servers.websocket.chat import ChatMixin
 
 pytestmark = pytest.mark.unit
@@ -56,7 +57,9 @@ class TestHandleAskUserResponse:
         """Handler should look up session and call provide_answer with answers."""
         session = MagicMock()
         session.has_pending_question = True
+        session.provide_answer.return_value = True
         host._chat_sessions["conv-123"] = session
+        host._fire_lifecycle = AsyncMock(return_value=None)  # type: ignore[method-assign]
 
         data = {
             "type": "ask_user_response",
@@ -70,6 +73,14 @@ class TestHandleAskUserResponse:
         session.provide_answer.assert_called_once_with("tool-abc", {"Which auth?": "OAuth"})
         assert session.provide_answer.call_count == 1
         assert session.provide_answer.call_args is not None
+        host._fire_lifecycle.assert_awaited_once_with(
+            "conv-123",
+            HookEventType.NOTIFICATION,
+            {
+                "tool_use_id": "tool-abc",
+                "_gobby_wait_resolution": "resumed",
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_missing_conversation_id_logs_warning(
@@ -107,3 +118,54 @@ class TestHandleAskUserResponse:
 
         assert "no pending question" in caplog.text.lower() or "conv-456" in caplog.text
         session.provide_answer.assert_not_called()
+
+
+class TestHandleToolApprovalResponse:
+    @pytest.mark.asyncio
+    async def test_exact_managed_response_resumes_lifecycle(
+        self, host: ChatMixinHost, websocket: MockWebSocket
+    ) -> None:
+        session = MagicMock()
+        session.provide_approval.return_value = True
+        host._chat_sessions["conv-approval"] = session
+        host._fire_lifecycle = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        await host._handle_tool_approval_response(
+            websocket,
+            {
+                "conversation_id": "conv-approval",
+                "tool_call_id": "approval-1",
+                "decision": "reject",
+            },
+        )
+
+        host._fire_lifecycle.assert_awaited_once_with(
+            "conv-approval",
+            HookEventType.NOTIFICATION,
+            {
+                "tool_use_id": "approval-1",
+                "decision": "reject",
+                "_gobby_wait_resolution": "resumed",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_mismatched_managed_response_does_not_resolve_lifecycle(
+        self, host: ChatMixinHost, websocket: MockWebSocket
+    ) -> None:
+        session = MagicMock()
+        session.provide_approval.return_value = False
+        session.has_pending_approval = True
+        host._chat_sessions["conv-approval"] = session
+        host._fire_lifecycle = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        await host._handle_tool_approval_response(
+            websocket,
+            {
+                "conversation_id": "conv-approval",
+                "tool_call_id": "wrong-id",
+                "decision": "approve",
+            },
+        )
+
+        host._fire_lifecycle.assert_not_awaited()

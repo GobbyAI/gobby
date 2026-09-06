@@ -10,7 +10,7 @@ import pytest
 
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import PROTECTED_SESSION_STATUSES, SessionManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
@@ -718,17 +718,19 @@ async def test_interactive_session_task_not_recovered(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_depth", [0, 1])
-async def test_awaiting_handoff_session_task_not_recovered(
+@pytest.mark.parametrize("protected_status", sorted(PROTECTED_SESSION_STATUSES))
+async def test_protected_session_task_not_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
     agent_depth: int,
+    protected_status: str,
 ) -> None:
-    """A handoff-ready owner retains its in-progress task claim."""
+    """A protected live owner retains its in-progress task claim."""
     _seed_db(temp_db)
     temp_db.execute(
-        "UPDATE sessions SET status = 'awaiting_handoff', agent_depth = %s WHERE id = %s",
-        (agent_depth, SESSION_ID),
+        "UPDATE sessions SET status = %s, agent_depth = %s WHERE id = %s",
+        (protected_status, agent_depth, SESSION_ID),
     )
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 

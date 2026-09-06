@@ -291,7 +291,13 @@ class ChatSessionPermissionsMixin:
         # respected because can_use_tool already granted permission. By checking
         # here, we block tools at the SDK permission gate itself.
         if invoke_pre_tool_callback and self._on_pre_tool:
-            resp = await self._on_pre_tool({"tool_name": tool_name, "tool_input": input_data})
+            resp = await self._on_pre_tool(
+                {
+                    "tool_name": tool_name,
+                    "tool_input": input_data,
+                    "tool_use_id": tool_use_id,
+                }
+            )
             if resp and resp.get("decision") == "block":
                 session_id = str(getattr(self, "db_session_id", None) or self.conversation_id)
                 reason = _resolve_session_lifecycle_block_reason(

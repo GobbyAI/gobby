@@ -35,6 +35,9 @@ from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
+from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
+from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
+from gobby.storage.attention import AttentionStateManager
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -132,6 +135,13 @@ class WebSocketServer(
         self.terminal_manager: Any | None = None
         self.terminal_runtime_registry: Any | None = None
         self.terminal_config: Any | None = None
+        self.terminal_turn_observer: TerminalTurnObserver | None = None
+        if session_manager is not None:
+            lifecycle = TurnLifecycleReducer(
+                session_manager,
+                AttentionStateManager(session_manager.db),
+            )
+            self.terminal_turn_observer = TerminalTurnObserver(session_manager, lifecycle)
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
@@ -201,6 +211,8 @@ class WebSocketServer(
         self.terminal_runtime_registry = runtime_registry
         self.terminal_config = terminal_config
         self.terminal_services = terminal_services
+        if self.terminal_turn_observer is not None:
+            self.terminal_turn_observer.set_terminal_manager(terminal_manager)
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

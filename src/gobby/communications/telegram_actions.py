@@ -215,7 +215,7 @@ class TelegramActionController:
             target="session",
             target_id=session.id,
             content=answer,
-            include_wakeup=True,
+            wake=True,
             message_type="telegram_session_action",
             metadata={
                 "source": "telegram",

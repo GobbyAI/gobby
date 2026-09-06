@@ -66,6 +66,12 @@ def _valid_turn_completed(update: dict[str, object]) -> bool:
     )
 
 
+def _turn_event_kind(update: dict[str, object]) -> TurnEventKind:
+    """Treat only Grok's successful end-turn reason as a completed answer."""
+    stop_reason = update.get("stop_reason")
+    return "completed" if stop_reason == "end_turn" else "aborted"
+
+
 def _valid_retry_state(update: dict[str, object]) -> bool:
     attempt = update.get("attempt")
     max_retries = update.get("max_retries")
@@ -157,7 +163,7 @@ def _read_grok_snapshot(path: str) -> WatchdogTranscriptSnapshot:
             latest_turn_kind = "started"
         elif update_type == "turn_completed":
             latest_turn_event = summary
-            latest_turn_kind = "completed"
+            latest_turn_kind = _turn_event_kind(update)
         elif update_type == "retry_state":
             provider_error_event = summary
         return ScanVerdict.VALID

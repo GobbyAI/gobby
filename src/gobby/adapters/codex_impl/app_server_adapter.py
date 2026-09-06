@@ -32,6 +32,10 @@ from gobby.adapters.codex_impl.item_normalization import (
 from gobby.adapters.codex_impl.item_normalization import (
     looks_like_tool_item as _shared_looks_like_tool_item,
 )
+from gobby.adapters.codex_impl.lifecycle_events import (
+    REQUEST_USER_INPUT_METHODS,
+    annotate_codex_app_event,
+)
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
@@ -112,11 +116,14 @@ class CodexAdapter(BaseAdapter):
         "thread/closed": HookEventType.SESSION_END,  # Unsubscribe = end
         "turn/started": HookEventType.BEFORE_AGENT,
         "turn/completed": HookEventType.AFTER_AGENT,
+        "thread/status/changed": HookEventType.NOTIFICATION,
+        "serverRequest/resolved": HookEventType.NOTIFICATION,
         # Approval requests map to BEFORE_TOOL
         "item/commandExecution/requestApproval": HookEventType.BEFORE_TOOL,
         "item/fileChange/requestApproval": HookEventType.BEFORE_TOOL,
         "item/mcpToolCall/requestApproval": HookEventType.BEFORE_TOOL,
         "mcpServer/elicitation/request": HookEventType.BEFORE_TOOL,
+        **dict.fromkeys(REQUEST_USER_INPUT_METHODS, HookEventType.NOTIFICATION),
         # Completed items map to AFTER_TOOL
         "item/completed": HookEventType.AFTER_TOOL,
     }
@@ -145,6 +152,8 @@ class CodexAdapter(BaseAdapter):
         "thread/closed",
         "turn/started",
         "turn/completed",
+        "thread/status/changed",
+        "serverRequest/resolved",
         "item/completed",
     ]
 
@@ -159,6 +168,7 @@ class CodexAdapter(BaseAdapter):
         self._attached = False
         self._machine_id: str | None = None
         self._dynamic_exec_correlator = DynamicExecCorrelator()
+        self._notification_locks: dict[str, asyncio.Lock] = {}
 
     async def _dispatch_hook_event(self, event: HookEvent) -> HookResponse:
         """Dispatch through sync or async hook managers."""
@@ -189,6 +199,17 @@ class CodexAdapter(BaseAdapter):
         }:
             await self._interrupt_blocked_turn(method, event, response)
         return response
+
+    async def _dispatch_serialized_notification(
+        self,
+        method: str,
+        event: HookEvent,
+    ) -> HookResponse:
+        """Serialize lifecycle reduction for one Codex thread."""
+        lock_key = event.session_id or "__unknown_thread__"
+        lock = self._notification_locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
+            return await self._dispatch_notification_event(method, event)
 
     async def _interrupt_blocked_turn(
         self, method: str, event: HookEvent, response: HookResponse
@@ -354,6 +375,7 @@ class CodexAdapter(BaseAdapter):
 
         self._codex_client = None
         self._attached = False
+        self._notification_locks.clear()
         logger.debug("CodexAdapter detached from CodexAppServerClient")
 
     def _handle_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -372,7 +394,7 @@ class CodexAdapter(BaseAdapter):
                     logger.debug("Processed Codex event: %s -> %s", method, hook_event.event_type)
                     return
 
-                task = loop.create_task(self._dispatch_notification_event(method, hook_event))
+                task = loop.create_task(self._dispatch_serialized_notification(method, hook_event))
 
                 def _log_notification_result(done_task: asyncio.Task[HookResponse]) -> None:
                     try:
@@ -468,7 +490,7 @@ class CodexAdapter(BaseAdapter):
 
             normalize_tool_fields(data)
 
-            return HookEvent(
+            event = HookEvent(
                 event_type=HookEventType.BEFORE_TOOL,
                 session_id=params.get("threadId", ""),
                 source=self.source,
@@ -483,6 +505,26 @@ class CodexAdapter(BaseAdapter):
                     "normalized_tool_name": data.get("tool_name", original_tool),
                 },
             )
+            return annotate_codex_app_event(event, method, params)
+
+        if method in REQUEST_USER_INPUT_METHODS:
+            request_id = params.get("requestId", params.get("_gobby_request_id", ""))
+            turn_id = params.get("turnId", "")
+            data = {
+                **params,
+                "request_id": str(request_id) if request_id != "" else "",
+                "turn_id": turn_id,
+            }
+            event = HookEvent(
+                event_type=HookEventType.NOTIFICATION,
+                session_id=params.get("threadId", ""),
+                source=self.source,
+                timestamp=datetime.now(UTC),
+                machine_id=self._get_machine_id(),
+                data=data,
+                metadata={"requires_response": True, "request_method": method},
+            )
+            return annotate_codex_app_event(event, method, params)
 
         thread_id = params.get("threadId", "")
         item_type = method.removeprefix("item/").removesuffix("/requestApproval")
@@ -547,7 +589,7 @@ class CodexAdapter(BaseAdapter):
 
         normalize_tool_fields(data)
 
-        return HookEvent(
+        event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=thread_id,
             source=self.source,
@@ -562,6 +604,7 @@ class CodexAdapter(BaseAdapter):
                 "normalized_tool_name": tool_name,
             },
         )
+        return annotate_codex_app_event(event, method, params)
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Convert Codex app-server event to unified HookEvent.
@@ -603,7 +646,7 @@ class CodexAdapter(BaseAdapter):
             if isinstance(terminal_context, dict) and terminal_context:
                 data["terminal_context"] = terminal_context
 
-            return HookEvent(
+            event = HookEvent(
                 event_type=HookEventType.SESSION_START,
                 session_id=thread.get("id", ""),
                 source=self.source,
@@ -612,9 +655,10 @@ class CodexAdapter(BaseAdapter):
                 cwd=cwd if isinstance(cwd, str) else None,
                 data=data,
             )
+            return annotate_codex_app_event(event, method, params)
 
         if method in ("thread/archive", "thread/closed"):
-            return HookEvent(
+            event = HookEvent(
                 event_type=HookEventType.SESSION_END,
                 session_id=params.get("threadId", ""),
                 source=self.source,
@@ -622,10 +666,11 @@ class CodexAdapter(BaseAdapter):
                 machine_id=self._get_machine_id(),
                 data=params,
             )
+            return annotate_codex_app_event(event, method, params)
 
         if method == "turn/started":
             turn = params.get("turn", {})
-            return HookEvent(
+            event = HookEvent(
                 event_type=HookEventType.BEFORE_AGENT,
                 session_id=params.get("threadId", turn.get("id", "")),
                 source=self.source,
@@ -637,10 +682,11 @@ class CodexAdapter(BaseAdapter):
                     "prompt": params.get("prompt", ""),
                 },
             )
+            return annotate_codex_app_event(event, method, params)
 
         if method == "turn/completed":
             turn = params.get("turn", {})
-            return HookEvent(
+            event = HookEvent(
                 event_type=HookEventType.AFTER_AGENT,
                 session_id=params.get("threadId", turn.get("id", "")),
                 source=self.source,
@@ -652,6 +698,22 @@ class CodexAdapter(BaseAdapter):
                     "error": turn.get("error"),
                 },
             )
+            return annotate_codex_app_event(event, method, params)
+
+        if method in {"thread/status/changed", "serverRequest/resolved"}:
+            data = dict(params)
+            request_id = params.get("requestId")
+            if request_id is not None:
+                data["request_id"] = str(request_id)
+            event = HookEvent(
+                event_type=HookEventType.NOTIFICATION,
+                session_id=params.get("threadId", ""),
+                source=self.source,
+                timestamp=datetime.now(UTC),
+                machine_id=self._get_machine_id(),
+                data=data,
+            )
+            return annotate_codex_app_event(event, method, params)
 
         if method == "item/completed":
             item = self._extract_completed_item_payload(params)
@@ -659,7 +721,7 @@ class CodexAdapter(BaseAdapter):
 
             # contextCompaction items map to PRE_COMPACT (not AFTER_TOOL)
             if item_type == "contextCompaction":
-                return HookEvent(
+                event = HookEvent(
                     event_type=HookEventType.PRE_COMPACT,
                     session_id=params.get("threadId", ""),
                     source=self.source,
@@ -671,12 +733,13 @@ class CodexAdapter(BaseAdapter):
                         "item_type": item_type,
                     },
                 )
+                return annotate_codex_app_event(event, method, params)
 
             # Only translate tool-related items
             if self._looks_like_tool_item(item):
                 item_data = self._build_completed_tool_data(item)
 
-                return HookEvent(
+                event = HookEvent(
                     event_type=HookEventType.AFTER_TOOL,
                     session_id=params.get("threadId", ""),
                     source=self.source,
@@ -685,6 +748,7 @@ class CodexAdapter(BaseAdapter):
                     cwd=event_cwd,
                     data=item_data,
                 )
+                return annotate_codex_app_event(event, method, params)
 
         # Unknown/unsupported event
         logger.debug("Unsupported Codex event: %s", method)

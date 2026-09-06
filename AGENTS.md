@@ -79,6 +79,11 @@ how the system behaves so you can work with it instead of being surprised by it.
     `gobby-sessions:send_keys` for terminal control. Waits are event-driven: use
     the applicable `wait_for_*` primitive and yield the turn. Reserve sleeps,
     repeated status calls, and repeated `capture_output` for bounded diagnostics.
+    Message text never wakes a session. Set `wake=true` only when immediate processing
+    is intended; it may steer active work, while interrupted, input/approval-waiting,
+    and handoff-waiting sessions keep the durable message queued without daemon input.
+    Use one targetless `project` send for repository coordination and `global` only for
+    machine-local coordination across projects.
 13. A denied call is about that call, never a standing policy. Approval prompts
     do not always name the tool being invoked, so a rejection can mean "not that,
     not now" or simply a misread. Adjust and continue. If you decide to stop

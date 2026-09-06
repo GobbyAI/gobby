@@ -18,6 +18,7 @@ from gobby.adapters.capabilities import (
     ContextChannel,
     get_provider_capabilities,
 )
+from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
@@ -114,7 +115,7 @@ class CodexHooksAdapter(BaseAdapter):
             metadata["normalized_tool_name"] = normalized_data.get("tool_name")
         self._copy_platform_session_metadata(native_event, metadata)
 
-        return HookEvent(
+        event = HookEvent(
             event_type=event_type,
             session_id=session_id,
             source=self.source,
@@ -124,6 +125,7 @@ class CodexHooksAdapter(BaseAdapter):
             data=normalized_data,
             metadata=metadata,
         )
+        return annotate_codex_hook_event(event, hook_type)
 
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None

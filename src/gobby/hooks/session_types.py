@@ -65,6 +65,7 @@ class HookSessionManager(Protocol):
         limit: int = 100,
         exclude_subagents: bool = False,
         machine_id: str | None = None,
+        statuses: Sequence[str] | None = None,
     ) -> list[Session]: ...
 
     def update(self, session_id: str, **kwargs: Any) -> Session | None: ...

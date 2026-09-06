@@ -15,7 +15,7 @@ from gobby.terminal_ownership import (
 )
 from gobby.utils.datetime import utc_now
 
-from ._constants import get_logger, past_terminal_revival_horizon
+from ._constants import LIVE_SESSION_STATUSES, get_logger, past_terminal_revival_horizon
 from ._contested_expiry import (
     clear_contested_terminal_expiry,
     session_has_active_native_subagent,
@@ -152,7 +152,7 @@ class _TerminalRevivalMixin:
                 live_native_parents = [
                     candidate
                     for candidate in interactive_candidates
-                    if candidate.status in {"active", "paused"}
+                    if candidate.status in LIVE_SESSION_STATUSES
                     and session_has_active_native_subagent(self.db, candidate.id)
                 ]
                 if live_native_parents:

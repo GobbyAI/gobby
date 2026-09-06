@@ -23,6 +23,7 @@ from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.hooks.events import HookEventType
     from gobby.hooks.hook_types import SessionEndReason
     from gobby.servers.websocket.chat_attachments import AttachmentSessionManager
 
@@ -64,6 +65,13 @@ class SessionControlMixin:
         async def _cancel_active_chat(self, conversation_id: str) -> None: ...
 
         async def _cleanup_attached_tts(self, session_id: str) -> None: ...
+
+        async def _fire_lifecycle(
+            self,
+            conversation_id: str,
+            event_type: HookEventType,
+            data: dict[str, Any] | None = None,
+        ) -> None: ...
 
         async def _fire_session_end(
             self,

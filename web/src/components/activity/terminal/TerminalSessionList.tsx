@@ -1,5 +1,12 @@
 import { cn } from "../../../lib/utils";
-import { ActivityRowStatusDot, type StatusKind } from "../ActivityRowStatusDot";
+import {
+  ActivityRowStatusDot,
+  DashGlyph,
+  EyeGlyph,
+  LockGlyph,
+  type StatusGlyph,
+  type StatusKind,
+} from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { SourceIcon } from "../../shared/SourceIcon";
 import { Button } from "../../ui/Button";
@@ -19,6 +26,7 @@ interface LifecyclePresentation {
   kind: StatusKind;
   pulse: boolean;
   label: string;
+  glyph?: StatusGlyph;
 }
 
 function lifecyclePresentation(status: string): LifecyclePresentation {
@@ -27,13 +35,24 @@ function lifecyclePresentation(status: string): LifecyclePresentation {
       ? "active"
       : status === "expired"
         ? "stopped"
-        : status === "paused"
-          ? "paused"
-          : "warning";
+        : status === "awaiting_input"
+          ? "info"
+          : status === "awaiting_approval" || status === "awaiting_handoff"
+            ? "warning"
+            : "paused";
+  const glyph =
+    status === "awaiting_input"
+      ? EyeGlyph
+      : status === "awaiting_approval" || status === "awaiting_handoff"
+        ? LockGlyph
+        : status === "interrupted"
+          ? DashGlyph
+          : undefined;
   return {
     kind,
     pulse: status === "active",
     label: `Session ${status}`,
+    glyph,
   };
 }
 
@@ -75,6 +94,7 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
           kind={lifecycle.kind}
           pulse={lifecycle.pulse}
           label={lifecycle.label}
+          glyph={lifecycle.glyph}
         />
       ) : null}
       {session.provider ? (

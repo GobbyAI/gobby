@@ -326,7 +326,6 @@ class AttentionStateManager:
         mark_seen: bool,
     ) -> tuple[AttentionTransitionResult, bool]:
         now = utc_now()
-        serialized_payload = json.dumps(dict(payload or {}))
         with self.db.transaction() as transaction:
             existing_row = transaction.execute(
                 "SELECT * FROM attention_states WHERE entry_id = %s FOR UPDATE",
@@ -335,8 +334,10 @@ class AttentionStateManager:
             existing = AttentionState.from_row(existing_row) if existing_row is not None else None
 
             if existing is None:
-                if state is None:
+                target_payload = dict(payload or {})
+                if state is None and not target_payload:
                     return AttentionTransitionResult(applied=False, current=None), False
+                serialized_payload = json.dumps(target_payload)
                 attention_id = str(uuid.uuid4())
                 inserted = transaction.execute(
                     """
@@ -376,6 +377,14 @@ class AttentionStateManager:
                 return AttentionTransitionResult(applied=True, current=current), True
 
             target_payload = dict(payload or {})
+            if "turn_lifecycle" not in target_payload:
+                lifecycle = existing.payload.get("turn_lifecycle")
+                if lifecycle is not None:
+                    target_payload["turn_lifecycle"] = lifecycle
+            if state is None:
+                lifecycle = target_payload.get("turn_lifecycle")
+                target_payload = {"turn_lifecycle": lifecycle} if lifecycle is not None else {}
+            serialized_payload = json.dumps(target_payload)
             unchanged = (
                 state == "blocked"
                 and existing.state == "blocked"
@@ -386,7 +395,12 @@ class AttentionStateManager:
                 and existing.fingerprint == fingerprint
                 and existing.payload == target_payload
                 and (not mark_seen or existing.seen_at is not None)
-            ) or (state is None and existing.state is None and not mark_seen)
+            ) or (
+                state is None
+                and existing.state is None
+                and existing.payload == target_payload
+                and not mark_seen
+            )
             if unchanged:
                 return AttentionTransitionResult(applied=False, current=existing), False
 
@@ -403,7 +417,7 @@ class AttentionStateManager:
             next_session_id = session_id if session_id is not None else existing.session_id
             next_reason = reason if state == "blocked" else None
             next_kind = kind if state == "blocked" else None
-            next_payload = serialized_payload if state == "blocked" else json.dumps({})
+            next_payload = serialized_payload
             next_since = (now if opened_episode else existing.since) if state == "blocked" else None
             next_seen_at = now if mark_seen else (existing.seen_at if state == "blocked" else None)
 

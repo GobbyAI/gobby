@@ -88,6 +88,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _pending_plan_events: dict[str, asyncio.Event] = field(default_factory=dict, repr=False)
     _pending_plan_decisions: dict[str, str] = field(default_factory=dict, repr=False)
     _plan_broadcast_sent: bool = field(default=False, repr=False)
+    _pending_plan_lifecycle_token: str | None = field(default=None, repr=False)
     _on_plan_ready: Callable[[str | None, dict[str, Any], str | None], Awaitable[None]] | None = (
         field(default=None, repr=False)
     )

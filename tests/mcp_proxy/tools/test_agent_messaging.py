@@ -26,7 +26,7 @@ from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.utils.session_context import (
     reset_session_context,
     session_context_for_test,
@@ -304,10 +304,10 @@ class TestSendMessage:
             "from_session defaults to the calling session's id from SessionContext" in description
         )
         assert "target='session'" in description
-        assert "target='all' forbids target_id" in description
-        assert "target='project' fans out to active agent runs" in description
-        assert "target='all' reaches every deliverable session in the project" in description
-        assert "include_wakeup=true is an explicit urgent terminal interrupt" in description
+        assert "Both exclude the sender and forbid target_id" in description
+        assert "project reaches that population in the sender's project" in description
+        assert "global reaches every live non-system session" in description
+        assert "wake=true requests immediate processing" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
         assert "from_session" in schema["inputSchema"]["properties"]
@@ -315,6 +315,19 @@ class TestSendMessage:
         assert "from_session" not in schema["inputSchema"]["required"]
         assert "to_session" not in schema["inputSchema"]["properties"]
         assert "send_to_all" not in schema["inputSchema"]["properties"]
+        target_schema = schema["inputSchema"]["properties"]["target"]
+        target_values = target_schema.get("enum") or [
+            branch["const"] for branch in target_schema["anyOf"]
+        ]
+        assert target_values == [
+            "global",
+            "project",
+            "session",
+            "agent",
+            "build",
+        ]
+        assert schema["inputSchema"]["properties"]["wake"]["default"] is False
+        assert "include_wakeup" not in schema["inputSchema"]["properties"]
 
     def test_no_positional_from_session_in_production_callers(self) -> None:
         """Production callers do not pass from_session as send_message's first positional arg."""
@@ -346,10 +359,10 @@ class TestSendMessage:
         assert offenders == []
 
     @pytest.mark.asyncio
-    async def test_send_message_rejects_target_id_with_all(
+    async def test_send_message_rejects_removed_all_selector(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Reject target_id when sending to all."""
+        """The removed all selector has no compatibility alias."""
         result = await messaging_registry.call(
             "send_message",
             {
@@ -361,8 +374,7 @@ class TestSendMessage:
         )
 
         assert result["success"] is False
-        assert result["error"] == "target_id is not allowed when target='all'."
-        mock_session_manager.resolve_session_reference.assert_not_called()
+        assert "Unknown message target 'all'" in result["error"]
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
@@ -395,10 +407,10 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_message_rejects_unknown_project_target_id(
+    async def test_send_message_rejects_project_target_id(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
-        """Reject unknown target identifiers."""
+        """Project scope is derived from the sender and forbids target_id."""
         mock_session_manager.get.side_effect = lambda sid: {
             "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
@@ -414,7 +426,66 @@ class TestSendMessage:
         )
 
         assert result["success"] is False
-        assert "Project target not found" in result["error"]
+        assert result["error_code"] == "target_id_forbidden"
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_project_broadcast_rejects_project_override(
+        self,
+        messaging_registry,
+        mock_session_manager,
+        mock_message_manager,
+    ) -> None:
+        mock_session_manager.get.return_value = MockSession(id="s-from")
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "project",
+                "project_id": "project-other",
+                "content": "hi",
+            },
+        )
+
+        assert result["error_code"] == "project_scope_forbidden"
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_system_project_broadcast_requires_explicit_project(
+        self,
+        messaging_registry,
+        mock_message_manager,
+    ) -> None:
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": system_session_id(),
+                "target": "project",
+                "content": "hi",
+            },
+        )
+
+        assert result["error_code"] == "project_scope_required"
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_global_broadcast_rejects_project_scope(
+        self,
+        messaging_registry,
+        mock_message_manager,
+    ) -> None:
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "global",
+                "project_id": "project-other",
+                "content": "hi",
+            },
+        )
+
+        assert result["error_code"] == "project_scope_forbidden"
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
@@ -467,10 +538,8 @@ class TestSendMessage:
         )
         mock_db.fetchall.return_value = [
             {
-                "child_session_id": "s-child",
-                "child_status": "active",
-                "parent_session_id": "s-from",
-                "parent_status": "active",
+                "id": "s-child",
+                "status": "active",
             }
         ]
         mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
@@ -488,8 +557,7 @@ class TestSendMessage:
             {
                 "from_session": "s-from",
                 "target": "project",
-                "target_id": "11111111-1111-4111-8111-111111110001",
-                "include_wakeup": True,
+                "wake": True,
                 "content": "hello agents",
             },
         )
@@ -499,7 +567,12 @@ class TestSendMessage:
         assert result["broadcast_id"]
         assert wake_dispatcher.calls == ["s-child"]
         assert result["wake_results"] == [
-            {"session_id": "s-child", "delivered": True, "method": "fake"}
+            {
+                "session_id": "s-child",
+                "delivered": True,
+                "method": "fake",
+                "session_status": "active",
+            }
         ]
 
     @pytest.mark.asyncio
@@ -679,20 +752,15 @@ class TestSendMessage:
             {
                 "from_session": "s-from",
                 "target": "project",
-                "target_id": "project-1",
                 "content": "hello agents",
             },
         )
 
         assert result["success"] is False
         assert result["error_code"] == "no_recipients"
-        assert result["selector_metadata"] == {
-            "target": "project",
-            "project_id": "project-1",
-            "agent_run_status": ["pending", "running"],
-            "session_status": ["active", "paused"],
-            "exclude_session_id": "s-from",
-        }
+        assert result["selector_metadata"]["scope"]["kind"] == "project"
+        assert result["selector_metadata"]["scope"]["project_id"] == "project-1"
+        assert result["selector_metadata"]["recipient_states"] == []
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
@@ -701,7 +769,7 @@ class TestSendMessage:
         temp_db: HubDatabase,
         sample_project: dict[str, Any],
     ) -> None:
-        """Explicit include_wakeup links public send_message to tmux delivery."""
+        """Explicit wake links public send_message to terminal delivery."""
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
         session_manager = SessionManager(temp_db)
@@ -747,7 +815,7 @@ class TestSendMessage:
                 "target": "session",
                 "target_id": recipient.id,
                 "content": "urgent update",
-                "include_wakeup": True,
+                "wake": True,
             },
         )
 
@@ -757,6 +825,7 @@ class TestSendMessage:
                 "session_id": recipient.id,
                 "delivered": True,
                 "method": "tmux_pane",
+                "session_status": "active",
             }
         ]
         tmux_pane_sender.assert_awaited_once_with(
@@ -946,7 +1015,7 @@ class TestSendMessage:
         mock_message_manager,
         mock_db,
     ) -> None:
-        """include_wakeup stores mailbox rows even when no live pane exists."""
+        """wake stores mailbox rows even when no live pane exists."""
         from gobby.events.wake import WakeDispatcher
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
@@ -984,7 +1053,7 @@ class TestSendMessage:
                 "from_session": "s-from",
                 "target": "session",
                 "target_id": "s-to",
-                "include_wakeup": True,
+                "wake": True,
                 "content": "hello",
             },
         )
@@ -1247,7 +1316,9 @@ class TestGetInterSessionMessages:
         assert result["messages"][0]["id"] == "msg-1"
 
     @pytest.mark.asyncio
-    async def test_passes_direction(self, messaging_registry, mock_message_manager) -> None:
+    async def test_passes_direction(
+        self, messaging_registry: Any, mock_message_manager: Any
+    ) -> None:
         """direction='inbox' is forwarded to list_messages."""
         mock_message_manager.list_messages.return_value = []
 
@@ -1264,8 +1335,8 @@ class TestGetInterSessionMessages:
     @pytest.mark.asyncio
     async def test_received_direction_aliases_inbox(
         self,
-        messaging_registry,
-        mock_message_manager,
+        messaging_registry: Any,
+        mock_message_manager: Any,
     ) -> None:
         """direction='received' is normalized before storage query."""
         mock_message_manager.list_messages.return_value = []
@@ -1281,8 +1352,8 @@ class TestGetInterSessionMessages:
     @pytest.mark.asyncio
     async def test_invalid_direction_is_rejected(
         self,
-        messaging_registry,
-        mock_message_manager,
+        messaging_registry: Any,
+        mock_message_manager: Any,
     ) -> None:
         """Invalid direction returns a clear error without querying storage."""
         result = await messaging_registry.call(
@@ -1296,7 +1367,9 @@ class TestGetInterSessionMessages:
         mock_message_manager.list_messages.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_side_effects(self, messaging_registry, mock_message_manager) -> None:
+    async def test_no_side_effects(
+        self, messaging_registry: Any, mock_message_manager: Any
+    ) -> None:
         """Does not mark messages as delivered."""
         mock_message_manager.list_messages.return_value = [
             MockMessage(id="msg-1"),

@@ -15,6 +15,7 @@ import pytest
 
 from gobby.servers.pending_interactions import PendingInteractionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
@@ -77,6 +78,24 @@ class TestCreate:
         assert row["kind"] == "tool"
         assert row["status"] == "pending"
         assert row["tool_name"] == "Read"
+        session = SessionManager(db).get(SESSION_1)
+        assert session is not None
+        assert session.status == "awaiting_approval"
+
+    @pytest.mark.asyncio
+    async def test_question_enters_input_wait(
+        self, manager: PendingInteractionManager, db: HubDatabase
+    ) -> None:
+        await manager.create(
+            session_id=SESSION_1,
+            kind="question",
+            provider="claude",
+            payload={},
+        )
+
+        session = SessionManager(db).get(SESSION_1)
+        assert session is not None
+        assert session.status == "awaiting_input"
 
 
 class TestResolve:
@@ -90,6 +109,9 @@ class TestResolve:
         row = db.fetchone("SELECT * FROM pending_interactions WHERE id = %s", (iid,))
         assert row["status"] == "resolved"
         assert row["decision"] == "approve"
+        session = SessionManager(db).get(SESSION_1)
+        assert session is not None
+        assert session.status == "active"
 
     @pytest.mark.asyncio
     async def test_resolve_wakes_waiter(self, manager: PendingInteractionManager) -> None:
@@ -108,6 +130,34 @@ class TestResolve:
         result = await manager.resolve(iid, "approve")
         assert result is False
 
+    @pytest.mark.asyncio
+    async def test_stale_resolution_does_not_clear_new_wait(
+        self, manager: PendingInteractionManager, db: HubDatabase
+    ) -> None:
+        first = await manager.create(
+            session_id=SESSION_1, kind="tool", provider="claude", payload={}
+        )
+        await manager.resolve(first, "approve")
+        await manager.create(session_id=SESSION_1, kind="tool", provider="claude", payload={})
+
+        assert await manager.resolve(first, "reject") is False
+        session = SessionManager(db).get(SESSION_1)
+        assert session is not None
+        assert session.status == "awaiting_approval"
+
+    @pytest.mark.asyncio
+    async def test_tool_rejection_resumes_provider_turn(
+        self, manager: PendingInteractionManager, db: HubDatabase
+    ) -> None:
+        interaction_id = await manager.create(
+            session_id=SESSION_1, kind="tool", provider="claude", payload={}
+        )
+
+        assert await manager.resolve(interaction_id, "reject") is True
+        session = SessionManager(db).get(SESSION_1)
+        assert session is not None
+        assert session.status == "active"
+
 
 class TestExpire:
     @pytest.mark.asyncio
@@ -119,6 +169,9 @@ class TestExpire:
         row = db.fetchone("SELECT * FROM pending_interactions WHERE id = %s", (iid,))
         assert row["status"] == "expired"
         assert row["decision"] == "timeout"
+        session = SessionManager(db).get(SESSION_1)
+        assert session is not None
+        assert session.status == "paused"
 
     @pytest.mark.asyncio
     async def test_expire_wakes_waiter_with_timeout(
@@ -258,6 +311,11 @@ class TestExpireAllPending:
         await manager.expire_all_pending()
         rows = db.fetchall("SELECT status FROM pending_interactions WHERE status = 'pending'")
         assert len(rows) == 0
+        sessions = SessionManager(db)
+        first = sessions.get(SESSION_1)
+        second = sessions.get(SESSION_2)
+        assert first is not None and first.status == "paused"
+        assert second is not None and second.status == "paused"
 
     @pytest.mark.asyncio
     async def test_expire_all_clears_in_memory(self, manager: PendingInteractionManager) -> None:

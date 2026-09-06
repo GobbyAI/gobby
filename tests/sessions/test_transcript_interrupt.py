@@ -9,7 +9,10 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import SessionSource
-from gobby.sessions.transcript_interrupt import turn_interrupt_initiated
+from gobby.sessions.transcript_interrupt import (
+    lifecycle_interrupt_from_lines,
+    turn_interrupt_initiated,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -95,6 +98,29 @@ def test_claude_plain_prompt_and_stop_hook_feedback_continuation_are_not_interru
     )
 
     assert turn_interrupt_initiated("claude", transcript) is False
+
+
+def test_claude_lifecycle_interrupt_excludes_tool_denial_and_replacement_prompt() -> None:
+    marker = json.dumps(_claude_user("[Request interrupted by user]"))
+    denial = json.dumps(
+        _claude_user(
+            [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "rejected"}],
+            rejected=True,
+        )
+    )
+    prompt = json.dumps(_claude_user("replacement prompt"))
+
+    assert lifecycle_interrupt_from_lines("claude", [marker]) is True
+    assert lifecycle_interrupt_from_lines("claude", [denial]) is False
+    assert lifecycle_interrupt_from_lines("claude", [marker, prompt]) is False
+
+
+def test_codex_lifecycle_interrupt_is_cancelled_by_newer_turn_start() -> None:
+    aborted = json.dumps({"type": "event_msg", "payload": {"type": "turn_aborted"}})
+    started = json.dumps({"type": "event_msg", "payload": {"type": "task_started"}})
+
+    assert lifecycle_interrupt_from_lines("codex", [aborted]) is True
+    assert lifecycle_interrupt_from_lines("codex", [aborted, started]) is False
 
 
 def test_codex_turn_aborted_before_prompt_is_interrupt_initiated(tmp_path: Path) -> None:

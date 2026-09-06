@@ -41,6 +41,7 @@ from gobby.storage.projects import (
     LocalProjectManager,
     Project,
 )
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
@@ -188,13 +189,15 @@ def _get_project_stats_batch(
     session_rows = db.fetchall(
         f"""
         SELECT project_id,
-               COUNT(*) FILTER (WHERE status IN ('active', 'paused')) AS session_count,
+               COUNT(*) FILTER (
+                   WHERE status = ANY(%s)
+               ) AS session_count,
                MAX(updated_at) AS last_activity_at
         FROM sessions
         WHERE project_id IN ({placeholders})
         GROUP BY project_id
         """,  # nosec B608
-        tuple(project_ids),
+        (list(LIVE_SESSION_STATUS_ORDER), *project_ids),
     )
     task_rows = db.fetchall(
         f"""

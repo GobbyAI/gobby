@@ -15,6 +15,7 @@ from gobby.hooks.events import (
     HookEventType,
     HookResponse,
     SessionSource,
+    correlate_hook_lifecycle,
     parse_session_source,
 )
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
@@ -191,6 +192,21 @@ class ChatLifecycleMixin:
             cwd=project_path,
             project_id=project_id,
         )
+        correlate_hook_lifecycle(event)
+        if event_type is HookEventType.STOP:
+            reason = data.get("reason")
+            if reason == "completed":
+                event.turn_disposition = "completed"
+            elif reason in {"error", "failed", "cancelled", "canceled", "shutdown"}:
+                event.turn_disposition = "ended_non_user"
+        if event_type is HookEventType.BEFORE_TOOL and data.get("tool_name") == "AskUserQuestion":
+            event.wait_kind = "input"
+        wait_kind = data.get("_gobby_wait_kind")
+        if wait_kind in {"input", "approval", "handoff"}:
+            event.wait_kind = wait_kind
+        wait_resolution = data.get("_gobby_wait_resolution")
+        if wait_resolution in {"resumed", "abandoned", "ambiguous"}:
+            event.wait_resolution = wait_resolution
 
         try:
             # DEBUG: log event data to diagnose hook issues

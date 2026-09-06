@@ -24,6 +24,7 @@ from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.logging import ThrottledLogger
 from gobby.utils.machine_id import require_machine_id
 
@@ -383,6 +384,7 @@ class TmuxPaneMonitor:
                 classification_reason = classification.reason
 
         if reason is None or kind is None:
+            await self._resolve_interactive_lifecycle_wait(session_id)
             await self._clear_attention_if_current(session_attention_entry_id(session_id))
             return
         prompt_payload = (
@@ -393,6 +395,13 @@ class TmuxPaneMonitor:
                 label=classification_reason or reason,
             )
         )
+        if reason in {"approval", "question"}:
+            await self._enter_interactive_lifecycle_wait(
+                session_id,
+                provider,
+                reason,
+                prompt_payload.fingerprint,
+            )
         await manager.transition_async(
             asyncio.to_thread,
             session_attention_entry_id(session_id),
@@ -403,6 +412,62 @@ class TmuxPaneMonitor:
             fingerprint=prompt_payload.fingerprint,
             payload=prompt_payload.to_payload(),
         )
+
+    async def _enter_interactive_lifecycle_wait(
+        self,
+        session_id: str,
+        provider: str,
+        reason: PromptKind,
+        fingerprint: str,
+    ) -> None:
+        session_manager = self._session_manager
+        if session_manager is None:
+            return
+
+        def enter() -> None:
+            from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
+
+            lifecycle = TurnLifecycleReducer(session_manager)
+            current = lifecycle.get(session_id)
+            lifecycle.enter_wait(
+                session_id,
+                kind="approval" if reason == "approval" else "input",
+                token=fingerprint,
+                evidence=TurnEvidence(source=f"{provider}.pane", generation=current.generation),
+            )
+
+        await asyncio.to_thread(enter)
+
+    async def _resolve_interactive_lifecycle_wait(self, session_id: str) -> None:
+        manager = self._attention_manager
+        session_manager = self._session_manager
+        if manager is None or session_manager is None:
+            return
+        current_attention = await asyncio.to_thread(
+            manager.get,
+            session_attention_entry_id(session_id),
+        )
+        fingerprint = current_attention.fingerprint if current_attention is not None else None
+        if (
+            current_attention is None
+            or current_attention.reason not in {"approval", "question"}
+            or fingerprint is None
+        ):
+            return
+
+        def resolve() -> None:
+            from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
+
+            lifecycle = TurnLifecycleReducer(session_manager)
+            state = lifecycle.get(session_id)
+            lifecycle.resolve_wait(
+                session_id,
+                token=fingerprint,
+                resolution="ambiguous",
+                evidence=TurnEvidence(source="pane.resolved", generation=state.generation),
+            )
+
+        await asyncio.to_thread(resolve)
 
     async def _clear_attention_if_current(self, entry_id: str) -> None:
         manager = self._attention_manager
@@ -447,7 +512,7 @@ class TmuxPaneMonitor:
         while True:
             page = await asyncio.to_thread(
                 session_manager.list,
-                statuses=["active", "paused"],
+                statuses=list(LIVE_SESSION_STATUS_ORDER),
                 modes=["interactive"],
                 limit=_INTERACTIVE_SESSION_PAGE_SIZE,
                 cursor_updated_at=cursor_updated_at,

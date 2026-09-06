@@ -78,6 +78,7 @@ class IdleCheckHandler:
             tmux_config=tmux_config,
             attention_manager=attention_manager,
             attention_metadata_store=attention_metadata_store,
+            get_session_manager=get_session_manager,
         )
         self._transcript_resolver = WatchdogTranscriptResolver()
         self._recovery = WatchdogRecoveryCoordinator(

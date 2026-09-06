@@ -12,6 +12,8 @@ from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.datetime import to_aware_utc, utc_now
 from gobby.utils.machine_id import require_machine_id
 
+from ._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -116,7 +118,7 @@ class _TerminalMixin:
                 WHERE id = ANY(%s::uuid[])
                 """,
                 (
-                    ["active", "paused", "awaiting_handoff"],
+                    list(LIVE_SESSION_STATUS_ORDER),
                     list(_TMUX_CONTEXT_KEYS),
                     now,
                     session_ids,
@@ -124,7 +126,7 @@ class _TerminalMixin:
             )
 
         for session in sessions:
-            transitioned = session.status in {"active", "paused", "awaiting_handoff"}
+            transitioned = session.status in LIVE_SESSION_STATUSES
             self._notify_session_change(
                 "session_expired" if transitioned else "session_updated",
                 session.id,

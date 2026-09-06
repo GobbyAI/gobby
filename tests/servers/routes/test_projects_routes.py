@@ -180,18 +180,29 @@ class TestProjectRoutes:
         session_manager: SessionManager,
     ) -> None:
         """Project stats reflect actual session and task counts."""
-        # Create a session for this project using register()
-        session_manager.register(
-            external_id="ext-100",
-            source="claude",
-            machine_id="21000000-0000-4000-8000-000000000002",
-            project_id=real_project["id"],
-        )
+        for index, status in enumerate(
+            (
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+            )
+        ):
+            session = session_manager.register(
+                external_id=f"ext-{100 + index}",
+                source="claude",
+                machine_id="21000000-0000-4000-8000-000000000002",
+                project_id=real_project["id"],
+            )
+            if status != "active":
+                session_manager.update_status(session.id, status)
         response = client.get("/api/projects")
         assert response.status_code == 200
         data = response.json()
         proj = next(p for p in data if p["id"] == real_project["id"])
-        assert proj["session_count"] == 1
+        assert proj["session_count"] == 6
 
     @pytest.mark.parametrize("project_count", [1, 3])
     def test_list_projects_batches_stats_queries(
