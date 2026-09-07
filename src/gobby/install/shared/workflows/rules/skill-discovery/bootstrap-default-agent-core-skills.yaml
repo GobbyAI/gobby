@@ -18,6 +18,10 @@ rules:
         )
         or not skill_loaded('loading-skills')
         or (
+          not variables.get('restraint_disabled')
+          and not skill_loaded('restraint')
+        )
+        or (
           not variables.get('brevity_disabled')
           and not skill_loaded('brevity')
         )
@@ -39,3 +43,8 @@ rules:
         when: >
           not variables.get('brevity_disabled')
           and not skill_loaded('brevity')
+      - type: load_skill
+        skill: restraint
+        when: >
+          not variables.get('restraint_disabled')
+          and not skill_loaded('restraint')

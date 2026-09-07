@@ -68,8 +68,8 @@ call_tool(
 
 Open `references/creation.md` when selecting task types, categories, priorities,
 labels, or writing expanded validation criteria.
-Open `references/handoffs.md` when context pressure approaches, when finishing a
-task, or when moving between epic children.
+Load `handoff-discipline` before authoring a session or agent handoff, including
+when finishing a task or moving between epic children.
 
 ## Implementation
 

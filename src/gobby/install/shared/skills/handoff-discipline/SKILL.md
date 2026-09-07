@@ -1,4 +1,9 @@
-# Task and session boundaries
+---
+name: handoff-discipline
+description: Write concise, current-state session and agent handoffs. Load before set_handoff or cooperative end_agent_run, and when context-pressure guidance appears.
+---
+
+# Handoff Discipline
 
 Choose the boundary from the task state, then write a readable structured
 handoff derived from the provider-native tracker.
@@ -17,6 +22,10 @@ only when they help the receiver continue.
 Do not paste cumulative history, previous handoffs, raw logs, completed ledgers,
 or artificial shorthand. Do not create a checkpoint file by default; checkpoint
 files remain available only when the user explicitly requests one.
+
+Use references to existing plans and evidence for cross-session history. Carry
+forward only the still-active constraints and unresolved work needed to continue.
+Before submitting, remove inherited history and completed ledgers from the draft.
 
 `set_handoff` remains uncapped and its `clear_session` boolean is the boundary
 control. `clear_session=true` is reserved for moving between tasks after the current

@@ -26,6 +26,14 @@ rules:
         event.data.get('mcp_server') == 'gobby-agents'
         and event.data.get('mcp_tool') == 'end_agent_run'
       )
+      and not (
+        event.data.get('mcp_server') == 'gobby-skills'
+        and event.data.get('mcp_tool') == 'get_skill'
+        and (
+          ((tool_input.get('arguments') or tool_input) or {}).get('name') == 'handoff-discipline'
+          or ((tool_input.get('arguments') or tool_input) or {}).get('cursor')
+        )
+      )
       and event.data.get('mcp_tool') not in ('get_tool_schema', 'list_tools')
       and event.data.get('tool_name') not in (
         'get_tool_schema',

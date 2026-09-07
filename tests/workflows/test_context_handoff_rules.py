@@ -175,7 +175,11 @@ class TestBlockPlanModeClearSession:
         assert row is not None
         assert row.source == "installed"
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        template = body.resolved_effects[0].template or ""
+        template = "\n".join(
+            effect.template or ""
+            for effect in body.resolved_effects
+            if effect.type == "inject_context"
+        )
         assert "Planning, review, and ongoing task work use this compact path" in template
         assert "only between tasks after the current task closes" in template
 
@@ -233,7 +237,11 @@ class TestBlockPlanModeClearSession:
         response = await _evaluate(
             db,
             event,
-            {"plan_mode": True, "is_spawned_agent": False},
+            {
+                "plan_mode": True,
+                "is_spawned_agent": False,
+                "loaded_skills": ["handoff-discipline"],
+            },
         )
 
         assert response.decision == "allow"
@@ -247,7 +255,11 @@ class TestBlockPlanModeClearSession:
         response = await _evaluate(
             db,
             event,
-            {"plan_mode": False, "is_spawned_agent": False},
+            {
+                "plan_mode": False,
+                "is_spawned_agent": False,
+                "loaded_skills": ["handoff-discipline"],
+            },
         )
 
         assert response.decision == "allow"

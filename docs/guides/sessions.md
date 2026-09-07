@@ -259,6 +259,13 @@ references are deduplicated in their original order. Feedback can be captured th
 the dedicated `gobby-sessions:feedback` tool or the `gobby_feedback` field on
 `set_handoff`. Both paths use the same validation and storage contract.
 
+Load the standalone `handoff-discipline` skill before authoring `set_handoff` or
+cooperative `end_agent_run` content. A before-tool block teaches this requirement;
+the existing model-aware context-pressure warnings also request the skill.
+Completed skill loading suppresses further requests until the next context reset.
+Handoffs describe current state and concrete next actions; reference durable
+evidence instead of copying cumulative history or earlier handoffs.
+
 Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or
 `always`; optional `disposition` is `worked-around`, `filed-task`, `fixed`,
@@ -328,7 +335,7 @@ by `set_handoff`. A second call is empty. Manual provider compact and `/clear`
 operations create no marker, so they also return an empty handoff. Persisted
 `handoff_markdown` remains visible in the UI after consumption. While that marker is
 pending, turn-start meta skill loads wait so the pull runs before `memory`,
-`loading-skills`, and `brevity` reloads.
+`loading-skills`, `brevity`, and `restraint` reloads.
 
 For terminal sessions, the tool result reports `handoff_staged=true` and
 `delivery_pending=true` before Gobby touches provider input. The proxy strips the

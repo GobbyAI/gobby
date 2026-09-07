@@ -20,7 +20,7 @@ SKILL_DIR = (
     / "tasks"
 )
 SKILL_PATH = SKILL_DIR / "SKILL.md"
-HANDOFFS_PATH = SKILL_DIR / "references" / "handoffs.md"
+HANDOFFS_PATH = SKILL_DIR.parent / "handoff-discipline" / "SKILL.md"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BREVITY_PATH = (
     REPO_ROOT / "src" / "gobby" / "install" / "shared" / "skills" / "brevity" / "SKILL.md"
@@ -103,8 +103,12 @@ def test_claimed_task_owns_native_substeps_and_found_work() -> None:
     assert "Sweep the native tracker and current transcript for owned findings" in content
 
 
-def test_handoff_reference_selects_boundaries_and_readable_payloads() -> None:
+def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> None:
     content = HANDOFFS_PATH.read_text()
+
+    assert "name: handoff-discipline" in content
+    assert "Load `handoff-discipline`" in SKILL_PATH.read_text()
+    assert not (SKILL_DIR / "references" / "handoffs.md").exists()
 
     assert "Planning or review reaches context pressure" in content
     assert "Active task reaches context pressure" in content

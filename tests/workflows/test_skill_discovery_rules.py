@@ -224,7 +224,7 @@ class TestLanguageSkillWriteTargetContract:
 
 
 class TestDefaultAgentCoreSkillBootstrap:
-    CORE_SKILLS = ("memory", "loading-skills", "brevity")
+    CORE_SKILLS = ("memory", "loading-skills", "brevity", "restraint")
 
     @staticmethod
     def _turn_event(prompt: str = "Continue.") -> HookEvent:

@@ -101,7 +101,8 @@ pressure during planning, review, or ongoing task work, use
 closing the current task, when a root or coordinator moves to another task or epic
 child. A spawned worker ending cooperatively or handing off a blocker supplies the
 same structured fields to `gobby-agents:end_agent_run`.
-Derive concise, readable handoffs from the native tracker. Canonical usage lives in
+Load `handoff-discipline` before authoring a handoff. Derive concise, readable
+handoffs from the native tracker. Canonical usage lives in
 `docs/guides/sessions.md` (§Creating And Reading Handoffs), with compaction, `/clear`,
 and provider-handoff semantics in `docs/contracts/session-boundary.md`.
 

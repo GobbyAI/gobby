@@ -1,0 +1,17 @@
+tags: [context-handoff, skill-discovery, gobby, default]
+
+rules:
+  require-handoff-discipline:
+    description: "Teach handoff discipline before authoring a session or agent handoff"
+    event: before_tool
+    enabled: true
+    priority: 24
+    when: "not skill_loaded('handoff-discipline')"
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-sessions:set_handoff"
+          - "gobby-agents:end_agent_run"
+        reason: |
+          {{ skill_fetch_directive("handoff-discipline") }}
+          Before retrying, revise the handoff to current state and concrete next actions. Do not paste cumulative history, previous handoffs, raw logs, or completed ledgers; reference durable evidence instead.
