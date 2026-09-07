@@ -203,8 +203,21 @@ def find_navigation_metadata(parts: Sequence[str], paths: Sequence[str] = ()) ->
 def gcode_navigation_metadata(parts: list[str]) -> tuple[str, dict[str, Any]] | None:
     if len(parts) < 2 or shell_command_name(parts[0]) != "gcode":
         return None
-    subcommand = parts[1]
-    if subcommand == "graph" and len(parts) >= 3 and parts[2] == "view":
+    command_index = 1
+    while command_index < len(parts):
+        option = parts[command_index]
+        if option in {"--project", "--format"}:
+            command_index += 2
+        elif option in {"--quiet", "--verbose", "--allow-stale"} or option.startswith(
+            ("--project=", "--format=")
+        ):
+            command_index += 1
+        else:
+            break
+    if command_index >= len(parts):
+        return None
+    subcommand = parts[command_index]
+    if subcommand == "graph" and parts[command_index + 1 : command_index + 2] == ["view"]:
         subcommand = "graph view"
     if subcommand not in GCODE_NAVIGATION_COMMANDS:
         return None

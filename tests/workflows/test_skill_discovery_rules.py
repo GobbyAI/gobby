@@ -4316,6 +4316,9 @@ class TestCodeIndexNavigationRules:
         extraction = tmp_path / "workbook-extract"
         cases = (
             ("rg --files", extraction, False, "allow"),
+            (f"rg --files {extraction}", repo, False, "allow"),
+            (f"rg --files {extraction} | rg '(parser|language).*test'", repo, False, "allow"),
+            (f"rg --files {extraction} src", repo, True, "block"),
             (f"find {extraction} -type f", repo, False, "allow"),
             ("rg pattern src", repo, True, "block"),
         )
@@ -4504,13 +4507,21 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "gcode grep -F 'gcode-runtime' -m 50",
+            "gcode --project /external/archive tree core",
+            "gcode --format=json --project=/external/archive tree core",
+        ],
+    )
     async def test_codex_gcode_error_allows_raw_retry_but_ordinary_search_blocks(
         self,
         db: HubDatabase,
+        command: str,
     ) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
-        command = "gcode grep -F 'gcode-runtime' -m 50"
         completed_item = {
             "id": "gcode-error",
             "type": "dynamicToolCall",

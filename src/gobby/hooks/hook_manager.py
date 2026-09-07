@@ -645,14 +645,25 @@ class HookManager(HookManagerDispatchMixin):
             return
         from gobby.hooks.event_handlers._session_start.transcripts import (
             recheck_pending_transcript_path,
+            replace_session_message_processor,
         )
 
-        recheck_pending_transcript_path(
+        tracking = recheck_pending_transcript_path(
             event,
             session_manager=self._session_manager,
             budgets=self._pending_transcript_rechecks,
             local_machine_id=self.get_machine_id(),
         )
+        if tracking is not None:
+            session_id, transcript_path, source = tracking
+            handler = self._event_handlers
+            processor = handler._resolve_message_processor()
+            if processor is not None:
+                # Registration is idempotent for an unchanged path; it also repairs
+                # pre-created sessions whose initial SessionStart never arrived.
+                replace_session_message_processor(
+                    handler, session_id, processor, transcript_path, source=source
+                )
 
     def _discard_pending_transcript_recheck(self, event: HookEvent) -> None:
         """Drop the resolved session's bounded recheck budget.

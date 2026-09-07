@@ -635,6 +635,44 @@ def _recheck_event(
     return event
 
 
+@pytest.mark.parametrize("stored_path", [None, "/tmp/late-rollout.jsonl"])
+def test_later_hook_registers_transcript_for_live_processing(
+    manager_with_mocks: HookManager,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_path: str | None,
+) -> None:
+    manager = cast(Any, manager_with_mocks)
+    session = SimpleNamespace(
+        id="platform-1",
+        transcript_path=stored_path,
+        source="codex",
+        external_id="conv-1",
+        machine_id=_RECHECK_MACHINE_ID,
+    )
+    manager._session_manager.get.return_value = session
+    handler = manager._event_handlers
+    handler._session_message_processors = {}
+    processor = MagicMock()
+    handler._resolve_message_processor.side_effect = [None, processor, processor]
+    monkeypatch.setattr(manager_with_mocks, "get_machine_id", lambda: _RECHECK_MACHINE_ID)
+    event = _recheck_event(HookEventType.BEFORE_TOOL)
+    event.source = SessionSource.CODEX
+
+    with patch(_DERIVE_PATCH, return_value="/tmp/late-rollout.jsonl") as derive:
+        manager_with_mocks._recheck_pending_transcript(event)
+        session.transcript_path = "/tmp/late-rollout.jsonl"
+        manager_with_mocks._recheck_pending_transcript(event)
+        manager_with_mocks._recheck_pending_transcript(event)
+
+    assert derive.call_count == (1 if stored_path is None else 0)
+    assert processor.register_session.call_count == 2
+    processor.register_session.assert_called_with(
+        "platform-1", "/tmp/late-rollout.jsonl", source="codex"
+    )
+    processor.unregister_session.assert_not_called()
+    assert handler._session_message_processors == {"platform-1": processor}
+
+
 def _seam_manager(manager: HookManager, *, session: SimpleNamespace) -> HookManager:
     """Mock everything around the shared hook seam so events reach the recheck."""
     mocks = cast(Any, manager)

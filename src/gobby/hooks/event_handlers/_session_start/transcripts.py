@@ -196,26 +196,26 @@ def recheck_pending_transcript_path(
     session_manager: Any,
     budgets: dict[str, int],
     local_machine_id: str | None,
-) -> None:
-    """Persist a usable transcript path on later hook events without blocking start."""
+) -> tuple[str, str, str] | None:
+    """Resolve transcript tracking after start, including a missed SessionStart."""
     if event.event_type not in PENDING_TRANSCRIPT_RECHECK_EVENTS:
-        return
+        return None
     if session_manager is None:
-        return
+        return None
     platform_session_id = event.metadata.get("_platform_session_id")
     if not isinstance(platform_session_id, str) or not platform_session_id:
-        return
+        return None
     session = session_manager.get(platform_session_id)
     if session is None:
-        return
+        return None
     stored = getattr(session, "transcript_path", None)
+    source = str(session.source)
     if stored and stored != MISSING_TRANSCRIPT_PATH:
-        return
+        return platform_session_id, stored, source
     attempts = budgets.get(platform_session_id, 0)
     if attempts >= MAX_PENDING_TRANSCRIPT_RECHECKS:
-        return
+        return None
     budgets[platform_session_id] = attempts + 1
-    source = event.source.value if hasattr(event.source, "value") else str(event.source)
     external_id = str(event.session_id or getattr(session, "external_id", "") or "").strip()
     path = derive_transcript_path(
         None,
@@ -227,6 +227,7 @@ def recheck_pending_transcript_path(
         stored_path=stored,
     )
     if not path:
-        return
+        return None
     session_manager.update(platform_session_id, transcript_path=path)
     budgets.pop(platform_session_id, None)
+    return platform_session_id, path, source

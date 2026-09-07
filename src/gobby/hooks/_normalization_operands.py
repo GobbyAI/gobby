@@ -212,7 +212,8 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
             part in {"-e", "--regexp"} or part.startswith("-e") or part.startswith("--regexp=")
             for part in parts[1:]
         )
-        candidate_paths = positional if pattern_from_option else positional[1:]
+        lists_files = cmd == "rg" and "--files" in parts[1:]
+        candidate_paths = positional if pattern_from_option or lists_files else positional[1:]
         return [path for path in candidate_paths if is_path_operand(path)]
 
     if cmd == "git":
