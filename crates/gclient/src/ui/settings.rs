@@ -8,6 +8,7 @@ use crate::ui::widgets::{
     action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_stack_areas,
     panel_contrast_fg, render_action_button, render_panel_shell, ActionButtonSpec,
 };
+use crossterm::event::KeyModifiers;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -19,6 +20,41 @@ pub const SETTINGS_POPUP_WIDTH: u16 = 76;
 pub const SETTINGS_POPUP_HEIGHT: u16 = 22;
 /// Column where a row's current value starts.
 const VALUE_COLUMN: usize = 30;
+
+/// Modifier that sends a right-click to the pane's app instead of the pane
+/// menu (herdr `right_click_passthrough_modifier`); `None` leaves every
+/// right-click to the menu unless the pane's own flag is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PassthroughModifier {
+    #[default]
+    None,
+    Shift,
+    Alt,
+    Ctrl,
+}
+
+impl PassthroughModifier {
+    /// The modifier a right-click must carry, exactly, to pass through.
+    pub fn key_modifiers(self) -> Option<KeyModifiers> {
+        match self {
+            PassthroughModifier::None => Option::None,
+            PassthroughModifier::Shift => Some(KeyModifiers::SHIFT),
+            PassthroughModifier::Alt => Some(KeyModifiers::ALT),
+            PassthroughModifier::Ctrl => Some(KeyModifiers::CONTROL),
+        }
+    }
+
+    /// The prefs-file spelling, which the settings row shows.
+    pub fn label(self) -> &'static str {
+        match self {
+            PassthroughModifier::None => "none",
+            PassthroughModifier::Shift => "shift",
+            PassthroughModifier::Alt => "alt",
+            PassthroughModifier::Ctrl => "ctrl",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -36,6 +72,9 @@ pub struct ClientPrefs {
     pub confirm_close: bool,
     pub hide_tab_bar_when_single_tab: bool,
     pub sidebar_width: u16,
+    /// Held alone, this modifier makes a right-click pass through to the
+    /// pane's app instead of opening the pane menu.
+    pub right_click_passthrough_modifier: PassthroughModifier,
 }
 
 impl Default for ClientPrefs {
@@ -51,6 +90,7 @@ impl Default for ClientPrefs {
             confirm_close: true,
             hide_tab_bar_when_single_tab: false,
             sidebar_width: 26,
+            right_click_passthrough_modifier: PassthroughModifier::None,
         }
     }
 }
@@ -76,10 +116,11 @@ pub enum SettingsRow {
     ConfirmClose,
     HideTabBarWhenSingleTab,
     SidebarWidth,
+    RightClickPassthrough,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 8] = [
+    pub const ALL: [SettingsRow; 9] = [
         SettingsRow::Theme,
         SettingsRow::MouseCapture,
         SettingsRow::PaneBorders,
@@ -88,6 +129,7 @@ impl SettingsRow {
         SettingsRow::ConfirmClose,
         SettingsRow::HideTabBarWhenSingleTab,
         SettingsRow::SidebarWidth,
+        SettingsRow::RightClickPassthrough,
     ];
 }
 
@@ -108,6 +150,7 @@ fn row_label(row: SettingsRow) -> &'static str {
         SettingsRow::ConfirmClose => "confirm close",
         SettingsRow::HideTabBarWhenSingleTab => "hide tab bar with one tab",
         SettingsRow::SidebarWidth => "sidebar width",
+        SettingsRow::RightClickPassthrough => "right-click passthrough",
     }
 }
 
@@ -131,6 +174,9 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
             on_off(prefs.hide_tab_bar_when_single_tab).to_string()
         }
         SettingsRow::SidebarWidth => prefs.sidebar_width.to_string(),
+        SettingsRow::RightClickPassthrough => {
+            prefs.right_click_passthrough_modifier.label().to_string()
+        }
     }
 }
 
@@ -284,5 +330,11 @@ mod tests {
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "off");
         assert_eq!(row_value(SettingsRow::SidebarWidth, &prefs), "30");
         assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "off");
+        assert_eq!(
+            row_value(SettingsRow::RightClickPassthrough, &prefs),
+            "none"
+        );
+        prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
+        assert_eq!(row_value(SettingsRow::RightClickPassthrough, &prefs), "alt");
     }
 }

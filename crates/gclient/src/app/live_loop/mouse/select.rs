@@ -159,7 +159,7 @@ pub fn finish_selection(chrome: &mut Chrome) -> bool {
     done
 }
 
-fn inner_rect(chrome: &Chrome, slot: layout::PaneId) -> Option<Rect> {
+pub(super) fn inner_rect(chrome: &Chrome, slot: layout::PaneId) -> Option<Rect> {
     chrome
         .view
         .pane_infos

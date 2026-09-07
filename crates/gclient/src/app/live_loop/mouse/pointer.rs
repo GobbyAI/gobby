@@ -15,17 +15,22 @@ use crate::ui::sidebar::section_metrics;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::{
-    focus_active_tab, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
+    focus_active_tab, forward, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
     ROSTER_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
 };
 
-/// A button went down on `hit`. Only the left button means anything.
+/// A button went down on `hit`. Outside a pane only the left button means
+/// anything.
 ///
-/// Inside a pane it focuses the pane (herdr `FocusPane`); alt makes that an
-/// observe-only focus. A ctrl+press first asks `links::resolve` for a URL
-/// under the pointer and opens that instead, whichever pane has focus. A
-/// press on the pane that already has focus starts a selection there
-/// (`select::down`), and a slot whose pane has left the roster is stale until
+/// Inside a pane the right button is `right_down`'s. A ctrl+left press first
+/// asks `links::resolve` for a URL under the pointer and opens that instead,
+/// whichever pane has focus. Then a pane whose app tracks the mouse gets the
+/// press (`forward::press`), after being focused when it was not, unless
+/// shift is held (herdr `shift_bypasses_mouse_reporting`) or alt asks for an
+/// observe-only focus of another pane, which never writes. Otherwise a left
+/// press focuses the pane (herdr `FocusPane`), alt making that observe-only,
+/// or starts a selection on the pane that already has focus
+/// (`select::down`). A slot whose pane has left the roster is stale until
 /// the next chrome sync, so it is ignored.
 ///
 /// On the tab bar it activates the tab and focuses its pane (herdr
@@ -58,9 +63,6 @@ pub(super) fn down<W: WorkspaceView>(
     button: MouseButton,
     mouse: &MouseEvent,
 ) -> MouseOutcome {
-    if button != MouseButton::Left {
-        return MouseOutcome::Ignore;
-    }
     let observe_only = mouse.modifiers.contains(KeyModifiers::ALT);
     let sidebar_area = chrome.view.sidebar_rect;
     match hit {
@@ -71,16 +73,32 @@ pub(super) fn down<W: WorkspaceView>(
             if !on_roster(ws, pane) {
                 return MouseOutcome::Ignore;
             }
-            if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+            if button == MouseButton::Right {
+                return right_down(ws, chrome, pane, slot, mouse, (col, row));
+            }
+            if button == MouseButton::Left && mouse.modifiers.contains(KeyModifiers::CONTROL) {
                 if let Some(url) = links::resolve(ws, pane, row, col) {
                     return MouseOutcome::OpenLink(url);
                 }
             }
-            if chrome.focused_pane() == Some(pane) {
+            let focused = chrome.focused_pane() == Some(pane);
+            if !mouse.modifiers.contains(KeyModifiers::SHIFT) && (focused || !observe_only) {
+                let strip = KeyModifiers::empty();
+                if let Some(outcome) =
+                    forward::press(ws, chrome, pane, slot, mouse, strip, (col, row))
+                {
+                    return outcome;
+                }
+            }
+            if button != MouseButton::Left {
+                return MouseOutcome::Ignore;
+            }
+            if focused {
                 return select::down(ws, chrome, pane, slot, col, row, mouse);
             }
             MouseOutcome::Focus { pane, observe_only }
         }
+        _ if button != MouseButton::Left => MouseOutcome::Ignore,
         Hit::Tab(index) => {
             chrome.active_tab = index;
             chrome.tab_scroll_follow_active = true;
@@ -195,14 +213,41 @@ pub(super) fn down<W: WorkspaceView>(
     }
 }
 
+/// The right button went down at pane cell `cell` of `pane`. It passes
+/// through to the pane's app when the configured passthrough modifier is
+/// held, exactly, or the pane's own flag is set and no modifier is held
+/// (herdr `handle_right_click_passthrough`); the modifier is hidden from the
+/// app, and a pane whose app does not track the mouse gets nothing. Any other
+/// right-click is the pane menu's, which lands with its section.
+fn right_down<W: WorkspaceView>(
+    ws: &W,
+    chrome: &mut Chrome,
+    pane: PaneId,
+    slot: layout::PaneId,
+    mouse: &MouseEvent,
+    cell: (u16, u16),
+) -> MouseOutcome {
+    let configured = chrome
+        .prefs
+        .right_click_passthrough_modifier
+        .key_modifiers()
+        .filter(|held| mouse.modifiers == *held);
+    let flagged = mouse.modifiers.is_empty() && ws.pane(pane).right_click_passthrough;
+    let Some(strip) = configured.or_else(|| flagged.then(KeyModifiers::empty)) else {
+        return MouseOutcome::Handled;
+    };
+    forward::press(ws, chrome, pane, slot, mouse, strip, cell).unwrap_or(MouseOutcome::Handled)
+}
+
 /// The pointer moved with a button held. A tab drag that has travelled
 /// `TAB_DRAG_THRESHOLD` columns from its press becomes a move, a roster drag
 /// `ROSTER_DRAG_THRESHOLD` rows; the sidebar edge and section rule follow
 /// the pointer; a scrollbar thumb, sidebar or pane, keeps the row it was
 /// grabbed by under the pointer; a split border follows the pointer along
 /// its split, the first pane taking the share of the split's area the
-/// pointer sits at, clamped to `0.1..=0.9` (herdr `SetSplitRatio`). Every
-/// other gesture waits for its section.
+/// pointer sits at, clamped to `0.1..=0.9` (herdr `SetSplitRatio`); a
+/// selection extends to the pointer; a captured button reports the drag to
+/// the pane holding it (`forward::captured`), which also takes the release.
 pub(super) fn drag<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -281,6 +326,10 @@ pub(super) fn drag<W: WorkspaceView>(
             let slot = *slot;
             select::drag(ws, chrome, slot, mouse)
         }
+        Some(MouseGesture::Forwarding { slot, strip }) => {
+            let (slot, strip) = (*slot, *strip);
+            forward::captured(ws, chrome, slot, strip, mouse)
+        }
         _ => MouseOutcome::Ignore,
     }
 }
@@ -298,6 +347,7 @@ pub(super) fn up<W: WorkspaceView>(
     chrome: &mut Chrome,
     hit: Hit,
     released: Option<MouseGesture>,
+    mouse: &MouseEvent,
 ) -> MouseOutcome {
     match released {
         Some(MouseGesture::TabDrag {
@@ -329,6 +379,9 @@ pub(super) fn up<W: WorkspaceView>(
             MouseOutcome::Handled
         }
         Some(MouseGesture::Select { .. }) => select::up(chrome),
+        Some(MouseGesture::Forwarding { slot, strip }) => {
+            forward::captured(ws, chrome, slot, strip, mouse)
+        }
         Some(
             MouseGesture::TabDrag { .. }
             | MouseGesture::RosterDrag { .. }

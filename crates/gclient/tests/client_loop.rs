@@ -27,6 +27,7 @@ use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutt
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
+use gobby_client::ui::settings::PassthroughModifier;
 use gobby_client::ui::status::ToastKind;
 use gobby_client::ui::{Chrome, WorkspaceView};
 use gobby_client::Workspace;
@@ -186,6 +187,17 @@ fn encoded_alternate_frame(text: &str) -> String {
     };
     frame.modes.alternate_on = true;
     encode_frame(&ServerMessage::Frame(frame))
+}
+
+/// `semantic_frame` from a pane whose app tracks every motion with SGR
+/// reports.
+fn reporting_frame(text: &str) -> ServerMessage {
+    let ServerMessage::Frame(mut frame) = semantic_frame(text) else {
+        unreachable!("semantic_frame builds a frame");
+    };
+    frame.modes.mouse_all = true;
+    frame.modes.mouse_sgr = true;
+    ServerMessage::Frame(frame)
 }
 
 async fn live_workspace_with_scripted_direct(
@@ -3012,6 +3024,224 @@ async fn pane_click_focuses_and_takes_control_unless_alt() {
     assert!(
         workspace.pane(pane).is_observe(),
         "alt+click leaves the pane observed"
+    );
+    mock.shutdown().await;
+}
+
+/// 3.3: a pane whose app tracks the mouse gets SGR reports for its presses
+/// and releases; a press in another such pane focuses it and takes the lease
+/// before the report; a pane left observed by alt+click gets nothing; a
+/// right-click passes through with the configured modifier held, hidden from
+/// the app, or with the pane's own flag, and stays gclient's otherwise; a
+/// shifted press selects instead of reporting.
+#[tokio::test]
+async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let roster = WorkspaceView::roster_terminal_ids(&workspace).to_vec();
+    for terminal_id in &roster {
+        let pane = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("roster pane");
+        let mut source = ScriptedFrameSource::new(Transport::Direct);
+        source.queue(reporting_frame("mouse app"));
+        workspace
+            .replace_frame_source(pane, PaneFrameSource::Scripted(source))
+            .expect("install scripted direct source");
+        workspace
+            .recv_pane_frame(pane)
+            .await
+            .expect("the frame reaches the pane before the loop starts");
+        workspace.pane_mut(pane).right_click_passthrough = true;
+    }
+
+    // Mirror the loop's chrome to learn where each pane's content is drawn.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    for terminal_id in &roster {
+        let pane = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("roster pane");
+        probe.open_pane(pane, terminal_id);
+    }
+    probe.compute_view(&workspace, area);
+    let cells: Vec<(String, (u16, u16))> = probe
+        .view
+        .pane_infos
+        .iter()
+        .map(|info| {
+            let pane = probe.pane_for_slot(info.id).expect("slot pane");
+            let inner = info.inner_rect;
+            (
+                workspace.pane(pane).terminal_id.clone(),
+                (inner.x + 1, inner.y + 1),
+            )
+        })
+        .collect();
+    assert_eq!(cells.len(), 2, "both terminals draw as panes");
+    let cell_of = |terminal_id: &str| {
+        cells
+            .iter()
+            .find(|(id, _)| id == terminal_id)
+            .map(|(_, cell)| *cell)
+            .expect("pane cell")
+    };
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let initial = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("terminal_id")
+            .and_then(Value::as_str)
+            .expect("initial focused terminal")
+            .to_string();
+        let other = if initial == "terminal-a" {
+            "terminal-b".to_string()
+        } else {
+            "terminal-a".to_string()
+        };
+        let mouse = |kind: MouseEventKind, (column, row): (u16, u16), modifiers: KeyModifiers| {
+            send_mouse(&input_tx, kind, column, row, modifiers)
+        };
+        let left_down = MouseEventKind::Down(MouseButton::Left);
+        let left_up = MouseEventKind::Up(MouseButton::Left);
+        let right_down = MouseEventKind::Down(MouseButton::Right);
+        let right_up = MouseEventKind::Up(MouseButton::Right);
+        let inputs = || websocket_requests(&mock, "terminal_input").len();
+
+        // A click in the held pane is reported: press, then release.
+        mouse(left_down, cell_of(&initial), KeyModifiers::NONE).await;
+        mouse(left_up, cell_of(&initial), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+
+        // A press in the other pane focuses it and takes its lease first.
+        mouse(left_down, cell_of(&other), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 3).await;
+        mouse(left_up, cell_of(&other), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
+
+        // alt+click observes the first pane; a click there now reports nothing.
+        mouse(left_down, cell_of(&initial), KeyModifiers::ALT).await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 2).await;
+        settle_live_event().await;
+        mouse(left_down, cell_of(&initial), KeyModifiers::NONE).await;
+        mouse(left_up, cell_of(&initial), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            2,
+            "a report never takes the lease"
+        );
+        assert_eq!(inputs(), 4, "an observed pane gets no report");
+
+        // alt+right-click passes through with the modifier hidden, after the
+        // focus and lease move back; the pane flag passes a plain one through.
+        mouse(right_down, cell_of(&other), KeyModifiers::ALT).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 5).await;
+        mouse(right_up, cell_of(&other), KeyModifiers::ALT).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 6).await;
+        mouse(right_down, cell_of(&other), KeyModifiers::NONE).await;
+        mouse(right_up, cell_of(&other), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 8).await;
+
+        // ctrl is not the configured modifier; shift keeps the press for a
+        // selection.
+        mouse(right_down, cell_of(&other), KeyModifiers::CONTROL).await;
+        let (column, row) = cell_of(&other);
+        mouse(left_down, (column, row), KeyModifiers::SHIFT).await;
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            (column + 3, row),
+            KeyModifiers::SHIFT,
+        )
+        .await;
+        settle_live_event().await;
+        assert_eq!(
+            inputs(),
+            8,
+            "ctrl+right-click and a shifted press are gclient's"
+        );
+        drop(input_tx);
+        (initial, other)
+    };
+
+    let (result, (initial, other)) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let writes = websocket_requests(&mock, "terminal_input");
+    let data: Vec<&str> = writes
+        .iter()
+        .map(|write| {
+            write
+                .get("data")
+                .and_then(Value::as_str)
+                .expect("write data")
+        })
+        .collect();
+    assert_eq!(
+        data,
+        [
+            "\u{1b}[<0;2;2M",
+            "\u{1b}[<0;2;2m",
+            "\u{1b}[<0;2;2M",
+            "\u{1b}[<0;2;2m",
+            "\u{1b}[<2;2;2M",
+            "\u{1b}[<2;2;2m",
+            "\u{1b}[<2;2;2M",
+            "\u{1b}[<2;2;2m",
+        ],
+        "every report is SGR at the pane cell, modifiers stripped"
+    );
+    let targets: Vec<&str> = writes
+        .iter()
+        .map(|write| {
+            write
+                .get("terminal_id")
+                .and_then(Value::as_str)
+                .expect("write target")
+        })
+        .collect();
+    let (initial, other) = (initial.as_str(), other.as_str());
+    assert_eq!(
+        targets,
+        [initial, initial, other, other, other, other, other, other],
+        "reports go to the pane under the pointer"
+    );
+    assert!(
+        chrome.selection.is_some(),
+        "shift+drag selects instead of reporting"
     );
     mock.shutdown().await;
 }

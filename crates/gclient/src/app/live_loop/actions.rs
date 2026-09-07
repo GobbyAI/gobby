@@ -87,6 +87,11 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::Write { pane, bytes } => {
             send_live_write(workspace, pane, &bytes, false).await?;
         }
+        MouseOutcome::FocusWrite { pane, bytes } => {
+            chrome.focus_pane(pane);
+            focus_live_pane(workspace, pane).await?;
+            send_live_write(workspace, pane, &bytes, false).await?;
+        }
         MouseOutcome::Scroll { pane, rows } => {
             set_live_scroll_offset(workspace, pane, rows).await?;
         }

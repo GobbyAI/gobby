@@ -429,8 +429,8 @@ async fn double_and_triple_click_select_token_and_row() {
     assert_eq!(click(&mut chrome, 2), MouseOutcome::Handled);
     assert!(chrome.selection.is_none());
 
-    // A pane that reports the mouse keeps a plain press for forwarding;
-    // shift selects there anyway.
+    // A pane that reports the mouse gets a plain press as an X10 report and
+    // captures the button; shift selects there anyway.
     let modes = PaneModes {
         mouse_all: true,
         ..PaneModes::default()
@@ -451,9 +451,16 @@ async fn double_and_triple_click_select_token_and_row() {
     };
     assert_eq!(
         route_mouse(&ws, &mut chrome, &press(KeyModifiers::NONE)),
-        MouseOutcome::Ignore
+        MouseOutcome::Write {
+            pane: reporting,
+            bytes: b"\x1b[M !!".to_vec()
+        }
     );
-    assert_eq!(chrome.gesture, None);
+    assert!(
+        matches!(chrome.gesture, Some(MouseGesture::Forwarding { .. })),
+        "{:?}",
+        chrome.gesture
+    );
     assert_eq!(
         route_mouse(&ws, &mut chrome, &press(KeyModifiers::SHIFT)),
         MouseOutcome::Handled

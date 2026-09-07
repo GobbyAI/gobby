@@ -4,7 +4,7 @@
 //! key is optional and unknown keys are rejected by name, so a typo never
 //! silently falls back to a default.
 
-use crate::ui::settings::ClientPrefs;
+use crate::ui::settings::{ClientPrefs, PassthroughModifier};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -43,6 +43,7 @@ struct UiPrefs {
     confirm_close: bool,
     hide_tab_bar_when_single_tab: bool,
     sidebar_width: u16,
+    right_click_passthrough_modifier: PassthroughModifier,
 }
 
 impl Default for UiPrefs {
@@ -62,6 +63,7 @@ impl From<&ClientPrefs> for UiPrefs {
             confirm_close: prefs.confirm_close,
             hide_tab_bar_when_single_tab: prefs.hide_tab_bar_when_single_tab,
             sidebar_width: prefs.sidebar_width,
+            right_click_passthrough_modifier: prefs.right_click_passthrough_modifier,
         }
     }
 }
@@ -97,6 +99,7 @@ impl From<PrefsFile> for ClientPrefs {
             confirm_close: ui.confirm_close,
             hide_tab_bar_when_single_tab: ui.hide_tab_bar_when_single_tab,
             sidebar_width: ui.sidebar_width,
+            right_click_passthrough_modifier: ui.right_click_passthrough_modifier,
             ..Self::default()
         }
     }

@@ -4,7 +4,7 @@ use gobby_client::persist::{
     load_snapshot, save_snapshot, LayoutNode, SplitAxis, WorkspaceSnapshot,
 };
 use gobby_client::prefs::{load_prefs, prefs_path, save_prefs, PrefsError};
-use gobby_client::ui::settings::ClientPrefs;
+use gobby_client::ui::settings::{ClientPrefs, PassthroughModifier};
 use gobby_client::Workspace;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -161,6 +161,7 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         mouse_capture: false,
         pane_gaps: false,
         sidebar_width: 32,
+        right_click_passthrough_modifier: PassthroughModifier::Alt,
         ..ClientPrefs::default()
     };
     let path = save_prefs(&home, &prefs).expect("save");
@@ -169,6 +170,10 @@ fn prefs_round_trip_and_reject_unknown_keys() {
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.starts_with("[ui]\n"), "{text}");
     assert!(text.contains("mouse_capture = false\n"), "{text}");
+    assert!(
+        text.contains("right_click_passthrough_modifier = \"alt\"\n"),
+        "{text}"
+    );
     assert!(
         text.contains("[keymap]\npath = \"/tmp/keys.toml\"\n"),
         "{text}"

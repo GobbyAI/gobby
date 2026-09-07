@@ -7,15 +7,16 @@
 //! `Chrome::gesture`: a press may start one, drags feed it, and a release
 //! always ends it, handing it to `pointer::up` to finish.
 
-use crossterm::event::{MouseEvent, MouseEventKind};
+use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
 use crate::ui::chrome::Tab;
-use crate::ui::hit::{hit_test, SidebarSection};
+use crate::ui::hit::{hit_test, Hit, SidebarSection};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
 
+mod forward;
 mod links;
 mod pointer;
 mod select;
@@ -60,8 +61,13 @@ pub enum MouseGesture {
     },
     /// A selection is being extended inside a pane.
     Select { slot: layout::PaneId },
-    /// A button is held inside a pane that reports mouse; motion is forwarded.
-    Forwarding { slot: layout::PaneId },
+    /// A button is held inside a pane whose app tracks the mouse: drags and
+    /// the release go to that pane wherever the pointer travels, with the
+    /// passthrough modifier `strip` hidden from the app.
+    Forwarding {
+        slot: layout::PaneId,
+        strip: KeyModifiers,
+    },
 }
 
 /// Where a mouse-spawned terminal lands.
@@ -104,6 +110,10 @@ pub enum MouseOutcome {
     /// A ctrl+click landed on a link: the loop hands the URL to
     /// `Chrome::link_opener`.
     OpenLink(String),
+    /// A press in a pane whose app tracks the mouse while another pane has
+    /// focus: focus it as `Focus` would (control follows) and forward `bytes`
+    /// once the pane is writable.
+    FocusWrite { pane: PaneId, bytes: Vec<u8> },
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -127,8 +137,10 @@ pub const MOUSE_SCROLL_LINES: usize = 3;
 /// mode owns the screen; what the release itself does belongs to the
 /// gesture's own surface (`pointer::up`). Modal modes own the whole screen
 /// while they are up, and copy mode leaves the mouse to the selection router.
-/// Motion with no button down only records what the pointer is over
-/// (`Chrome::hover`) for hover styling and stays unclaimed.
+/// Motion with no button down records what the pointer is over
+/// (`Chrome::hover`) for hover styling; over a pane whose app tracks all
+/// motion it is also reported there, unless shift is held, and otherwise
+/// stays unclaimed.
 pub fn route_mouse<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -154,14 +166,27 @@ pub fn route_mouse<W: WorkspaceView>(
     match mouse.kind {
         MouseEventKind::Down(button) => pointer::down(ws, chrome, hit, button, mouse),
         MouseEventKind::Drag(_) => pointer::drag(ws, chrome, mouse),
-        MouseEventKind::Up(_) => pointer::up(ws, chrome, hit, released),
-        MouseEventKind::ScrollUp => wheel::wheel(ws, chrome, hit, mouse.row, true),
-        MouseEventKind::ScrollDown => wheel::wheel(ws, chrome, hit, mouse.row, false),
+        MouseEventKind::Up(_) => pointer::up(ws, chrome, hit, released, mouse),
+        MouseEventKind::ScrollUp
+        | MouseEventKind::ScrollDown
+        | MouseEventKind::ScrollLeft
+        | MouseEventKind::ScrollRight => wheel::wheel(ws, chrome, hit, mouse),
         MouseEventKind::Moved => {
+            let outcome = match hit {
+                Hit::Pane { slot, col, row } if !mouse.modifiers.contains(KeyModifiers::SHIFT) => {
+                    chrome
+                        .pane_for_slot(slot)
+                        .filter(|pane| on_roster(ws, *pane))
+                        .and_then(|pane| {
+                            forward::report(ws, pane, mouse, KeyModifiers::empty(), (col, row))
+                        })
+                        .unwrap_or(MouseOutcome::Ignore)
+                }
+                _ => MouseOutcome::Ignore,
+            };
             chrome.hover = Some(hit);
-            MouseOutcome::Ignore
+            outcome
         }
-        _ => MouseOutcome::Ignore,
     }
 }
 
@@ -189,8 +214,27 @@ mod tests {
     use super::*;
     use crate::app::Workspace;
     use crate::ui::hit::Hit;
+    use crate::ui::settings::PassthroughModifier;
     use crossterm::event::{KeyModifiers, MouseButton};
+    use gobby_terminal::protocol::{FrameData, PaneModes};
     use ratatui::layout::Rect;
+
+    /// `pane`'s app tracks every motion and asked for SGR reports.
+    fn track_mouse(ws: &mut Workspace, pane: PaneId) {
+        ws.pane_mut(pane).latest_frame = Some(FrameData {
+            cells: Vec::new(),
+            width: 0,
+            height: 0,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+            modes: PaneModes {
+                mouse_all: true,
+                mouse_sgr: true,
+                ..PaneModes::default()
+            },
+        });
+    }
 
     /// Two panes split in one tab, drawn once so the hit map is populated.
     /// Returns the workspace, the chrome, the focused pane and a cell inside
@@ -360,6 +404,189 @@ mod tests {
         assert_eq!(
             chrome.gesture, None,
             "a release under a modal still ends it"
+        );
+    }
+
+    #[test]
+    fn route_mouse_forwards_reports_and_captures_the_button() {
+        let (mut ws, mut chrome, (fcol, frow), other, (col, row)) = split_chrome();
+        let focused = chrome.focused_pane().expect("focused pane");
+        track_mouse(&mut ws, focused);
+        track_mouse(&mut ws, other);
+        let write = |pane, bytes: &[u8]| MouseOutcome::Write {
+            pane,
+            bytes: bytes.to_vec(),
+        };
+        let at = |kind, column, row, modifiers| event(kind, column, row, modifiers);
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &down(fcol, frow, KeyModifiers::NONE)),
+            write(focused, b"\x1b[<0;2;2M"),
+            "a press in a tracking pane is reported at its pane cell"
+        );
+        assert!(
+            matches!(chrome.gesture, Some(MouseGesture::Forwarding { .. })),
+            "the press captures the button: {:?}",
+            chrome.gesture
+        );
+        assert_eq!(
+            route_mouse(
+                &ws,
+                &mut chrome,
+                &at(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    0,
+                    0,
+                    KeyModifiers::NONE
+                )
+            ),
+            write(focused, b"\x1b[<32;1;1M"),
+            "a drag goes to the captured pane, clamped to its content"
+        );
+        assert_eq!(
+            route_mouse(
+                &ws,
+                &mut chrome,
+                &at(
+                    MouseEventKind::Up(MouseButton::Left),
+                    fcol,
+                    frow,
+                    KeyModifiers::NONE
+                )
+            ),
+            write(focused, b"\x1b[<0;2;2m")
+        );
+        assert_eq!(chrome.gesture, None, "the release frees the button");
+        assert_eq!(
+            route_mouse(
+                &ws,
+                &mut chrome,
+                &at(MouseEventKind::Moved, fcol, frow, KeyModifiers::NONE)
+            ),
+            write(focused, b"\x1b[<35;2;2M"),
+            "any-motion tracking gets the pointer with no button down"
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &down(fcol, frow, KeyModifiers::SHIFT)),
+            MouseOutcome::Handled,
+            "shift bypasses the app and selects instead"
+        );
+        assert!(matches!(chrome.gesture, Some(MouseGesture::Select { .. })));
+        route_mouse(
+            &ws,
+            &mut chrome,
+            &at(
+                MouseEventKind::Up(MouseButton::Left),
+                fcol,
+                frow,
+                KeyModifiers::SHIFT,
+            ),
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::NONE)),
+            MouseOutcome::FocusWrite {
+                pane: other,
+                bytes: b"\x1b[<0;2;2M".to_vec()
+            },
+            "a press in another tracking pane focuses it before the report"
+        );
+        route_mouse(
+            &ws,
+            &mut chrome,
+            &at(
+                MouseEventKind::Up(MouseButton::Left),
+                col,
+                row,
+                KeyModifiers::NONE,
+            ),
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::ALT)),
+            MouseOutcome::Focus {
+                pane: other,
+                observe_only: true
+            },
+            "alt+click observes without writing"
+        );
+        assert_eq!(
+            route_mouse(
+                &ws,
+                &mut chrome,
+                &at(MouseEventKind::ScrollUp, fcol, frow, KeyModifiers::NONE)
+            ),
+            write(focused, b"\x1b[<64;2;2M")
+        );
+        assert_eq!(
+            route_mouse(
+                &ws,
+                &mut chrome,
+                &at(MouseEventKind::ScrollLeft, fcol, frow, KeyModifiers::NONE)
+            ),
+            write(focused, b"\x1b[<66;2;2M"),
+            "a horizontal notch reaches a tracking pane"
+        );
+    }
+
+    #[test]
+    fn route_mouse_right_click_passthrough() {
+        let (mut ws, mut chrome, (col, row), _, _) = split_chrome();
+        let focused = chrome.focused_pane().expect("focused pane");
+        track_mouse(&mut ws, focused);
+        let right = |kind, modifiers| event(kind, col, row, modifiers);
+        let write = |bytes: &[u8]| MouseOutcome::Write {
+            pane: focused,
+            bytes: bytes.to_vec(),
+        };
+        let press = MouseEventKind::Down(MouseButton::Right);
+        let release = MouseEventKind::Up(MouseButton::Right);
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::NONE)),
+            MouseOutcome::Handled,
+            "a plain right-click is the pane menu's"
+        );
+        assert_eq!(chrome.gesture, None);
+        ws.pane_mut(focused).right_click_passthrough = true;
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::NONE)),
+            write(b"\x1b[<2;2;2M"),
+            "the pane flag passes a plain right-click through"
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(release, KeyModifiers::NONE)),
+            write(b"\x1b[<2;2;2m")
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::ALT)),
+            MouseOutcome::Handled,
+            "the flag wants no modifier held"
+        );
+        ws.pane_mut(focused).right_click_passthrough = false;
+        chrome.prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::ALT)),
+            write(b"\x1b[<2;2;2M"),
+            "the configured modifier is hidden from the app"
+        );
+        assert_eq!(
+            route_mouse(
+                &ws,
+                &mut chrome,
+                &right(MouseEventKind::Drag(MouseButton::Right), KeyModifiers::ALT)
+            ),
+            write(b"\x1b[<34;2;2M")
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(release, KeyModifiers::ALT)),
+            write(b"\x1b[<2;2;2m")
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::CONTROL)),
+            MouseOutcome::Handled,
+            "another modifier is not the configured one"
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::NONE)),
+            MouseOutcome::Handled,
+            "with a modifier configured a plain right-click stays the menu's"
         );
     }
 }

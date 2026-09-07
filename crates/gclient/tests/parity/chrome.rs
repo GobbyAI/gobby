@@ -1321,6 +1321,7 @@ fn rendered_settings_hits_match_drawn_rows() {
         "confirm close",
         "hide tab bar with one tab",
         "sidebar width",
+        "right-click passthrough",
     ];
     for (index, rect) in &view.settings_row_hit_areas {
         let text = hit_text(&terminal, *rect);

@@ -64,6 +64,9 @@ pub struct Pane {
     pub bracketed_paste: bool,
     pub search_buffer: String,
     pub copy_search: bool,
+    /// Every right-click in this pane goes to its app instead of the pane
+    /// menu (herdr's per-pane passthrough, toggled from that menu).
+    pub right_click_passthrough: bool,
     pub(super) frame_source: Option<PaneFrameSource>,
     pub(super) fallback_in_flight: bool,
     pub(super) direct_available: bool,
@@ -110,6 +113,7 @@ impl Pane {
             bracketed_paste: false,
             search_buffer: String::new(),
             copy_search: false,
+            right_click_passthrough: false,
             frame_source: Some(PaneFrameSource::Scripted(frame_source)),
             fallback_in_flight: false,
             direct_available: false,

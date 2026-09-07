@@ -357,8 +357,8 @@ async fn ctrl_click_resolves_osc8_and_bare_urls() {
         "without ctrl the URL is ordinary text"
     );
 
-    // Inside a pane that reports the mouse a plain press is left alone, but
-    // ctrl still resolves the link first.
+    // Inside a pane that reports the mouse a plain press is reported to the
+    // app (X10 here), but ctrl still resolves the link first.
     let vim_row = "open https://r.example/q now";
     let vim = pane_showing(
         &mut ws,
@@ -377,10 +377,21 @@ async fn ctrl_click_resolves_osc8_and_bare_urls() {
     let vim_inner = inner_rect(&chrome, vim_slot);
     assert_eq!(chrome.focused_pane(), Some(vim));
     let url_col = col_of(vim_row, "r.example");
+    let report = vec![
+        0x1b,
+        b'[',
+        b'M',
+        b' ',
+        b'!' + u8::try_from(url_col).expect("column fits an x10 report"),
+        b'!',
+    ];
     assert_eq!(
         click(&ws, &mut chrome, vim_inner, url_col, 0, KeyModifiers::NONE),
-        MouseOutcome::Ignore,
-        "a reporting pane keeps a plain press"
+        MouseOutcome::Write {
+            pane: vim,
+            bytes: report
+        },
+        "a reporting pane gets a plain press as a report"
     );
     assert_eq!(
         click(&ws, &mut chrome, vim_inner, url_col, 0, ctrl),

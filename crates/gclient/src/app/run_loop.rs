@@ -180,6 +180,15 @@ fn apply_scripted_mouse_outcome(
         MouseOutcome::Write { pane, bytes } => workspace
             .send_input(pane, &bytes)
             .map_err(|error| FrameError::Other(error.to_string()))?,
+        MouseOutcome::FocusWrite { pane, bytes } => {
+            chrome.focus_pane(pane);
+            workspace
+                .focus_pane(pane)
+                .map_err(|error| FrameError::Other(error.to_string()))?;
+            workspace
+                .send_input(pane, &bytes)
+                .map_err(|error| FrameError::Other(error.to_string()))?;
+        }
         MouseOutcome::Scroll { pane, rows } => workspace.set_scroll_offset(pane, rows)?,
         MouseOutcome::Attention {
             pane: Some(pane), ..

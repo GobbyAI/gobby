@@ -820,6 +820,10 @@ impl<D: Daemon> Workspace<D> {
         &self.panes[&id]
     }
 
+    pub fn pane_mut(&mut self, id: PaneId) -> &mut Pane {
+        self.panes.get_mut(&id).expect("pane exists")
+    }
+
     pub fn pane_for_terminal(&self, terminal_id: &str) -> Option<PaneId> {
         self.order
             .iter()

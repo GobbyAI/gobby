@@ -1,15 +1,19 @@
 //! Wheel notches: what a scroll over each chrome region means.
 
-use gobby_terminal::protocol::MouseTracking;
+use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
 use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::sidebar::section_metrics;
 use crate::ui::{Chrome, WorkspaceView};
 
-use super::{focus_active_tab, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
+use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
 
-/// A wheel notch over `hit` at screen `row`; `up` is a notch away from the
-/// user.
+/// A wheel notch over `hit`.
+///
+/// Inside a pane whose app tracks the mouse the notch is reported to the app,
+/// any of the four directions, unless shift is held (herdr
+/// `forward_pane_reported_wheel`). Everything below is for vertical notches;
+/// a horizontal one over anything else is left alone.
 ///
 /// Over the tab bar a notch switches tabs, up = previous and down = next,
 /// wrapping at either end (herdr's tab-bar wheel), and focuses the new tab's
@@ -19,23 +23,40 @@ use super::{focus_active_tab, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
 /// the section rule the pointer is on. A list that fits stays put, and the
 /// collapsed rail has nothing to scroll.
 ///
-/// Over a pane, its border or its scrollbar the notch goes by the pane's
-/// modes (herdr `forward_pane_wheel`). A pane that reports mouse waits for
-/// the forwarding section; an alternate-screen pane gets `MOUSE_SCROLL_LINES`
-/// arrow keys, up or down (herdr alternate-scroll), delivered where a key
-/// would be; any other pane scrolls its scrollback `MOUSE_SCROLL_LINES` rows,
-/// up into history and down toward the live edge, clamped to the depth the
-/// daemon reported, and a notch that would not move it is consumed. Focus
-/// never moves: in gclient focus takes the lease, and a scroll is not a
-/// claim on the pane. A slot whose pane has left the roster is stale until
-/// the next chrome sync and is left alone.
+/// Over a pane that was not reported to, its border or its scrollbar, the
+/// notch goes by the pane's modes (herdr `forward_pane_wheel`): an
+/// alternate-screen pane gets `MOUSE_SCROLL_LINES` arrow keys, up or down
+/// (herdr alternate-scroll), delivered where a key would be; any other pane
+/// scrolls its scrollback `MOUSE_SCROLL_LINES` rows, up into history and down
+/// toward the live edge, clamped to the depth the daemon reported, and a
+/// notch that would not move it is consumed. Focus never moves: in gclient
+/// focus takes the lease, and a scroll is not a claim on the pane. A slot
+/// whose pane has left the roster is stale until the next chrome sync and is
+/// left alone.
 pub(super) fn wheel<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
     hit: Hit,
-    row: u16,
-    up: bool,
+    mouse: &MouseEvent,
 ) -> MouseOutcome {
+    if let Hit::Pane { slot, col, row } = hit {
+        if !mouse.modifiers.contains(KeyModifiers::SHIFT) {
+            let pane = chrome
+                .pane_for_slot(slot)
+                .filter(|pane| on_roster(ws, *pane));
+            if let Some(outcome) = pane.and_then(|pane| {
+                forward::report(ws, pane, mouse, KeyModifiers::empty(), (col, row))
+            }) {
+                return outcome;
+            }
+        }
+    }
+    let up = match mouse.kind {
+        MouseEventKind::ScrollUp => true,
+        MouseEventKind::ScrollDown => false,
+        _ => return MouseOutcome::Ignore,
+    };
+    let row = mouse.row;
     match hit {
         Hit::Tab(_) | Hit::TabScrollLeft | Hit::TabScrollRight | Hit::NewTab | Hit::TabBarEmpty => {
             let count = chrome.tabs.len();
@@ -89,9 +110,6 @@ pub(super) fn wheel<W: WorkspaceView>(
             };
             let state = ws.pane(pane);
             let modes = state.latest_frame().map(|frame| &frame.modes);
-            if modes.is_some_and(|modes| modes.mouse_tracking() != MouseTracking::Off) {
-                return MouseOutcome::Ignore;
-            }
             if modes.is_some_and(|modes| modes.alternate_on) {
                 let key: &[u8] = if up { b"\x1b[A" } else { b"\x1b[B" };
                 return MouseOutcome::Write {
