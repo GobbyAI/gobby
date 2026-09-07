@@ -582,3 +582,50 @@ async fn an_oversized_tmux_frame_renders_from_its_origin() {
         );
     }
 }
+
+#[tokio::test]
+async fn frame_modes_follow_the_latest_frame() {
+    use gobby_terminal::protocol::MouseTracking;
+
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-modes", "native", "epoch-modes")
+        .expect("open pane");
+    assert!(ws.pane(pane).latest_frame().is_none());
+    let ServerMessage::Frame(mut tracking) = semantic_frame("M") else {
+        panic!("expected semantic frame");
+    };
+    tracking.modes = PaneModes {
+        mouse_all: true,
+        mouse_sgr: true,
+        alternate_on: true,
+        ..Default::default()
+    };
+    let mut without_modes = serde_json::to_value(&tracking).expect("serialize frame");
+    without_modes
+        .as_object_mut()
+        .expect("frame object")
+        .remove("modes");
+    let without_modes: FrameData =
+        serde_json::from_value(without_modes).expect("decode missing modes");
+    assert_eq!(without_modes.modes.mouse_tracking(), MouseTracking::Off);
+
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(tracking.clone()));
+    source.queue(ServerMessage::Frame(without_modes.clone()));
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("install source");
+    ws.recv_pane_frame(pane).await.expect("tracking frame");
+    let latest = ws.pane(pane).latest_frame().expect("latest tracking frame");
+    assert_eq!(latest, &tracking);
+    assert_eq!(latest.modes.mouse_tracking(), MouseTracking::AnyMotion);
+    assert!(latest.modes.mouse_sgr && latest.modes.alternate_on);
+
+    ws.recv_pane_frame(pane).await.expect("frame without modes");
+    let latest = ws
+        .pane(pane)
+        .latest_frame()
+        .expect("latest frame without modes");
+    assert_eq!(latest, &without_modes);
+    assert_eq!(latest.modes.mouse_tracking(), MouseTracking::Off);
+}

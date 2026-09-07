@@ -183,11 +183,40 @@ impl PaneRuntime {
                 shape: cursor.shape,
             });
         let hyperlinks = self.terminal.visible_hyperlinks(area);
-        crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
+        let mut frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
             &buffer,
             protocol_cursor,
             &hyperlinks,
-        )
+        );
+        if let Ok(core) = self.terminal.ghostty.core.lock() {
+            const MODE_MOUSE_X10: u16 = 9;
+            const MODE_MOUSE_PRESS_RELEASE: u16 = 1000;
+            const MODE_MOUSE_BUTTON_MOTION: u16 = 1002;
+            const MODE_MOUSE_ANY_MOTION: u16 = 1003;
+            frame.modes = crate::protocol::PaneModes {
+                mouse_standard: core
+                    .terminal
+                    .mode_get(MODE_MOUSE_PRESS_RELEASE)
+                    .unwrap_or(false),
+                mouse_button: core
+                    .terminal
+                    .mode_get(MODE_MOUSE_BUTTON_MOTION)
+                    .unwrap_or(false),
+                mouse_all: core
+                    .terminal
+                    .mode_get(MODE_MOUSE_ANY_MOTION)
+                    .unwrap_or(false),
+                mouse_any: core.terminal.mode_get(MODE_MOUSE_X10).unwrap_or(false),
+                mouse_sgr: core
+                    .terminal
+                    .mode_get(crate::ghostty::MODE_MOUSE_SGR)
+                    .unwrap_or(false),
+                alternate_on: core.terminal.active_screen().ok()
+                    == Some(crate::ghostty::ActiveScreen::Alternate),
+                ..Default::default()
+            };
+        }
+        frame
     }
 
     pub fn dirty_patch(&self) -> super::TerminalDirtyPatchOutcome {
@@ -373,5 +402,77 @@ impl PaneRuntime {
 
     pub fn render_notify(&self) -> Arc<Notify> {
         self.render_notify.clone()
+    }
+}
+
+#[cfg(test)]
+mod frame_modes_tests {
+    use super::PaneRuntime;
+    use crate::protocol::{MouseTracking, PaneModes};
+
+    #[test]
+    fn frame_data_reports_mouse_modes() {
+        let (pane, _rx) = PaneRuntime::test_with_channel(4, 2);
+        assert_eq!(pane.frame_data(4, 2).modes, PaneModes::default());
+        let write = |bytes: &[u8]| {
+            pane.terminal
+                .ghostty
+                .core
+                .lock()
+                .unwrap()
+                .terminal
+                .write(bytes);
+        };
+        write(b"\x1b[?1003h\x1b[?1006h\x1b[?1049h");
+        let modes = pane.frame_data(4, 2).modes;
+        assert_eq!(modes.mouse_tracking(), MouseTracking::AnyMotion);
+        assert_eq!(
+            modes,
+            PaneModes {
+                mouse_all: true,
+                mouse_sgr: true,
+                alternate_on: true,
+                ..Default::default()
+            }
+        );
+
+        write(b"\x1b[?1003l");
+        let modes = pane.frame_data(4, 2).modes;
+        assert_eq!(modes.mouse_tracking(), MouseTracking::Off);
+        assert!(modes.mouse_sgr && modes.alternate_on);
+        write(b"\x1b[?1006l\x1b[?1049l");
+        assert_eq!(pane.frame_data(4, 2).modes, PaneModes::default());
+
+        for (enable, disable, expected) in [
+            (
+                &b"\x1b[?9h"[..],
+                &b"\x1b[?9l"[..],
+                PaneModes {
+                    mouse_any: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                &b"\x1b[?1000h"[..],
+                &b"\x1b[?1000l"[..],
+                PaneModes {
+                    mouse_standard: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                &b"\x1b[?1002h"[..],
+                &b"\x1b[?1002l"[..],
+                PaneModes {
+                    mouse_button: true,
+                    ..Default::default()
+                },
+            ),
+        ] {
+            write(enable);
+            assert_eq!(pane.frame_data(4, 2).modes, expected);
+            write(disable);
+            assert_eq!(pane.frame_data(4, 2).modes, PaneModes::default());
+        }
     }
 }

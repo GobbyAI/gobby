@@ -348,3 +348,61 @@ impl std::io::Read for Chunked<'_> {
         Ok(n)
     }
 }
+
+#[test]
+fn frame_modes_expose_mouse_tracking() {
+    use gobby_terminal::protocol::{MouseTracking, PaneModes};
+
+    let expected = [
+        MouseTracking::Off,
+        MouseTracking::X10,
+        MouseTracking::Normal,
+        MouseTracking::Normal,
+        MouseTracking::ButtonMotion,
+        MouseTracking::ButtonMotion,
+        MouseTracking::ButtonMotion,
+        MouseTracking::ButtonMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+        MouseTracking::AnyMotion,
+    ];
+    for (flags, expected) in expected.into_iter().enumerate() {
+        for encoding_enabled in [false, true] {
+            let modes = PaneModes {
+                mouse_any: flags & 1 != 0,
+                mouse_standard: flags & 2 != 0,
+                mouse_button: flags & 4 != 0,
+                mouse_all: flags & 8 != 0,
+                mouse_sgr: encoding_enabled,
+                mouse_utf8: encoding_enabled,
+                alternate_on: encoding_enabled,
+                ..Default::default()
+            };
+            assert_eq!(modes.mouse_tracking(), expected, "flags {flags:04b}");
+        }
+    }
+
+    let buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
+    let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[]);
+    frame.modes = PaneModes {
+        mouse_all: true,
+        mouse_sgr: true,
+        alternate_on: true,
+        ..Default::default()
+    };
+    let message = ServerMessage::Frame(frame);
+    let bytes = write_bin("frame_mouse_modes.bin", &message);
+    let decoded: ServerMessage =
+        gobby_terminal::protocol::read_message(&mut Chunked(&bytes, 0, 3), MAX_FRAME_SIZE).unwrap();
+    assert_eq!(decoded, message);
+    let ServerMessage::Frame(frame) = decoded else {
+        panic!("expected frame")
+    };
+    assert_eq!(frame.modes.mouse_tracking(), MouseTracking::AnyMotion);
+    assert!(frame.modes.mouse_sgr && frame.modes.alternate_on);
+}
