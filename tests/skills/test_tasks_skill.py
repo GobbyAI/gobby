@@ -122,8 +122,12 @@ def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> 
     assert "Structured `end_agent_run(...)`" in content
     assert "cumulative history, previous handoffs, raw logs, completed ledgers" in content
     assert "artificial shorthand" in content
-    assert "Do not create a checkpoint file by default" in content
-    assert "only when the user explicitly requests one" in content
+    assert "create or update a Markdown file" in content
+    assert "include its path in the handoff's `references`" in content
+    assert "Reuse an existing relevant log" in content
+    assert "do not paste it into the handoff or" in content
+    assert "try to compress it there" in content
+    assert "Progress logs are optional" in content
     assert "`set_handoff` remains uncapped" in content
 
 

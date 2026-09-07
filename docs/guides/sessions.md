@@ -265,6 +265,9 @@ the existing model-aware context-pressure warnings also request the skill.
 Completed skill loading suppresses further requests until the next context reset.
 Handoffs describe current state and concrete next actions; reference durable
 evidence instead of copying cumulative history or earlier handoffs.
+When detailed progress needs to be retained, keep an optional Markdown progress
+log and include its path in the handoff's `references`; keep the log's contents
+out of the handoff.
 
 Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or

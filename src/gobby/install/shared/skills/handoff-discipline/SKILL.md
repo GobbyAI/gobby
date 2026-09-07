@@ -20,8 +20,12 @@ Include decisions, blockers, commands, diagnostics, paths, impact, and reference
 only when they help the receiver continue.
 
 Do not paste cumulative history, previous handoffs, raw logs, completed ledgers,
-or artificial shorthand. Do not create a checkpoint file by default; checkpoint
-files remain available only when the user explicitly requests one.
+or artificial shorthand.
+
+When a detailed progress log is useful, create or update a Markdown file and
+include its path in the handoff's `references`. Reuse an existing relevant log
+when available. Keep the detail in that file; do not paste it into the handoff or
+try to compress it there. Progress logs are optional, not a required handoff artifact.
 
 Use references to existing plans and evidence for cross-session history. Carry
 forward only the still-active constraints and unresolved work needed to continue.
