@@ -1068,6 +1068,12 @@ and the existing dialogs.
   workspace menu, settings-overlay clicks) is mapped or disposed by name in the
   Constraints table; the tab bar is the landing surface (2.2), sidebar
   scrollbars (1.3, 2.3) and settings-row clicks (1.3, 4.2) are added.
+- 2026-09-07 (sidebar rework): sections 4.2, 4.3, 4.4, 5.1 and 5.2 moved to
+  `.gobby/plans/gclient-workspace-sidebar.md` as 4.1 (modal routers), 4.2 (keymap
+  overrides), 2.3 (geometry propagation and render pin), 5.1 (context menu
+  state and dispatch) and 5.2 (context menu rendering); the row menus for
+  project, worktree and agent rows are its 5.3. Their bodies are carried
+  verbatim with dependencies rebased on that plan; they are not expanded here.
 
 ## Task Mapping
 `kind: framing`

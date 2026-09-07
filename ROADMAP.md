@@ -183,10 +183,14 @@ its only open deliverable: the physical smoke per
 
 The client epic has landed (`.gobby/plans/herdr-client-completion.md`).
 Follow-on planning epics are #21357 (D1: native runtime completion — daemon/host
-hardening and the native-default flip) and #20202 (D2: hub-wide roster, attach
-routing, and capability tokens for remote attach). Both are tail work blocked
-on this epic's closing leaf 5.1 (#21355); #20202 additionally waits on the
-two-machine smoke #19600.
+hardening and the native-default flip), #20202 (D2: hub-wide roster, attach
+routing, and capability tokens for remote attach) and #21908 (D4: worktree
+groups and workspace lifecycle in the client sidebar, planned in
+`.gobby/plans/gclient-workspace-sidebar.md` as the projects/agents sidebar
+rework with per-project tabs, context menus and viewer-precedence sizing;
+#20202 later feeds its machine filter). #21357 and #20202 are tail work
+blocked on this epic's closing leaf 5.1 (#21355); #20202 additionally waits on
+the two-machine smoke #19600.
 
 ### Stage 1 — the gdaemon front door owns the network boundary (#21543)
 
