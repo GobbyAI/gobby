@@ -25,6 +25,7 @@ EXPECTED_HOOK_EVENTS: Final[tuple[str, ...]] = (
     "UserPromptSubmit",
     "SubagentStop",
     "Stop",
+    "Interrupt",
 )
 EXPECTED_HOOK_EVENT_SET: Final[set[str]] = set(EXPECTED_HOOK_EVENTS)
 HOOKS_WITH_MATCHERS: Final[set[str]] = {"PreToolUse", "PermissionRequest", "PostToolUse"}
@@ -40,6 +41,7 @@ EVENT_KEY_LABELS: Final[dict[str, str]] = {
     "UserPromptSubmit": "user_prompt_submit",
     "SubagentStop": "subagent_stop",
     "Stop": "stop",
+    "Interrupt": "interrupt",
 }
 
 
@@ -58,6 +60,7 @@ def _make_hooks_template(events: tuple[str, ...] = EXPECTED_HOOK_EVENTS) -> dict
         }
         if event == "SessionEnd":
             handler["command"] = f"{command} --enqueue-only"
+        if event in {"Interrupt", "SessionEnd"}:
             handler["timeout"] = 3
         group: dict[str, Any] = {"hooks": [handler]}
         if event in HOOKS_WITH_MATCHERS:
@@ -775,6 +778,7 @@ class TestInstallCodexProjectHooks:
         hooks_config = json.loads(project_hooks_path.read_text())
         assert set(hooks_config["hooks"].keys()) == EXPECTED_HOOK_EVENT_SET
         assert hooks_config["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 150
+        assert hooks_config["hooks"]["Interrupt"][0]["hooks"][0]["timeout"] == 3
         session_end = hooks_config["hooks"]["SessionEnd"][0]["hooks"][0]
         assert session_end["timeout"] == 3
         assert "--enqueue-only" in session_end["command"]

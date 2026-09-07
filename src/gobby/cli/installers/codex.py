@@ -59,6 +59,7 @@ CODEX_HOOK_EVENT_KEY_LABELS: dict[str, str] = {
     "UserPromptSubmit": "user_prompt_submit",
     "SubagentStop": "subagent_stop",
     "Stop": "stop",
+    "Interrupt": "interrupt",
     "SessionEnd": "session_end",
 }
 
@@ -439,7 +440,7 @@ def _install_hooks_file(
     set_gobby_hook_timeouts(
         gobby_hooks_config,
         timeout=hook_timeout_seconds,
-        hook_overrides={"SessionEnd": 3},
+        hook_overrides={"Interrupt": 3, "SessionEnd": 3},
     )
 
     existing: dict[str, Any] = {}

@@ -119,7 +119,7 @@
           {
             "type": "command",
             "command": "ghook --gobby-owned --cli=codex --type=Interrupt",
-            "timeout": 120
+            "timeout": 3
           }
         ]
       }
