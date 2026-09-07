@@ -67,7 +67,7 @@ fn guard_restores_on_quit_failure_panic_and_signal() {
     let backend = RecordingBackend::default();
     let hits = backend.hits();
     let mut guard = TerminalGuard::new(backend);
-    let _ = guard.arm();
+    let _ = guard.arm(false);
     guard.disarm_for_test();
     drop(guard);
     assert_eq!(hits.load(Ordering::SeqCst), 0);
@@ -98,7 +98,7 @@ fn legacy_backend_restore_failure_is_retried() {
     let mut guard = TerminalGuard::new(RetryBackend {
         attempts: Arc::clone(&attempts),
     });
-    guard.arm().expect("arm guard");
+    guard.arm(false).expect("arm guard");
 
     guard.handle_signal();
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
@@ -182,6 +182,14 @@ impl ModeBackend for StageBackend {
     fn disable_raw_mode(&mut self) -> io::Result<()> {
         self.restoration("raw-")
     }
+
+    fn enable_mouse_capture(&mut self) -> io::Result<()> {
+        self.entry("mouse+")
+    }
+
+    fn disable_mouse_capture(&mut self) -> io::Result<()> {
+        self.restoration("mouse-")
+    }
 }
 
 #[test]
@@ -204,7 +212,7 @@ fn partial_arming_rolls_back_completed_stages() {
             fail_entry: Some(failure),
             ..StageBackend::default()
         });
-        assert!(guard.arm().is_err());
+        assert!(guard.arm(false).is_err());
         drop(guard);
         assert_eq!(*events.lock().unwrap(), expected, "failure at {failure}");
     }
@@ -214,12 +222,97 @@ fn partial_arming_rolls_back_completed_stages() {
         events: Arc::clone(&events),
         ..StageBackend::default()
     });
-    guard.arm().unwrap();
+    guard.arm(false).unwrap();
     guard.restore().unwrap();
     drop(guard);
     assert_eq!(
         *events.lock().unwrap(),
         vec!["raw+", "alt+", "bracket+", "cursor+", "cursor-", "bracket-", "alt-", "raw-",]
+    );
+}
+
+#[test]
+fn mouse_capture_follows_the_pref_and_restores_first() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        ..StageBackend::default()
+    });
+    guard.arm(true).unwrap();
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec!["raw+", "alt+", "mouse+", "bracket+", "cursor+"],
+        "capture is enabled right after the alternate screen"
+    );
+    guard.restore().unwrap();
+    drop(guard);
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            "raw+", "alt+", "mouse+", "bracket+", "cursor+", "mouse-", "cursor-", "bracket-",
+            "alt-", "raw-",
+        ],
+        "capture is disabled before the cursor is shown"
+    );
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        ..StageBackend::default()
+    });
+    guard.arm(false).unwrap();
+    drop(guard);
+    let stages = events.lock().unwrap().clone();
+    assert!(
+        !stages.iter().any(|stage| stage.starts_with("mouse")),
+        "mouse capture off never touches the backend: {stages:?}"
+    );
+
+    // A failure while enabling capture rolls back the alternate screen and raw mode.
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        fail_entry: Some("mouse+"),
+        ..StageBackend::default()
+    });
+    assert!(guard.arm(true).is_err());
+    drop(guard);
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec!["raw+", "alt+", "mouse+", "alt-", "raw-"]
+    );
+}
+
+#[test]
+fn mouse_capture_toggle_is_idempotent() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut guard = TerminalGuard::new(StageBackend {
+        events: Arc::clone(&events),
+        ..StageBackend::default()
+    });
+    guard.arm(false).unwrap();
+    let armed = events.lock().unwrap().len();
+
+    guard.set_mouse_capture(false).unwrap();
+    assert_eq!(events.lock().unwrap().len(), armed, "off -> off is a no-op");
+    guard.set_mouse_capture(true).unwrap();
+    guard.set_mouse_capture(true).unwrap();
+    assert_eq!(
+        events.lock().unwrap()[armed..],
+        ["mouse+"],
+        "on -> on is a no-op"
+    );
+    guard.set_mouse_capture(false).unwrap();
+    guard.set_mouse_capture(false).unwrap();
+    assert_eq!(events.lock().unwrap()[armed..], ["mouse+", "mouse-"]);
+
+    guard.set_mouse_capture(true).unwrap();
+    guard.restore().unwrap();
+    drop(guard);
+    assert_eq!(
+        events.lock().unwrap()[armed..],
+        ["mouse+", "mouse-", "mouse+", "mouse-", "cursor-", "bracket-", "alt-", "raw-"],
+        "restore disables capture exactly once, before show_cursor"
     );
 }
 
@@ -232,7 +325,7 @@ fn restore_failures_stay_outstanding_and_never_panic() {
             fail_restore: Some(failure),
             ..StageBackend::default()
         });
-        guard.arm().unwrap();
+        guard.arm(false).unwrap();
         let error = guard.restore().expect_err("one restore stage fails");
         assert!(error.to_string().contains(failure));
         let before_drop = events.lock().unwrap().clone();
@@ -256,7 +349,7 @@ fn restore_failures_stay_outstanding_and_never_panic() {
         panic_restore: Some("raw-"),
         ..StageBackend::default()
     });
-    guard.arm().unwrap();
+    guard.arm(false).unwrap();
     let unwind = catch_unwind(AssertUnwindSafe(|| {
         let _guard = guard;
         panic!("primary panic");
@@ -707,7 +800,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let mut guard = TerminalGuard::new(TraceModeBackend(Arc::clone(&trace)));
-    guard.arm().expect("arm recording terminal");
+    guard.arm(false).expect("arm recording terminal");
 
     let driver = async {
         wait_for_ws_request(&mock, "terminal_attach").await;
@@ -784,7 +877,7 @@ async fn graceful_exit_releases_and_detaches_within_deadline() {
         trace: Arc::clone(&trace),
     };
     let mut guard = TerminalGuard::new(TraceModeBackend(Arc::clone(&trace)));
-    guard.arm().unwrap();
+    guard.arm(false).unwrap();
 
     shutdown(
         &mut workspace,
@@ -940,7 +1033,7 @@ async fn every_exit_cause_uses_one_shutdown_seam() {
         let trace = Arc::clone(&trace);
         move || {
             let mut guard = TerminalGuard::new(TraceModeBackend(trace));
-            guard.arm().expect("arm panic terminal");
+            guard.arm(false).expect("arm panic terminal");
             let _guard = guard;
             panic!("injected panic");
         }

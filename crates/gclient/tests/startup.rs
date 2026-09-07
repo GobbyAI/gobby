@@ -2,9 +2,10 @@
 
 use gobby_client::startup::{
     parse_args, prepare_at, resolve_probe_env_at, resolve_project_at, start_session,
-    GtermHostState, HealthClient, HttpHealthClient, ProbeEnv, Ready, StartupError,
+    start_session_at, GtermHostState, HealthClient, HttpHealthClient, ProbeEnv, Ready,
+    StartupError,
 };
-use gobby_client::teardown::{ModeBackend, TerminalGuard};
+use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
 use gobby_client::ui::settings::ClientPrefs;
 use gobby_client::FrameDelivery;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
@@ -667,4 +668,65 @@ fn no_mouse_flag_and_prefs_file_shape_ready() {
         stdout.contains("--no-mouse"),
         "usage text omits --no-mouse: {stdout}"
     );
+}
+
+#[test]
+fn start_session_arms_mouse_capture_from_prefs() {
+    let project_id = "55555555-5555-4555-8555-555555555555";
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let session = |no_mouse: bool| {
+        let args = if no_mouse {
+            parse_args(["gclient", "--project", project_id, "--no-mouse"])
+        } else {
+            parse_args(["gclient", "--project", project_id])
+        }
+        .expect("parse args");
+        let backend = RecordingBackend::default();
+        let captured = backend.mouse_capture();
+        let (ready, guard) = start_session_at(
+            args,
+            env_at("http://unused"),
+            &HealthyHost,
+            backend,
+            cwd.path(),
+            home.path(),
+        )
+        .expect("start session");
+        (ready, guard, captured)
+    };
+
+    // Default prefs enable capture while the guard is armed and release it on drop.
+    let (ready, guard, captured) = session(false);
+    assert!(ready.prefs.mouse_capture);
+    assert!(
+        captured.load(Ordering::SeqCst),
+        "default prefs arm mouse capture"
+    );
+    drop(guard);
+    assert!(
+        !captured.load(Ordering::SeqCst),
+        "dropping the guard disables capture"
+    );
+
+    // --no-mouse keeps capture off.
+    let (ready, guard, captured) = session(true);
+    assert!(!ready.prefs.mouse_capture);
+    assert!(
+        !captured.load(Ordering::SeqCst),
+        "--no-mouse never enables capture"
+    );
+    drop(guard);
+
+    // A prefs file with mouse_capture = false keeps capture off too.
+    let path = home.path().join("client").join("prefs.toml");
+    std::fs::create_dir_all(path.parent().expect("prefs parent")).expect("create client dir");
+    std::fs::write(&path, "[ui]\nmouse_capture = false\n").expect("write prefs");
+    let (ready, guard, captured) = session(false);
+    assert!(!ready.prefs.mouse_capture);
+    assert!(
+        !captured.load(Ordering::SeqCst),
+        "prefs file keeps capture off"
+    );
+    drop(guard);
 }

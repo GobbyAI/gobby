@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::future::Future;
 use std::io::{self, IsTerminal};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use tokio::time::{timeout_at, Instant};
@@ -51,16 +51,30 @@ pub trait ModeBackend {
     fn disable_raw_mode(&mut self) -> io::Result<()> {
         self.restore()
     }
+
+    fn enable_mouse_capture(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn disable_mouse_capture(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
 pub struct RecordingBackend {
     hits: Arc<AtomicUsize>,
+    mouse_capture: Arc<AtomicBool>,
 }
 
 impl RecordingBackend {
     pub fn hits(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.hits)
+    }
+
+    /// Whether the backend currently reports mouse capture as enabled.
+    pub fn mouse_capture(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.mouse_capture)
     }
 }
 
@@ -71,6 +85,16 @@ impl ModeBackend for RecordingBackend {
 
     fn restore(&mut self) -> io::Result<()> {
         self.hits.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn enable_mouse_capture(&mut self) -> io::Result<()> {
+        self.mouse_capture.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn disable_mouse_capture(&mut self) -> io::Result<()> {
+        self.mouse_capture.store(false, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -133,12 +157,27 @@ impl ModeBackend for CrosstermBackend {
         }
         crossterm::terminal::disable_raw_mode()
     }
+
+    fn enable_mouse_capture(&mut self) -> io::Result<()> {
+        if !io::stdout().is_terminal() {
+            return Ok(());
+        }
+        crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)
+    }
+
+    fn disable_mouse_capture(&mut self) -> io::Result<()> {
+        if !io::stdout().is_terminal() {
+            return Ok(());
+        }
+        crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)
+    }
 }
 
 #[derive(Default)]
 struct Obligations {
     raw_mode: bool,
     alternate_screen: bool,
+    mouse_capture: bool,
     bracketed_paste: bool,
     hidden_cursor: bool,
 }
@@ -159,7 +198,7 @@ impl TerminalGuard<RecordingBackend> {
         let backend = RecordingBackend::default();
         let hits = backend.hits();
         let mut guard = Self::new(backend);
-        let _ = guard.arm();
+        let _ = guard.arm(false);
         (guard, hits)
     }
 
@@ -182,7 +221,7 @@ impl<B: ModeBackend> TerminalGuard<B> {
         }
     }
 
-    pub fn arm(&mut self) -> io::Result<()> {
+    pub fn arm(&mut self, mouse_capture: bool) -> io::Result<()> {
         let state = self
             .state
             .get_mut()
@@ -191,10 +230,33 @@ impl<B: ModeBackend> TerminalGuard<B> {
         state.obligations.raw_mode = true;
         state.backend.enter_alternate_screen()?;
         state.obligations.alternate_screen = true;
+        if mouse_capture {
+            state.backend.enable_mouse_capture()?;
+            state.obligations.mouse_capture = true;
+        }
         state.backend.enable_bracketed_paste()?;
         state.obligations.bracketed_paste = true;
         state.backend.hide_cursor()?;
         state.obligations.hidden_cursor = true;
+        Ok(())
+    }
+
+    /// Enable or disable mouse capture on the armed terminal; a no-op when the
+    /// obligation already matches `on`.
+    pub fn set_mouse_capture(&mut self, on: bool) -> io::Result<()> {
+        let state = self
+            .state
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.obligations.mouse_capture == on {
+            return Ok(());
+        }
+        if on {
+            state.backend.enable_mouse_capture()?;
+        } else {
+            state.backend.disable_mouse_capture()?;
+        }
+        state.obligations.mouse_capture = on;
         Ok(())
     }
 
@@ -211,6 +273,12 @@ impl<B: ModeBackend> TerminalGuard<B> {
             obligations,
         } = &mut *state;
         let mut errors = Vec::new();
+        restore_obligation(
+            &mut obligations.mouse_capture,
+            "disable_mouse_capture",
+            || backend.disable_mouse_capture(),
+            &mut errors,
+        );
         restore_obligation(
             &mut obligations.hidden_cursor,
             "show_cursor",

@@ -459,8 +459,29 @@ pub fn start_session<B: ModeBackend>(
     backend: B,
 ) -> Result<(Ready, TerminalGuard<B>), StartupError> {
     let ready = prepare(&args, env, health)?;
+    arm_session(ready, backend)
+}
+
+/// `start_session` with an explicit working directory and gobby home, for callers
+/// that must not touch the real `~/.gobby`.
+pub fn start_session_at<B: ModeBackend>(
+    args: CliArgs,
+    env: ProbeEnv,
+    health: &impl HealthClient,
+    backend: B,
+    current_dir: &Path,
+    gobby_home: &Path,
+) -> Result<(Ready, TerminalGuard<B>), StartupError> {
+    let ready = prepare_at(&args, env, health, current_dir, gobby_home)?;
+    arm_session(ready, backend)
+}
+
+fn arm_session<B: ModeBackend>(
+    ready: Ready,
+    backend: B,
+) -> Result<(Ready, TerminalGuard<B>), StartupError> {
     let mut guard = TerminalGuard::new(backend);
-    guard.arm()?;
+    guard.arm(ready.prefs.mouse_capture)?;
     Ok((ready, guard))
 }
 
