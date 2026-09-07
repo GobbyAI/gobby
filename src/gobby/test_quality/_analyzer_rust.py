@@ -11,6 +11,7 @@ from gobby.test_quality._analyzer_common import (
     _append_issue,
     _script_suppressed_codes,
 )
+from gobby.test_quality._analyzer_rust_macros import _rust_macro_context
 from gobby.test_quality._analyzer_scanner import (
     _find_matching_delimiter,
     _rust_char_literal_end,
@@ -43,9 +44,11 @@ class _RustTest:
     line: int
 
 
-def _analyze_rust_file(source: str, relative_path: str) -> tuple[list[AuditIssue], int]:
+def _analyze_rust_file(
+    source: str, relative_path: str, test_macros: frozenset[str] = frozenset()
+) -> tuple[list[AuditIssue], int]:
     issues: list[AuditIssue] = []
-    test_nodes = list(_iter_rust_tests(source))
+    test_nodes = list(_iter_rust_tests(source, test_macros))
 
     for test in test_nodes:
         suppressions = _script_suppressed_codes(test.source)
@@ -96,9 +99,10 @@ def _analyze_rust_file(source: str, relative_path: str) -> tuple[list[AuditIssue
     return issues, len(test_nodes)
 
 
-def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
+def _iter_rust_tests(source: str, test_macros: frozenset[str] = frozenset()) -> Iterable[_RustTest]:
+    code, macro_ranges = _rust_macro_context(source, test_macros)
     pending_attrs: list[tuple[str, int, int]] = []
-    lines = source.splitlines(keepends=True)
+    lines = code.splitlines(keepends=True)
     line_offset = 0
     line_index = 0
     scan_offset = 0
@@ -109,10 +113,10 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
         line_end = line_offset + len(line)
         cursor = max(line_offset, scan_offset)
 
-        while cursor < line_end and source[cursor] in " \t\r":
+        while cursor < line_end and code[cursor] in " \t\r":
             cursor += 1
 
-        if source.startswith("#[", cursor):
+        if code.startswith("#[", cursor):
             attr_offset = cursor
             parsed_attr = _rust_attr_at(source, attr_offset)
             if parsed_attr is not None:
@@ -124,9 +128,9 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
                     line = lines[line_index]
                     line_end = line_offset + len(line)
                 cursor = attr_end + 1
-                while cursor < line_end and source[cursor] in " \t\r":
+                while cursor < line_end and code[cursor] in " \t\r":
                     cursor += 1
-                if cursor < line_end and source[cursor] != "\n":
+                if cursor < line_end and code[cursor] != "\n":
                     scan_offset = cursor
                     continue
                 line_index += 1
@@ -134,19 +138,22 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
                 scan_offset = line_offset
                 continue
 
-        stripped = source[cursor:line_end].strip()
+        stripped = code[cursor:line_end].strip()
         if not stripped or stripped.startswith("//"):
             line_index += 1
             line_offset = line_end
             scan_offset = line_offset
             continue
 
-        fn_match = _RUST_FN_RE.search(source, cursor, line_end)
-        if fn_match is not None and _rust_attrs_mark_test(tuple(item[0] for item in pending_attrs)):
+        fn_match = _RUST_FN_RE.search(code, cursor, line_end)
+        if fn_match is not None and (
+            _rust_attrs_mark_test(tuple(item[0] for item in pending_attrs))
+            or any(start < fn_match.start() < end for start, end in macro_ranges)
+        ):
             fn_offset = fn_match.start()
-            open_brace = source.find("{", fn_match.end())
+            open_brace = code.find("{", fn_match.end())
             close_brace = (
-                _find_matching_delimiter(source, open_brace, "{", "}") if open_brace != -1 else None
+                _find_matching_delimiter(code, open_brace, "{", "}") if open_brace != -1 else None
             )
             if close_brace is not None:
                 start_offset = pending_attrs[0][2] if pending_attrs else fn_offset
@@ -160,6 +167,15 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
                     start_line=start_line,
                     line=line_number,
                 )
+                # Consume the body so helper functions are not counted as emitted tests.
+                while close_brace >= line_end and line_index + 1 < len(lines):
+                    line_index += 1
+                    line_offset = line_end
+                    line_end += len(lines[line_index])
+                pending_attrs = []
+                scan_offset = close_brace + 1
+                if scan_offset < line_end:
+                    continue
 
         pending_attrs = []
         line_index += 1
