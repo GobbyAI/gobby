@@ -1,4 +1,45 @@
 {
-  "issues": [],
+  "issues": [
+    {
+      "fingerprint": "crates/gclient/tests/parity/chrome.rs::expanded_sidebar_workspace_rows_show_state_before_name_without_numbers::TODO_IN_TEST",
+      "issue_code": "TODO_IN_TEST",
+      "line": 655,
+      "message": "test contains TODO/FIXME/XXX debt marker",
+      "occurrences": 1,
+      "path": "crates/gclient/tests/parity/chrome.rs",
+      "severity": "medium",
+      "test_name": "expanded_sidebar_workspace_rows_show_state_before_name_without_numbers"
+    },
+    {
+      "fingerprint": "crates/gclient/tests/parity/chrome.rs::keybind_help_shows_custom_command_descriptions::TODO_IN_TEST",
+      "issue_code": "TODO_IN_TEST",
+      "line": 987,
+      "message": "test contains TODO/FIXME/XXX debt marker",
+      "occurrences": 1,
+      "path": "crates/gclient/tests/parity/chrome.rs",
+      "severity": "medium",
+      "test_name": "keybind_help_shows_custom_command_descriptions"
+    },
+    {
+      "fingerprint": "crates/gclient/tests/parity/chrome.rs::workspace_creation_dialog_renders_new_workspace_title::TODO_IN_TEST",
+      "issue_code": "TODO_IN_TEST",
+      "line": 388,
+      "message": "test contains TODO/FIXME/XXX debt marker",
+      "occurrences": 1,
+      "path": "crates/gclient/tests/parity/chrome.rs",
+      "severity": "medium",
+      "test_name": "workspace_creation_dialog_renders_new_workspace_title"
+    },
+    {
+      "fingerprint": "crates/gclient/tests/parity/dialogs.rs::confirm_close_text_reports_parent_group_scope::TODO_IN_TEST",
+      "issue_code": "TODO_IN_TEST",
+      "line": 99,
+      "message": "test contains TODO/FIXME/XXX debt marker",
+      "occurrences": 1,
+      "path": "crates/gclient/tests/parity/dialogs.rs",
+      "severity": "medium",
+      "test_name": "confirm_close_text_reports_parent_group_scope"
+    }
+  ],
   "schema_version": 2
 }

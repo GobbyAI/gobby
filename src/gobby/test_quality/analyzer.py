@@ -15,6 +15,7 @@ from gobby.test_quality._analyzer_common import (
 from gobby.test_quality._analyzer_discovery import _discover_files
 from gobby.test_quality._analyzer_python import _analyze_python_file
 from gobby.test_quality._analyzer_rust import _analyze_rust_file
+from gobby.test_quality._analyzer_rust_macros import _RustMacroResolver
 from gobby.test_quality._analyzer_script import _analyze_script_file
 from gobby.test_quality.models import AuditIssue, AuditReport, AuditWarning
 
@@ -30,9 +31,12 @@ def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) 
     issues: list[AuditIssue] = []
     warnings = list(discovery.warnings)
     tests_scanned = 0
+    rust_macros = _RustMacroResolver()
     for file_path in discovery.files:
         try:
-            file_issues, file_test_count = analyze_file(file_path, root=root_path)
+            file_issues, file_test_count = _analyze_file(
+                file_path, root=root_path, rust_macros=rust_macros
+            )
         except (SyntaxError, UnicodeDecodeError, OSError) as error:
             relative_path = _relative_path(file_path, root_path)
             warnings.append(
@@ -60,7 +64,12 @@ def analyze_file(
     path: str | Path, *, root: str | Path | None = None
 ) -> tuple[list[AuditIssue], int]:
     """Audit one test file."""
+    return _analyze_file(path, root=root, rust_macros=_RustMacroResolver())
 
+
+def _analyze_file(
+    path: str | Path, *, root: str | Path | None, rust_macros: _RustMacroResolver
+) -> tuple[list[AuditIssue], int]:
     file_path = Path(path)
     root_path = Path.cwd() if root is None else Path(root)
     source = file_path.read_text(encoding="utf-8")
@@ -69,7 +78,7 @@ def analyze_file(
     if file_path.suffix in _SCRIPT_TEST_SUFFIXES:
         return _analyze_script_file(source, relative_path)
     if file_path.suffix == _RUST_SUFFIX:
-        return _analyze_rust_file(source, relative_path)
+        return _analyze_rust_file(source, relative_path, rust_macros.for_file(file_path, source))
     if file_path.suffix == _PYTHON_SUFFIX:
         return _analyze_python_file(source, relative_path, filename=str(file_path))
 
