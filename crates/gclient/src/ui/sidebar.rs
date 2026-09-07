@@ -8,6 +8,7 @@
 
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, SidebarState, WorkspaceView};
+use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::sidebar_rows::{attention_rows, roster_rows, row_line, SidebarRow};
 use crate::ui::status::state_dot;
@@ -309,6 +310,30 @@ pub fn list_metrics(len: usize, viewport: u16, requested: usize) -> ScrollMetric
         offset_from_bottom: max_scroll.saturating_sub(scroll),
         max_offset_from_bottom: max_scroll,
         viewport_rows: viewport.min(len),
+    }
+}
+
+/// Scroll metrics of one list section as the last frame laid it out: the
+/// rows it holds against the body rows `chrome.view.sidebar_rect` gives it.
+/// The mouse reads these to scroll the list the renderer will draw next.
+pub fn section_metrics<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    section: SidebarSection,
+) -> ScrollMetrics {
+    let (roster, attention) =
+        expanded_sections(chrome.view.sidebar_rect, chrome.sidebar.section_split);
+    match section {
+        SidebarSection::Roster => list_metrics(
+            ws.roster_terminal_ids().len(),
+            roster_body_rect(roster, false).height,
+            chrome.sidebar.scroll,
+        ),
+        SidebarSection::Attention => list_metrics(
+            ws.attention_entry_ids().len(),
+            attention_body_rect(attention, false).height,
+            chrome.sidebar.attention_scroll,
+        ),
     }
 }
 

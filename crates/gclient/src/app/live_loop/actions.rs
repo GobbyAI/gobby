@@ -52,8 +52,10 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
 /// lease (it follows focus), or only the workspace focus for an observe-only
 /// click; actions dispatch exactly as their chords would; a spawn goes through
-/// the same request as `NewTerminal`; forwarded bytes go to the pane. Returns
-/// whether the client should exit, like the key routers.
+/// the same request as `NewTerminal`; forwarded bytes go to the pane; an
+/// attention click focuses its terminal and opens that entry's prompt; a
+/// roster drop saves the new order. Returns whether the client should exit,
+/// like the key routers.
 pub(super) async fn apply_live_mouse_outcome(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -77,6 +79,15 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::Write { pane, bytes } => {
             send_live_write(workspace, pane, &bytes, false).await?;
         }
+        MouseOutcome::Attention { pane, entry_id } => {
+            if let Some(pane) = pane {
+                focus_live_pane(workspace, pane).await?;
+            }
+            open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
+        }
+        MouseOutcome::Reorder { order } => workspace
+            .set_tab_order(&order)
+            .map_err(|error| FrameError::Other(error.to_string()))?,
     }
     Ok(false)
 }
@@ -102,7 +113,7 @@ pub(super) async fn handle_live_action(
                 take_live_control(workspace, pane_id).await?;
             }
         }
-        Action::Respond => open_response_dialog(workspace, chrome).await?,
+        Action::Respond => open_response_dialog(workspace, chrome, None).await?,
         Action::CopyMode => chrome.mode = Mode::Copy,
         // Both are bound in the default keymap and both render (chrome_render
         // draws the help table and the settings pane), but neither was ever

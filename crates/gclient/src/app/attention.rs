@@ -20,9 +20,12 @@ struct Prompt {
     options: Vec<String>,
 }
 
+/// Open the response dialog for the first actionable prompt among the known
+/// attention entries, or for `entry_id` alone when its row was clicked.
 pub(super) async fn open_response_dialog(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    entry_id: Option<&str>,
 ) -> Result<(), DaemonError> {
     let known_entries = workspace.attention_entry_ids();
     let prompt = workspace
@@ -31,6 +34,7 @@ pub(super) async fn open_response_dialog(
         .await?
         .into_iter()
         .filter(|entry| known_entries.iter().any(|known| known == &entry.entry_id))
+        .filter(|entry| entry_id.is_none_or(|wanted| wanted == entry.entry_id))
         .find_map(parse_prompt);
     let Some(prompt) = prompt else {
         chrome.status_message = Some("No actionable attention prompt".to_string());

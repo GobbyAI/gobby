@@ -1093,3 +1093,71 @@ async fn buffer_overflow_and_cursor_stale_restart_the_listing() {
         .expect("close overflow daemon");
     overflow.shutdown().await;
 }
+
+/// 2.3 roster reorder: the order a drag saved survives the next listing, and
+/// a terminal the next page adds joins at the end.
+#[tokio::test]
+async fn roster_reorder_survives_the_next_page() {
+    let mock = MockDaemon::start("local-token").await;
+    let page = |ids: &[&str]| {
+        let items: Vec<Value> = ids
+            .iter()
+            .map(|id| json!({"id": id, "terminal_id": id, "state": "live"}))
+            .collect();
+        json!({
+            "items": items,
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        })
+    };
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        page(&["terminal-a", "terminal-b"]),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        page(&["terminal-a", "terminal-b"]),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        page(&["terminal-a", "terminal-b", "terminal-c"]),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+
+    workspace.fetch_roster().await.expect("first listing");
+    assert_eq!(
+        workspace.roster_terminal_ids(),
+        ["terminal-a", "terminal-b"]
+    );
+    workspace
+        .set_tab_order(&["terminal-b", "terminal-a"])
+        .expect("reorder");
+    assert_eq!(
+        workspace.roster_terminal_ids(),
+        ["terminal-b", "terminal-a"]
+    );
+
+    workspace.fetch_roster().await.expect("second listing");
+    assert_eq!(
+        workspace.roster_terminal_ids(),
+        ["terminal-b", "terminal-a"],
+        "a relisting keeps the saved order"
+    );
+    workspace.fetch_roster().await.expect("third listing");
+    assert_eq!(
+        workspace.roster_terminal_ids(),
+        ["terminal-b", "terminal-a", "terminal-c"],
+        "a new terminal joins at the end"
+    );
+    mock.shutdown().await;
+}

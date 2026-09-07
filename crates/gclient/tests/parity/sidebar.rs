@@ -10,11 +10,19 @@
 //! sidebar drag reorder are dropped surfaces; their fixtures map to the flat
 //! roster and each adapted assertion carries the herdr original in a comment.
 
-use gobby_client::app::{Pane, PaneId};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{
+    route_mouse, MouseGesture, MouseOutcome, Pane, PaneId, Workspace, MOUSE_SCROLL_LINES,
+    ROSTER_DRAG_THRESHOLD,
+};
+use gobby_client::persist::load_snapshot;
 use gobby_client::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
+use gobby_client::ui::chrome_render::render_workspace;
+use gobby_client::ui::hit::SidebarSection;
+use gobby_client::ui::scrollbar::scrollbar_thumb_grab_offset;
 use gobby_client::ui::sidebar::{
     attention_body_rect, collapsed_sections, expanded_sections, expanded_toggle_rect, list_metrics,
-    render_collapsed_sidebar, render_sidebar, roster_body_rect, SidebarHits,
+    render_collapsed_sidebar, render_sidebar, roster_body_rect, section_metrics, SidebarHits,
 };
 use gobby_client::ui::sidebar_rows::{
     attention_rows, fitted_spans, roster_rows, row_line, RowKind, SidebarRow,
@@ -26,6 +34,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::Terminal;
+use serde_json::json;
 
 use super::fixtures::{cell, render, rows};
 use super::token_map::{palette, theme};
@@ -910,4 +919,499 @@ parity_tests! {
             assert!(!text.contains('↑') && !text.contains('↓'));
         }
     }
+}
+
+// herdr `src/app/input/mouse.rs` sidebar rows: the mouse on the roster,
+// attention list, toggle, edge, section rule and list scrollbars, routed
+// through `route_mouse` against a drawn frame. herdr's workspace-list drag
+// reorder is a keep (the roster reorders) even though the sidebar render
+// tests above call it dropped: the rows have no drag handle glyphs.
+
+const LEFT_DOWN: MouseEventKind = MouseEventKind::Down(MouseButton::Left);
+const LEFT_DRAG: MouseEventKind = MouseEventKind::Drag(MouseButton::Left);
+const LEFT_UP: MouseEventKind = MouseEventKind::Up(MouseButton::Left);
+
+/// `count` scripted roster terminals `term-0..`, no tab open yet.
+fn sidebar_workspace(count: usize) -> Workspace {
+    let mut ws = Workspace::scripted();
+    for index in 0..count {
+        ws.open_terminal(&format!("term-{index}"), "native", "epoch")
+            .expect("open scripted terminal");
+    }
+    ws
+}
+
+/// `count` attention entries `run:term-0..`, each on its terminal.
+fn set_attention(ws: &mut Workspace, count: usize) {
+    let entries: Vec<_> = (0..count)
+        .map(|index| json!({"entry_id": format!("run:term-{index}"), "kind": "blocked"}))
+        .collect();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": entries,
+    }));
+    ws.reconcile_subscribe_first().expect("attention roster");
+}
+
+/// Draw the whole frame the way the run loop does and write the hits back.
+fn draw_with_hits(ws: &Workspace, chrome: &mut Chrome, area: Rect) -> Terminal<TestBackend> {
+    chrome.compute_view(ws, area);
+    let mut hits = None;
+    let term = render(area.width, area.height, |frame| {
+        hits = Some(render_workspace(frame, ws, chrome));
+    });
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    term
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn route(
+    ws: &Workspace,
+    chrome: &mut Chrome,
+    kind: MouseEventKind,
+    column: u16,
+    row: u16,
+) -> MouseOutcome {
+    route_mouse(ws, chrome, &mouse(kind, column, row))
+}
+
+/// A cell inside the roster row last drawn for `terminal_id`.
+fn roster_cell(chrome: &Chrome, terminal_id: &str) -> (u16, u16) {
+    let (_, rect) = chrome
+        .view
+        .roster_hit_areas
+        .iter()
+        .find(|(id, _)| id == terminal_id)
+        .expect("roster row drawn");
+    (rect.x + 1, rect.y)
+}
+
+/// A cell inside the attention row last drawn for `entry_id`.
+fn attention_cell(chrome: &Chrome, entry_id: &str) -> (u16, u16) {
+    let (_, rect) = chrome
+        .view
+        .attention_hit_areas
+        .iter()
+        .find(|(id, _)| id == entry_id)
+        .expect("attention row drawn");
+    (rect.x + 1, rect.y)
+}
+
+/// The pane `sidebar_workspace` opened for `term-{index}`.
+fn pane(ws: &Workspace, index: usize) -> PaneId {
+    ws.pane_for_terminal(&format!("term-{index}"))
+        .expect("terminal pane")
+}
+
+fn focused(pane: PaneId, observe_only: bool) -> MouseOutcome {
+    MouseOutcome::Focus { pane, observe_only }
+}
+
+#[test]
+fn roster_click_focuses_the_terminal() {
+    // herdr `FocusWorkspace` from a sidebar click. gclient shows the pane
+    // where it already is: its own tab, or split into the active tab when
+    // no tab shows it; the attention row jumps the same way and then asks
+    // for its prompt.
+    let mut ws = sidebar_workspace(3);
+    let mut chrome = chrome();
+    chrome.open_tab(pane(&ws, 0), "0");
+    chrome.open_tab(pane(&ws, 1), "1");
+    chrome.active_tab = 0;
+    let area = Rect::new(0, 0, 80, 20);
+    draw_with_hits(&ws, &mut chrome, area);
+
+    let (col, row) = roster_cell(&chrome, "term-1");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, col, row),
+        focused(pane(&ws, 1), false)
+    );
+    assert_eq!(
+        chrome.active_tab, 1,
+        "the tab showing the terminal is activated"
+    );
+    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 1)));
+    assert_eq!(
+        chrome.gesture,
+        Some(MouseGesture::RosterDrag {
+            terminal_id: "term-1".to_string(),
+            origin_row: row,
+            moved: false,
+        })
+    );
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_UP, col, row),
+        MouseOutcome::Handled,
+        "a release without movement was the click"
+    );
+    assert_eq!(chrome.gesture, None);
+
+    let (col, row) = roster_cell(&chrome, "term-2");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, col, row),
+        focused(pane(&ws, 2), false)
+    );
+    assert_eq!(
+        chrome.tabs.len(),
+        2,
+        "a terminal no tab shows splits into the active tab"
+    );
+    assert_eq!(chrome.active_tab, 1);
+    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 2)));
+    route(&ws, &mut chrome, LEFT_UP, col, row);
+
+    let (col, row) = roster_cell(&chrome, "term-0");
+    assert_eq!(
+        route_mouse(
+            &ws,
+            &mut chrome,
+            &MouseEvent {
+                modifiers: KeyModifiers::ALT,
+                ..mouse(LEFT_DOWN, col, row)
+            }
+        ),
+        focused(pane(&ws, 0), true),
+        "alt+click observes"
+    );
+    assert_eq!(chrome.active_tab, 0);
+    route(&ws, &mut chrome, LEFT_UP, col, row);
+
+    set_attention(&mut ws, 1);
+    chrome.active_tab = 1;
+    draw_with_hits(&ws, &mut chrome, area);
+    let (col, row) = attention_cell(&chrome, "run:term-0");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, col, row),
+        MouseOutcome::Attention {
+            pane: Some(pane(&ws, 0)),
+            entry_id: "run:term-0".to_string(),
+        }
+    );
+    assert_eq!(
+        chrome.active_tab, 0,
+        "an attention click jumps to its terminal"
+    );
+    assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
+    assert_eq!(chrome.gesture, None, "an attention row starts no drag");
+}
+
+#[test]
+fn sidebar_drags_reorder_resize_and_scroll() {
+    // herdr workspace-list drag reorder, `set_manual_sidebar_width`,
+    // `set_sidebar_section_split`, `scroll_workspace_list` and the list
+    // scrollbar's thumb drag and track jump.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    let mut ws = sidebar_workspace(8);
+    ws.set_gobby_home(home.clone());
+    ws.select_project("proj-1");
+    set_attention(&mut ws, 6);
+    let mut chrome = chrome();
+    chrome.open_pane(pane(&ws, 0), "0");
+    let area = Rect::new(0, 0, 60, 14);
+    draw_with_hits(&ws, &mut chrome, area);
+    let sidebar = chrome.view.sidebar_rect;
+
+    // A row dragged onto another takes its place; the loop saves the order.
+    let (col, row0) = roster_cell(&chrome, "term-0");
+    let (_, row2) = roster_cell(&chrome, "term-2");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, col, row0),
+        focused(pane(&ws, 0), false)
+    );
+    assert_eq!(
+        route(
+            &ws,
+            &mut chrome,
+            LEFT_DRAG,
+            col,
+            row0 + ROSTER_DRAG_THRESHOLD
+        ),
+        MouseOutcome::Handled
+    );
+    assert!(matches!(
+        chrome.gesture,
+        Some(MouseGesture::RosterDrag { moved: true, .. })
+    ));
+    let reordered: Vec<String> = [1, 2, 0, 3, 4, 5, 6, 7]
+        .iter()
+        .map(|index| format!("term-{index}"))
+        .collect();
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_UP, col, row2),
+        MouseOutcome::Reorder {
+            order: reordered.clone()
+        }
+    );
+    ws.set_tab_order(&reordered).expect("reorder persists");
+    assert_eq!(WorkspaceView::roster_terminal_ids(&ws), reordered);
+    assert_eq!(
+        load_snapshot(&home, "proj-1")
+            .expect("snapshot saved")
+            .tab_order,
+        reordered
+    );
+    draw_with_hits(&ws, &mut chrome, area);
+    let (col, row1) = roster_cell(&chrome, "term-1");
+    let (_, row3) = roster_cell(&chrome, "term-3");
+    route(&ws, &mut chrome, LEFT_DOWN, col, row1);
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DRAG, col, row1),
+        MouseOutcome::Handled
+    );
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_UP, col, row3),
+        MouseOutcome::Handled,
+        "a drag that never left its row is a click"
+    );
+    assert_eq!(WorkspaceView::roster_terminal_ids(&ws), reordered);
+
+    // The toggle collapses and expands; the rail ignores drags and wheels.
+    let toggle = chrome.view.sidebar_toggle_hit_area.expect("toggle drawn");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
+        MouseOutcome::Handled
+    );
+    assert!(chrome.sidebar.collapsed);
+    draw_with_hits(&ws, &mut chrome, area);
+    let rail_divider = chrome.view.sidebar_divider_x.expect("rail edge");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, rail_divider, 5),
+        MouseOutcome::Ignore,
+        "the rail cannot be resized"
+    );
+    assert_eq!(chrome.gesture, None);
+    let toggle = chrome
+        .view
+        .sidebar_toggle_hit_area
+        .expect("rail toggle drawn");
+    assert_eq!(
+        route(
+            &ws,
+            &mut chrome,
+            MouseEventKind::ScrollDown,
+            toggle.x,
+            toggle.y - 2
+        ),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.sidebar.scroll, 0, "the rail has nothing to scroll");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
+        MouseOutcome::Handled
+    );
+    assert!(!chrome.sidebar.collapsed);
+    draw_with_hits(&ws, &mut chrome, area);
+
+    // The edge follows the pointer within the width bounds, from the press
+    // on; the release keeps the width as the preferred width.
+    let divider_x = chrome.view.sidebar_divider_x.expect("edge drawn");
+    assert_eq!(divider_x, sidebar.x + sidebar.width - 1);
+    let row = sidebar.y + 1;
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, divider_x, row),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.gesture, Some(MouseGesture::SidebarDrag));
+    assert_eq!(
+        chrome.sidebar.width, 26,
+        "the press keeps the width the edge sits at"
+    );
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DRAG, divider_x + 4, row),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.sidebar.width, 30);
+    route(&ws, &mut chrome, LEFT_DRAG, sidebar.x + 4, row);
+    assert_eq!(
+        chrome.sidebar.width, chrome.sidebar.min_width,
+        "clamped to the minimum"
+    );
+    route(&ws, &mut chrome, LEFT_DRAG, area.width - 1, row);
+    assert_eq!(
+        chrome.sidebar.width, chrome.sidebar.max_width,
+        "clamped to the maximum"
+    );
+    assert_ne!(chrome.prefs.sidebar_width, chrome.sidebar.max_width);
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_UP, area.width - 1, row),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.gesture, None);
+    assert_eq!(
+        chrome.prefs.sidebar_width, chrome.sidebar.max_width,
+        "the release keeps the width reached"
+    );
+    chrome.sidebar.width = 26;
+    draw_with_hits(&ws, &mut chrome, area);
+
+    // The section rule follows the pointer, each section keeping its header.
+    let rule = chrome
+        .view
+        .sidebar_section_divider_y
+        .expect("section rule drawn");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, sidebar.x + 1, rule),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.gesture, Some(MouseGesture::SectionDrag));
+    assert_eq!(chrome.sidebar.section_split, Some(rule - sidebar.y));
+    route(&ws, &mut chrome, LEFT_DRAG, sidebar.x + 1, sidebar.y + 4);
+    assert_eq!(chrome.sidebar.section_split, Some(4));
+    route(&ws, &mut chrome, LEFT_DRAG, sidebar.x + 1, sidebar.y);
+    assert_eq!(
+        chrome.sidebar.section_split,
+        Some(3),
+        "the roster keeps its header"
+    );
+    route(
+        &ws,
+        &mut chrome,
+        LEFT_DRAG,
+        sidebar.x + 1,
+        sidebar.y + sidebar.height,
+    );
+    assert_eq!(
+        chrome.sidebar.section_split,
+        Some(sidebar.height - 3),
+        "the attention list keeps its header"
+    );
+    assert_eq!(
+        route(
+            &ws,
+            &mut chrome,
+            LEFT_UP,
+            sidebar.x + 1,
+            sidebar.y + sidebar.height
+        ),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.gesture, None);
+    draw_with_hits(&ws, &mut chrome, area);
+    assert_eq!(
+        chrome.view.sidebar_section_divider_y,
+        Some(sidebar.y + sidebar.height - 3)
+    );
+    chrome.sidebar.section_split = None;
+    draw_with_hits(&ws, &mut chrome, area);
+
+    // A wheel notch moves the list under the pointer three rows, clamped.
+    let roster_max = section_metrics(&ws, &chrome, SidebarSection::Roster).max_offset_from_bottom;
+    assert!(
+        roster_max > MOUSE_SCROLL_LINES,
+        "the roster overflows: {roster_max}"
+    );
+    let (col, row) = roster_cell(&chrome, "term-1");
+    assert_eq!(
+        route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.sidebar.scroll, MOUSE_SCROLL_LINES);
+    route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
+    assert_eq!(chrome.sidebar.scroll, roster_max, "clamped at the end");
+    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    assert_eq!(chrome.sidebar.scroll, roster_max - MOUSE_SCROLL_LINES);
+    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    assert_eq!(chrome.sidebar.scroll, 0, "clamped at the top");
+    let attention_max =
+        section_metrics(&ws, &chrome, SidebarSection::Attention).max_offset_from_bottom;
+    assert!(
+        attention_max > 0 && attention_max < MOUSE_SCROLL_LINES,
+        "the attention list overflows by less than a notch: {attention_max}"
+    );
+    let (col, row) = attention_cell(&chrome, "run:term-0");
+    route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
+    assert_eq!(chrome.sidebar.attention_scroll, attention_max);
+    assert_eq!(
+        chrome.sidebar.scroll, 0,
+        "the roster is not the list under the pointer"
+    );
+    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    assert_eq!(chrome.sidebar.attention_scroll, 0);
+    route(
+        &ws,
+        &mut chrome,
+        MouseEventKind::ScrollDown,
+        sidebar.x + 1,
+        rule,
+    );
+    assert_eq!(
+        chrome.sidebar.attention_scroll, attention_max,
+        "the section rule belongs to the attention list"
+    );
+    route(
+        &ws,
+        &mut chrome,
+        MouseEventKind::ScrollDown,
+        sidebar.x + 1,
+        sidebar.y,
+    );
+    assert_eq!(
+        chrome.sidebar.scroll, MOUSE_SCROLL_LINES,
+        "the roster header belongs to the roster"
+    );
+    chrome.sidebar.scroll = 0;
+    chrome.sidebar.attention_scroll = 0;
+    draw_with_hits(&ws, &mut chrome, area);
+
+    // The scrollbar track jumps the list; the thumb drags it.
+    let track = chrome
+        .view
+        .roster_scrollbar_hit_area
+        .expect("roster scrollbar drawn");
+    let bottom = track.y + track.height - 1;
+    let metrics = section_metrics(&ws, &chrome, SidebarSection::Roster);
+    assert_eq!(
+        scrollbar_thumb_grab_offset(metrics, track, bottom),
+        None,
+        "the thumb sits at the top of an unscrolled list"
+    );
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, track.x, bottom),
+        MouseOutcome::Handled
+    );
+    assert_eq!(
+        chrome.sidebar.scroll, roster_max,
+        "a track click jumps there"
+    );
+    assert_eq!(chrome.gesture, None);
+    draw_with_hits(&ws, &mut chrome, area);
+    route(&ws, &mut chrome, LEFT_DOWN, track.x, track.y);
+    assert_eq!(chrome.sidebar.scroll, 0);
+    draw_with_hits(&ws, &mut chrome, area);
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, track.x, track.y),
+        MouseOutcome::Handled
+    );
+    assert_eq!(
+        chrome.gesture,
+        Some(MouseGesture::SidebarScrollbarDrag {
+            section: SidebarSection::Roster,
+            grab_offset: 0,
+        }),
+        "a thumb press starts a drag"
+    );
+    assert_eq!(chrome.sidebar.scroll, 0, "a thumb press does not jump");
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DRAG, track.x, bottom),
+        MouseOutcome::Handled
+    );
+    assert_eq!(
+        chrome.sidebar.scroll, roster_max,
+        "the thumb follows the pointer"
+    );
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_UP, track.x, bottom),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.gesture, None);
 }

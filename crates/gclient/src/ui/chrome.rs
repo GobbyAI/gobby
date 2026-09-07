@@ -6,6 +6,7 @@ use crate::app::{short_terminal_id, MouseGesture, Pane, PaneId, Workspace};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
+use crate::ui::hit::SidebarSection;
 use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::keymap::Keymap;
 use crate::ui::navigator::NavigatorState;
@@ -112,11 +113,18 @@ pub fn attention_pane<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<PaneId
         .find(|id| ws.pane(*id).session_id.as_deref() == Some(subject))
 }
 
-/// What the chrome calls the terminal behind an attention entry.
+/// What the chrome calls the terminal behind an attention entry: its name,
+/// then its address when it has one the name does not already show, so a
+/// blocked session reads `15 %15` and never its session uuid.
 pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
-    match attention_pane(ws, entry_id) {
-        Some(pane) => ws.pane(pane).display_name().to_string(),
-        None => short_terminal_id(attention_subject(entry_id)).to_string(),
+    let Some(pane) = attention_pane(ws, entry_id) else {
+        return short_terminal_id(attention_subject(entry_id)).to_string();
+    };
+    let pane = ws.pane(pane);
+    let name = pane.display_name();
+    match pane.address.as_deref().filter(|address| *address != name) {
+        Some(address) => format!("{name} {address}"),
+        None => name.to_string(),
     }
 }
 
@@ -196,6 +204,35 @@ impl Default for SidebarState {
             attention_scroll: 0,
             selected: 0,
         }
+    }
+}
+
+impl SidebarState {
+    /// The scroll position of one list section.
+    pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
+        match section {
+            SidebarSection::Roster => &mut self.scroll,
+            SidebarSection::Attention => &mut self.attention_scroll,
+        }
+    }
+
+    /// herdr `set_manual_sidebar_width`: the pointer column becomes the
+    /// sidebar's last column, within the width bounds.
+    pub fn set_width_from_column(&mut self, area: Rect, column: u16) {
+        let width = column.saturating_sub(area.x).saturating_add(1);
+        self.width = width.clamp(self.min_width, self.max_width);
+    }
+
+    /// herdr `set_sidebar_section_split`: the pointer row becomes the first
+    /// attention row, so the roster keeps the rows above it and each section
+    /// keeps at least its header. A sidebar under six rows keeps its fixed
+    /// halves.
+    pub fn set_split_from_row(&mut self, area: Rect, row: u16) {
+        if area.height < 6 {
+            return;
+        }
+        let split = row.saturating_sub(area.y).clamp(3, area.height - 3);
+        self.section_split = Some(split);
     }
 }
 
@@ -430,6 +467,26 @@ impl Chrome {
         };
         tab.layout.focus_pane(slot);
         true
+    }
+
+    /// Bring `pane` on screen the way a roster click does: focus it in the
+    /// active tab, switch to the tab already showing it, or split it into
+    /// the active tab when no tab shows it. A pane is never shown twice.
+    pub fn reveal_pane(&mut self, pane: PaneId, title: &str) {
+        if self.focus_pane(pane) {
+            return;
+        }
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.slot_for(pane).is_some())
+        {
+            self.active_tab = index;
+            self.tab_scroll_follow_active = true;
+            self.focus_pane(pane);
+            return;
+        }
+        self.open_pane(pane, title);
     }
 
     /// Sidebar width for the current frame (herdr `compute_view` clamp).

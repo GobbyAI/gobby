@@ -82,6 +82,14 @@ pub enum MouseOutcome {
     Spawn { placement: Placement },
     /// Bytes for a pane that reports mouse: a forwarded SGR report.
     Write { pane: PaneId, bytes: Vec<u8> },
+    /// An attention row was clicked: focus `pane` when the entry maps to one,
+    /// then open the response dialog for `entry_id`.
+    Attention {
+        pane: Option<PaneId>,
+        entry_id: String,
+    },
+    /// A roster row was dropped on another: the roster in its new order.
+    Reorder { order: Vec<String> },
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -89,6 +97,13 @@ pub enum MouseOutcome {
 /// Columns a pressed tab travels before its drag becomes a move. herdr moves
 /// on 1; one more keeps a click with a hair of jitter a click.
 pub const TAB_DRAG_THRESHOLD: u16 = 2;
+
+/// Rows a pressed roster row travels before its drag becomes a reorder
+/// (herdr `WORKSPACE_DRAG_THRESHOLD`).
+pub const ROSTER_DRAG_THRESHOLD: u16 = 1;
+
+/// Rows one wheel notch moves a sidebar list (herdr `scroll_workspace_list`).
+pub const MOUSE_SCROLL_LINES: usize = 3;
 
 /// Route one mouse event against the last drawn chrome.
 ///
@@ -121,13 +136,11 @@ pub fn route_mouse<W: WorkspaceView>(
     }
     let hit = hit_test(&chrome.view, mouse.column, mouse.row);
     match mouse.kind {
-        MouseEventKind::Down(button) => {
-            pointer::down(ws, chrome, hit, button, mouse.modifiers, mouse.column)
-        }
-        MouseEventKind::Drag(_) => pointer::drag(chrome, mouse.column),
-        MouseEventKind::Up(_) => pointer::up(chrome, hit, released),
-        MouseEventKind::ScrollUp => wheel::wheel(chrome, hit, true),
-        MouseEventKind::ScrollDown => wheel::wheel(chrome, hit, false),
+        MouseEventKind::Down(button) => pointer::down(ws, chrome, hit, button, mouse),
+        MouseEventKind::Drag(_) => pointer::drag(ws, chrome, mouse),
+        MouseEventKind::Up(_) => pointer::up(ws, chrome, hit, released),
+        MouseEventKind::ScrollUp => wheel::wheel(ws, chrome, hit, mouse.row, true),
+        MouseEventKind::ScrollDown => wheel::wheel(ws, chrome, hit, mouse.row, false),
         _ => MouseOutcome::Ignore,
     }
 }
@@ -265,7 +278,7 @@ mod tests {
             row,
             KeyModifiers::NONE,
         );
-        assert_eq!(route_mouse(&ws, &mut chrome, &drag), MouseOutcome::Ignore);
+        assert_eq!(route_mouse(&ws, &mut chrome, &drag), MouseOutcome::Handled);
         assert_eq!(
             chrome.gesture,
             Some(MouseGesture::SidebarDrag),
@@ -277,7 +290,7 @@ mod tests {
             row,
             KeyModifiers::NONE,
         );
-        assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Ignore);
+        assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Handled);
         assert_eq!(chrome.gesture, None, "a release ends the gesture");
         chrome.gesture = Some(MouseGesture::SidebarDrag);
         chrome.mode = Mode::KeybindHelp;

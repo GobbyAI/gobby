@@ -77,6 +77,11 @@ impl<D: Daemon> Workspace<D> {
             ));
         }
         self.order = order;
+        // The roster follows the pane order; ids without a pane keep their
+        // place after it.
+        let ordered = self.tab_order();
+        self.roster_ids.retain(|id| !ordered.contains(id));
+        self.roster_ids.splice(0..0, ordered);
         self.persist_workspace().map(|_| ())
     }
 

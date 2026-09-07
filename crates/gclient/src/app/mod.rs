@@ -11,7 +11,8 @@ pub mod run_loop;
 
 pub use attach::AttachState;
 pub use live_loop::mouse::{
-    route_mouse, MouseGesture, MouseOutcome, Placement, TAB_DRAG_THRESHOLD,
+    route_mouse, MouseGesture, MouseOutcome, Placement, MOUSE_SCROLL_LINES, ROSTER_DRAG_THRESHOLD,
+    TAB_DRAG_THRESHOLD,
 };
 pub use live_loop::run_live_loop;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};

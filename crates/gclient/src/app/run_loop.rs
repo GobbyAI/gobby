@@ -147,8 +147,9 @@ fn route_scripted_input(
     Ok(false)
 }
 
-/// Apply what `route_mouse` decided to the scripted workspace: chrome, focus
-/// and pane input only, since the scripted daemon has no terminals to spawn.
+/// Apply what `route_mouse` decided to the scripted workspace: chrome, focus,
+/// roster order and pane input only, since the scripted daemon has no
+/// terminals to spawn and no prompts to answer.
 /// Returns whether the client should exit, like the key router.
 fn apply_scripted_mouse_outcome(
     workspace: &mut Workspace,
@@ -175,6 +176,15 @@ fn apply_scripted_mouse_outcome(
         MouseOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
         MouseOutcome::Write { pane, bytes } => workspace
             .send_input(pane, &bytes)
+            .map_err(|error| FrameError::Other(error.to_string()))?,
+        MouseOutcome::Attention {
+            pane: Some(pane), ..
+        } => workspace
+            .focus_pane(pane)
+            .map_err(|error| FrameError::Other(error.to_string()))?,
+        MouseOutcome::Attention { pane: None, .. } => {}
+        MouseOutcome::Reorder { order } => workspace
+            .set_tab_order(&order)
             .map_err(|error| FrameError::Other(error.to_string()))?,
     }
     Ok(false)

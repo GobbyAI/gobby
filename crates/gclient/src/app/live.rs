@@ -118,7 +118,9 @@ impl Workspace<LiveDaemon> {
         if self.focus.is_some_and(|id| !self.panes.contains_key(&id)) {
             self.focus = self.order.first().copied();
         }
-        self.roster_ids = ids;
+        // Roster order is pane order: the saved order first, new rows after
+        // it in daemon order (`ensure_live_pane` appends them).
+        self.roster_ids = self.tab_order();
     }
 
     pub(super) async fn attach_ready_panes(&mut self) -> Result<(), DaemonError> {
