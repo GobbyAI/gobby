@@ -95,23 +95,29 @@ def test_review_prompts_have_direct_repository_and_task_access() -> None:
     assert "never edit it" in taskless.lower()
 
 
-def test_interactive_plan_keeps_lightweight_artifact_free_and_full_canonical() -> None:
+def test_interactive_plan_materializes_before_validation_or_review() -> None:
     body = _normalized(PLAN_SKILL_PATH)
 
-    assert "Lightweight depth is artifact-free" in body
-    assert "Present the plan directly in the conversation" in body
-    assert "Lightweight plans never create, update, validate, or hand off files" in body
-    assert "Full depth is artifact-first" in body
+    assert "one authority" in body
+    assert "complete latest draft" in body
+    assert "A conversational draft has not passed deterministic validation" in body
+    assert "Materialize the complete latest draft" in body
     assert "uv run gobby plans validate <plan-file>" in body
 
 
 def test_interactive_checkpoint_and_handoff_contract() -> None:
     body = _normalized(PLAN_SKILL_PATH)
 
-    for choice in ("`continue interactively`", "`hand off to build`", "`stop`"):
+    for choice in (
+        "`continue interactively`",
+        "`run enhancement`",
+        "`run adversarial review`",
+        "`approve for implementation`",
+        "`stop`",
+    ):
         assert choice in body
     assert "After drafting, enhancement, every finalized adversary round" in body
-    assert "During elicitation or drafting" in body
+    assert "After approval, offer both manual expansion and `gobby build`" in body
     assert "If handoff is requested while an enhancer or adversary is active" in body
     assert "without launching another enhancement or adversary round" in body
     assert "planning_seed_state=approved" in body

@@ -29,7 +29,8 @@ def test_writing_skills_requires_scenario_before_skill_body() -> None:
 @pytest.mark.parametrize(
     "scenario",
     [
-        "plan/depth-routing.yaml",
+        "plan/work-routing.yaml",
+        "plan/atomic-task-routing.yaml",
         "impeccable/critique-routing.yaml",
         "impeccable/live-routing.yaml",
         "impeccable/new-work-routing.yaml",
@@ -47,7 +48,7 @@ def test_decomposed_skill_families_preserve_routed_behavior(scenario: str) -> No
     assert len(loaded_references) <= 3
 
 
-def test_plan_embeds_artifact_provenance_in_presented_full_plan() -> None:
+def test_plan_embeds_artifact_provenance_in_presented_canonical_plan() -> None:
     """Verify loaded plan guidance preserves provenance when plan bodies are copied."""
     result = run_recorded_skill_scenario(SCENARIOS / "plan/present-artifact-provenance.yaml")
 
@@ -56,6 +57,48 @@ def test_plan_embeds_artifact_provenance_in_presented_full_plan() -> None:
 
     assert ".gobby/plans/" not in baseline_plan
     assert loaded_plan.splitlines()[0] == "Plan artifact: `.gobby/plans/blue-green-rollout.md`"
+    assert result.has_behavioral_delta
+
+
+def test_plan_staged_draft_scenario_preserves_full_payload_fields() -> None:
+    """The recorded skill scenario declares the complete handoff payload contract."""
+    result = run_recorded_skill_scenario(SCENARIOS / "plan/staged-draft-handoff.yaml")
+    loaded = {action["action"]: action for action in result.loaded.actions}
+
+    draft = str(loaded["draft_plan"]["text"])
+    assert len(draft) > 2_000
+    assert "```python" in draft
+    assert "```yaml" in draft
+    assert "## Open Questions" in draft
+
+    staged = loaded["stage_handoff"]
+    delivered = loaded["set_handoff"]
+    restored = loaded["restore_staged_draft"]
+    for field in ("current_state", "key_decisions", "notes", "next_steps"):
+        assert staged[field] == delivered[field] == restored[field]
+
+    assert delivered["current_state"] == draft
+    assert delivered["clear_session"] is False
+    assert "Decision Record:" in delivered["key_decisions"]
+    assert "Stage approvals:" in delivered["key_decisions"]
+    assert "Unresolved material questions:" in delivered["notes"]
+    assert loaded["get_handoff"]["arguments"] == {}
+    assert "write_scratch_file" not in result.loaded.action_names
+    assert "validate_plan" not in result.loaded.action_names
+
+
+def test_plan_optional_reviews_do_not_bypass_mandatory_approval_gates() -> None:
+    """Declining review still validates, obtains approval, and derives a manifest."""
+    result = run_recorded_skill_scenario(SCENARIOS / "plan/optional-review-approval.yaml")
+    actions = result.loaded.actions
+    names = result.loaded.action_names
+
+    validations = [action for action in actions if action["action"] == "validate_plan"]
+    assert [validation["mode"] for validation in validations] == ["base", "expansion"]
+    assert names.index("request_user_approval") < names.index("derive_plan_handoff_manifest")
+    assert names.index("derive_plan_handoff_manifest") < names.index("apply_plan_handoff_manifest")
+    assert names.index("apply_plan_handoff_manifest") < names.index("offer_implementation_route")
+    assert "spawn_adversary" not in names
     assert result.has_behavioral_delta
 
 

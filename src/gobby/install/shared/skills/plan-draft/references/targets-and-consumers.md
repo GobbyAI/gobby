@@ -8,17 +8,20 @@ with `**Acceptance:**` blocks, `framing` / `verification` / `deferred` sections,
 and the `## V1 Plan Changelog` rolling summary (per §2.23). Stop there.
 
 The `## M1 Task Manifest` section is not part of the first-draft narrative
-surface. It is written by the approving adversary or the interactive plan
-coordinator after final user approval. If a draft includes a manifest, it must
-pass expansion-mode validation.
+surface. An approving adversary returns server-derived routing decisions and
+manifest entries without editing the plan; after final user approval, the
+interactive coordinator applies them through the review-evidence path. When
+review is skipped, the coordinator uses the explicit human-handoff derive/apply
+path. If a draft includes a manifest, it must pass expansion-mode validation.
 
 Why this split: the planner's job is to fill holes in narrative; the
 adversary's job is to commit to a typed, expansion-ready bridge between the
 plan and the leaves. Mixing those concerns is what produced the long-context
-drift §2.23 fixes. Leave the manifest to the adversary.
+drift §2.23 fixes. Leave derivation to the review or human-handoff path and the
+write to the coordinator.
 
 See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the schema and
-the adversary-writes-on-approval contract.
+the server-derived, coordinator-applied approval contract.
 
 ### Table-Row Decomposition
 

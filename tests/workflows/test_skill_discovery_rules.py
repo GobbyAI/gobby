@@ -2946,7 +2946,7 @@ class TestRequirePlanSkillStructure:
         assert body.effects[0].reason.startswith(_skill_fetch_template("plan"))
 
     @pytest.mark.asyncio
-    async def test_rendered_block_reason_includes_registration_guidance(
+    async def test_installed_rule_evaluation_includes_current_plan_routing_guidance(
         self, db: HubDatabase
     ) -> None:
         _sync_bundled(db)
@@ -2971,9 +2971,12 @@ class TestRequirePlanSkillStructure:
         assert response.decision == "block"
         assert response.reason is not None
         assert skill_fetch_directive("plan") in response.reason
-        assert "`gobby plans register`" in response.reason
-        assert "never by copying a plan-mode file" in response.reason
-        assert "Lightweight planning does not create" in response.reason
+        assert "canonical file authority for dependent multi-deliverable plans" in response.reason
+        assert "materialize the complete conversational draft" in response.reason
+        assert "Atomic deliverables stay in the task workflow" in response.reason
+        assert "registration waits for a real expansion root" in response.reason
+        assert "Lightweight planning" not in response.reason
+        assert "written by `gobby plans register`" not in response.reason
 
 
 class TestRequirePlanSkillCondition:

@@ -7,7 +7,8 @@ description: >-
 prompt: |
   `uv run gobby plans validate .gobby/plans/example.md -p .` reports
   target-coverage on § 3.1 and shared-target-ordering between § 2.1 and § 3.1.
-  Get the plan to validate clean.
+  This is a narrative first draft with no M1 manifest. Use the first-draft
+  validation scope and get the plan ready for adversarial review.
 runs:
   excluded:
     loaded_skills: []
@@ -32,9 +33,9 @@ runs:
         lint: shared-target-ordering
         text: "Added (depends: 2.1) to the heading."
       - action: run_plan_validate
-        command: uv run gobby plans validate .gobby/plans/example.md -p . --mode expansion
+        command: uv run gobby plans validate .gobby/plans/example.md -p .
       - action: respond
-        text: "Validation clean: standard and expansion. 2 repairs applied. V1 fences byte-identical."
+        text: "Base validation clean: standard 0, expansion unrun-no-manifest. 2 repairs applied. V1 fences byte-identical."
 assertions:
   baseline_action_order:
     - rewrite_section
@@ -48,7 +49,8 @@ assertions:
   baseline_text_contains:
     - Rewrote section
   loaded_text_contains:
-    - "Validation clean"
+    - "Base validation clean"
+    - "expansion unrun-no-manifest"
     - byte-identical
   loaded_text_forbids:
     - Rewrote section

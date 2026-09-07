@@ -45,7 +45,9 @@ artifact reference, a `Targets:` block broken by a blank line.
   checkpoint fence stays byte-identical. Verify with `git diff` before
   reporting: no hunk may start at or below that heading.
 - **Never write the `## M1 Task Manifest`** and never call `approve_review` /
-  `reject_review`. The adversary owns the gate and the manifest.
+  `reject_review`. The adversary owns qualitative review and returns
+  server-derived manifest entries; the coordinator owns the corresponding
+  apply path.
 - **A design choice is a stop, not a guess.** When a failing lint can only be
   cleared by choosing scope, ownership, a split boundary, or a dependency
   direction the plan does not already state, leave the section unchanged and
@@ -82,21 +84,35 @@ Findings").
 
 ## Procedure
 
-1. Run both modes from the project root and collect every error and warning:
+1. Read the caller-selected validation scope. Do not infer a stronger result:
+
+   - `first-draft` is for a narrative plan before `## M1 Task Manifest` exists.
+     Run base validation only. Expansion validation is intentionally unrun at
+     this boundary.
+   - `manifest-bearing` is for an artifact whose manifest has already been
+     applied, including post-review, human-handoff, and pre-expansion sweeps.
+     Run both base and expansion validation.
+
+2. Run the selected modes from the project root and collect every error and
+   warning:
 
    ```bash
    uv run gobby plans validate <plan-file> -p <project-root>
+   # manifest-bearing scope only:
    uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
    ```
 
    `-p` is required; without it symbol resolution and
    `production-size-growth` are skipped and a clean result proves nothing.
-2. Repair section by section from the table. Re-run both modes after each
-   section's repairs; a fix in one section can surface a plan-wide check
+3. Repair section by section from the table. Re-run every selected mode after
+   each section's repairs; a fix in one section can surface a plan-wide check
    (mixed `::*`, shared targets) in another.
-3. Stop when both modes are clean, or after five full passes. A residue after
-   five passes is reported, never forced.
-4. Confirm the V1 changelog is untouched: `git diff -- <plan-file>` shows no
+4. Stop when every selected mode is clean, or after five full passes. A residue
+   after five passes is reported, never forced. A clean `first-draft` sweep
+   clears only the next adversary boundary; it never clears expansion. After a
+   review or human-handoff manifest is applied, the coordinator must run the
+   mandatory expansion gate.
+5. Confirm the V1 changelog is untouched: `git diff -- <plan-file>` shows no
    hunk at or below `## V1 Plan Changelog`.
 
 ---
@@ -108,8 +124,10 @@ agent, send it to the parent via `send_message` before `end_agent_run`):
 
 ```yaml
 validation:
-  before: {standard: <error-count>, expansion: <error-count>}
-  after: {standard: 0, expansion: 0}
+  scope: <first-draft | manifest-bearing>
+  before: {standard: <error-count>, expansion: <error-count | unrun>}
+  after: {standard: 0, expansion: <0 | unrun>}
+  expansion_validation: <passed | unrun-no-manifest>
 repairs:
   - {section: "3.1", lint: target-coverage, edit: "added tests/hooks/test_x.py to Targets"}
 needs_planner:
@@ -118,6 +136,11 @@ v1_changelog: byte-identical
 ledger: re-seal required   # or: none
 ```
 
-An empty `needs_planner` list with `after` at zero is the only outcome that
-clears the plan for the next adversary round. Report a non-empty list
-honestly; the coordinator routes those notes back to the planner.
+For `first-draft`, both expansion values are `unrun` and
+`expansion_validation` is `unrun-no-manifest`; never report expansion as zero
+or validated. For `manifest-bearing`, expansion must run and finish at zero
+with `expansion_validation: passed`.
+
+An empty `needs_planner` list with every selected mode clean is the only outcome
+that clears the caller-selected boundary. Report a non-empty list honestly; the
+coordinator routes those notes back to the planner.

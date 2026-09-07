@@ -1,0 +1,47 @@
+skill: plan
+agent: default
+description: Declining optional reviews preserves validation and explicit approval before implementation.
+prompt: |
+  The canonical plan is materialized and all material questions are resolved.
+  I decline enhancement and adversarial review. Do not start implementation
+  until the mandatory gates are complete, then offer both supported routes.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: skip_reviews
+      - action: expand_plan
+      - action: respond
+        text: Reviews were skipped, so expansion started immediately.
+  loaded:
+    loaded_skills: [plan]
+    actions:
+      - action: load_reference
+        path: references/evidence-and-recovery.md
+      - action: load_reference
+        path: references/build-handoff.md
+      - action: validate_plan
+        mode: base
+        plan_file: .gobby/plans/session-recovery.md
+      - action: record_optional_review_choices
+        enhancement: declined
+        adversarial_review: declined
+      - action: request_user_approval
+        gate: implementation
+        response: approved
+      - action: derive_plan_handoff_manifest
+      - action: apply_plan_handoff_manifest
+      - action: validate_plan
+        mode: expansion
+        plan_file: .gobby/plans/session-recovery.md
+      - action: offer_implementation_route
+        options: [manual expansion, gobby build]
+      - action: respond
+        text: Optional reviews were declined; base validation and explicit user approval still completed before manual expansion or gobby build.
+assertions:
+  baseline_action_order: [skip_reviews, expand_plan, respond]
+  loaded_action_order:
+    [load_reference, load_reference, validate_plan, record_optional_review_choices, request_user_approval, derive_plan_handoff_manifest, apply_plan_handoff_manifest, validate_plan, offer_implementation_route, respond]
+  baseline_text_contains: [expansion started immediately]
+  loaded_text_contains: [base validation, explicit user approval, manual expansion, gobby build]
+  loaded_text_forbids: [review verdict]

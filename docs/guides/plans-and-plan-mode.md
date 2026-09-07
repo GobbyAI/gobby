@@ -5,25 +5,32 @@ and DB-backed plan records for durable implementation or strategy artifacts.
 
 ## Mental Model
 
-Plan mode is a live session state. It lets an agent write or update the current
-plan artifact while blocking unrelated file edits until the user approves or
-exits plan mode. The Web UI exposes this through plan approval controls.
+Plan mode is a live session state. It lets an agent investigate and choose the
+right delivery workflow while blocking unrelated file edits until the user
+approves or exits plan mode. The Web UI exposes this through plan approval
+controls.
 
 Plan records are durable database rows. They register a plan file, hash, kind,
 state, root task reference, and generated coverage manifest. They let Gobby
 validate that a plan maps to the tasks and files it is supposed to cover.
 
-Use `/gobby plan` to produce and approve a plan artifact. It drafts and revises
-the Markdown file with the user, runs a constructive enhancement pass and then
-taskless adversarial review after user approval, records review history in the
-plan, and hands approved artifacts to `gobby build`.
+Use `/gobby plan` to investigate first. One independently closeable deliverable
+expected to fit one implementation session routes to the existing task
+workflow; multiple dependent deliverables route to a plan. Bugs, maintenance,
+features, and refactors all use the same rule. Duration is only an estimate.
+
+The plan route drafts and revises a Markdown artifact with the user. When the
+provider cannot write it yet, the complete latest draft survives compaction in
+the existing structured session handoff. Once materialized, the file is the
+sole authority. Deterministic validation and explicit user approval are
+mandatory; enhancement and taskless adversarial review are recommended but
+optional.
 
 Planning has three roles: the **planner** drafts and folds in changes, the
-**plan-enhancer** proposes constructive Better/Bigger improvements before the
-gate, and the **plan-adversary** gates the plan for correctness and contract
-compliance. The enhancer is advisory only — it never approves, rejects, edits
-the plan file, or writes the manifest. Only the planner or coordinator edits the
-plan, and the adversary remains the sole correctness gate.
+optional **plan-enhancer** proposes constructive Better/Bigger improvements,
+and the optional **plan-adversary** reviews correctness and contract
+compliance. Neither reviewer edits the plan. Base validation and human approval
+remain the mandatory gates.
 
 Use plan records to track a plan artifact through validation, archival, review,
 and deletion.
@@ -60,20 +67,21 @@ call_tool(server_name="gobby-plans", tool_name="create_plan", ...)
 
 Plan mode is enforced through workflow/rule state. In plan mode:
 
-- The agent may write the active plan artifact.
-- Structured `Write`, `Edit`, and `NotebookEdit` calls may write scratch files
-  beneath the active provider's user directory (`~/.claude`, `~/.codex`,
-  `~/.factory`, `~/.grok`, `~/.qwen`, or AGY's `~/.gemini`) and OS temporary
-  directories. Cross-provider directories, relative project config directories,
-  and paths that escape an approved root remain blocked.
-- Multi-file operations are allowed only when every target is the active plan
-  artifact or an approved scratch path.
+- The agent investigates the repository before routing work.
+- When project writes are allowed, the plan workflow writes the active
+  `.gobby/plans/<slug>.md` artifact.
+- When project writes are unavailable, the plan workflow stages the complete
+  draft in `set_handoff(clear_session=false)` and restores it with argumentless
+  `get_handoff`; it does not invent a scratch store, draft-storage tool,
+  autosave path, or indirect writer.
+- A conversational draft is not deterministically validated. It must be
+  materialized before file validation, review, registration, or expansion.
 - Other file writes are blocked by `block-edits-plan-mode.yaml`.
 - Shell mutation policy is unchanged; redirections and heredoc writes still use
   the existing plan-mode shell restrictions.
 - `/gobby plan` does not create planning epics, review anchors, or per-round
-  review tasks. Task management calls remain available for other planning
-  workflows, but artifact-first planning keeps review state in the file.
+  review tasks while drafting or reviewing. Registration waits for the real
+  implementation root used by manual expansion or build.
 - User approval can exit plan mode and authorize execution.
 - The UI can show an approval bar for the active plan state.
 
@@ -86,13 +94,13 @@ src/gobby/install/shared/workflows/rules/plan-mode/block-edits-plan-mode.yaml
 Rule templates are not runtime rules by themselves. Installed DB rules are the
 source of truth after daemon startup and sync.
 
-## Artifact-First Enhancement
+## Optional Enhancement
 
-After the user approves the draft and before adversarial review, `/gobby plan`
-runs an enhancement loop (default `max_enhancement_rounds = 1`). The parent
-session spawns `plan-enhancer-taskless` (no `task_id`, `isolation="none"`) with
-the plan path, round number, max rounds, and parent session id. The enhancer
-loads `plan-enhance` and `proportionality`, then returns ranked Better/Bigger
+After materialization and base validation, `/gobby plan` offers an optional
+enhancement loop. When selected, the parent session spawns
+`plan-enhancer-taskless` (no `task_id`, `isolation="none"`) with the plan path,
+round number, max rounds, and parent session id. The enhancer loads
+`plan-enhance` and `proportionality`, then returns ranked Better/Bigger
 suggestions to the parent via `send_message` and calls `end_agent_run`. It never
 claims tasks, edits the plan file, or calls a review verdict.
 
@@ -100,11 +108,10 @@ The coordinator surfaces the ranked suggestions to the user (impact-vs-effort,
 top first); the human is the scope gate. Accepted suggestions are folded into the
 plan artifact only, the plan is re-validated, and the round is recorded as
 `kind: enhancement` under `## V1 Plan Changelog`. The loop stops on
-`converged: true`, all-declined, or the round cap, then hands off to the
-unchanged adversary gate. Suggestions are offers — they must still pass the
-adversary.
+`converged: true`, all-declined, or the round cap. Suggestions are offers. If
+the user also selects adversarial review, accepted changes pass that review.
 
-## Artifact-First Review
+## Optional Adversarial Review
 
 Taskless review uses `plan-adversary-taskless`. The parent session passes the
 plan path, round number, review cap, and parent session id. The adversary loads
@@ -124,13 +131,15 @@ Every review round is recorded in the plan under:
 Each round records reviewer run/session, verdict, findings, and resolution
 notes. Keep prior rounds for audit.
 
-Approved plans must carry `## M1 Task Manifest` and pass:
+Before expansion, approved plans must carry `## M1 Task Manifest` and pass:
 
 ```bash
 uv run gobby plans validate <plan-file> --mode expansion
 ```
 
-Then hand off to build:
+If adversarial review is skipped, the coordinator derives and applies the human
+handoff manifest through the existing `gobby-plans` APIs; it never fabricates
+review evidence. After user approval, offer either manual expansion or build:
 
 ```bash
 uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
@@ -151,6 +160,11 @@ include:
 - `state`, such as `active` or `archived`
 - `root_task_ref`
 - coverage manifest metadata
+
+`create_plan` requires a real `root_task_ref` and generates the initial coverage
+manifest. Do not create a planning task only to register a draft. Manual
+expansion registers against its real epic; `gobby build` creates or reuses the
+real root and preserves its configured unattended stage sequence.
 
 Coverage manifests are generated under the project root and are removed when a
 plan is archived or deleted.
@@ -233,4 +247,4 @@ override plan-mode restrictions on unrelated files.
 - [workflow-rules.md](workflow-rules.md)
 - [tdd-enforcement.md](tdd-enforcement.md)
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-06_

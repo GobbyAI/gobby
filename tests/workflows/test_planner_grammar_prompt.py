@@ -30,15 +30,17 @@ def test_planner_prompt_contains_grammar() -> None:
 
 
 def test_planner_authors_narrative_only_not_the_manifest() -> None:
-    """Planner authors narrative only; plan-adversary owns the manifest.
+    """Planner authors narrative; review derives and the coordinator applies the manifest.
 
     Regression for the drift where planner.yaml instructed the planner to author
     and update `## M1 Task Manifest`, contradicting plan-draft and the
-    plan-coverage contract (the adversary writes the manifest on approval).
+    plan-coverage contract (the adversary returns server-derived entries and the
+    coordinator applies them after approval).
     """
     prompt = _planner_prompt()
     assert "NARRATIVE ONLY" in prompt
-    assert "plan-adversary` writes the manifest" in prompt
+    assert "plan-adversary` returns server-derived manifest entries" in prompt
+    assert "coordinator applies them through the review-evidence path" in prompt
     # The planner must not be told to author/include/update the manifest itself.
     assert "include a `## M1 Task Manifest`" not in prompt
     assert "update the manifest in the" not in prompt

@@ -2,25 +2,32 @@
 
 ### Adversarial review phase
 
-Start only after explicit adversarial-review approval.
+Adversarial review is recommended and optional. Start only after explicit
+adversarial-review approval and only against a materialized canonical plan file.
 
 0. Immediately before every adversary round, and after any plan-byte change since
-   the previous clean gate, run the deterministic sweep from the project root:
+   the previous clean gate, run the file-based deterministic sweep from the
+   project root:
 
    ```bash
    uv run gobby plans validate <plan-file> -p <project-root>
-   uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
    ```
 
-   When either mode reports residue, use a mid-tier internal subagent with this
-   prompt: "Load `restraint`, `plan-draft`, and `plan-mechanic`; apply only bounded
-   validator-driven repairs to the canonical artifact; rerun both project-aware
-   modes; return the `plan-mechanic` report." This is the validator
-   rerun-until-clean loop. A `needs-planner` result returns to the planner role;
-   repeat the deterministic gate after its semantic repair. Prepare no evidence
-   and launch no adversary until both modes are clean. Preserve the final clean
-   `plan-mechanic` result, or a zero-residue direct-run result with the same fields,
-   as the deterministic sweep report.
+   The first-draft narrative has no manifest yet, so the caller selects
+   `validation_scope=first-draft`; expansion-mode validation is unrun at this
+   boundary. A later pre-review sweep of a plan that already carries M1 selects
+   `validation_scope=manifest-bearing` and runs both modes. When a selected mode
+   reports residue, use a mid-tier internal subagent with this prompt: "Load
+   `restraint`, `plan-draft`, and `plan-mechanic`; apply only bounded
+   validator-driven repairs to the canonical artifact with the caller-selected
+   validation scope; rerun every selected mode; return the `plan-mechanic`
+   report, with expansion explicitly unrun for `first-draft`." This is the
+   validator rerun-until-clean loop. A
+   `needs-planner` result returns to the planner role; repeat the deterministic
+   gate after its semantic repair. Prepare no evidence and launch no adversary
+   until every selected mode is clean. Preserve the final clean
+   `plan-mechanic` result, or a zero-residue direct-run result with the same
+   fields, as the deterministic sweep report.
 1. Call `prepare_plan_review_round` immediately before spawning
    `plan-adversary-taskless` without `task_id`, using `isolation="none"`. Pass
    only `plan_path`, `round_number`, and optional `project`, `session_id`,
@@ -29,11 +36,12 @@ Start only after explicit adversarial-review approval.
    session id to the adversary role.
 2. Bind the spawned run with `bind_evidence_run`. Expire the evidence if spawn
    or bind fails. After a successful bind, immediately call
-   `gobby-sessions:set_handoff` with `clear_session=false`, then use **Waiting on Spawned Runs**. In a
-   terminal session that call comes back as a rejected or cancelled tool use
-   attributed to the user. That is the daemon interrupting the turn to deliver
-   the compaction command, never a refusal: do not stop, do not ask the user
-   about it, and resume from the continuation prompt.
+   `gobby-sessions:set_handoff` with `clear_session=false`, then use **Waiting on
+   Spawned Runs**. In a terminal session, the `set_handoff` call comes back as a
+   rejected or cancelled tool use attributed to the user. That is the daemon
+   interrupting the turn to deliver the compaction command, never a refusal: do
+   not stop, do not ask the user about it, and resume from the continuation
+   prompt.
 3. Read the canonical result. Present every finding with its full text and
    metadata, and collect one accept/decline vote per finding before editing.
    Every vote walks `restraint`'s decision ladder; a finding whose fix adds
@@ -73,7 +81,7 @@ Start only after explicit adversarial-review approval.
    finalize evidence, complete lesson-mint checkpointing, and run:
 
    ```bash
-   uv run gobby plans validate <plan-file> --mode expansion
+   uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
    ```
 
    Then present the checkpoint menu as the final-approval checkpoint.

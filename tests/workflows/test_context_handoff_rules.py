@@ -24,6 +24,7 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 BLOCK_REASON = "Autonomous sessions hand off in place."
+PLAN_MODE_BLOCK_REASON = "Plan Mode handoffs compact in place."
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def _set_handoff_event(
     tool_name: str = "mcp__gobby__call_tool",
     source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
-    if tool_name == "mcp__gobby__call_tool":
+    if tool_name in {"call_tool", "mcp__gobby__call_tool"}:
         tool_input: Any = {
             "server_name": "gobby-sessions",
             "tool_name": "set_handoff",
@@ -144,6 +145,112 @@ class TestBlockAutonomousClearSession:
         response = await _evaluate(db, event, {"is_spawned_agent": True})
 
         assert not _blocked_by_rule(response)
+
+
+class TestBlockPlanModeClearSession:
+    def test_rule_is_installed_enabled_and_uses_resolved_plan_mode(self, db: HubDatabase) -> None:
+        row = RuleDefinitionManager(db).get_by_name("block-clear-session-in-plan-mode")
+        assert row is not None
+        assert row.source == "installed"
+        assert row.enabled is True
+        assert row.priority == 13
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert "variables.get('plan_mode')" in (body.when or "")
+        effects = body.resolved_effects
+        assert effects[0].type == "block"
+        assert effects[0].mcp_tools == ["gobby-sessions:set_handoff"]
+
+    @pytest.mark.parametrize(
+        "rule_name",
+        [
+            "nudge-compact-on-context-pressure",
+            "nudge-compact-on-context-pressure-mid-turn",
+        ],
+    )
+    def test_installed_context_warning_explains_task_boundaries(
+        self, db: HubDatabase, rule_name: str
+    ) -> None:
+        row = RuleDefinitionManager(db).get_by_name(rule_name)
+        assert row is not None
+        assert row.source == "installed"
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        template = body.resolved_effects[0].template or ""
+        assert "Planning, review, and ongoing task work use this compact path" in template
+        assert "only between tasks after the current task closes" in template
+
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments"),
+        [
+            pytest.param(
+                "mcp__gobby__call_tool",
+                {**HANDOFF_ARGUMENTS, "clear_session": True},
+                id="normalized-wrapper",
+            ),
+            pytest.param(
+                "call_tool",
+                {**HANDOFF_ARGUMENTS, "clear_session": True},
+                id="plain-wrapper",
+            ),
+            pytest.param(
+                "mcp__gobby-sessions__set_handoff",
+                {**HANDOFF_ARGUMENTS, "clear_session": True},
+                id="direct-tool",
+            ),
+            pytest.param(
+                "mcp__gobby__call_tool",
+                json.dumps({**HANDOFF_ARGUMENTS, "clear_session": True}),
+                id="json-arguments",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_blocks_clear_session_during_plan_mode(
+        self, db: HubDatabase, tool_name: str, arguments: Any
+    ) -> None:
+        event = _set_handoff_event(arguments, tool_name=tool_name)
+
+        response = await _evaluate(
+            db,
+            event,
+            {"plan_mode": True, "is_spawned_agent": False},
+        )
+
+        assert response.decision == "block"
+        assert PLAN_MODE_BLOCK_REASON in (response.reason or "")
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [HANDOFF_ARGUMENTS, {**HANDOFF_ARGUMENTS, "clear_session": False}],
+        ids=["absent", "false"],
+    )
+    @pytest.mark.asyncio
+    async def test_allows_in_place_handoff_during_plan_mode(
+        self, db: HubDatabase, arguments: dict[str, Any]
+    ) -> None:
+        event = _set_handoff_event(arguments)
+
+        response = await _evaluate(
+            db,
+            event,
+            {"plan_mode": True, "is_spawned_agent": False},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_allows_clear_session_for_non_plan_interactive_session(
+        self, db: HubDatabase
+    ) -> None:
+        event = _set_handoff_event({**HANDOFF_ARGUMENTS, "clear_session": True})
+
+        response = await _evaluate(
+            db,
+            event,
+            {"plan_mode": False, "is_spawned_agent": False},
+        )
+
+        assert response.decision == "allow"
 
 
 class TestPreserveContextOnCompact:

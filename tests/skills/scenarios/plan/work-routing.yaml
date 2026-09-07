@@ -1,0 +1,39 @@
+skill: plan
+agent: default
+description: Investigation routes dependent bug deliverables to a plan instead of routing by work kind.
+prompt: |
+  Plan a short bug fix. Investigation shows the database repair must land before
+  the session-resume consumer can change, so there are two independently
+  closeable deliverables even though the whole change may take less than a day.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: classify_work_kind
+        work_kind: bug
+      - action: route_work
+        route: task
+      - action: respond
+        text: Bug fixes always use one task regardless of their dependency graph.
+  loaded:
+    loaded_skills: [plan]
+    actions:
+      - action: investigate_repository
+      - action: map_deliverables
+        deliverables: [repair persisted state, update session-resume consumer]
+        dependencies: [repair persisted state before update session-resume consumer]
+      - action: route_work
+        route: plan
+      - action: elicit_decision
+        topic: repair compatibility boundary
+      - action: load_reference
+        path: references/drafting-and-staging.md
+      - action: respond
+        text: Dependent deliverables use the plan route; work kind and duration are estimates, not routing rules.
+assertions:
+  baseline_action_order: [classify_work_kind, route_work, respond]
+  loaded_action_order:
+    [investigate_repository, map_deliverables, route_work, elicit_decision, load_reference, respond]
+  baseline_text_contains: [Bug fixes always use one task]
+  loaded_text_contains: [Dependent deliverables use the plan route, estimates]
+  loaded_text_forbids: [one-shot task, select_depth]

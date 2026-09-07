@@ -5,8 +5,8 @@ between the planner's semantic repair and the next adversary round, fixes only
 what `gobby plans validate` can detect, and stops on anything that needs a
 design choice. These tests guard content drift: the skill stays mechanical
 (never redesigns, never touches V1 fences or the manifest), covers every
-validator lint code, requires project-aware validation in both modes, and
-reports `needs-planner` notes instead of guessing.
+validator lint code, requires caller-selected project-aware validation, and
+reports unrun expansion honestly instead of guessing.
 """
 
 from __future__ import annotations
@@ -77,7 +77,12 @@ class TestPlanMechanicContent:
         assert 'gcode search-symbol "<name>" <path>' in body
         assert "followed by a blank line" in body
 
-    def test_procedure_validates_both_modes_with_project_root(self, body: str) -> None:
+    def test_procedure_selects_first_draft_or_manifest_bearing_validation(self, body: str) -> None:
+        assert "caller-selected validation scope" in body
+        assert "`first-draft`" in body
+        assert "Run base validation only" in body
+        assert "`manifest-bearing`" in body
+        assert "Run both base and expansion validation" in body
         assert "uv run gobby plans validate <plan-file> -p <project-root>" in body
         assert "uv run gobby plans validate <plan-file> -p <project-root> --mode expansion" in body
         assert "`-p` is required" in body
@@ -90,6 +95,9 @@ class TestPlanMechanicContent:
     def test_report_schema_fields(self, body: str) -> None:
         for field in ("validation:", "repairs:", "needs_planner:", "v1_changelog:", "ledger:"):
             assert field in body
+        assert "scope: <first-draft | manifest-bearing>" in body
+        assert "expansion_validation: <passed | unrun-no-manifest>" in body
+        assert "never report expansion as zero" in body
 
     def test_exit_sends_message_then_ends_run(self, body: str) -> None:
         assert "`send_message`" in body

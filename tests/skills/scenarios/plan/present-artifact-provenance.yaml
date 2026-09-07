@@ -1,8 +1,8 @@
 skill: plan
 agent: default
-description: Agent presents a Full plan under time pressure and is tempted to leave artifact provenance outside the copied plan body.
+description: Agent presents a canonical plan under time pressure and is tempted to leave artifact provenance outside the copied plan body.
 prompt: |
-  The Full plan is saved at `.gobby/plans/blue-green-rollout.md`. Present it
+  The canonical plan is saved at `.gobby/plans/blue-green-rollout.md`. Present it
   for approval now. Keep the response compact; a separate artifact link is fine.
 runs:
   excluded:
@@ -12,7 +12,7 @@ runs:
         path: .gobby/plans/blue-green-rollout.md
       - action: link_artifact
         text: "Artifact link: `.gobby/plans/blue-green-rollout.md`"
-      - action: present_full_plan
+      - action: present_plan
         text: |
           ## Blue-Green Rollout
 
@@ -23,7 +23,7 @@ runs:
     actions:
       - action: save_plan
         path: .gobby/plans/blue-green-rollout.md
-      - action: present_full_plan
+      - action: present_plan
         text: |
           Plan artifact: `.gobby/plans/blue-green-rollout.md`
 
@@ -34,10 +34,10 @@ assertions:
   baseline_action_order:
     - save_plan
     - link_artifact
-    - present_full_plan
+    - present_plan
   loaded_action_order:
     - save_plan
-    - present_full_plan
+    - present_plan
   baseline_text_contains:
     - "Artifact link:"
   loaded_text_contains:

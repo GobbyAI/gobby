@@ -255,6 +255,49 @@ before then. A dangling `task_ref` in an unfinalized plan is expected and does
 not fail base validation; the open-task, provenance, and dependency-closure
 gates above apply from expansion validation onward.
 
+## Planning Route and Draft Authority
+
+Interactive planning investigates the repository and maps the delivery graph
+before choosing a workflow. An atomic deliverable is independently closeable,
+has concrete scope and validation criteria, and is reasonably expected to fit
+one implementation session. It goes through the existing task workflow and
+does not enter plan drafting, review, registration, or expansion. Multiple
+dependent deliverables use the plan workflow. This rule applies uniformly to
+bugs, maintenance, features, and refactors; duration is an estimate, never the
+routing discriminator.
+
+When provider writes are allowed, the plan lives at
+`.gobby/plans/<slug>.md`. That file is the canonical narrative authority. When
+writes are unavailable, the planner keeps the complete latest conversational
+draft in the existing session handoff at compaction:
+
+- `current_state`: the full Markdown draft, including code fences.
+- `key_decisions`: decisions and stage approvals.
+- `notes`: unresolved questions.
+- `next_steps`: the concrete continuation point.
+
+The planner calls `set_handoff(clear_session=false)` and the resumed session
+consumes it with argumentless `get_handoff`. This staging state is not a second
+plan format and has not passed deterministic validation. Do not create a
+scratch store, draft-storage tool, autosave path, planning task, or indirect
+MCP/agent write to evade provider permissions. Resolve material questions by
+elicitation and retain the staged draft until writes become available.
+
+Once permitted, materialize the entire staged draft to the canonical path and
+use that file as the sole authority. The file-only `validate_plan(plan_file)`
+gate runs after materialization and before any review or approval. Enhancement
+and adversarial review are recommended optional stages; deterministic base
+validation and explicit user approval remain mandatory before expansion. If
+the user skips adversarial review, the coordinator uses
+`derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`, followed by
+expansion-mode validation. It does not synthesize adversary evidence.
+
+Plan registration also waits for a real expansion root. `create_plan` requires
+`root_task_ref` and generates the initial coverage manifest, so the coordinator
+must not invent a planning task merely to register a draft. Manual expansion
+registers against its real epic; `gobby build` creates or reuses its real root
+and preserves its established unattended stage-manifest sequence.
+
 ## Coverage Records
 
 Leaves emit structured labels:
@@ -381,35 +424,46 @@ validation strictness:
 
 | Mode | Manifest | Used by | Behavior |
 | --- | --- | --- | --- |
-| `parse_mode="draft"` | optional | `validate_plan_file` (planner-side gate run before every adversary spawn); `/gobby plan` Phase 3a; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
+| `parse_mode="draft"` | optional | `validate_plan_file` (file-only planner gate run after materialization and before every adversary spawn); interactive canonical plans; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
 | `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; taskless adversary/coordinator post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
 | `parse_mode="strict"` (default) | required | callers that want full validation regardless of context | Same strict invariants as `expansion`; default so any caller that omits `parse_mode` keeps full validation. |
 
 The deadlock between "review the plan" and "manifest must exist" is resolved by
-construction: the planner-side `validate_plan_file` gate parses in `draft` mode
-before each taskless adversary spawn, the adversary then runs qualitative review without
-re-parsing, writes the manifest on clean review, self-checks in `expansion`
-mode, and downstream `gobby expand` parses in `expansion` against the
-now-manifest-bearing plan.
+construction: after materialization, the planner-side `validate_plan_file` gate
+parses in `draft` mode before each taskless adversary spawn. The adversary then
+runs qualitative review without re-parsing and, on clean review, returns exact
+server-derived routing decisions and manifest entries without editing the plan.
+After user acceptance, the coordinator applies those entries through
+`apply_plan_review_manifest`; that apply re-derives and expansion-parses before
+its atomic write. Downstream `gobby expand` parses the now-manifest-bearing plan
+in `expansion` mode. A staged conversational draft cannot enter this sequence.
 
 ### Manifest-on-Approval Contract
 
-First drafts are narrative-only. The approving `plan-adversary-taskless` run or
-interactive coordinator writes `## M1 Task Manifest` after user-approved review.
-If the planning agent already supplied complete category and implementation
-domain decisions, preserve them. The deterministic manifest emitter is fallback
-only for missing manifests or legacy drafts where planning agents did not assign
+First drafts are narrative-only. An approving `plan-adversary-taskless` run
+returns server-derived manifest entries; the coordinator writes
+`## M1 Task Manifest` through the review-evidence apply path. When the user
+skips that optional review, the interactive coordinator uses the explicit
+human-handoff derive/apply path after base validation and user approval. If the
+planning agent already supplied complete category and implementation-domain
+decisions, preserve them. The deterministic manifest emitter is fallback only
+for missing manifests or legacy drafts where planning agents did not assign
 enough category/domain data.
 
 Sequence on clean review (no blocking findings):
 
-1. Append or repair the `## M1 Task Manifest` section in the plan file.
-2. Self-check via `parse_plan(plan_path, parse_mode="expansion")`.
-3. On `PlanParseError`, fix the manifest in-place and retry up to 3 times.
-4. After the cap is exhausted, return `verdict: needs_review` with the parser
-   details. Do not approve.
-5. On success, return `verdict: approved` with manifest entry count and whether
-   fallback emission was used.
+1. The adversary returns `verdict: approved` with exact server-derived routing
+   decisions, manifest entries, and coverage attestation. It does not edit the
+   plan.
+2. After the user accepts the result, the coordinator calls
+   `apply_plan_review_manifest` with that complete approval payload.
+3. The apply path re-derives the manifest, verifies evidence and source
+   freshness, expansion-parses the rendered plan, and writes atomically.
+4. If apply returns typed diagnostics, preserve them and leave the plan
+   unchanged. Do not hand-edit a manifest or synthesize review evidence; repair
+   through a fresh review round.
+5. After apply succeeds, the coordinator runs expansion-mode validation before
+   expansion.
 
 On rejection rounds the adversary MUST NOT edit the plan file — plan edits
 between rounds are the parent planner's responsibility. Findings are recorded in
@@ -434,13 +488,14 @@ and after. Design-class findings stay prose; the planner owns those edits.
 
 ### Enhancement And Over-Engineering Vocabulary
 
-A constructive `plan-enhancer` pass runs before the adversary gate (default on
-for interactive `/gobby plan`, opt-in via `--plan-enhancement-rounds` for
-autonomous `gobby build`). It loads `plan-enhance` and `proportionality` and
+A constructive `plan-enhancer` pass is recommended and optional for interactive
+planning; autonomous `gobby build` controls it with
+`--plan-enhancement-rounds`. It loads `plan-enhance` and `proportionality` and
 emits ranked Better/Bigger suggestions. The enhancer is advisory only: it never
 approves, rejects, edits the plan file, or writes the manifest. Fold-ins are the
-planner's or coordinator's responsibility, and every suggestion must still pass
-the adversary. The manifest stays adversary-owned regardless of enhancement.
+planner's or coordinator's responsibility. When adversarial review is selected,
+every accepted enhancement still passes that review. The enhancer never owns
+the manifest.
 
 The adversary's review vocabulary gains an `over-engineering` dimension, scored
 against the shared `proportionality` justification test: flag mechanism with no
@@ -449,8 +504,9 @@ abstraction, a subsystem where a function would do, single-value config or
 flags, indirection without payoff) and name the simpler alternative. Size,
 ambition, and large-but-justified epics are never findings on their own.
 Structural over-engineering is `blocking` ("simplify before expansion");
-ceremony is a `nit`. This dimension only *adds* to review — the adversary keeps
-sole correctness-gate authority and its write-scope invariant.
+ceremony is a `nit`. This dimension only *adds* to review — when selected, the
+adversary keeps sole qualitative-review authority and its write-scope
+invariant. Base validation and user approval remain separate mandatory gates.
 
 ## Review Severity and Approval
 
@@ -472,9 +528,11 @@ Boundary examples are table-driven:
 | One validated example omits an adjacent bounded hardening case. | Effect is localized and bounded. | minor |
 | Heading punctuation differs from house style. | Effect is cosmetic. | nit |
 
-Approval requires zero `blocking` findings. Open `major`, `minor`, and `nit`
-entries remain visible in the server-derived quality ledger carried beside the
-canonical manifest in the approved result envelope.
+An adversary approval requires zero `blocking` findings. Open `major`, `minor`,
+and `nit` entries remain visible in the server-derived quality ledger carried
+beside the canonical manifest in the approved result envelope. Regardless of
+whether optional review ran, explicit user approval is mandatory before
+expansion.
 
 ## Coverage CLI
 
@@ -527,6 +585,12 @@ are the read/write surfaces for plan metadata. Each row carries:
 - `plan_hash` — sha256 of the current plan file content.
 - `plan_kind` — one of `implementation`, `strategy`.
 - `state` — one of `active`, `archived`.
+
+Registration begins only when a real implementation root exists. The
+`gobby-plans:create_plan` surface requires that `root_task_ref` and generates
+the initial coverage manifest. Drafting and review therefore create no
+synthetic planning task or registry row; the canonical file remains the sole
+plan authority until manual expansion or build supplies the real root.
 
 `plan_kind` controls how the plan participates in coverage verification:
 

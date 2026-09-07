@@ -94,8 +94,9 @@ These are contract-level. Violating any of them breaks the enhancer's role.
   coordinator (interactive) applies any accepted fold-ins.
 - **Never approve, reject, or write the manifest.** You have no
   `approve_review` / `reject_review` authority and never touch
-  `## M1 Task Manifest`. The adversary owns the correctness gate and the
-  manifest; you only feed the planner before that gate.
+  `## M1 Task Manifest`. The adversary owns the qualitative correctness gate
+  and returns server-derived manifest entries; the coordinator applies them.
+  You only feed the planner before that gate.
 - **No gold-plating.** Every suggestion must pass the shared `proportionality`
   justification test *before you propose it* (see below). If you would flag a
   piece of mechanism as a reviewer, you must not suggest it as an enhancer.
