@@ -234,18 +234,50 @@ pub fn capture_to_frame(
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                let mut params = String::new();
-                for next in chars.by_ref() {
-                    if next.is_ascii_alphabetic() {
-                        if next == 'm' {
-                            apply_sgr(&params, &mut fg, &mut bg, &mut modifier);
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    let mut params = String::new();
+                    for next in chars.by_ref() {
+                        if next.is_ascii_alphabetic() {
+                            if next == 'm' {
+                                apply_sgr(&params, &mut fg, &mut bg, &mut modifier);
+                            }
+                            break;
                         }
-                        break;
+                        params.push(next);
                     }
-                    params.push(next);
                 }
+                // String sequences (OSC, DCS, SOS, PM, APC) run until BEL or
+                // ST. `capture-pane -e` emits OSC 8 hyperlinks, so without
+                // this their payload — `]8;;<url>` plus the ST's trailing
+                // backslash — reaches the grid as text, overwriting the link
+                // text and shifting the rest of the row.
+                Some(']' | 'P' | 'X' | '^' | '_') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\u{7}' {
+                            break;
+                        }
+                        if next == '\u{1b}' {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                // Any other escape is zero or more intermediate bytes
+                // (0x20..=0x2f) followed by one final byte (0x30..=0x7e).
+                // None of it is content.
+                Some(_) => {
+                    for next in chars.by_ref() {
+                        if !matches!(next, '\u{20}'..='\u{2f}') {
+                            break;
+                        }
+                    }
+                }
+                None => {}
             }
             continue;
         }
@@ -328,6 +360,10 @@ fn apply_sgr(params: &str, fg: &mut u32, bg: &mut u32, modifier: &mut u16) {
         i += 1;
     }
 }
+
+#[cfg(test)]
+#[path = "poll/tests.rs"]
+mod tests;
 
 pub fn numeric_format() -> &'static str {
     "#{pid} #{start_time} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{cursor_very_visible} #{alternate_on} #{keypad_cursor_flag} #{keypad_flag} #{bracket_paste_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_any_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{wrap_flag} #{origin_flag} #{insert_flag} #{scroll_region_upper} #{scroll_region_lower} #{pane_in_mode} #{cursor_shape} #{cursor_blinking} #{cursor_colour} #{mouse_utf8_flag} #{pane_dead}"
