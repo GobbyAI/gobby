@@ -1,0 +1,225 @@
+header:
+  plan_id: wiki-code-bakeoff
+  plan_hash: 7f650b96b8516d29f39012054de5064746aae2b47079fd1e627389f67c5361be
+  root_task_ref: '21926'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-07T08:08:03Z'
+  task_tree_source: db
+  task_tree_source_hash: 02f554b2744d13391a4b3e385183287828e635cf11d8fd372e61b4e88b88131a
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 1f0bcc7d8b00dcbbbe3e782adcd2bc7744ef075619fd92bd539d41f2b66fa477
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21941'
+    validation_criteria_snippet: '1.1.1: Every case specifies inputs, expected observations,
+      metrics, and pass/fail or unsupported criteria. file: `docs/evidence/wiki-bakeoff-code-2026-09/matri...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/matrix.md
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 9ab4e5796738449c44430c44e94791eece06d806edf9ff98e49d01da291de4f6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21941'
+    validation_criteria_snippet: '1.1.1: Every case specifies inputs, expected observations,
+      metrics, and pass/fail or unsupported criteria. file: `docs/evidence/wiki-bakeoff-code-2026-09/matri...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/matrix.md
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 23c149e681e34b175907f782118efa3f56cb9a71289fd8af95d760d98c889dd8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21941'
+    validation_criteria_snippet: '1.1.1: Every case specifies inputs, expected observations,
+      metrics, and pass/fail or unsupported criteria. file: `docs/evidence/wiki-bakeoff-code-2026-09/matri...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/matrix.md
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: f69d22b7aeb3b3a47a4202d08f05e80214cbce9c08948e110d3376e94762d510
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21942'
+    validation_criteria_snippet: '1.2.1: Configuration and before/after observations
+      prove the source repository, live stores, global configuration, and existing
+      application state are outside t...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/environment.md
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 6122444478cf9e3fa48497f22843e7d189188ae75d9ce2fadf8aaeeb222614c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21942'
+    validation_criteria_snippet: '1.2.1: Configuration and before/after observations
+      prove the source repository, live stores, global configuration, and existing
+      application state are outside t...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/environment.md
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 13604f64c69307d6b12e998d893deb4cde7f3882c5857e95ec4097533e71dcd0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21942'
+    validation_criteria_snippet: '1.2.1: Configuration and before/after observations
+      prove the source repository, live stores, global configuration, and existing
+      application state are outside t...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/environment.md
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 935b9e152400d79d3960bd99774bc200c1bf8e00cfe2824453e7125943941d6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21943'
+    validation_criteria_snippet: '1.3.1: Every application has a compatibility disposition
+      supported by commands, responses, effective configuration, and per-case measurements,
+      including calibr...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/compatibility.md
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 6d50cce22fbb78a97f1119329e1d884d5d75141d8a47487629fab1e77b57c4d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21943'
+    validation_criteria_snippet: '1.3.1: Every application has a compatibility disposition
+      supported by commands, responses, effective configuration, and per-case measurements,
+      including calibr...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/compatibility.md
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: d5ae40b3197a002610812cbf6f50a7d008741010ce3cddfc63390b98a1e58a88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21944'
+    validation_criteria_snippet: '2.1.1: Every index case has results from both tools
+      or a demonstrated unsupported disposition. file: `docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 18fcc284f9c36f632af42c7066855a981935b74c0676c6e50540a344e2fa7160
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21944'
+    validation_criteria_snippet: '2.1.1: Every index case has results from both tools
+      or a demonstrated unsupported disposition. file: `docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 9bd3c59cdb3bf50541a64293eef606c51d6ded467ab4de61b5a6c198509227d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21944'
+    validation_criteria_snippet: '2.1.1: Every index case has results from both tools
+      or a demonstrated unsupported disposition. file: `docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/graphify-gcode.md
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: ddec66192154305dc4d7dc918cdf91bc388de3f81d1854b2222fdecfb120aeae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21945'
+    validation_criteria_snippet: '3.1.1: Complete native CodeWiki outputs, supported
+      retrieval/export/update observations, citation checks, inventories, hashes,
+      and per-test measurements are ac...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/codewiki.md
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 014b72cfa3189ff3e631873823886b17f06341e1611fa846376e7cf8ea6fc105
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21946'
+    validation_criteria_snippet: '3.2.1: Complete native OpenDeepWiki outputs are
+      accessible with inventories, hashes, and measured generation/retrieval/export/update
+      observations; effective ad...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/opendeepwiki.md
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: 8be3a68247e4b470ff6ec205291a85bf8fb774bdeb53d3462d925ce070f5a0e0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21947'
+    validation_criteria_snippet: '3.3.1: Complete native Grok Wiki outputs/exports
+      are accessible, model identity is verified, and every case has measurements
+      or demonstrated unsupported eviden...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/grok-wiki.md
+  deferral_target: null
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: c0da9f60177d98985a3bc8056bb1f3d97e0b2ebfa703295dd90a67b4400ed874
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21948'
+    validation_criteria_snippet: '3.4.1: Complete native structure, domain, tour,
+      and change outputs are accessible with inventories, hashes, and per-test measurements;
+      retrieval/presentation a...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/understand-anything.md
+  deferral_target: null
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: a3adf2846cc534f3619798a569701ead4fe4f34ee1dc2b4e06a21d94b887381d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21949'
+    validation_criteria_snippet: '3.5.1: All five diagram types have accessible native/rendered
+      output, source grounding, validation receipts, inventories, hashes, and per-test
+      measurements. fi...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/archify.md
+  deferral_target: null
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: b52889ee77db1b612b036fa4a8162e919535e42d8c0fd117de25e3dc993e7ac8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21949'
+    validation_criteria_snippet: '3.5.1: All five diagram types have accessible native/rendered
+      output, source grounding, validation receipts, inventories, hashes, and per-test
+      measurements. fi...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/archify.md
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: ae529e0b72873d091e23b4dd56a05a3ae0f04978054a14475da0fca69ba2c551
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21950'
+    validation_criteria_snippet: '4.1.1: Every required case and comparator is accessible
+      through the index with no hidden omissions. file: `docs/evidence/wiki-bakeoff-code-2026-09/README.md`.
+      ...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/README.md
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 19e6b82970e566b317f68eee7b08dfc1b325661c8a1e0b419b19f37f1e0fea3e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21950'
+    validation_criteria_snippet: '4.1.1: Every required case and comparator is accessible
+      through the index with no hidden omissions. file: `docs/evidence/wiki-bakeoff-code-2026-09/README.md`.
+      ...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/README.md
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 5becc0e84563c1d6e0f3ba6e4e10f2c799e2947def4a8981f4660856b064997d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21950'
+    validation_criteria_snippet: '4.1.1: Every required case and comparator is accessible
+      through the index with no hidden omissions. file: `docs/evidence/wiki-bakeoff-code-2026-09/README.md`.
+      ...'
+    matched_artifact_ref: docs/evidence/wiki-bakeoff-code-2026-09/README.md
+  deferral_target: null
