@@ -169,7 +169,7 @@ fn inner_rect(chrome: &Chrome, slot: layout::PaneId) -> Option<Rect> {
 }
 
 /// Cells of frame row `row`, when the frame has it.
-fn frame_row(frame: &FrameData, row: u16) -> Option<&[CellData]> {
+pub(super) fn frame_row(frame: &FrameData, row: u16) -> Option<&[CellData]> {
     if row >= frame.height {
         return None;
     }

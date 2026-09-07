@@ -1,11 +1,13 @@
 //! Chrome actions for the live loop: keymap actions, relative focus,
 //! terminal spawn/terminate, and chrome sync from the workspace.
 
-use std::io::Write;
+use std::io::{self, Write};
+use std::process::{Command, Stdio};
 
 use crate::copy_mode::copy_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
+use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
 
 use super::super::attention::open_response_dialog;
@@ -58,9 +60,10 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
 /// click; actions dispatch exactly as their chords would; a spawn goes through
 /// the same request as `NewTerminal`; forwarded bytes go to the pane; a
 /// scroll moves the pane's viewport on its frame source; an attention click
-/// focuses its terminal and opens that entry's prompt; a roster drop saves
-/// the new order. Returns whether the client should exit,
-/// like the key routers.
+/// focuses its terminal and opens that entry's prompt; a link goes to
+/// `Chrome::link_opener`, and a launch failure to a warning toast that names
+/// it; a roster drop saves the new order. Returns whether the client should
+/// exit, like the key routers.
 pub(super) async fn apply_live_mouse_outcome(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -98,11 +101,37 @@ pub(super) async fn apply_live_mouse_outcome(
             copy_selection(workspace, chrome, &mut output)?;
             output.flush()?;
         }
+        MouseOutcome::OpenLink(url) => {
+            if let Err(error) = open_link(&chrome.link_opener, &url) {
+                chrome.toast = Some(Toast {
+                    kind: ToastKind::Warning,
+                    title: format!("Could not open link with {}", chrome.link_opener),
+                    body: Some(error.to_string()),
+                    target: None,
+                });
+            }
+        }
         MouseOutcome::Reorder { order } => workspace
             .set_tab_order(&order)
             .map_err(|error| FrameError::Other(error.to_string()))?,
     }
     Ok(false)
+}
+
+/// Hand `url` to `opener` detached: null stdio, and a thread reaps it so a
+/// finished opener never lingers as a zombie. `Err` when the opener cannot
+/// be spawned at all (missing binary, permission).
+pub(super) fn open_link(opener: &str, url: &str) -> io::Result<()> {
+    let mut child = Command::new(opener)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 pub(super) async fn handle_live_action(

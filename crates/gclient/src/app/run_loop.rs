@@ -149,15 +149,18 @@ fn route_scripted_input(
 
 /// Apply what `route_mouse` decided to the scripted workspace: chrome, focus,
 /// roster order, pane input and scrollback only, since the scripted daemon
-/// has no terminals to spawn and no prompts to answer.
-/// Returns whether the client should exit, like the key router.
+/// has no terminals to spawn, no prompts to answer and no desktop to open
+/// links on. Returns whether the client should exit, like the key router.
 fn apply_scripted_mouse_outcome(
     workspace: &mut Workspace,
     chrome: &mut Chrome,
     outcome: MouseOutcome,
 ) -> Result<bool, FrameError> {
     match outcome {
-        MouseOutcome::Handled | MouseOutcome::Ignore | MouseOutcome::Spawn { .. } => {}
+        MouseOutcome::Handled
+        | MouseOutcome::Ignore
+        | MouseOutcome::Spawn { .. }
+        | MouseOutcome::OpenLink(_) => {}
         MouseOutcome::Focus { pane, observe_only } => {
             chrome.focus_pane(pane);
             if observe_only {

@@ -1,8 +1,11 @@
 //! 3.1.3: `gclient` links `gobby_terminal::{raw_input, input, selection}`
 //! through real consumers. Host bytes parsed by `raw_input` drive the chrome
 //! keymap and the pane encoding; a `selection` paints the pane it belongs to.
+//! 3.2.1: a ctrl+click resolves the OSC 8 or bare URL under the pointer.
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{route_mouse, MouseOutcome, PaneId};
+use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::key_input::{key_input, resolve_chord, text_bytes, KeyInput, Resolution};
 use gobby_client::theme::{Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
@@ -10,6 +13,7 @@ use gobby_client::ui::{render_workspace, Action, Chrome, Keymap};
 use gobby_client::Workspace;
 use gobby_terminal::input::{KeyboardProtocol, TextCommit};
 use gobby_terminal::layout::PaneId as SlotId;
+use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
 use gobby_terminal::raw_input::{parse_raw_input_bytes, RawInputEvent};
 use gobby_terminal::selection::Selection;
 use ratatui::backend::TestBackend;
@@ -187,4 +191,200 @@ fn selection_highlights_only_its_pane() {
         })
         .unwrap();
     assert_untouched(&terminal, alpha_inner, highlight, "anchored term-alpha");
+}
+
+/// A frame showing `rows`, each padded with blanks to the widest row.
+fn frame_of(rows: &[&str], modes: PaneModes) -> FrameData {
+    let width = rows
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap_or(0);
+    let cells = rows
+        .iter()
+        .flat_map(|row| {
+            row.chars()
+                .chain(std::iter::repeat(' '))
+                .take(width)
+                .map(|symbol| CellData {
+                    symbol: symbol.to_string(),
+                    fg: 0,
+                    bg: 0,
+                    modifier: 0,
+                    skip: false,
+                    hyperlink: None,
+                })
+        })
+        .collect();
+    FrameData {
+        cells,
+        width: u16::try_from(width).expect("frame width"),
+        height: u16::try_from(rows.len()).expect("frame height"),
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes,
+    }
+}
+
+/// Column where `needle` starts in `row`.
+fn col_of(row: &str, needle: &str) -> u16 {
+    let at = row
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} in {row:?}"));
+    u16::try_from(row[..at].chars().count()).expect("column")
+}
+
+/// Give the cells spelling `needle` on `rows[row]` the OSC 8 target `uri`.
+fn link_cells(frame: &mut FrameData, rows: &[&str], row: usize, needle: &str, uri: &str) {
+    let index = u32::try_from(frame.hyperlinks.len()).expect("link index");
+    frame.hyperlinks.push(uri.to_string());
+    let start = usize::from(col_of(rows[row], needle));
+    let width = usize::from(frame.width);
+    for col in start..start + needle.chars().count() {
+        frame.cells[row * width + col].hyperlink = Some(index);
+    }
+}
+
+/// Open `terminal` in `ws` and deliver `frame` as its latest frame.
+async fn pane_showing(ws: &mut Workspace, terminal: &str, frame: FrameData) -> PaneId {
+    let pane = ws
+        .open_terminal(terminal, "native", "epoch-links")
+        .expect("open terminal");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(frame));
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("replace source");
+    ws.recv_pane_frame(pane).await.expect("receive frame");
+    pane
+}
+
+/// Press and release the left button on inner cell (`col`, `row`) of `inner`
+/// holding `modifiers`; what the press meant.
+fn click(
+    ws: &Workspace,
+    chrome: &mut Chrome,
+    inner: Rect,
+    col: u16,
+    row: u16,
+    modifiers: KeyModifiers,
+) -> MouseOutcome {
+    let at = |kind| MouseEvent {
+        kind,
+        column: inner.x + col,
+        row: inner.y + row,
+        modifiers,
+    };
+    let outcome = route_mouse(ws, chrome, &at(MouseEventKind::Down(MouseButton::Left)));
+    route_mouse(ws, chrome, &at(MouseEventKind::Up(MouseButton::Left)));
+    outcome
+}
+
+#[tokio::test]
+async fn ctrl_click_resolves_osc8_and_bare_urls() {
+    let rows = [
+        "see https://example.com/a-b_c?q=x@y. or (https://wiki.example/Foo_(bar))",
+        "read the docs and the local file",
+        "plain words only",
+    ];
+    let mut frame = frame_of(&rows, PaneModes::default());
+    link_cells(&mut frame, &rows, 1, "docs", "https://docs.example/start");
+    link_cells(&mut frame, &rows, 1, "file", "file:///etc/hosts");
+    let mut ws = Workspace::scripted();
+    let pane = pane_showing(&mut ws, "term-links", frame).await;
+    let area = Rect::new(0, 0, 120, 40);
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "links");
+    chrome.compute_view(&ws, area);
+    let inner = inner_rect(&chrome, slot);
+    let ctrl = KeyModifiers::CONTROL;
+
+    assert_eq!(
+        click(
+            &ws,
+            &mut chrome,
+            inner,
+            col_of(rows[0], "example.com"),
+            0,
+            ctrl
+        ),
+        MouseOutcome::OpenLink("https://example.com/a-b_c?q=x@y".to_string()),
+        "a bare URL loses its trailing period"
+    );
+    assert_eq!(
+        click(&ws, &mut chrome, inner, col_of(rows[0], "Foo_"), 0, ctrl),
+        MouseOutcome::OpenLink("https://wiki.example/Foo_(bar)".to_string()),
+        "the bracket the URL opened stays, the wrapping one goes"
+    );
+    assert_eq!(
+        click(&ws, &mut chrome, inner, col_of(rows[1], "docs"), 1, ctrl),
+        MouseOutcome::OpenLink("https://docs.example/start".to_string()),
+        "an OSC 8 target wins over the visible text"
+    );
+    for (row, col, why) in [
+        (
+            0,
+            col_of(rows[0], "y.") + 1,
+            "the trimmed period is not part of the link",
+        ),
+        (
+            1,
+            col_of(rows[1], "file"),
+            "a file: OSC 8 target never opens",
+        ),
+        (2, col_of(rows[2], "plain"), "plain text is a plain click"),
+    ] {
+        assert_eq!(
+            click(&ws, &mut chrome, inner, col, row, ctrl),
+            MouseOutcome::Handled,
+            "{why}"
+        );
+        assert!(
+            chrome.gesture.is_none() && chrome.selection.is_none(),
+            "{why}: the click ended like any other"
+        );
+    }
+    assert_eq!(
+        click(
+            &ws,
+            &mut chrome,
+            inner,
+            col_of(rows[0], "example.com"),
+            0,
+            KeyModifiers::NONE
+        ),
+        MouseOutcome::Handled,
+        "without ctrl the URL is ordinary text"
+    );
+
+    // Inside a pane that reports the mouse a plain press is left alone, but
+    // ctrl still resolves the link first.
+    let vim_row = "open https://r.example/q now";
+    let vim = pane_showing(
+        &mut ws,
+        "term-vim",
+        frame_of(
+            &[vim_row],
+            PaneModes {
+                mouse_all: true,
+                ..PaneModes::default()
+            },
+        ),
+    )
+    .await;
+    let vim_slot = chrome.open_pane(vim, "vim");
+    chrome.compute_view(&ws, area);
+    let vim_inner = inner_rect(&chrome, vim_slot);
+    assert_eq!(chrome.focused_pane(), Some(vim));
+    let url_col = col_of(vim_row, "r.example");
+    assert_eq!(
+        click(&ws, &mut chrome, vim_inner, url_col, 0, KeyModifiers::NONE),
+        MouseOutcome::Ignore,
+        "a reporting pane keeps a plain press"
+    );
+    assert_eq!(
+        click(&ws, &mut chrome, vim_inner, url_col, 0, ctrl),
+        MouseOutcome::OpenLink("https://r.example/q".to_string()),
+        "ctrl resolves the link before any forwarding"
+    );
 }

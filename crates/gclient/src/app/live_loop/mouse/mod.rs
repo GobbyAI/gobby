@@ -16,6 +16,7 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
 
+mod links;
 mod pointer;
 mod select;
 mod wheel;
@@ -100,6 +101,9 @@ pub enum MouseOutcome {
     /// A selection inside a pane was finalized: the loop copies it through
     /// OSC 52 and keeps the text for middle-click paste.
     Copy,
+    /// A ctrl+click landed on a link: the loop hands the URL to
+    /// `Chrome::link_opener`.
+    OpenLink(String),
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }

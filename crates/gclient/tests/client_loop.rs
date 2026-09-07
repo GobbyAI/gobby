@@ -27,6 +27,7 @@ use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutt
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
+use gobby_client::ui::status::ToastKind;
 use gobby_client::ui::{Chrome, WorkspaceView};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -3460,4 +3461,109 @@ async fn control_indicator_click_toggles_control() {
         pane.has_take_back()
     );
     mock.shutdown().await;
+}
+
+/// Run the live loop over one terminal showing a URL, ctrl+click the URL
+/// with `opener` configured, and return the chrome the loop left behind.
+async fn ctrl_click_link_with(opener: &str) -> Chrome {
+    const ROW: &str = "see https://example.com/docs now";
+    let mock = MockDaemon::start("local-token").await;
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": "terminal-link", "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane = workspace
+        .pane_for_terminal("terminal-link")
+        .expect("roster pane");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(semantic_frame(ROW));
+    workspace
+        .replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("install scripted direct source");
+    workspace
+        .recv_pane_frame(pane)
+        .await
+        .expect("the frame reaches the pane before the loop starts");
+
+    // Mirror the loop's one-pane chrome to learn where the URL is drawn.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(pane, "terminal-link");
+    probe.compute_view(&workspace, area);
+    let inner = probe.view.pane_infos[0].inner_rect;
+    let url_col = u16::try_from(ROW.find("example").expect("url in row")).expect("column");
+    let (column, row) = (inner.x + url_col, inner.y);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.link_opener = opener.to_string();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        settle_live_event().await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::CONTROL,
+        )
+        .await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Up(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::CONTROL,
+        )
+        .await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    chrome
+}
+
+#[tokio::test]
+async fn open_link_failure_surfaces_a_toast() {
+    let opened = ctrl_click_link_with("true").await;
+    assert_eq!(
+        opened.toast, None,
+        "an opener that launches raises no toast"
+    );
+
+    let opener = "/nonexistent/gclient-link-opener";
+    let failed = ctrl_click_link_with(opener).await;
+    let toast = failed.toast.expect("a failed launch raises a toast");
+    assert!(
+        matches!(toast.kind, ToastKind::Warning),
+        "warning, not error: {toast:?}"
+    );
+    assert!(
+        toast.title.contains(opener),
+        "the toast names the opener: {toast:?}"
+    );
 }

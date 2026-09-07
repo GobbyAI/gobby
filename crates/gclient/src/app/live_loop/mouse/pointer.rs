@@ -15,16 +15,18 @@ use crate::ui::sidebar::section_metrics;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::{
-    focus_active_tab, on_roster, select, MouseGesture, MouseOutcome, Placement,
+    focus_active_tab, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
     ROSTER_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
 };
 
 /// A button went down on `hit`. Only the left button means anything.
 ///
 /// Inside a pane it focuses the pane (herdr `FocusPane`); alt makes that an
-/// observe-only focus. A press on the pane that already has focus starts a
-/// selection there (`select::down`), and a slot whose pane has left the
-/// roster is stale until the next chrome sync, so it is ignored.
+/// observe-only focus. A ctrl+press first asks `links::resolve` for a URL
+/// under the pointer and opens that instead, whichever pane has focus. A
+/// press on the pane that already has focus starts a selection there
+/// (`select::down`), and a slot whose pane has left the roster is stale until
+/// the next chrome sync, so it is ignored.
 ///
 /// On the tab bar it activates the tab and focuses its pane (herdr
 /// `FocusTab`), starting the drag that `up` may finish as a reorder; a
@@ -68,6 +70,11 @@ pub(super) fn down<W: WorkspaceView>(
             };
             if !on_roster(ws, pane) {
                 return MouseOutcome::Ignore;
+            }
+            if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                if let Some(url) = links::resolve(ws, pane, row, col) {
+                    return MouseOutcome::OpenLink(url);
+                }
             }
             if chrome.focused_pane() == Some(pane) {
                 return select::down(ws, chrome, pane, slot, col, row, mouse);

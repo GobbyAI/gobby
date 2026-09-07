@@ -22,6 +22,13 @@ use std::collections::HashMap;
 /// Collapsed sidebar width (herdr `COLLAPSED_WIDTH`).
 pub const COLLAPSED_WIDTH: u16 = 4;
 
+/// Command that opens a URL on this platform, the one a ctrl+click uses.
+pub const DEFAULT_LINK_OPENER: &str = if cfg!(target_os = "macos") {
+    "open"
+} else {
+    "xdg-open"
+};
+
 /// Read-only workspace facts the chrome renders from. Implemented for the
 /// scripted workspace here; the live workspace implements it where its pane
 /// accessors live.
@@ -363,6 +370,9 @@ pub struct Chrome {
     pub last_click: Option<ClickRun>,
     /// Text of the last mouse copy, for middle-click paste.
     pub last_copy: Option<String>,
+    /// Command a ctrl+click hands a link to: `DEFAULT_LINK_OPENER` unless a
+    /// test points it elsewhere.
+    pub link_opener: String,
 }
 
 impl Chrome {
@@ -392,6 +402,7 @@ impl Chrome {
             hover: None,
             last_click: None,
             last_copy: None,
+            link_opener: DEFAULT_LINK_OPENER.to_owned(),
         }
     }
 
