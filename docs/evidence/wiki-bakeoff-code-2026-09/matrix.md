@@ -1,16 +1,17 @@
 # Code-wiki bakeoff matrix and casebook
 
-This document is the executable evidence contract for the Graphify/gcode comparison in
+This document is the shared executable matrix for all bakeoff comparators and the detailed
+Graphify/gcode index casebook in
 [the approved bakeoff plan](../../../.gobby/plans/wiki-code-bakeoff.md). It defines the corpus,
-questions, fixtures, measurements, and scoring before either comparator runs. It is not a result,
-a recommendation, or a canonical wiki.
+questions, fixtures, profiles, measurements, and scoring before any comparator runs. It is not a
+result, recommendation, or canonical wiki.
 
 ## Frozen inputs and authority
 
 | Item | Frozen identity | Role |
 | --- | --- | --- |
-| Game Goblins baseline | `0216f1e33f05962d49467d95fe84609041c6dba8` | C0-C2 and the parent for C4-C9 |
-| Game Goblins committed change | `8b24ac26699aac8b24254a647aa70b208287b492` | C3 only: name-prefix store-minimum behavior |
+| Game Goblins baseline | `0216f1e33f05962d49467d95fe84609041c6dba8` | C0-C2, C4-C7, and Q01-Q13 in C8-C9; parent of the committed change |
+| Game Goblins committed change | `8b24ac26699aac8b24254a647aa70b208287b492` | C3 and Q14 in C8-C9: name-prefix store-minimum behavior |
 | Game Goblins checkout | `/Users/josh/Projects/game-goblins` | Read-only object source; never switch or modify this checkout |
 | Graphify | [`c9f99018774e2e0380e9f65b3959944559a0d5f6`](https://github.com/Graphify-Labs/graphify/tree/c9f99018774e2e0380e9f65b3959944559a0d5f6), package `0.9.55` | Comparator A |
 | gcode | `7394b97c1d88c82f685e788e798de2cfd728ad15`, `1.7.0`, CLI contract v8 | Comparator B |
@@ -31,6 +32,7 @@ commands read Git objects and do not alter the Game Goblins checkout.
 ```bash
 export BAKEOFF_ROOT=/Users/josh/Projects/wiki-bakeoff-code-2026-09
 export SOURCE_REPO=/Users/josh/Projects/game-goblins
+export MATRIX_VALIDATOR=/Users/josh/Projects/gobby/docs/evidence/wiki-bakeoff-code-2026-09/validate_matrix.py
 export BASE_SHA=0216f1e33f05962d49467d95fe84609041c6dba8
 export CHANGE_SHA=8b24ac26699aac8b24254a647aa70b208287b492
 install -d "$BAKEOFF_ROOT/templates/baseline" "$BAKEOFF_ROOT/templates/change"
@@ -82,17 +84,18 @@ next input hash.
 
 ### Domain inventory
 
-| Domain | Gold summary | Frozen evidence |
-| --- | --- | --- |
-| Shared platform boundary | The local-first shared package owns Lightspeed synchronization, normalized PostgreSQL mirrors, forecasting, plans, review artifacts, and guarded application. The standalone Restocks and Buylist tools remain authoritative within their legacy boundaries until an explicit cutover. | [README lines 1-6](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/README.md#L1-L6), [architecture lines 3-95](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/docs/architecture.md#L3-L95) |
-| Synchronization | Every sync run and resource is tracked. Each page atomically persists raw records, normalized records, counts, and an advancing numeric watermark. Runs fail if required resources do not all succeed. | [sync store lines 37-167](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/sync_store.py#L37-L167), [run completion lines 230-292](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/sync_store.py#L230-L292) |
-| Daily/weekly planning | Daily planning serves only the warehouse-to-Little-Rock lane. Weekly planning orders Conway return, Conway/Little Rock seeds, store replenishment, network target, and vendor purchasing while respecting floors and available stock. | [planner lines 251-498](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/planner.py#L251-L498), [daily execution lines 273-381](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/daily.py#L273-L381) |
-| Writes and approvals | Shadow mode writes review artifacts without external mutation. Publish preflights write scopes, applies and reads back settings/transfers, and uploads the vendor workbook only after transfer verification. | [README lines 71-73](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/README.md#L71-L73), [weekly writes lines 316-389](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L316-L389), [transfer verification lines 558-675](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L558-L675) |
-| Recovery | Sync records failures while retaining prior committed pages. Publish applications record a run, completed steps, transfer IDs, status, and incomplete summary. Stable transfer names plus readback make reruns reconcilable, but this is point-specific recovery, not a claim of universal automatic resume. | [sync failure lines 230-292](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/sync_store.py#L230-L292), [apply tracking lines 769-853](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L769-L853) |
-| Vendor workbook | A versioned workbook contains Orders, Transfers, Sales, Demand, Bands, and Exceptions sheets. Publication is gated by transfer verification. | [writer lines 54-171](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/vendor_workbook/writer.py#L54-L171), [weekly writes lines 360-383](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L360-L383) |
-| Restocks | The standalone script pages Lightspeed products, inventory, and prior-day sales; it produces needs-image and restock/missing-inventory CSVs and uploads the reports to Slack. Pull quantities are capped by available stock. | [Restocks lines 122-276](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Restocks/restockmaster.py#L122-L276), [main lines 324-420](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Restocks/restockmaster.py#L324-L420) |
-| Buylist | The standalone Buylist builds per-game operational and unpriced CSVs from a retained catalog plus current pricing, then updates internal/public Google Sheets and reports aggregate status to Slack. Daily feed changes hydrate through TCGplayer; direct reconciliation is attempted weekly; a failed refresh can retain a usable prior snapshot. | [Buylist README lines 1-23](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Buylist/README.md#L1-L23), [pipeline lines 426-456](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Buylist/buylist_automation.py#L426-L456), [catalog sync lines 755-872](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Buylist/buylist_catalog.py#L755-L872) |
-| C3 change | Product-name prefix rules are loaded independently of category rules. A case-sensitive longest-prefix match wins before the category minimum for automatic, non-excluded products. Tracked policy adds Hobby Supplies minimum 2 and `Sleeves: ` minimum 4. | [settings at changed commit lines 197-214](https://github.com/GobbyAI/game-goblins/blob/8b24ac26699aac8b24254a647aa70b208287b492/src/game_goblins/platform/settings.py#L197-L214), [target selection lines 41-75](https://github.com/GobbyAI/game-goblins/blob/8b24ac26699aac8b24254a647aa70b208287b492/src/game_goblins/replenishment/store_targets.py#L41-L75), [tracked policy lines 83-95](https://github.com/GobbyAI/game-goblins/blob/8b24ac26699aac8b24254a647aa70b208287b492/config/replenishment.toml#L83-L95) |
+| ID | Domain | Gold summary | Frozen evidence |
+| --- | --- | --- | --- |
+| D01 | Shared platform boundary | The local-first shared package owns Lightspeed synchronization, normalized PostgreSQL mirrors, forecasting, plans, review artifacts, and guarded application. The standalone Restocks and Buylist tools remain authoritative within their legacy boundaries until an explicit cutover. | [README lines 1-6](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/README.md#L1-L6), [architecture lines 3-95](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/docs/architecture.md#L3-L95) |
+| D02 | Synchronization | Every sync run and resource is tracked. Each page atomically persists raw records, normalized records, counts, and an advancing numeric watermark. Runs fail if required resources do not all succeed. | [sync store lines 37-167](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/sync_store.py#L37-L167), [run completion lines 230-292](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/sync_store.py#L230-L292) |
+| D03 | Daily/weekly planning | Daily planning serves only the warehouse-to-Little-Rock lane. Weekly planning orders Conway return, Conway/Little Rock seeds, store replenishment, network target, and vendor purchasing while respecting floors and available stock. | [planner lines 251-498](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/planner.py#L251-L498), [daily execution lines 273-381](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/daily.py#L273-L381) |
+| D04 | Writes and approvals | Shadow mode writes review artifacts without external mutation. Publish preflights write scopes, applies and reads back settings/transfers, and uploads the vendor workbook only after transfer verification. | [README lines 71-73](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/README.md#L71-L73), [weekly writes lines 316-389](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L316-L389), [transfer verification lines 558-675](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L558-L675) |
+| D05 | Recovery | Sync records failures while retaining prior committed pages. Publish applications record a run, completed steps, transfer IDs, status, and incomplete summary. Stable transfer names plus readback make reruns reconcilable, but this is point-specific recovery, not a claim of universal automatic resume. | [sync failure lines 230-292](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/sync_store.py#L230-L292), [apply tracking lines 769-853](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L769-L853) |
+| D06 | Vendor workbook | A versioned workbook contains Orders, Transfers, Sales, Demand, Bands, and Exceptions sheets. Publication is gated by transfer verification. | [writer lines 54-171](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/vendor_workbook/writer.py#L54-L171), [weekly writes lines 360-383](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/src/game_goblins/replenishment/weekly_writes.py#L360-L383) |
+| D07 | Restocks | The standalone script pages Lightspeed products, inventory, and prior-day sales; it produces needs-image and restock/missing-inventory CSVs and uploads the reports to Slack. Pull quantities are capped by available stock. | [Restocks lines 122-276](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Restocks/restockmaster.py#L122-L276), [main lines 324-420](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Restocks/restockmaster.py#L324-L420) |
+| D08 | Buylist | The standalone Buylist builds per-game operational and unpriced CSVs from a retained catalog plus current pricing, then updates internal/public Google Sheets and reports aggregate status to Slack. Daily feed changes hydrate through TCGplayer; direct reconciliation is attempted weekly; a failed refresh can retain a usable prior snapshot. | [Buylist README lines 1-23](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Buylist/README.md#L1-L23), [pipeline lines 426-456](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Buylist/buylist_automation.py#L426-L456), [catalog sync lines 755-872](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/Buylist/buylist_catalog.py#L755-L872) |
+| D09 | Implemented versus proposed | The shared package does not import or rewrite either legacy application. `game_goblins.buylist` and its shared schema are explicitly future architecture; the standalone directory remains authoritative until approved cutover. | [README lines 38-48](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/README.md#L38-L48), [architecture lines 16-19 and 49-55](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/docs/architecture.md#L16-L55), [legacy boundary lines 85-95](https://github.com/GobbyAI/game-goblins/blob/0216f1e33f05962d49467d95fe84609041c6dba8/docs/architecture.md#L85-L95) |
+| D10 | C3 change | Product-name prefix rules are loaded independently of category rules. A case-sensitive longest-prefix match wins before the category minimum for automatic, non-excluded products. Tracked policy adds Hobby Supplies minimum 2 and `Sleeves: ` minimum 4. | [settings at changed commit lines 197-214](https://github.com/GobbyAI/game-goblins/blob/8b24ac26699aac8b24254a647aa70b208287b492/src/game_goblins/platform/settings.py#L197-L214), [target selection lines 41-75](https://github.com/GobbyAI/game-goblins/blob/8b24ac26699aac8b24254a647aa70b208287b492/src/game_goblins/replenishment/store_targets.py#L41-L75), [tracked policy lines 83-95](https://github.com/GobbyAI/game-goblins/blob/8b24ac26699aac8b24254a647aa70b208287b492/config/replenishment.toml#L83-L95) |
 
 ### Common questions and answer keys
 
@@ -101,22 +104,22 @@ implementation, and `A` means the source itself leaves a material ambiguity. Sco
 right conclusion, the D/I/A label, and at least one supporting file and line span. A system must
 not convert an `A` answer into false certainty.
 
-| ID | Question | Gold answer | Class |
-| --- | --- | --- | --- |
-| Q01 | What is the shared platform, and which systems remain standalone? | The shared local-first package owns sync/normalized data, replenishment forecasting/planning, and guarded writes. Restocks and Buylist remain standalone legacy systems until explicit cutover. | D |
-| Q02 | Which data source is authoritative and what is PostgreSQL's role? | Lightspeed remains the system of record; PostgreSQL holds normalized local mirrors and workflow state. | D |
-| Q03 | How does a paged synchronization protect progress? | Raw and normalized rows, counts, and numeric watermark advance in one transaction per page; the run succeeds only if all required resources succeed. | D |
-| Q04 | What exactly does the daily replenishment cadence do? | It plans the warehouse-to-Little-Rock lane, writes transfer/refacing review files in shadow, and in publish mode preflights, applies, verifies, and publishes guarded results. | D |
-| Q05 | What is the weekly lane order and why does order matter? | Conway return, Conway-only/Little-Rock seed behavior, store replenishment, network target, then vendor purchasing; the implementation implies order matters because earlier moves change available/projected stock and floors constrain later moves. | I |
-| Q06 | What prevents an unreviewed run from mutating Lightspeed? | Shadow is the default non-mutating path; publish requires explicit mode/baseline behavior, scope preflight, a publish lock, readback verification, and tracked application state. | D |
-| Q07 | What is in the vendor workbook and when is it uploaded? | Orders, Transfers, Sales, Demand, Bands, and Exceptions; publish uploads it only when transfer application is publication-ready. | D |
-| Q08 | What recovery behavior is implemented after interruption? | Committed sync pages and watermarks survive and failures are recorded. Stable transfer names/readbacks and persisted application status support bounded reconciliation, but the source does not specify one universal automatic-resume path for every interruption point. The exact operator action after a partial external settings write is ambiguous. | A |
-| Q09 | What does Restocks read, calculate, and publish? | It reads paged products/inventory and prior-day store sales, builds image/restock/missing-stock CSVs, caps pulls to stock where implemented, and uploads reports to Slack. | D |
-| Q10 | What does Buylist produce and where does it publish? | Per-game operational and Unpriced CSVs for Magic, Pokemon, One Piece, and Riftbound, then internal/public Google Sheets plus aggregate Slack status. | D |
-| Q11 | How does Buylist catalog refresh and failure retention work? | TCGCSV identifies daily changes, TCGplayer hydrates changed products/all SKUs, direct reconciliation is weekly, and a failed refresh retains a usable complete snapshot when one exists. | D |
-| Q12 | Is Buylist already part of the shared platform? | No. The standalone Buylist is implemented and operational; shared-platform Buylist integration is still described as future work. | D |
-| Q13 | Which artifacts express intent rather than implemented truth? | Tracked plans and historical docs may express intent; current code/tests and current operational docs determine implementation. A mismatch must be surfaced, not blended. | D |
-| Q14 | What changed at the C3 commit? | Eight existing files changed and one test file was added. Name-prefix rules were added; the case-sensitive longest matching prefix overrides category/default minimum for automatic, non-excluded products. Policy sets Hobby Supplies to 2 and `Sleeves: ` to 4. | D |
+| ID | Question | Gold answer | Class | Source commit | Evidence binding |
+| --- | --- | --- | --- | --- | --- |
+| Q01 | What is the shared platform, and which systems remain standalone? | The shared local-first package owns sync/normalized data, replenishment forecasting/planning, and guarded writes. Restocks and Buylist remain standalone legacy systems until explicit cutover. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D01 |
+| Q02 | Which data source is authoritative and what is PostgreSQL's role? | Lightspeed remains the system of record; PostgreSQL holds normalized local mirrors and workflow state. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D01 |
+| Q03 | How does a paged synchronization protect progress? | Raw and normalized rows, counts, and numeric watermark advance in one transaction per page; the run succeeds only if all required resources succeed. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D02 |
+| Q04 | What exactly does the daily replenishment cadence do? | It plans the warehouse-to-Little-Rock lane, writes transfer/refacing review files in shadow, and in publish mode preflights, applies, verifies, and publishes guarded results. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D03, D04 |
+| Q05 | What is the weekly lane order and why does order matter? | Conway return, Conway-only/Little-Rock seed behavior, store replenishment, network target, then vendor purchasing; the implementation implies order matters because earlier moves change available/projected stock and floors constrain later moves. | I | `0216f1e33f05962d49467d95fe84609041c6dba8` | D03 |
+| Q06 | What prevents an unreviewed run from mutating Lightspeed? | Shadow is the default non-mutating path; publish requires explicit mode/baseline behavior, scope preflight, a publish lock, readback verification, and tracked application state. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D04 |
+| Q07 | What is in the vendor workbook and when is it uploaded? | Orders, Transfers, Sales, Demand, Bands, and Exceptions; publish uploads it only when transfer application is publication-ready. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D06, D04 |
+| Q08 | What recovery behavior is implemented after interruption? | Committed sync pages and watermarks survive and failures are recorded. Stable transfer names/readbacks and persisted application status support bounded reconciliation, but the source does not specify one universal automatic-resume path for every interruption point. The exact operator action after a partial external settings write is ambiguous. | A | `0216f1e33f05962d49467d95fe84609041c6dba8` | D05 |
+| Q09 | What does Restocks read, calculate, and publish? | It reads paged products/inventory and prior-day store sales, builds image/restock/missing-stock CSVs, caps pulls to stock where implemented, and uploads reports to Slack. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D07 |
+| Q10 | What does Buylist produce and where does it publish? | Per-game operational and Unpriced CSVs for Magic, Pokemon, One Piece, and Riftbound, then internal/public Google Sheets plus aggregate Slack status. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D08 |
+| Q11 | How does Buylist catalog refresh and failure retention work? | TCGCSV identifies daily changes, TCGplayer hydrates changed products/all SKUs, direct reconciliation is weekly, and a failed refresh retains a usable complete snapshot when one exists. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D08 |
+| Q12 | Is Buylist already part of the shared platform? | No. The standalone Buylist is implemented and operational; shared-platform Buylist integration is still described as future work. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D01, D08, D09 |
+| Q13 | Which artifacts express intent rather than implemented truth? | Tracked plans and historical docs may express intent; current code/tests and current operational docs determine implementation. A mismatch must be surfaced, not blended. | D | `0216f1e33f05962d49467d95fe84609041c6dba8` | D09 |
+| Q14 | What changed at the C3 commit? | Eight existing files changed and one test file was added. Name-prefix rules were added; the case-sensitive longest matching prefix overrides category/default minimum for automatic, non-excluded products. Policy sets Hobby Supplies to 2 and `Sleeves: ` to 4. | D | `8b24ac26699aac8b24254a647aa70b208287b492` | D10 |
 
 Q14's exact changed-file key is:
 
@@ -135,11 +138,14 @@ A tests/replenishment/test_store_targets.py
 ## Comparator capability audit
 
 This table prevents the bakeoff from erasing delivered gcode capability or imputing features to
-either tool. `Native` means the pinned tool owns the surface. Graphify statements were audited
-directly from the `graphifyy 0.9.55` source distribution (SHA-256
-`8135a5a22b6b78745aa3ab040cb3f5cecd7126eef5b4e89764404e6e75b58568`); its package metadata names
-the frozen repository. C0 must still prove that the installed executable is the planned
-commit/package pair. The machine's older installed `0.9.34` is not capability evidence.
+either tool. `Native` means the pinned tool owns the surface. Graphify statements are a package
+audit of the hash-verified PyPI `graphifyy 0.9.55` source distribution (SHA-256
+`8135a5a22b6b78745aa3ab040cb3f5cecd7126eef5b4e89764404e6e75b58568`). The attempted fetch of
+commit `c9f99018774e2e0380e9f65b3959944559a0d5f6` failed, so package contents and linked upstream
+line anchors are not verified as byte-identical to that commit. Package metadata naming the
+repository is provenance, not identity proof. C0 must compare the package audit with the installed
+executable and the planned commit/package pair before any capability result is accepted. The
+machine's older installed `0.9.34` is not capability evidence.
 
 | Capability | Graphify `0.9.55` disposition | gcode `1.7.0` disposition |
 | --- | --- | --- |
@@ -162,7 +168,7 @@ gcode's frozen documentation describes the index and hybrid stores
 ([models lines 14-121](https://github.com/GobbyAI/gobby/blob/7394b97c1d88c82f685e788e798de2cfd728ad15/crates/gcode/src/models.rs#L14-L121),
 [models lines 609-628](https://github.com/GobbyAI/gobby/blob/7394b97c1d88c82f685e788e798de2cfd728ad15/crates/gcode/src/models.rs#L609-L628)).
 
-Graphify's frozen CLI exposes versioning, traversal, extraction, update, and export surfaces
+The Graphify package audit exposes versioning, traversal, extraction, update, and export surfaces
 ([entry point lines 528-666](https://github.com/Graphify-Labs/graphify/blob/c9f99018774e2e0380e9f65b3959944559a0d5f6/graphify/__main__.py#L528-L666)). Its query implementation is bounded graph traversal
 ([CLI lines 1202-1322](https://github.com/Graphify-Labs/graphify/blob/c9f99018774e2e0380e9f65b3959944559a0d5f6/graphify/cli.py#L1202-L1322)); update is a no-LLM code rebuild
 ([CLI lines 2400-2458](https://github.com/Graphify-Labs/graphify/blob/c9f99018774e2e0380e9f65b3959944559a0d5f6/graphify/cli.py#L2400-L2458)). Python extraction creates typed rationale edges and source locations
@@ -172,29 +178,66 @@ Graphify's frozen CLI exposes versioning, traversal, extraction, update, and exp
 ([CLI lines 2779-3047](https://github.com/Graphify-Labs/graphify/blob/c9f99018774e2e0380e9f65b3959944559a0d5f6/graphify/cli.py#L2779-L3047)). Graph/report JSON writes are atomic against process interruption
 ([paths lines 29-101](https://github.com/Graphify-Labs/graphify/blob/c9f99018774e2e0380e9f65b3959944559a0d5f6/graphify/paths.py#L29-L101)).
 
+## Shared P3 comparator profiles
+
+The five P3 leaves consume this shared matrix as well as the Graphify/gcode index casebook. They
+report native outputs and unsupported surfaces; none adopts or normalizes a canonical Gobby wiki
+format. One small `gpt-5.6-luna`/medium calibration is shared across the cohort and is not repeated
+as a full comparator run.
+
+Use these exact Ask prompts wherever the pinned comparator has a native Ask/chat/retrieval surface:
+
+| Ask ID | Exact prompt | Baseline evidence binding |
+| --- | --- | --- |
+| P3-A1 | What prevents an unreviewed run from mutating Lightspeed, and which explicit steps precede a live write? | Q06; `0216f1e33f05962d49467d95fe84609041c6dba8` |
+| P3-A2 | What is the weekly planning lane order, why does that order matter, what sheets are in the vendor workbook, and when is the workbook uploaded? | Q05 and Q07; `0216f1e33f05962d49467d95fe84609041c6dba8` |
+| P3-A3 | Is Buylist part of the shared platform today? Describe its current outputs and publication targets, and distinguish implemented ownership from proposed integration. | Q10, Q12, and Q13; `0216f1e33f05962d49467d95fe84609041c6dba8` |
+
+| P3 comparator | Generator profile and deadline | Common cases | C4-C6 | Exact Ask profile | Native unsupported disposition |
+| --- | --- | --- | --- | --- | --- |
+| CodeWiki | `gpt-5.6-terra`/medium; hosted generation 60 minutes | C0-C3 and supported C7-C9; preserve overview, modules, hierarchy, metadata, and diagrams | `not-applicable`: index-only fixtures | P3-A1 through P3-A3 | Require pinned source plus binary command inventory; otherwise `blocked-preflight`; no substitute |
+| OpenDeepWiki | `qwen/qwen3.8-27b`/xhigh; local generation 120 minutes, serial | C0-C3 and supported C7-C9; preserve catalog, articles, references, diagrams, records, and MCP/export evidence | `not-applicable`: index-only fixtures | P3-A1 through P3-A3 | Require pinned source plus binary command inventory; otherwise `blocked-preflight`; no substitute |
+| Grok Wiki | `gpt-5.6-terra`/medium; hosted generation 60 minutes | C0-C3 and supported C7-C9; preserve first-30/automatic pages, saved records, sources, and Markdown/Obsidian exports | `not-applicable`: index-only fixtures | P3-A1 through P3-A3 | Require pinned source plus binary command inventory; otherwise `blocked-preflight`; no substitute |
+| Understand Anything | `gpt-5.6-terra`/medium; hosted generation 60 minutes | C0-C3 and supported C7-C9; preserve repository/domain analysis, tours, graph, summaries, flows, and dashboard evidence | `not-applicable`: index-only fixtures | P3-A1 through P3-A3 | Require pinned source plus binary command inventory; otherwise `blocked-preflight`; no substitute |
+| Archify | `gpt-5.6-terra`/medium; hosted generation 60 minutes | C0-C3 and supported C7-C9; preserve five specified diagrams and invalid-candidate/last-good receipts | `not-applicable`: index-only fixtures | P3-A1 through P3-A3 where native support exists | Require pinned source plus binary command inventory; otherwise `blocked-preflight`; no substitute |
+
 ## Controls and measurements
 
 ### Execution controls
 
 - Use a fresh copy and tool-owned state for every `(tool, case)` pair. Never point a comparator at
   the read-only source checkout, the other tool's copy, or this answer key.
-- Run local work serially. Hosted generation uses at most two concurrent calls. Record native
-  child-process and model-call concurrency separately; do not infer it from wall time.
-- Use the approved hosted models: Terra at medium reasoning for the primary hosted run, Luna only
-  for the declared calibration, and Qwen at xhigh only for the declared local comparison when the
-  tool supports the required adapter. Record requested and effective provider/model/reasoning.
-- Use `nomic-ai/nomic-embed-text-v1.5`, 768 dimensions, the required query/document prefixes, and
-  the pinned context policy wherever semantic embeddings are enabled. C0 must compare requested
-  and effective values. A fallback, dimension drift, missing prefix, or changed model invalidates
-  semantic results; deterministic lanes may remain valid if separately measured.
+- Schedule at most two independent hosted generator runs concurrently. This limit is about
+  complete generator runs, not individual calls. Run the local model serially. Measure native
+  child-process fan-out and native model-call concurrency separately, and set a conservative
+  per-tool native limit from C0 rather than treating two as a global call limit.
+- Use `gpt-5.6-terra` with medium reasoning for hosted generation, exactly one small shared
+  `gpt-5.6-luna`/medium calibration, and `qwen/qwen3.8-27b` with xhigh reasoning for the local
+  comparison when the required adapter verifies. Record requested and effective
+  provider/model/reasoning. The operator is `gpt-5.6-sol`/xhigh and must be recorded separately
+  from every comparator-generation model.
+- Use endpoint ID `text-embedding-nomic-embed-text-v1.5@f16`, 768 dimensions, and verify the exact
+  query prefix, document prefix, and context limit/policy wherever semantic embeddings are
+  enabled. A family alias such as `nomic-ai/nomic-embed-text-v1.5` may appear only as metadata; it
+  cannot satisfy endpoint identity. C0 must compare requested and effective values. A fallback,
+  dimension drift, missing prefix, context drift, or changed endpoint invalidates semantic
+  results; deterministic lanes may remain valid if separately measured.
 - Measure deterministic extraction/indexing separately from Graphify semantic extraction,
   community labeling, or any model-derived summaries. For gcode, separate AST/BM25/graph work from
   embedding calls. Never assign generation tokens to a native retrieval-only command.
-- Per operation: soft observation at 15 minutes, diagnostic capture at 60 minutes, hard stop at
-  120 minutes. Allow one diagnosed retry using the same input and controls. Preserve the failed
-  attempt; do not report only the retry.
+- Enforce hard deadlines by run class: compatibility/probe 15 minutes, hosted generation 60
+  minutes, and local generation 120 minutes. Allow one diagnosed whole-run retry with the same
+  input and controls, preserving the failed attempt separately. Any further repeat or deadline
+  extension requires an explicit user continuation decision.
 - No live/global config, hooks, daemon restart, published source, external writes, or global graph
   merge. The environment task owns isolated provisioning and signed project grants.
+
+Before any case runs, validate this contract and its frozen fixture anchors without modifying the
+source checkout:
+
+```bash
+uv run python "$MATRIX_VALIDATOR" --source-repo "$SOURCE_REPO"
+```
 
 ### Required run record
 
@@ -204,23 +247,31 @@ not zero. Currency estimates never substitute for provider quota or token counts
 | Group | Required fields |
 | --- | --- |
 | Identity | `run_id`, `case_id`, `tool`, `attempt`, `source_commit`, `corpus_snapshot_id`, `input_tree_sha256`, `executable_sha256`, `version`, `lock_or_image_hash` |
-| Invocation | `command_argv`, redacted `environment_diff`, `working_directory`, `state_directory`, `output_directory`, `started_at`, `ended_at`, `wall_seconds`, `exit_code`, `termination_signal` |
-| Model | `stage`, `requested_provider`, `requested_model`, `requested_reasoning`, `effective_provider`, `effective_model`, `effective_reasoning`, `model_calls`, `input_tokens`, `output_tokens`, `cache_tokens`, `retry_count`, `native_concurrency` |
-| Embeddings | `requested_embedding_model`, `effective_embedding_model`, `dimension`, `query_prefix`, `document_prefix`, `context_policy`, `probe_status`, redacted `endpoint_fingerprint` |
+| Invocation | `command_argv`, redacted `environment_diff`, `working_directory`, `state_directory`, `output_directory`, `started_at`, `ended_at`, `wall_seconds`, `exit_code`, `termination_signal`, `deadline_class`, `deadline_seconds` |
+| Prompts | exact `redacted_prompts`, `prompt_artifact_paths`, `prompt_sha256s`; redact secrets only and preserve exact post-redaction text |
+| Model | `stage`, `requested_provider`, `requested_model`, `requested_reasoning`, `effective_provider`, `effective_model`, `effective_reasoning`, `operator_model`, `operator_reasoning`, `model_calls`, `input_tokens`, `output_tokens`, `cache_tokens`, `retry_count`, `independent_hosted_runs_active`, `native_child_processes`, `native_model_call_concurrency`, `native_concurrency_limit`, `subscription_quota_before`, `subscription_quota_after`, `subscription_quota_delta`, `subscription_quota_unit` |
+| Embeddings | `requested_embedding_endpoint`, `effective_embedding_endpoint`, `embedding_family_metadata`, `dimension`, `query_prefix`, `document_prefix`, `context_limit`, `context_policy`, `probe_status`, redacted `endpoint_fingerprint` |
 | Index | `files_scanned`, `files_indexed`, `files_skipped`, `nodes`, `edges`, `symbols`, `imports`, `calls`, `unresolved`, `chunks`, `communities`, `tombstones`, `changed`, `unchanged`, `removed`, `degraded_sources` |
-| Retrieval/export | `question_id`, `query_id`, `rank`, `path`, `line_start`, `line_end`, `score`, `relation`, `distance`, `provenance`, `output_inventory_sha256`, `output_file_count`, `output_bytes` |
+| Retrieval/export | `question_id`, `question_source_commit`, `query_id`, `rank`, `path`, `line_start`, `line_end`, `score`, `relation`, `distance`, `provenance`, `output_inventory_sha256`, `output_file_count`, `output_bytes` |
 | Outcome | `support_disposition`, `pass_fail`, `evidence_paths`, `warnings`, `fallbacks`, `notes` |
 
 `support_disposition` is one of `supported`, `demonstrated-unsupported`, `blocked-preflight`, or
 `not-applicable`. Demonstrated unsupported requires pinned source/contract plus the frozen binary's
 command inventory; a missing result, old binary, configuration failure, or degraded dependency is
 only blocked/fail. A fallback must be visible and makes the affected semantic measurement fail.
+Prompt artifacts contain the exact post-redaction text recorded in `redacted_prompts`; their
+SHA-256 values must match `prompt_sha256s`. Use `"unknown"` only when a requested counter or quota
+is not observable. A deterministic stage with no prompt records an empty prompt list and explains
+the `not-applicable` condition in `notes`.
 
 ### Common scoring
 
-- Retrieval: for every Q01-Q14, record reciprocal rank of the first gold-supporting span, recall at
-  5/10/20, citation precision at 10, wrong-domain collisions, D/I/A classification accuracy, and
-  unsupported/ambiguity honesty. The scorer reads the external key only after outputs are sealed.
+- Retrieval: for every Q01-Q14, record `question_source_commit`, reciprocal rank of the first
+  gold-supporting span, recall at 5/10/20, citation precision at 10, wrong-domain collisions, D/I/A
+  classification accuracy, and unsupported/ambiguity honesty. Score Q01-Q13 only against
+  `0216f1e33f05962d49467d95fe84609041c6dba8` state and Q14 only against
+  `8b24ac26699aac8b24254a647aa70b208287b492` state. The scorer reads the external key only after
+  outputs are sealed.
 - Structure: compare symbols and relations against explicit case assertions. Report precision,
   recall, false merges, missing edges, and provenance preservation by relation kind.
 - Change: report changed-file precision/recall, stale artifact count, deleted-symbol residue,
@@ -257,15 +308,20 @@ answer-key material.
 "$GCODE_BIN" --format json status
 ```
 
-Also verify Graphify's executable/package resolves to `c9f990...`/`0.9.55` and gcode resolves to
-`7394b97...`/`1.7.0` with contract v8. Capture Graphify's top-level command inventory and pinned
+Also verify Graphify's executable/package resolves to
+`c9f99018774e2e0380e9f65b3959944559a0d5f6`/`0.9.55` and gcode resolves to
+`7394b97c1d88c82f685e788e798de2cfd728ad15`/`1.7.0` with contract v8. Capture Graphify's top-level
+command inventory and pinned
 source for `extract`, `update`, `path`, `explain`, `query`, `affected`, `cluster-only`, `label`,
 `check-update`, `tree`, `benchmark`, and `export callflow-html`. Do not use the machine's observed
-Graphify `0.9.34` as the comparator.
+Graphify `0.9.34` as the comparator. Record the conservative positive integer selected from this
+probe as `GRAPHIFY_NATIVE_CONCURRENCY` before freezing the command manifest.
 
-**Expected observations and metrics.** Executable hashes, versions, contract/schema identity, provider/model,
-embedding model/dimension/prefix/context, dependency health, output locations/schemas, command
-availability, and any fallback. Preserve redacted effective config.
+**Expected observations and metrics.** Executable hashes, versions, contract/schema identity, exact requested
+and effective provider/model/reasoning, operator identity, embedding endpoint/dimension/prefix/context,
+dependency health, output locations/schemas, command availability, native fan-out limits,
+observable subscription quota, exact redacted probe prompts and prompt artifact paths, and any
+fallback. Preserve redacted effective config; record every unavailable value as `"unknown"`.
 
 **Pass/fail.** Pass only when both exact pins run against isolated copies and all requested versus
 effective controls agree. A required native surface absent at the pin is demonstrated unsupported
@@ -288,7 +344,7 @@ stages separately:
 
 ```bash
 "$GRAPHIFY_BIN" extract "$CASE_ROOT" --code-only --no-cluster --out "$CASE_STATE/code-only"
-"$GRAPHIFY_BIN" extract "$CASE_ROOT" --backend "$GRAPHIFY_BACKEND" --model "$GRAPHIFY_MODEL" --max-concurrency 2 --out "$CASE_STATE/semantic"
+"$GRAPHIFY_BIN" extract "$CASE_ROOT" --backend "$GRAPHIFY_BACKEND" --model "$GRAPHIFY_MODEL" --max-concurrency "$GRAPHIFY_NATIVE_CONCURRENCY" --out "$CASE_STATE/semantic"
 "$GCODE_BIN" --format json index "$CASE_ROOT" --full --sync-projections
 "$GCODE_BIN" --format json status
 ```
@@ -316,7 +372,7 @@ mechanism, then run:
 
 ```bash
 GRAPHIFY_OUT="$CASE_STATE/code-only/graphify-out" "$GRAPHIFY_BIN" update "$CASE_ROOT" --no-cluster
-"$GRAPHIFY_BIN" extract "$CASE_ROOT" --backend "$GRAPHIFY_BACKEND" --model "$GRAPHIFY_MODEL" --max-concurrency 2 --out "$CASE_STATE/semantic"
+"$GRAPHIFY_BIN" extract "$CASE_ROOT" --backend "$GRAPHIFY_BACKEND" --model "$GRAPHIFY_MODEL" --max-concurrency "$GRAPHIFY_NATIVE_CONCURRENCY" --out "$CASE_STATE/semantic"
 GRAPHIFY_OUT="$CASE_STATE/semantic/graphify-out" "$GRAPHIFY_BIN" check-update "$CASE_ROOT"
 "$GCODE_BIN" --format json index "$CASE_ROOT" --sync-projections
 "$GCODE_BIN" --format json status
@@ -356,22 +412,28 @@ retrievable.
 **Execute.** Apply exactly one replacement:
 
 ```bash
-uv run python - "$CASE_ROOT" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1]) / "src/game_goblins/replenishment/product_types.py"
-old = '"""Classify a catalog name using its final colon-delimited segment."""'
-new = '"""Classify from the final colon-delimited segment so set names do not mask product form."""'
-text = path.read_text(encoding="utf-8")
-assert text.count(old) == 1 and new not in text
-path.write_text(text.replace(old, new), encoding="utf-8")
-PY
+(
+  cd "$CASE_ROOT"
+  apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: src/game_goblins/replenishment/product_types.py
+@@
+ def derive_demand_type(name: str, demand_types: Sequence[str]) -> str:
+-    """Classify a catalog name using its final colon-delimited segment."""
++    """Classify from the final colon-delimited segment so set names do not mask product form."""
+*** End Patch
+PATCH
+)
+uv run python "$MATRIX_VALIDATOR" --source-repo "$SOURCE_REPO" \
+  --fixture C4 --baseline-root "$BAKEOFF_ROOT/templates/baseline" --case-root "$CASE_ROOT"
 ```
 
-Run `uv run python -m compileall -q "$CASE_ROOT/src" "$CASE_ROOT/tests"`, seal the input hash, then
-run the native incremental commands from C2. Query the new exact sentence, `derive_demand_type`,
-and why the final colon-delimited segment is used.
+The validator requires exactly
+`src/game_goblins/replenishment/product_types.py` to differ from the baseline, verifies the exact
+replacement, and calls `compile()` on the changed source in memory. It does not write bytecode,
+import business code, or touch the Game Goblins checkout. Seal the input hash only after it exits
+zero, then run the native incremental commands from C2. Query the new exact sentence,
+`derive_demand_type`, and why the final colon-delimited segment is used.
 
 **Expected observations and metrics.** Changed-file detection, comment/doc indexing, rationale retrieval rank,
 symbol identity, graph churn, semantic calls, and stale old sentence count.
@@ -388,29 +450,61 @@ that excludes comments may demonstrate unsupported comment indexing; a missed hi
 **Execute.** Rename all and only 12 exact identifier occurrences across four files:
 
 ```bash
-uv run python - "$CASE_ROOT" <<'PY'
-from pathlib import Path
-import sys
-
-root = Path(sys.argv[1])
-expected = {
-    "src/game_goblins/replenishment/product_types.py": 3,
-    "src/game_goblins/replenishment/set_sell_through.py": 4,
-    "src/game_goblins/replenishment/vendor_workbook/queries.py": 2,
-    "tests/replenishment/test_product_types.py": 3,
-}
-old, new = "derive_demand_type", "classify_demand_type"
-for relative, count in expected.items():
-    path = root / relative
-    text = path.read_text(encoding="utf-8")
-    assert text.count(old) == count and new not in text
-    path.write_text(text.replace(old, new), encoding="utf-8")
-assert sum(expected.values()) == 12
-PY
+(
+  cd "$CASE_ROOT"
+  apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: src/game_goblins/replenishment/product_types.py
+@@
+-def derive_demand_type(name: str, demand_types: Sequence[str]) -> str:
++def classify_demand_type(name: str, demand_types: Sequence[str]) -> str:
+@@
+-        (candidate, derive_demand_type(candidate.name, demand_types)) for candidate in candidates
++        (candidate, classify_demand_type(candidate.name, demand_types)) for candidate in candidates
+@@
+-        demand_type = derive_demand_type(product_names[product_id], policy.forecast.demand_types)
++        demand_type = classify_demand_type(product_names[product_id], policy.forecast.demand_types)
+*** Update File: src/game_goblins/replenishment/set_sell_through.py
+@@
+-from game_goblins.replenishment.product_types import derive_demand_type
++from game_goblins.replenishment.product_types import classify_demand_type
+@@
+-        return name.strip(), derive_demand_type(name, demand_types)
++        return name.strip(), classify_demand_type(name, demand_types)
+@@
+-        demand_type = derive_demand_type(segment, demand_types)
++        demand_type = classify_demand_type(segment, demand_types)
+@@
+-    return ": ".join(segments[:2]), derive_demand_type(name, demand_types)
++    return ": ".join(segments[:2]), classify_demand_type(name, demand_types)
+*** Update File: src/game_goblins/replenishment/vendor_workbook/queries.py
+@@
+-    derive_demand_type,
++    classify_demand_type,
+@@
+-        product_type = derive_demand_type(product.product, snapshot.demand_types)
++        product_type = classify_demand_type(product.product, snapshot.demand_types)
+*** Update File: tests/replenishment/test_product_types.py
+@@
+-    derive_demand_type,
++    classify_demand_type,
+@@
+-def test_derive_demand_type_uses_longest_whole_phrase_in_final_segment(
++def test_classify_demand_type_uses_longest_whole_phrase_in_final_segment(
+@@
+-    assert derive_demand_type(name, DEMAND_TYPES) == expected
++    assert classify_demand_type(name, DEMAND_TYPES) == expected
+*** End Patch
+PATCH
+)
+uv run python "$MATRIX_VALIDATOR" --source-repo "$SOURCE_REPO" \
+  --fixture C5 --baseline-root "$BAKEOFF_ROOT/templates/baseline" --case-root "$CASE_ROOT"
 ```
 
-Run compileall, seal the input hash, then the C2 incremental commands. Resolve the renamed symbol,
-its callers/usages, imports, source, and exact old-name grep.
+The validator requires exactly the four listed files to differ, verifies all 12 replacements and
+zero old-name occurrences, and compiles every changed file in memory without imports or bytecode.
+Seal the input hash only after it exits zero, then run the C2 incremental commands. Resolve the
+renamed symbol, its callers/usages, imports, source, and exact old-name grep.
 
 **Expected observations and metrics.** Four-file detection, old/new node identities, caller/import preservation,
 false add/delete versus rename evidence, stale old-name hits, affected paths, and rebuild
@@ -428,32 +522,35 @@ documents it and no stale fact remains.
 **Execute.** Replace the sole `_ceil` call and remove the sole helper block:
 
 ```bash
-uv run python - "$CASE_ROOT" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1]) / "src/game_goblins/replenishment/product_types.py"
-text = path.read_text(encoding="utf-8")
-old_call = "    units = _ceil(rate.daily_rate * Decimal(horizon))"
-new_call = (
-    "    units = int(\n"
-    "        (rate.daily_rate * Decimal(horizon)).to_integral_value(\n"
-    "            rounding=ROUND_CEILING\n"
-    "        )\n"
-    "    )"
+(
+  cd "$CASE_ROOT"
+  apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: src/game_goblins/replenishment/product_types.py
+@@
+-            units = _ceil(rate.daily_rate * Decimal(horizon))
++            units = int(
++                (rate.daily_rate * Decimal(horizon)).to_integral_value(
++                    rounding=ROUND_CEILING
++                )
++            )
+@@
+-
+-
+-def _ceil(value: Decimal) -> int:
+-    return int(value.to_integral_value(rounding=ROUND_CEILING))
+*** End Patch
+PATCH
 )
-old_helper = (
-    "\n\ndef _ceil(value: Decimal) -> int:\n"
-    "    return int(value.to_integral_value(rounding=ROUND_CEILING))\n"
-)
-assert text.count(old_call) == 1 and text.count(old_helper) == 1
-text = text.replace(old_call, new_call).replace(old_helper, "")
-path.write_text(text, encoding="utf-8")
-PY
+uv run python "$MATRIX_VALIDATOR" --source-repo "$SOURCE_REPO" \
+  --fixture C6 --baseline-root "$BAKEOFF_ROOT/templates/baseline" --case-root "$CASE_ROOT"
 ```
 
-Run compileall, seal the input hash, then the C2 incremental commands. Query `_ceil`, its former
-caller, and `ROUND_CEILING`.
+The validator requires exactly
+`src/game_goblins/replenishment/product_types.py` to differ, verifies the sole call replacement
+and helper deletion, and compiles the changed source in memory without imports or bytecode. Seal
+the input hash only after it exits zero, then run the C2 incremental commands. Query `_ceil`, its
+former caller, and `ROUND_CEILING`.
 
 **Expected observations and metrics.** Removed node/edge/tombstone counts, stale graph/search/vector hits, caller
 source correctness, changed-file scope, model work, and full-rebuild equivalence.
@@ -599,10 +696,15 @@ evidence. A hang, undetected partial success, or manual repair is fail, not unsu
 
 ### C8 — native retrieval and Ask behavior
 
-**Inputs.** Sealed C1 baseline states and external Q01-Q14 key held outside comparator inputs.
+**Inputs.** Sealed C1 baseline states for Q01-Q13, sealed C3 changed-commit states for Q14, and the
+external key held outside comparator inputs.
 
-**Execute.** Run every common question through the tool's native question/query surface. Also run
-this structural battery:
+**Execute.** Run Q01-Q13 through the tool's native question/query surface against the C1 state and
+record `question_source_commit=0216f1e33f05962d49467d95fe84609041c6dba8`. Run Q14 against the C3
+state and record `question_source_commit=8b24ac26699aac8b24254a647aa70b208287b492`. A separate,
+explicit version-comparison observation may query Q14 against C1 to demonstrate absence, but that
+baseline observation is never scored as failure for lacking the future change. Also run this
+structural battery against C1:
 
 | Query ID | Intent | Graphify native surface | gcode native surface |
 | --- | --- | --- | --- |
@@ -626,19 +728,25 @@ record native Ask synthesis as demonstrated unsupported; do not upgrade traversa
 versus inferred classification, false certainty, path validity, relation provenance, pagination,
 and degradation warnings.
 
-**Pass/fail.** Pass retrieval when all domains have gold-supporting evidence in the sealed result
-set, structural paths resolve only real source relationships, and ambiguity is preserved. Pass Ask
-only when a native command returns a sourced answer with the right conclusion/D-I-A label. A
-source-backed absence is demonstrated unsupported; empty or degraded retrieval is fail/blocked.
+**Pass/fail.** Pass retrieval when Q01-Q13 have gold-supporting evidence at the baseline commit,
+Q14 has gold-supporting evidence at the changed commit, structural paths resolve only real source
+relationships, and ambiguity is preserved. Pass Ask only when a native command returns a sourced
+answer with the right conclusion/D-I-A label. A source-backed absence is demonstrated unsupported;
+empty or degraded retrieval is fail/blocked. Baseline state cannot fail for lacking Q14's future
+behavior.
 
 ### C9 — native export and presentation
 
-**Inputs.** Sealed C1 state; no answer key, hand-written bridge, or post-processed generated pages.
+**Inputs.** Sealed C1 state for Q01-Q13 and sealed C3 state for Q14; no answer key, hand-written
+bridge, or post-processed generated pages.
 
 **Execute.** Invoke the frozen native Graphify exports below and the C0-confirmed gcode JSON/text,
-`graph view` Mermaid, and project graph-report commands. Do not invoke Graphify's Neo4j/FalkorDB
-push sinks. Record exact argv in the immutable command manifest and run each deterministic export
-twice from unchanged state.
+`graph view` Mermaid, and project graph-report commands from both bound states. Score Q01-Q13 only
+in C1 exports with
+`question_source_commit=0216f1e33f05962d49467d95fe84609041c6dba8`; score Q14 only in C3 exports
+with `question_source_commit=8b24ac26699aac8b24254a647aa70b208287b492`. Do not invoke
+Graphify's Neo4j/FalkorDB push sinks. Record exact argv in the immutable command manifest and run
+each deterministic export twice from unchanged state.
 
 ```bash
 export GRAPH="$CASE_STATE/semantic/graphify-out/graph.json"
@@ -653,13 +761,15 @@ export REPORT="$CASE_STATE/semantic/graphify-out/GRAPH_REPORT.md"
 "$GRAPHIFY_BIN" export callflow-html --graph "$GRAPH" --labels "$LABELS" --report "$REPORT" --output "$CASE_STATE/callflow.html" --lang en
 ```
 
-**Expected observations and metrics.** File inventory/hash/bytes, link and source-span resolution, Q01-Q14 domain
-coverage, navigation, graph readability, provenance/D-I-A survival, deterministic diff, model
-calls, and time. Keep Graphify community labels separate from deterministic graph output.
+**Expected observations and metrics.** File inventory/hash/bytes, link and source-span resolution, Q01-Q13
+baseline coverage, Q14 changed-commit coverage, navigation, graph readability, provenance/D-I-A
+survival, deterministic diff, model calls, and time. Keep Graphify community labels separate from
+deterministic graph output.
 
 **Pass/fail.** Pass a native artifact when it opens without broken internal references, traces
-claims to frozen source, represents all claimed domains accurately, and reproduces modulo declared
-timestamps/IDs. Graphify's native Markdown wiki is required and must not be omitted merely because
+claims to its bound frozen source commit, represents all claimed domains accurately, and
+reproduces modulo declared timestamps/IDs. Baseline presentation cannot fail for lacking Q14's
+future behavior. Graphify's native Markdown wiki is required and must not be omitted merely because
 older local help lacked it. gcode receives credit for native Mermaid and graph-report presentation
 even though its facts facade does not own a complete wiki renderer.
 
