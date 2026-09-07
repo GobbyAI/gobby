@@ -1,6 +1,9 @@
 ---
 name: handoff-discipline
 description: Write concise, current-state session and agent handoffs. Load before set_handoff or cooperative end_agent_run, and when context-pressure guidance appears.
+metadata:
+  gobby:
+    audience: all
 ---
 
 # Handoff Discipline

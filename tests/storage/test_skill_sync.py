@@ -418,8 +418,9 @@ class TestSyncBundledSkills:
         assert skill is not None
         assert skill.project_id is None
 
+    @pytest.mark.parametrize("skill_name", ["memory", "handoff-discipline"])
     def test_sync_bundled_skills_updates_changed_content(
-        self, db: HubDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager, skill_name: str
     ) -> None:
         """Verify re-sync updates skills whose content has changed on disk."""
         from gobby.skills.sync import sync_bundled_skills
@@ -430,7 +431,7 @@ class TestSyncBundledSkills:
         assert result1["synced"] > 0
 
         # Grab the skill and remember its real content
-        skill = skill_manager.get_by_name("memory")
+        skill = skill_manager.get_by_name(skill_name)
         assert skill is not None
         original_content = skill.content
 
@@ -439,7 +440,7 @@ class TestSyncBundledSkills:
         skill_manager.update_skill(skill.id, content=stale_content)
 
         # Confirm the DB now has stale content
-        stale_skill = skill_manager.get_by_name("memory")
+        stale_skill = skill_manager.get_by_name(skill_name)
         assert stale_skill is not None
         assert stale_skill.content == stale_content
 
@@ -449,20 +450,21 @@ class TestSyncBundledSkills:
         assert result2["updated"] >= 1
 
         # Verify DB content now matches disk again
-        refreshed = skill_manager.get_by_name("memory")
+        refreshed = skill_manager.get_by_name(skill_name)
         assert refreshed is not None
         assert refreshed.content == original_content
         assert refreshed.content != stale_content
 
+    @pytest.mark.parametrize("skill_name", ["memory", "handoff-discipline"])
     def test_sync_bundled_skills_have_gobby_metadata(
-        self, db: HubDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager, skill_name: str
     ) -> None:
         """Verify synced skills have gobby key in metadata."""
         from gobby.skills.sync import sync_bundled_skills
 
         sync_bundled_skills(db)
 
-        skill = skill_manager.get_by_name("memory")
+        skill = skill_manager.get_by_name(skill_name)
         assert skill is not None
         assert skill.metadata is not None
         assert "gobby" in skill.metadata
