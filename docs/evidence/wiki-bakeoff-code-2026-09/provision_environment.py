@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import stat
@@ -27,7 +28,6 @@ BASE_SHA = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_SHA = "8b24ac26699aac8b24254a647aa70b208287b492"
 GOBBY_SHA = "7394b97c1d88c82f685e788e798de2cfd728ad15"
 TASK_REF = "#21942"
-SESSION_REF = "#12105"
 
 SOURCE_EXCLUSIONS = (
     ".gobby/project.json",
@@ -364,10 +364,12 @@ def _write_runtime_secrets(root: Path) -> None:
     )
 
 
-def init_runtime(root: Path, source_repo: Path, gobby_repo: Path) -> None:
+def init_runtime(root: Path, source_repo: Path, gobby_repo: Path, owner_session: str) -> None:
+    if not owner_session.strip():
+        raise ValueError("an explicit owner session is required")
     if root.exists():
         raise FileExistsError(f"refusing to overwrite existing runtime root: {root}")
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, mode=0o700)
     for relative in (
         "build",
         "config",
@@ -392,7 +394,7 @@ def init_runtime(root: Path, source_repo: Path, gobby_repo: Path) -> None:
             "schema_version": 1,
             "created_at": _utc_now(),
             "owner_task": TASK_REF,
-            "owner_session": SESSION_REF,
+            "owner_session": owner_session,
             "runtime_root": str(root),
             "owned_compose_project": COMPOSE_PROJECT,
             "owned_containers": sorted(CONTAINERS.values()),
@@ -484,16 +486,11 @@ def write_compose(
         ("qdrant", qdrant_image),
         ("falkordb", falkordb_image),
     ):
-        if not image or "latest" in image:
+        if re.fullmatch(r"(?:[^\s@]+@)?sha256:[0-9a-f]{64}", image) is None:
             raise ValueError(f"{name} image must be a resolved immutable reference")
     compose = f"""name: {COMPOSE_PROJECT}
 services:
   postgres:
-    build:
-      context: ../sources/gobby/src/gobby/data/postgres-pgsearch
-      args:
-        PG_SEARCH_VERSION: 0.23.4
-        PG_SEARCH_SHA256: 6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676
     image: {postgres_image}
     container_name: {CONTAINERS["postgres"]}
     command: [postgres, -c, shared_preload_libraries=pg_search,pgaudit, -c, pgaudit.log=none]
@@ -504,7 +501,7 @@ services:
     ports:
       - "127.0.0.1:{PORTS["postgres"]}:5432"
     volumes:
-      - {VOLUMES["postgres"]}:/var/lib/postgresql
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 2s
@@ -519,7 +516,7 @@ services:
       - "127.0.0.1:{PORTS["qdrant_http"]}:6333"
       - "127.0.0.1:{PORTS["qdrant_grpc"]}:6334"
     volumes:
-      - {VOLUMES["qdrant"]}:/qdrant/storage
+      - qdrant-data:/qdrant/storage
     healthcheck:
       test: [CMD-SHELL, 'bash -c ''exec 3<>/dev/tcp/localhost/6333 && printf "GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && grep -q "healthz check passed" <&3''']
       interval: 2s
@@ -536,7 +533,7 @@ services:
       - "127.0.0.1:{PORTS["falkordb"]}:6379"
       - "127.0.0.1:{PORTS["falkordb_browser"]}:3000"
     volumes:
-      - {VOLUMES["falkordb"]}:/var/lib/falkordb/data
+      - falkordb-data:/var/lib/falkordb/data
     healthcheck:
       test: [CMD-SHELL, 'redis-cli -a "$$BAKEOFF_FALKORDB_PASSWORD" PING | grep -q PONG']
       interval: 2s
@@ -578,7 +575,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-repo", type=Path, default=DEFAULT_SOURCE_REPO)
     parser.add_argument("--gobby-repo", type=Path, default=DEFAULT_GOBBY_REPO)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("init")
+    init = subparsers.add_parser("init")
+    init.add_argument("--owner-session", required=True)
     refresh = subparsers.add_parser("refresh-manifest")
     refresh.add_argument("--comparator", choices=sorted(COMPARATOR_CASES), required=True)
     refresh.add_argument("--case", required=True)
@@ -596,7 +594,9 @@ def main() -> int:
     if root != DEFAULT_RUNTIME_ROOT:
         raise ValueError(f"runtime root must be {DEFAULT_RUNTIME_ROOT}")
     if args.command == "init":
-        init_runtime(root, args.source_repo.resolve(), args.gobby_repo.resolve())
+        init_runtime(
+            root, args.source_repo.resolve(), args.gobby_repo.resolve(), args.owner_session
+        )
     elif args.command == "refresh-manifest":
         refresh_manifest(root, args.comparator, args.case)
     elif args.command == "write-compose":

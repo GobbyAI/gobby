@@ -1,7 +1,36 @@
 # Code-wiki bakeoff environment
 
-Status: **blocked before provisioning** on 2026-09-07. Task #21942 remains open. No substitute
-runtime, comparator version, service, or global installation was used.
+Status: **host provisioning in progress** on 2026-09-07. Task #21942 remains open. The user
+clarified that the coordinator should provision host resources before using sandboxed workers.
+No daemon-level sandbox permission changes are needed for that host-owned setup phase.
+
+## Coordinator setup checkpoint
+
+- Host `docker version --format '{{json .}}'` succeeded against Docker Desktop. Host GitHub
+  access succeeded; Graphify HEAD resolved to the frozen `c9f99018774e2e0380e9f65b3959944559a0d5f6`.
+- Created `/Users/josh/Projects/wiki-bakeoff-code-2026-09` with mode `0700`, owner task `#21942`,
+  and owner session `#12034`. No pre-existing runtime was overwritten.
+- Archived both Game Goblins commits and pinned Gobby source; created all 69 independent corpus
+  copies, exclusion inventories, hashes, private service credentials, and before-state evidence.
+  `validate_manifests` passed for every copy, including secret-pattern and input-exclusion checks.
+- No containers or isolated daemon have been started. No comparator installation is complete.
+  Service images have only been inspected; live checks and installation receipts remain pending.
+- Fixed the unexecuted provisioning scaffold's stale owner ID, private-root permissions, mutable
+  image acceptance, mismatched Compose volume names, and implicit build step. Seven offline
+  regression cases pass; Ruff, test-quality, test-types, and suppression checks passed.
+- Direct Git cloning was blocked by the repository's managed-clone rule. The supported
+  `gobby-clones.create_clone` then rejected this runtime location with `clone_path_outside_root`.
+  No unmanaged clone was created. Evaluate source/release archives for third-party installation;
+  do not disable the rule or alter global clone/sandbox settings.
+
+Executed initialization:
+
+```bash
+GIT_OPTIONAL_LOCKS=0 PYTHONDONTWRITEBYTECODE=1 uv run python \
+  docs/evidence/wiki-bakeoff-code-2026-09/provision_environment.py init --owner-session '#12034'
+```
+
+The original sandboxed-worker preflight below is historical evidence, not the current host state.
 
 ## Frozen inputs verified
 
@@ -83,11 +112,12 @@ No comparator was installed because the required runtime root was unwritable.
 The five Git checks used their exact approved HTTPS origins and all failed once with the same 403.
 No retry, mirror, package substitution, version update, or sandbox bypass followed.
 
-## Resume requirements
+## Remaining host setup
 
-A resumed worker needs explicit supported grants for exactly the runtime root, Docker's Unix
-socket, and the approved GitHub origins. It must run `provision_environment.py init`, resolve and
-pin image digests, render and reject unsafe Compose configuration before launch, build the pinned
-gcode into the runtime, start an isolated Gobby daemon, and produce passing live signed-grant
-evidence with `validate_environment.py`. Until those checks pass, acceptance items 1.2.1 through
-1.2.3 remain incomplete and this task must not close.
+Do not rerun `init`: the owned runtime now exists. Review the service/validation harness audit,
+finish pinned dependency installation, record immutable image identities, render and reject unsafe
+Compose configuration before launch, build pinned gcode into the runtime, start an isolated Gobby
+daemon, and produce passing live signed-grant evidence. The coordinator performs host operations;
+sandboxed workers do not receive Docker or broad network permissions. Assess their remaining
+workspace access only after setup. Until installation and live isolation checks pass, acceptance
+items 1.2.1 through 1.2.3 remain incomplete and this task must not close.
