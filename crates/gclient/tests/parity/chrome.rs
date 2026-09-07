@@ -1347,3 +1347,45 @@ fn groups() -> Vec<HelpGroup> {
         ),
     ]
 }
+
+/// Plan 2.2: `open_pane_below` stacks the new slot under the focused one where
+/// `open_pane` sets it beside; both open a first tab on an empty chrome.
+#[test]
+fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
+    let ws = scripted(&["alpha", "beta", "gamma"]);
+    let beta = ws.pane_for_terminal("beta").expect("beta pane");
+    let gamma = ws.pane_for_terminal("gamma").expect("gamma pane");
+
+    let mut chrome = chrome_for(&ws, "alpha");
+    let beside = chrome.open_pane(beta, "beta");
+    let below = chrome.open_pane_below(gamma, "gamma");
+    assert_eq!(chrome.tabs.len(), 1);
+    assert_eq!(
+        chrome.focused_pane(),
+        Some(gamma),
+        "the new slot takes focus"
+    );
+
+    chrome.compute_view(&ws, Rect::new(0, 0, 100, 30));
+    let rect_of = |slot: layout::PaneId| {
+        chrome
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == slot)
+            .expect("slot drawn")
+            .rect
+    };
+    let (beta_rect, gamma_rect) = (rect_of(beside), rect_of(below));
+    assert_eq!(gamma_rect.x, beta_rect.x, "stacked slots share a column");
+    assert_eq!(gamma_rect.width, beta_rect.width);
+    assert!(
+        gamma_rect.y >= beta_rect.y + beta_rect.height,
+        "gamma sits under beta: {beta_rect:?} then {gamma_rect:?}"
+    );
+
+    let mut empty = Chrome::new(theme());
+    empty.open_pane_below(beta, "beta");
+    assert_eq!(empty.tabs.len(), 1);
+    assert_eq!(empty.focused_pane(), Some(beta));
+}

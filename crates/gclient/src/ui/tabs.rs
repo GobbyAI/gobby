@@ -1,6 +1,7 @@
 // upstream: herdr v0.8.0 src/ui/tabs.rs
 //! Tab bar with scroll arrows, hit areas, and the new-tab button.
 
+use crate::app::MouseGesture;
 use crate::ui::chrome::{Chrome, Tab, WorkspaceView};
 use crate::ui::text::display_width_u16;
 use crate::ui::widgets::panel_contrast_fg;
@@ -269,6 +270,12 @@ pub fn render_tab_bar<W: WorkspaceView>(
         );
     }
 
+    let dragged = match chrome.gesture {
+        Some(MouseGesture::TabDrag {
+            index, moved: true, ..
+        }) => Some(index),
+        _ => None,
+    };
     for (idx, tab) in tabs.iter().enumerate() {
         let Some(rect) = view.tab_hit_areas.get(idx).copied() else {
             break;
@@ -291,6 +298,13 @@ pub fn render_tab_bar<W: WorkspaceView>(
                 .add_modifier(Modifier::DIM)
         } else {
             Style::default().fg(p.overlay1).bg(p.surface0)
+        };
+        // A dragged tab lifts off the bar: its own foreground on the bar's
+        // surface, reversed, until the release drops it.
+        let style = if dragged == Some(idx) {
+            style.bg(p.surface0).add_modifier(Modifier::REVERSED)
+        } else {
+            style
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(tabs, idx);

@@ -375,9 +375,19 @@ impl Chrome {
             .and_then(|tab| tab.slots.get(&slot).copied())
     }
 
-    /// Show `pane` in the active tab: split the focused slot side by side,
-    /// or open a first tab when none exists. Returns the layout slot.
+    /// Show `pane` in the active tab beside the focused slot, or open a first
+    /// tab when none exists. Returns the layout slot.
     pub fn open_pane(&mut self, pane: PaneId, title: &str) -> layout::PaneId {
+        self.open_split(pane, title, Direction::Horizontal)
+    }
+
+    /// Show `pane` in the active tab under the focused slot, or open a first
+    /// tab when none exists. Returns the layout slot.
+    pub fn open_pane_below(&mut self, pane: PaneId, title: &str) -> layout::PaneId {
+        self.open_split(pane, title, Direction::Vertical)
+    }
+
+    fn open_split(&mut self, pane: PaneId, title: &str, direction: Direction) -> layout::PaneId {
         if self.tabs.is_empty() {
             let tab = Tab::new(title, pane);
             let slot = tab.layout.focused();
@@ -386,7 +396,7 @@ impl Chrome {
             return slot;
         }
         let tab = &mut self.tabs[self.active_tab];
-        let slot = tab.layout.split_focused(Direction::Horizontal);
+        let slot = tab.layout.split_focused(direction);
         tab.slots.insert(slot, pane);
         slot
     }

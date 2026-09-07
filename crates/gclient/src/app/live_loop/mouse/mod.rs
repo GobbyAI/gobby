@@ -5,17 +5,19 @@
 //! here reaches the daemon: the loop applies the outcome, so the lease model
 //! stays in `control.rs` and this module stays pure. Gesture state lives on
 //! `Chrome::gesture`: a press may start one, drags feed it, and a release
-//! always ends it.
+//! always ends it, handing it to `pointer::up` to finish.
 
 use crossterm::event::{MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
+use crate::ui::chrome::Tab;
 use crate::ui::hit::{hit_test, SidebarSection};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
 
 mod pointer;
+mod wheel;
 
 /// A press-and-drag in progress, keyed by what went down under the pointer.
 ///
@@ -84,14 +86,18 @@ pub enum MouseOutcome {
     Ignore,
 }
 
+/// Columns a pressed tab travels before its drag becomes a move. herdr moves
+/// on 1; one more keeps a click with a hair of jitter a click.
+pub const TAB_DRAG_THRESHOLD: u16 = 2;
+
 /// Route one mouse event against the last drawn chrome.
 ///
 /// Runs before every key router. With capture off the guard never arms the
 /// terminal, so no mouse event should arrive; one that does is ignored rather
 /// than routed. A release ends whatever gesture the press started, whichever
 /// mode owns the screen; what the release itself does belongs to the
-/// gesture's own surface. Modal modes own the whole screen while they are up,
-/// and copy mode leaves the mouse to the selection router.
+/// gesture's own surface (`pointer::up`). Modal modes own the whole screen
+/// while they are up, and copy mode leaves the mouse to the selection router.
 pub fn route_mouse<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -100,9 +106,9 @@ pub fn route_mouse<W: WorkspaceView>(
     if !chrome.prefs.mouse_capture {
         return MouseOutcome::Ignore;
     }
-    if let MouseEventKind::Up(_) = mouse.kind {
-        chrome.gesture = None;
-    }
+    let released = matches!(mouse.kind, MouseEventKind::Up(_))
+        .then(|| chrome.gesture.take())
+        .flatten();
     match chrome.mode {
         Mode::Copy => return MouseOutcome::Ignore,
         Mode::ConfirmClose
@@ -115,8 +121,23 @@ pub fn route_mouse<W: WorkspaceView>(
     }
     let hit = hit_test(&chrome.view, mouse.column, mouse.row);
     match mouse.kind {
-        MouseEventKind::Down(button) => pointer::down(ws, chrome, hit, button, mouse.modifiers),
+        MouseEventKind::Down(button) => {
+            pointer::down(ws, chrome, hit, button, mouse.modifiers, mouse.column)
+        }
+        MouseEventKind::Drag(_) => pointer::drag(chrome, mouse.column),
+        MouseEventKind::Up(_) => pointer::up(chrome, hit, released),
+        MouseEventKind::ScrollUp => wheel::wheel(chrome, hit, true),
+        MouseEventKind::ScrollDown => wheel::wheel(chrome, hit, false),
         _ => MouseOutcome::Ignore,
+    }
+}
+
+/// Focus the active tab's focused pane. A tab whose slots have all gone is
+/// still activated; there is just nothing to focus.
+fn focus_active_tab(chrome: &Chrome, observe_only: bool) -> MouseOutcome {
+    match chrome.active_tab().and_then(Tab::focused_pane) {
+        Some(pane) => MouseOutcome::Focus { pane, observe_only },
+        None => MouseOutcome::Handled,
     }
 }
 

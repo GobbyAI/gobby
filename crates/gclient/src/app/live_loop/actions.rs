@@ -10,7 +10,7 @@ use super::super::{PaneId, Workspace};
 use super::control::{
     focus_live_pane, observe_live_pane, release_live_control, send_live_write, take_live_control,
 };
-use super::mouse::MouseOutcome;
+use super::mouse::{MouseOutcome, Placement};
 
 pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     for tab in &mut chrome.tabs {
@@ -71,9 +71,9 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::Action(Action::Quit) => return Ok(true),
         MouseOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
-        // The placement reaches the spawn with the tab bar (2.2); until then the
-        // roster sync places the new terminal the way `NewTerminal` does.
-        MouseOutcome::Spawn { .. } => spawn_live_terminal(workspace, chrome).await?,
+        MouseOutcome::Spawn { placement } => {
+            spawn_live_terminal(workspace, chrome, placement).await?;
+        }
         MouseOutcome::Write { pane, bytes } => {
             send_live_write(workspace, pane, &bytes, false).await?;
         }
@@ -87,7 +87,10 @@ pub(super) async fn handle_live_action(
     action: Action,
 ) -> Result<(), FrameError> {
     match action {
-        Action::NewTerminal => spawn_live_terminal(workspace, chrome).await?,
+        Action::NewTerminal => {
+            spawn_live_terminal(workspace, chrome, Placement::SplitRight).await?;
+        }
+        Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
         Action::CloseTerminal | Action::ClosePane => {
             if let Some(pane_id) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane_id).await?;
@@ -156,9 +159,13 @@ pub(super) async fn focus_relative_live_pane(
     focus_live_pane(workspace, pane_ids[next]).await
 }
 
+/// Spawn a terminal and show it where `placement` says: in a fresh tab, beside
+/// the focused slot, or under it. The chrome sync afterwards still covers a
+/// terminal the roster has not reported yet.
 pub(super) async fn spawn_live_terminal(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    placement: Placement,
 ) -> Result<(), FrameError> {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return Ok(());
@@ -169,9 +176,21 @@ pub(super) async fn spawn_live_terminal(
     };
     match workspace.daemon().spawn(request).await? {
         SpawnOutcome::Created { terminal_id, .. } => {
-            workspace.pending_spawns.insert(terminal_id);
+            workspace.pending_spawns.insert(terminal_id.clone());
             workspace.fetch_roster().await?;
             workspace.attach_ready_panes().await?;
+            if let Some(pane) = workspace.pane_for_terminal(&terminal_id) {
+                let title = workspace.pane(pane).display_name();
+                match placement {
+                    Placement::Tab => chrome.open_tab(pane, title),
+                    Placement::SplitRight => {
+                        chrome.open_pane(pane, title);
+                    }
+                    Placement::SplitDown => {
+                        chrome.open_pane_below(pane, title);
+                    }
+                }
+            }
             sync_live_chrome(workspace, chrome);
         }
         SpawnOutcome::Refused { reason } => chrome.status_message = Some(reason),
