@@ -13,17 +13,39 @@ pub(super) async fn focus_live_pane(
     workspace: &mut Workspace<LiveDaemon>,
     pane_id: PaneId,
 ) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+    if !move_live_focus(workspace, pane_id).await? {
         return Ok(());
-    }
-    let previous = workspace.focus.replace(pane_id);
-    if let Some(previous) = previous.filter(|previous| *previous != pane_id) {
-        release_live_control(workspace, previous).await?;
     }
     if !workspace.pane(pane_id).is_held() {
         take_live_control(workspace, pane_id).await?;
     }
     Ok(())
+}
+
+/// Focus `pane_id` without taking control (alt+click): the lease still
+/// follows focus away from the previous pane, and the new pane stays observed
+/// until a key or the indicator takes it.
+pub(super) async fn observe_live_pane(
+    workspace: &mut Workspace<LiveDaemon>,
+    pane_id: PaneId,
+) -> Result<(), FrameError> {
+    move_live_focus(workspace, pane_id).await.map(drop)
+}
+
+/// Move focus and release the previous pane's lease. `false` when the loop
+/// is exiting or the daemon is not ready, in which case nothing moved.
+async fn move_live_focus(
+    workspace: &mut Workspace<LiveDaemon>,
+    pane_id: PaneId,
+) -> Result<bool, FrameError> {
+    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+        return Ok(false);
+    }
+    let previous = workspace.focus.replace(pane_id);
+    if let Some(previous) = previous.filter(|previous| *previous != pane_id) {
+        release_live_control(workspace, previous).await?;
+    }
+    Ok(true)
 }
 
 pub(super) async fn take_live_control(

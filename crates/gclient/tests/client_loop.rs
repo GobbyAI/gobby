@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_loop::{
     run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
 };
@@ -23,7 +23,7 @@ use gobby_client::frame_source::{
 };
 use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
-use gobby_client::ui::Chrome;
+use gobby_client::ui::{Chrome, WorkspaceView};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
 use gobby_terminal::protocol::{
@@ -33,6 +33,7 @@ use gobby_terminal::protocol::{
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::net::UnixStream;
@@ -105,6 +106,24 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .send(RawInputEvent::Key(TerminalKey::new(code, modifiers)))
         .await
         .expect("live loop input");
+}
+
+async fn send_mouse(
+    input: &mpsc::Sender<RawInputEvent>,
+    kind: MouseEventKind,
+    column: u16,
+    row: u16,
+    modifiers: KeyModifiers,
+) {
+    input
+        .send(RawInputEvent::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        }))
+        .await
+        .expect("live loop mouse input");
 }
 
 fn send_resize_burst(count: usize) {
@@ -2825,4 +2844,159 @@ async fn bare_navigation_keys_reach_a_focused_terminal() {
         typed, "hjkl\u{1b}[A\u{1b}[B",
         "every bare key must reach the pane verbatim"
     );
+}
+
+/// 2.1.1: a left click inside a pane that is not focused moves focus and the
+/// lease with it (release the old pane, take the new one); alt+click moves
+/// focus alone and leaves the pane observed.
+#[tokio::test]
+async fn pane_click_focuses_and_takes_control_unless_alt() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                    {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+
+    // The loop opens one split per roster terminal, in roster order; mirror
+    // that on a probe chrome to learn where each pane's content is drawn.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    for terminal_id in WorkspaceView::roster_terminal_ids(&workspace) {
+        let pane = workspace
+            .pane_for_terminal(&terminal_id)
+            .expect("roster pane");
+        probe.open_pane(pane, &terminal_id);
+    }
+    probe.compute_view(&workspace, area);
+    let cells: Vec<(String, (u16, u16))> = probe
+        .view
+        .pane_infos
+        .iter()
+        .map(|info| {
+            let pane = probe.pane_for_slot(info.id).expect("slot pane");
+            let inner = info.inner_rect;
+            (
+                workspace.pane(pane).terminal_id.clone(),
+                (inner.x + 1, inner.y + 1),
+            )
+        })
+        .collect();
+    assert_eq!(cells.len(), 2, "both terminals draw as panes");
+    let cell_of = |terminal_id: &str| {
+        cells
+            .iter()
+            .find(|(id, _)| id == terminal_id)
+            .map(|(_, cell)| *cell)
+            .expect("pane cell")
+    };
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let initial = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("terminal_id")
+            .and_then(Value::as_str)
+            .expect("initial focused terminal")
+            .to_string();
+        let other = if initial == "terminal-a" {
+            "terminal-b"
+        } else {
+            "terminal-a"
+        };
+        // The hit map exists once the loop has drawn; the first render tick
+        // fires as soon as the loop starts selecting.
+        tokio::time::sleep(RENDER_TICK * 4).await;
+
+        let (column, row) = cell_of(other);
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        let releases = websocket_requests(&mock, "terminal_release_control");
+        assert_eq!(
+            releases[0].get("terminal_id").and_then(Value::as_str),
+            Some(initial.as_str()),
+            "a click releases the pane focus left"
+        );
+        let takes = websocket_requests(&mock, "terminal_take_control");
+        assert_eq!(
+            takes[1].get("terminal_id").and_then(Value::as_str),
+            Some(other),
+            "a click takes the clicked pane"
+        );
+
+        let (column, row) = cell_of(&initial);
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::ALT,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 2).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            2,
+            "alt+click must not take control"
+        );
+        let releases = websocket_requests(&mock, "terminal_release_control");
+        assert_eq!(
+            releases[1].get("terminal_id").and_then(Value::as_str),
+            Some(other),
+            "the lease still follows focus away from the clicked pane"
+        );
+        drop(input_tx);
+        initial
+    };
+
+    let (result, initial) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane = workspace
+        .pane_for_terminal(&initial)
+        .expect("initial terminal pane");
+    assert_eq!(
+        chrome.focused_pane(),
+        Some(pane),
+        "alt+click moved focus back"
+    );
+    assert!(
+        workspace.pane(pane).is_observe(),
+        "alt+click leaves the pane observed"
+    );
+    mock.shutdown().await;
 }

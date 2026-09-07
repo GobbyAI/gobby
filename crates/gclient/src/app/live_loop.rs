@@ -27,9 +27,13 @@ use super::{PaneId, Workspace};
 
 mod actions;
 mod control;
+pub(super) mod mouse;
 
 use actions::{handle_live_action, sync_live_chrome};
-use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
+use control::{
+    apply_live_write_outcome, focus_live_pane, observe_live_pane, send_live_input, send_live_write,
+};
+use mouse::{route_mouse, MouseOutcome};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -505,6 +509,21 @@ async fn route_live_input(
             }
         }
         return Ok(false);
+    }
+    if let RawInputEvent::Mouse(mouse) = event {
+        match route_mouse(chrome, mouse) {
+            MouseOutcome::Focus { pane, observe_only } => {
+                chrome.focus_pane(pane);
+                if observe_only {
+                    observe_live_pane(workspace, pane).await?;
+                } else {
+                    focus_live_pane(workspace, pane).await?;
+                }
+                return Ok(false);
+            }
+            MouseOutcome::Handled => return Ok(false),
+            MouseOutcome::Ignore => {}
+        }
     }
     if route_mouse_selection(workspace, chrome, event) {
         let mut output = std::io::stdout();

@@ -21,6 +21,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
 use serde_json::json;
 
+use super::live_loop::mouse::{route_mouse, MouseOutcome};
 use super::{PaneId, Workspace};
 use crate::daemon::{DaemonEvent, ScriptedDaemon};
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
@@ -103,6 +104,28 @@ fn route_scripted_input(
     event: &RawInputEvent,
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
+    if let RawInputEvent::Mouse(mouse) = event {
+        match route_mouse(chrome, mouse) {
+            MouseOutcome::Focus { pane, observe_only } => {
+                chrome.focus_pane(pane);
+                if observe_only {
+                    if let Some(previous) = workspace.focus.filter(|previous| *previous != pane) {
+                        workspace
+                            .release_control(previous)
+                            .map_err(|error| FrameError::Other(error.to_string()))?;
+                    }
+                    workspace.focus = Some(pane);
+                } else {
+                    workspace
+                        .focus_pane(pane)
+                        .map_err(|error| FrameError::Other(error.to_string()))?;
+                }
+                return Ok(false);
+            }
+            MouseOutcome::Handled => return Ok(false),
+            MouseOutcome::Ignore => {}
+        }
+    }
     if route_paste_event(workspace, chrome, event)
         .map_err(|error| FrameError::Other(error.to_string()))?
     {
