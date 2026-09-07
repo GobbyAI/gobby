@@ -1,11 +1,13 @@
 //! Button presses, drags and releases: what each means on a chrome region.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};
-use ratatui::layout::Rect;
+use gobby_terminal::layout::{self, ScrollMetrics};
+use ratatui::layout::{Direction, Rect};
 
 use crate::app::PaneId;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::hit::{Hit, SidebarSection};
+use crate::ui::pane_layout::metrics_for;
 use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
@@ -13,7 +15,7 @@ use crate::ui::sidebar::section_metrics;
 use crate::ui::{Chrome, WorkspaceView};
 
 use super::{
-    focus_active_tab, MouseGesture, MouseOutcome, Placement, ROSTER_DRAG_THRESHOLD,
+    focus_active_tab, on_roster, MouseGesture, MouseOutcome, Placement, ROSTER_DRAG_THRESHOLD,
     TAB_DRAG_THRESHOLD,
 };
 
@@ -35,8 +37,12 @@ use super::{
 /// toggle collapses or expands the sidebar; the edge and the section rule
 /// start their resize drags and apply the press at once (herdr resizes on the
 /// press too), unless the sidebar is collapsed to its rail; a scrollbar thumb
-/// starts a thumb drag and the track beside it jumps the list there. Every
-/// other region is ignored until its section lands.
+/// starts a thumb drag and the track beside it jumps the list there.
+///
+/// A split border starts the drag that resizes the panes either side of it
+/// (herdr `SetSplitRatio`); a pane scrollbar thumb starts a thumb drag and
+/// the track beside it jumps the scrollback there. Every other region is
+/// ignored until its section lands.
 pub(super) fn down<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -136,6 +142,26 @@ pub(super) fn down<W: WorkspaceView>(
             }
             MouseOutcome::Handled
         }
+        Hit::SplitBorder(border) => {
+            chrome.gesture = Some(MouseGesture::SplitDrag { border });
+            MouseOutcome::Handled
+        }
+        Hit::PaneScrollbar { slot, row } => {
+            let Some((pane, track, metrics)) = pane_scrollbar(ws, chrome, slot) else {
+                return MouseOutcome::Ignore;
+            };
+            match scrollbar_thumb_grab_offset(metrics, track, row) {
+                Some(grab_offset) => {
+                    chrome.gesture = Some(MouseGesture::ScrollbarDrag { slot, grab_offset });
+                    MouseOutcome::Handled
+                }
+                None => scroll_to(
+                    pane,
+                    metrics,
+                    scrollbar_offset_from_row(metrics, track, row),
+                ),
+            }
+        }
         _ => MouseOutcome::Ignore,
     }
 }
@@ -143,8 +169,11 @@ pub(super) fn down<W: WorkspaceView>(
 /// The pointer moved with a button held. A tab drag that has travelled
 /// `TAB_DRAG_THRESHOLD` columns from its press becomes a move, a roster drag
 /// `ROSTER_DRAG_THRESHOLD` rows; the sidebar edge and section rule follow
-/// the pointer; a scrollbar thumb keeps the row it was grabbed by under the
-/// pointer. Every other gesture waits for its section.
+/// the pointer; a scrollbar thumb, sidebar or pane, keeps the row it was
+/// grabbed by under the pointer; a split border follows the pointer along
+/// its split, the first pane taking the share of the split's area the
+/// pointer sits at, clamped to `0.1..=0.9` (herdr `SetSplitRatio`). Every
+/// other gesture waits for its section.
 pub(super) fn drag<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -191,6 +220,34 @@ pub(super) fn drag<W: WorkspaceView>(
             *chrome.sidebar.scroll_mut(section) = metrics.max_offset_from_bottom - offset;
             MouseOutcome::Handled
         }
+        Some(MouseGesture::SplitDrag { border }) => {
+            let Some(split) = chrome.view.split_borders.get(*border) else {
+                return MouseOutcome::Handled;
+            };
+            let ratio = match split.direction {
+                Direction::Horizontal => {
+                    f32::from(mouse.column.saturating_sub(split.area.x))
+                        / f32::from(split.area.width.max(1))
+                }
+                Direction::Vertical => {
+                    f32::from(mouse.row.saturating_sub(split.area.y))
+                        / f32::from(split.area.height.max(1))
+                }
+            };
+            let path = split.path.clone();
+            if let Some(tab) = chrome.active_tab_mut() {
+                tab.layout.set_ratio_at(&path, ratio.clamp(0.1, 0.9));
+            }
+            MouseOutcome::Handled
+        }
+        Some(MouseGesture::ScrollbarDrag { slot, grab_offset }) => {
+            let (slot, grab_offset) = (*slot, *grab_offset);
+            let Some((pane, track, metrics)) = pane_scrollbar(ws, chrome, slot) else {
+                return MouseOutcome::Handled;
+            };
+            let rows = scrollbar_offset_from_drag_row(metrics, track, mouse.row, grab_offset);
+            scroll_to(pane, metrics, rows)
+        }
         _ => MouseOutcome::Ignore,
     }
 }
@@ -201,7 +258,8 @@ pub(super) fn drag<W: WorkspaceView>(
 /// another row takes its place in the roster, which the loop saves as the
 /// pane order; released anywhere else either stays put, and a release
 /// without movement was the click the press handled. A sidebar edge release
-/// keeps the width it reached as the preferred width.
+/// keeps the width it reached as the preferred width; a split border or
+/// scrollbar release keeps what the drag reached.
 pub(super) fn up<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -241,7 +299,9 @@ pub(super) fn up<W: WorkspaceView>(
             MouseGesture::TabDrag { .. }
             | MouseGesture::RosterDrag { .. }
             | MouseGesture::SectionDrag
-            | MouseGesture::SidebarScrollbarDrag { .. },
+            | MouseGesture::SidebarScrollbarDrag { .. }
+            | MouseGesture::SplitDrag { .. }
+            | MouseGesture::ScrollbarDrag { .. },
         ) => MouseOutcome::Handled,
         _ => MouseOutcome::Ignore,
     }
@@ -289,10 +349,38 @@ fn scrollbar_track(chrome: &Chrome, section: SidebarSection) -> Option<Rect> {
     }
 }
 
-/// Whether `pane` still backs a roster terminal: the same set the keyboard
-/// cycle (`focus_relative_live_pane`) focuses through.
-fn on_roster<W: WorkspaceView>(ws: &W, pane: PaneId) -> bool {
-    ws.roster_terminal_ids()
-        .iter()
-        .any(|terminal_id| ws.pane_for_terminal(terminal_id) == Some(pane))
+/// The scrollbar lane the last frame drew beside `slot`, with the pane it
+/// scrolls and where that pane's scrollback stood when the lane was drawn.
+/// None when the lane was not drawn or the slot no longer shows a roster
+/// pane.
+fn pane_scrollbar<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    slot: layout::PaneId,
+) -> Option<(PaneId, Rect, ScrollMetrics)> {
+    let info = chrome.view.pane_infos.iter().find(|info| info.id == slot)?;
+    let track = info.scrollbar_rect?;
+    let pane = chrome
+        .pane_for_slot(slot)
+        .filter(|pane| on_roster(ws, *pane))?;
+    let state = ws.pane(pane);
+    let metrics = metrics_for(
+        state.scroll_offset,
+        state.max_scroll,
+        info.inner_rect.height,
+    );
+    Some((pane, track, metrics))
+}
+
+/// Scroll `pane` to `rows` above the live edge, or consume the event when it
+/// is already there.
+fn scroll_to(pane: PaneId, metrics: ScrollMetrics, rows: usize) -> MouseOutcome {
+    if rows == metrics.offset_from_bottom {
+        MouseOutcome::Handled
+    } else {
+        MouseOutcome::Scroll {
+            pane,
+            rows: rows as u32,
+        }
+    }
 }

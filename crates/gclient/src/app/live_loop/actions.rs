@@ -8,7 +8,8 @@ use crate::ui::{Action, Chrome, Mode};
 use super::super::attention::open_response_dialog;
 use super::super::{PaneId, Workspace};
 use super::control::{
-    focus_live_pane, observe_live_pane, release_live_control, send_live_write, take_live_control,
+    focus_live_pane, observe_live_pane, release_live_control, send_live_write,
+    set_live_scroll_offset, take_live_control,
 };
 use super::mouse::{MouseOutcome, Placement};
 
@@ -52,9 +53,10 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
 /// lease (it follows focus), or only the workspace focus for an observe-only
 /// click; actions dispatch exactly as their chords would; a spawn goes through
-/// the same request as `NewTerminal`; forwarded bytes go to the pane; an
-/// attention click focuses its terminal and opens that entry's prompt; a
-/// roster drop saves the new order. Returns whether the client should exit,
+/// the same request as `NewTerminal`; forwarded bytes go to the pane; a
+/// scroll moves the pane's viewport on its frame source; an attention click
+/// focuses its terminal and opens that entry's prompt; a roster drop saves
+/// the new order. Returns whether the client should exit,
 /// like the key routers.
 pub(super) async fn apply_live_mouse_outcome(
     workspace: &mut Workspace<LiveDaemon>,
@@ -78,6 +80,9 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::Write { pane, bytes } => {
             send_live_write(workspace, pane, &bytes, false).await?;
+        }
+        MouseOutcome::Scroll { pane, rows } => {
+            set_live_scroll_offset(workspace, pane, rows).await?;
         }
         MouseOutcome::Attention { pane, entry_id } => {
             if let Some(pane) = pane {

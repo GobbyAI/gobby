@@ -1,10 +1,12 @@
 //! Wheel notches: what a scroll over each chrome region means.
 
+use gobby_terminal::protocol::MouseTracking;
+
 use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::sidebar::section_metrics;
 use crate::ui::{Chrome, WorkspaceView};
 
-use super::{focus_active_tab, MouseOutcome, MOUSE_SCROLL_LINES};
+use super::{focus_active_tab, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
 
 /// A wheel notch over `hit` at screen `row`; `up` is a notch away from the
 /// user.
@@ -15,7 +17,18 @@ use super::{focus_active_tab, MouseOutcome, MOUSE_SCROLL_LINES};
 /// the pointer by `MOUSE_SCROLL_LINES` rows (herdr `scroll_workspace_list`):
 /// a row or scrollbar names its list, anything else goes by which side of
 /// the section rule the pointer is on. A list that fits stays put, and the
-/// collapsed rail has nothing to scroll. Panes wait for their section.
+/// collapsed rail has nothing to scroll.
+///
+/// Over a pane, its border or its scrollbar the notch goes by the pane's
+/// modes (herdr `forward_pane_wheel`). A pane that reports mouse waits for
+/// the forwarding section; an alternate-screen pane gets `MOUSE_SCROLL_LINES`
+/// arrow keys, up or down (herdr alternate-scroll), delivered where a key
+/// would be; any other pane scrolls its scrollback `MOUSE_SCROLL_LINES` rows,
+/// up into history and down toward the live edge, clamped to the depth the
+/// daemon reported, and a notch that would not move it is consumed. Focus
+/// never moves: in gclient focus takes the lease, and a scroll is not a
+/// claim on the pane. A slot whose pane has left the roster is stale until
+/// the next chrome sync and is left alone.
 pub(super) fn wheel<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -66,6 +79,38 @@ pub(super) fn wheel<W: WorkspaceView>(
             };
             *chrome.sidebar.scroll_mut(section) = next;
             MouseOutcome::Handled
+        }
+        Hit::Pane { slot, .. } | Hit::PaneBorder(slot) | Hit::PaneScrollbar { slot, .. } => {
+            let Some(pane) = chrome
+                .pane_for_slot(slot)
+                .filter(|pane| on_roster(ws, *pane))
+            else {
+                return MouseOutcome::Ignore;
+            };
+            let state = ws.pane(pane);
+            let modes = state.latest_frame().map(|frame| &frame.modes);
+            if modes.is_some_and(|modes| modes.mouse_tracking() != MouseTracking::Off) {
+                return MouseOutcome::Ignore;
+            }
+            if modes.is_some_and(|modes| modes.alternate_on) {
+                let key: &[u8] = if up { b"\x1b[A" } else { b"\x1b[B" };
+                return MouseOutcome::Write {
+                    pane,
+                    bytes: key.repeat(MOUSE_SCROLL_LINES),
+                };
+            }
+            let step = MOUSE_SCROLL_LINES as u32;
+            let current = state.scroll_offset;
+            let next = if up {
+                current.saturating_add(step).min(state.max_scroll)
+            } else {
+                current.saturating_sub(step)
+            };
+            if next == current {
+                MouseOutcome::Handled
+            } else {
+                MouseOutcome::Scroll { pane, rows: next }
+            }
         }
         _ => MouseOutcome::Ignore,
     }

@@ -23,6 +23,10 @@ use gobby_client::frame_source::{
 };
 use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
+use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
+use gobby_client::ui::scrollbar::{
+    scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
+};
 use gobby_client::ui::{Chrome, WorkspaceView};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -164,10 +168,23 @@ fn semantic_frame(text: &str) -> ServerMessage {
     })
 }
 
-fn encoded_frame(text: &str) -> String {
+fn encode_frame(message: &ServerMessage) -> String {
     let mut framed = Vec::new();
-    write_message(&mut framed, &semantic_frame(text)).expect("encode test frame");
+    write_message(&mut framed, message).expect("encode test frame");
     STANDARD.encode(&framed[4..])
+}
+
+fn encoded_frame(text: &str) -> String {
+    encode_frame(&semantic_frame(text))
+}
+
+/// `encoded_frame` from a pane that switched to its alternate screen.
+fn encoded_alternate_frame(text: &str) -> String {
+    let ServerMessage::Frame(mut frame) = semantic_frame(text) else {
+        unreachable!("semantic_frame builds a frame");
+    };
+    frame.modes.alternate_on = true;
+    encode_frame(&ServerMessage::Frame(frame))
 }
 
 async fn live_workspace_with_scripted_direct(
@@ -2927,9 +2944,6 @@ async fn pane_click_focuses_and_takes_control_unless_alt() {
         } else {
             "terminal-a"
         };
-        // The hit map exists once the loop has drawn; the first render tick
-        // fires as soon as the loop starts selecting.
-        tokio::time::sleep(RENDER_TICK * 4).await;
 
         let (column, row) = cell_of(other);
         send_mouse(
@@ -2997,6 +3011,292 @@ async fn pane_click_focuses_and_takes_control_unless_alt() {
     assert!(
         workspace.pane(pane).is_observe(),
         "alt+click leaves the pane observed"
+    );
+    mock.shutdown().await;
+}
+
+/// 2.4.2: a wheel notch over a pane that reports no mouse scrolls its
+/// scrollback three rows a notch through `SetScrollOffset`, clamped to the
+/// depth the daemon reported; the scrollbar track jumps and the thumb drags
+/// to the offsets the scrollbar math gives; a pane on its alternate screen
+/// gets arrow keys instead (herdr alternate-scroll).
+#[tokio::test]
+async fn wheel_and_scrollbar_drive_scrollback() {
+    const MAX_ROWS: u32 = 10;
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue_write_outcome("delivered", None);
+    mock.enqueue_write_outcome("delivered", None);
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": "terminal-scroll", "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane = workspace
+        .pane_for_terminal("terminal-scroll")
+        .expect("roster pane");
+    let attachment = workspace.pane(pane).attachment_id().to_string();
+
+    // The daemon reports the scrollback depth before the loop's first draw,
+    // so the scrollbar lane is in the hit map from the start.
+    mock.send_event_and_wait(json!({
+        "type": "terminal_scroll_offset_applied",
+        "terminal_id": "terminal-scroll",
+        "attachment_id": attachment,
+        "applied_rows": 0,
+        "max_rows": MAX_ROWS,
+    }))
+    .await;
+    let applied = workspace
+        .recv_pane_frame(pane)
+        .await
+        .expect("scroll offset applied reaches the pane");
+    assert!(
+        matches!(
+            applied,
+            ServerMessage::ScrollOffsetApplied {
+                applied_rows: 0,
+                max_rows: MAX_ROWS
+            }
+        ),
+        "unexpected pane message: {applied:?}"
+    );
+
+    // Mirror the loop's one-pane chrome to learn where the content and the
+    // scrollbar lane are drawn.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(pane, "terminal-scroll");
+    probe.compute_view(&workspace, area);
+    let info = probe.view.pane_infos[0].clone();
+    let content = (info.inner_rect.x + 1, info.inner_rect.y + 1);
+    let viewport_rows = info.inner_rect.height;
+    let lane = scrollbar_gutter(
+        pane_inner_rect(info.rect, info.borders),
+        true,
+        metrics_for(0, MAX_ROWS, viewport_rows),
+    )
+    .expect("a pane with scrollback draws a scrollbar lane");
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+
+        let offsets = || -> Vec<u64> {
+            websocket_requests(&mock, "terminal_set_scroll_offset")
+                .iter()
+                .map(|request| {
+                    assert_eq!(
+                        request.get("attachment_id").and_then(Value::as_str),
+                        Some(attachment.as_str()),
+                        "scrolling names the pane's attachment"
+                    );
+                    request
+                        .get("rows_from_live_edge")
+                        .and_then(Value::as_u64)
+                        .expect("rows from the live edge")
+                })
+                .collect()
+        };
+        let (column, row) = content;
+        for _ in 0..5 {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::ScrollUp,
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+            .await;
+        }
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 4).await;
+        settle_live_event().await;
+        assert_eq!(
+            offsets(),
+            vec![3, 6, 9, 10],
+            "up steps three rows a notch, clamps at the top, and a notch that cannot move sends nothing"
+        );
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollDown,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 5).await;
+        assert_eq!(
+            offsets()[4],
+            7,
+            "down steps three rows toward the live edge"
+        );
+
+        // A click on the track beside the thumb jumps the scrollback there.
+        let metrics = metrics_for(7, MAX_ROWS, viewport_rows);
+        let track_row = (lane.y..lane.y + lane.height)
+            .find(|row| scrollbar_thumb_grab_offset(metrics, lane, *row).is_none())
+            .expect("a track row beside the thumb");
+        let jump = scrollbar_offset_from_row(metrics, lane, track_row) as u64;
+        assert_ne!(jump, 7, "the track row moves the viewport");
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            lane.x,
+            track_row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 6).await;
+        assert_eq!(
+            offsets()[5],
+            jump,
+            "a track click jumps the scrollback there"
+        );
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Up(MouseButton::Left),
+            lane.x,
+            track_row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        settle_live_event().await;
+
+        // A thumb drag keeps the grabbed row under the pointer.
+        let metrics = metrics_for(
+            u32::try_from(jump).expect("offset"),
+            MAX_ROWS,
+            viewport_rows,
+        );
+        let (thumb_row, grab) = (lane.y..lane.y + lane.height)
+            .find_map(|row| scrollbar_thumb_grab_offset(metrics, lane, row).map(|grab| (row, grab)))
+            .expect("a thumb row");
+        let drop_row = [lane.y + lane.height - 1, lane.y]
+            .into_iter()
+            .find(|row| scrollbar_offset_from_drag_row(metrics, lane, *row, grab) as u64 != jump)
+            .expect("a drop row that moves the viewport");
+        let dragged = scrollbar_offset_from_drag_row(metrics, lane, drop_row, grab) as u64;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            lane.x,
+            thumb_row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Drag(MouseButton::Left),
+            lane.x,
+            drop_row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_set_scroll_offset", 7).await;
+        assert_eq!(
+            offsets()[6],
+            dragged,
+            "a thumb drag maps the drop row to an offset"
+        );
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Up(MouseButton::Left),
+            lane.x,
+            drop_row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        settle_live_event().await;
+        assert_eq!(
+            offsets().len(),
+            7,
+            "a thumb press and its release send nothing of their own"
+        );
+
+        // A pane on its alternate screen gets arrow keys instead.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-scroll",
+            "attachment_id": attachment,
+            "encoding": "bincode-b64",
+            "payload": encoded_alternate_frame("full-screen app"),
+        }))
+        .await;
+        settle_live_event().await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollUp,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::ScrollDown,
+            column,
+            row,
+            KeyModifiers::NONE,
+        )
+        .await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        settle_live_event().await;
+        let inputs: Vec<String> = websocket_requests(&mock, "terminal_input")
+            .iter()
+            .map(|request| {
+                request
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .expect("input data")
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            inputs,
+            vec![
+                "\x1b[A\x1b[A\x1b[A".to_string(),
+                "\x1b[B\x1b[B\x1b[B".to_string()
+            ],
+            "alternate-scroll sends three arrow keys a notch"
+        );
+        assert_eq!(
+            offsets().len(),
+            7,
+            "a pane on its alternate screen never scrolls scrollback"
+        );
+        drop(input_tx);
+        dragged
+    };
+
+    let (result, dragged) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        u64::from(workspace.pane(pane).scroll_offset()),
+        dragged,
+        "the pane mirrors the last offset it asked for"
     );
     mock.shutdown().await;
 }

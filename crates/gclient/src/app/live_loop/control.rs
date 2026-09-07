@@ -1,11 +1,12 @@
 //! Pane control for the live loop: focus, take/release control, and the
 //! daemon writes that carry pane input.
 
+use gobby_terminal::protocol::ClientMessage;
 use serde_json::{json, Value};
 use tokio::time::Instant;
 
 use crate::daemon::{Daemon, DaemonError, LiveDaemon};
-use crate::frame_source::FrameError;
+use crate::frame_source::{FrameError, FrameSource};
 
 use super::super::{ControlState, PaneId, Workspace};
 
@@ -216,6 +217,36 @@ pub(super) async fn send_live_write(
             Err(FrameError::from(error))
         }
     }
+}
+
+/// Scroll `pane_id`'s viewport to `rows` above the live edge on whichever
+/// transport carries its frames: the socket encodes `SetScrollOffset`, the
+/// proxy sends `terminal_set_scroll_offset`. The offset is mirrored at once
+/// so the chrome draws the new position before `ScrollOffsetApplied`
+/// confirms it, as the scripted `Workspace::set_scroll_offset` does. A pane
+/// without a frame source has nothing to scroll.
+pub(super) async fn set_live_scroll_offset(
+    workspace: &mut Workspace<LiveDaemon>,
+    pane_id: PaneId,
+    rows: u32,
+) -> Result<(), FrameError> {
+    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+        return Ok(());
+    }
+    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
+    let Some(source) = pane.frame_source_mut() else {
+        return Ok(());
+    };
+    source
+        .send(&ClientMessage::SetScrollOffset {
+            rows_from_live_edge: rows,
+        })
+        .await?;
+    pane.scroll_offset = rows;
+    if rows == 0 {
+        pane.new_output = false;
+    }
+    Ok(())
 }
 
 pub(super) fn apply_live_write_outcome(workspace: &mut Workspace<LiveDaemon>, message: &Value) {

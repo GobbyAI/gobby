@@ -80,8 +80,12 @@ pub enum MouseOutcome {
     Action(Action),
     /// Spawn a terminal and place it.
     Spawn { placement: Placement },
-    /// Bytes for a pane that reports mouse: a forwarded SGR report.
+    /// Bytes for a pane: a forwarded SGR report where it reports mouse, or
+    /// the arrow keys a wheel notch means on an alternate screen.
     Write { pane: PaneId, bytes: Vec<u8> },
+    /// Scroll `pane`'s viewport to `rows` above the live edge; the loop sends
+    /// `SetScrollOffset` on the pane's frame source.
+    Scroll { pane: PaneId, rows: u32 },
     /// An attention row was clicked: focus `pane` when the entry maps to one,
     /// then open the response dialog for `entry_id`.
     Attention {
@@ -152,6 +156,16 @@ fn focus_active_tab(chrome: &Chrome, observe_only: bool) -> MouseOutcome {
         Some(pane) => MouseOutcome::Focus { pane, observe_only },
         None => MouseOutcome::Handled,
     }
+}
+
+/// Whether `pane` still backs a roster terminal: the same set the keyboard
+/// cycle (`focus_relative_live_pane`) focuses through. A slot whose pane has
+/// left the roster is stale until the next chrome sync, and `ws.pane` on it
+/// would panic.
+pub(super) fn on_roster<W: WorkspaceView>(ws: &W, pane: PaneId) -> bool {
+    ws.roster_terminal_ids()
+        .iter()
+        .any(|terminal_id| ws.pane_for_terminal(terminal_id) == Some(pane))
 }
 
 #[cfg(test)]

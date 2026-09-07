@@ -162,6 +162,14 @@ pub async fn run_live_loop<B: Backend>(
     let mut supervisor = ReconnectSupervisor::new();
     let mut reconnect_job = None;
 
+    // Draw once before the first select: input outranks the render tick, so
+    // the earliest event, a click included, would otherwise route against an
+    // empty hit map.
+    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+        workspace.latch_exit(error.to_string());
+        loop_error = Some(error);
+    }
+
     while workspace.exit_reason().is_none() {
         tokio::select! {
             biased;

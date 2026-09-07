@@ -2,7 +2,12 @@ nextest-version = { required = "0.9.133" }
 
 [profile.default]
 fail-fast = false
-leak-timeout = { period = "500ms", result = "fail" }
+# Leaks still fail. On macOS a test child can inherit another test's capture
+# pipe while nextest spawns from several threads (rust-lang/rust#95584: pipe()
+# then FD_CLOEXEC is not atomic), so the victim reads as leaky until that
+# unrelated test exits. The period must outlast the longest test that can be
+# co-spawned; a genuinely leaked child holds the pipe forever and still fails.
+leak-timeout = { period = "10s", result = "fail" }
 
 [profile.ci]
 inherits = "default"

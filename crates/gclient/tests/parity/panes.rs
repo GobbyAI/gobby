@@ -1,6 +1,7 @@
 //! herdr `src/ui/panes.rs` (17) keep-set render tests.
 
-use gobby_client::app::{PaneId as AppPaneId, Workspace};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{route_mouse, MouseGesture, MouseOutcome, PaneId as AppPaneId, Workspace};
 use gobby_client::theme::relative_luminance;
 use gobby_client::ui::chrome::{Chrome, Tab};
 use gobby_client::ui::pane_layout::{
@@ -477,5 +478,104 @@ parity_tests! {
                     > relative_luminance((host_background.r, host_background.g, host_background.b))
             );
         }
+
     }
+}
+
+// gclient-only mouse coverage for the pane surface: herdr drives its split
+// drag through `MouseAction::SetSplitRatio`, gclient through `route_mouse`
+// against a drawn frame. Outside the keep-set macro so the upstream
+// inventory stays exact.
+#[test]
+fn split_border_drag_sets_ratio() {
+    // herdr `PaneSplit` drag (`SetSplitRatio`): the pointer position
+    // inside the split's area, along its direction, becomes the first
+    // pane's share, clamped to `0.1..=0.9`; both panes re-lay out on
+    // the next draw and the release ends the gesture.
+    let (mut chrome, mut ws, root) = app_with_workspace();
+    let second = ws
+        .open_terminal("second", "native", "epoch")
+        .expect("open second terminal");
+    let tab = chrome.active_tab_mut().expect("active tab");
+    test_split(tab, Direction::Horizontal, second);
+    tab.layout.focus_pane(root);
+    let area = Rect::new(0, 0, 120, 40);
+    chrome.compute_view(&ws, area);
+    let split = chrome.view.split_borders[0].clone();
+    assert_eq!(split.direction, Direction::Horizontal);
+    let widths = |chrome: &Chrome| {
+        let infos = &chrome.view.pane_infos;
+        let left = infos
+            .iter()
+            .find(|info| info.id == root)
+            .expect("root slot");
+        let right = infos
+            .iter()
+            .find(|info| info.id != root)
+            .expect("split slot");
+        assert_eq!(left.rect.x, split.area.x);
+        assert_eq!(
+            right.rect.x + right.rect.width,
+            split.area.x + split.area.width
+        );
+        (left.rect.width, right.rect.width)
+    };
+    let (left_before, right_before) = widths(&chrome);
+    let row = split.area.y + 1;
+    let route = |chrome: &mut Chrome, kind: MouseEventKind, column: u16| {
+        let mouse = MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        route_mouse(&ws, chrome, &mouse)
+    };
+    let press = MouseEventKind::Down(MouseButton::Left);
+    let drag = MouseEventKind::Drag(MouseButton::Left);
+    let release = MouseEventKind::Up(MouseButton::Left);
+
+    assert_eq!(route(&mut chrome, press, split.pos), MouseOutcome::Handled);
+    assert_eq!(chrome.gesture, Some(MouseGesture::SplitDrag { border: 0 }));
+
+    let target = split.area.x + split.area.width * 3 / 10;
+    assert_eq!(route(&mut chrome, drag, target), MouseOutcome::Handled);
+    chrome.compute_view(&ws, area);
+    let ratio = chrome.view.split_borders[0].ratio;
+    assert!(
+        (ratio - 0.3).abs() < 0.02,
+        "the ratio follows the pointer: {ratio}"
+    );
+    let (left, right) = widths(&chrome);
+    assert!(
+        left < left_before && right > right_before,
+        "both panes re-lay out: {left_before}/{right_before} -> {left}/{right}"
+    );
+    let expected = (f32::from(split.area.width) * ratio).round() as u16;
+    assert!(
+        left.abs_diff(expected) <= 1,
+        "the first pane takes the ratio's share: {left} vs {expected}"
+    );
+
+    assert_eq!(
+        route(&mut chrome, drag, split.area.x),
+        MouseOutcome::Handled
+    );
+    chrome.compute_view(&ws, area);
+    let ratio = chrome.view.split_borders[0].ratio;
+    assert!((ratio - 0.1).abs() < f32::EPSILON, "clamped low: {ratio}");
+    let beyond = split.area.x + split.area.width + 5;
+    assert_eq!(route(&mut chrome, drag, beyond), MouseOutcome::Handled);
+    chrome.compute_view(&ws, area);
+    let ratio = chrome.view.split_borders[0].ratio;
+    assert!((ratio - 0.9).abs() < f32::EPSILON, "clamped high: {ratio}");
+
+    assert_eq!(route(&mut chrome, release, beyond), MouseOutcome::Handled);
+    assert_eq!(chrome.gesture, None);
+    chrome.compute_view(&ws, area);
+    let ratio = chrome.view.split_borders[0].ratio;
+    assert!(
+        (ratio - 0.9).abs() < f32::EPSILON,
+        "the release keeps the ratio: {ratio}"
+    );
 }
