@@ -385,7 +385,9 @@ def _assert_port_open(port: int) -> None:
         pass
 
 
-def _validate_grant_binding(root: Path, grant: dict[str, Any], now: float) -> dict[str, str]:
+def _validate_grant_binding(
+    root: Path, grant: dict[str, Any], now: float
+) -> dict[str, str | int | None]:
     from psycopg.conninfo import conninfo_to_dict
 
     project = _load_json(contained_file(root, "corpora/gcode/C0/.gobby/project.json"))
@@ -400,11 +402,15 @@ def _validate_grant_binding(root: Path, grant: dict[str, Any], now: float) -> di
     assert principal["session_id"] is None and principal["execution_id"] is None
     postgres = grant["capabilities"]["postgres"]
     assert postgres["mode"] == "direct" and now < postgres["valid_until"]
-    connection = conninfo_to_dict(postgres["dsn"])
+    dsn = postgres["dsn"]
+    assert isinstance(dsn, str)
+    connection = conninfo_to_dict(dsn)
     assert connection["host"] == "127.0.0.1" and connection["port"] == "61234"
     assert connection["dbname"] == "gobby_bakeoff_21942"
-    assert connection["user"] == postgres["role_name"]
-    assert connection["user"].startswith("gobby_ix_")
+    user = connection["user"]
+    assert isinstance(user, str)
+    assert user == postgres["role_name"]
+    assert user.startswith("gobby_ix_")
     qdrant = grant["capabilities"]["qdrant"]
     assert qdrant["mode"] == "direct" and qdrant["url"] == "http://127.0.0.1:61235"
     falkor = grant["capabilities"]["falkordb"]
@@ -523,6 +529,10 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     grant = _load_json(cache)["grant"]
     now = time.time()
     connection = _validate_grant_binding(root, grant, now)
+    postgres_dsn = grant["capabilities"]["postgres"]["dsn"]
+    postgres_user = connection["user"]
+    assert isinstance(postgres_dsn, str)
+    assert isinstance(postgres_user, str)
     status_code, config = _present_grant(root, grant)
     assert status_code == 200 and config["config_revision"] == grant["config_revision"]
     tampered = copy.deepcopy(grant)
@@ -530,11 +540,11 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
     tampered["signature"] = ("A" if signature[0] != "A" else "B") + signature[1:]
     rejected, reason = _present_grant(root, tampered)
     assert rejected == 403 and reason["code"] == "invalid_signature"
-    with psycopg.connect(**connection, connect_timeout=5) as conn:
+    with psycopg.connect(postgres_dsn, connect_timeout=5) as conn:
         identity = conn.execute(
             "SELECT current_database(), current_user, current_schema()"
         ).fetchone()
-        assert identity == ("gobby_bakeoff_21942", connection["user"], "public")
+        assert identity == ("gobby_bakeoff_21942", postgres_user, "public")
         extensions = conn.execute(
             "SELECT extname FROM pg_extension WHERE extname IN ('pg_search', 'pgaudit')"
         ).fetchall()
@@ -575,7 +585,7 @@ def probe_live_environment(root: Path) -> dict[str, Any]:
         "tampered_signature_http": rejected,
         "tampered_signature_reason": reason["code"],
         "postgres_identity": list(identity),
-        "postgres_role": connection["user"],
+        "postgres_role": postgres_user,
         "qdrant_url": qdrant["url"],
         "falkordb_endpoint": "127.0.0.1:61237",
         "launch_receipts": launches,
