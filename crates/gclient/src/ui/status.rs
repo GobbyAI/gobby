@@ -290,24 +290,33 @@ pub fn render_diagnostic(frame: &mut Frame, area: Rect, chrome: &Chrome, message
 }
 
 /// Gobby status line: daemon reachability, focused pane control state, mode.
+/// Returns the control indicator's cells, when a focused pane put one there.
 pub fn render_status_line<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
     ws: &W,
     chrome: &Chrome,
-) {
+) -> Option<Rect> {
     if area.width == 0 || area.height == 0 {
-        return;
+        return None;
     }
     let p = &chrome.palette;
     let base = Style::default().bg(p.surface_dim);
     let mut spans = Vec::new();
+    let mut indicator = None;
 
     match chrome.focused_pane().map(|id| ws.pane(id)) {
         Some(pane) => {
             let (glyph, label, color) = control_indicator(pane.control, pane.take_back, p);
+            let text = format!(" {glyph} {label}");
+            indicator = Some(Rect::new(
+                area.x,
+                area.y,
+                display_width_u16(&text).min(area.width),
+                1,
+            ));
             spans.push(Span::styled(
-                format!(" {glyph} {label}"),
+                text,
                 base.fg(color).add_modifier(Modifier::BOLD),
             ));
             let name = match pane.address.as_deref() {
@@ -335,6 +344,7 @@ pub fn render_status_line<W: WorkspaceView>(
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
+    indicator
 }
 
 #[cfg(test)]
@@ -394,7 +404,9 @@ mod tests {
 
         let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
         terminal
-            .draw(|frame| render_status_line(frame, frame.area(), &ws, &chrome))
+            .draw(|frame| {
+                render_status_line(frame, frame.area(), &ws, &chrome);
+            })
             .unwrap();
         let text = screen(&terminal);
         for needle in ["○ observe", "term-alpha", "navigate", "copied"] {
@@ -428,7 +440,9 @@ mod tests {
 
             let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
             terminal
-                .draw(|frame| render_status_line(frame, frame.area(), &ws, &chrome))
+                .draw(|frame| {
+                    render_status_line(frame, frame.area(), &ws, &chrome);
+                })
                 .unwrap();
             let text = screen(&terminal);
             assert!(text.contains(expected), "status lacks {expected:?}: {text}");

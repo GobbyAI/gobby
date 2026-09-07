@@ -7,6 +7,7 @@
 pub mod chrome;
 pub mod chrome_render;
 pub mod dialogs;
+pub mod hit;
 pub mod keybind_help;
 pub mod keymap;
 pub mod navigator;

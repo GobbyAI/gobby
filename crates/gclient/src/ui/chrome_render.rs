@@ -5,11 +5,25 @@
 use crate::app::PaneId;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::panes::PaneContent;
+use crate::ui::settings::SettingsHits;
+use crate::ui::sidebar::SidebarHits;
+use crate::ui::tabs::TabBarHits;
 use crate::ui::{dialogs, keybind_help, navigator, panes, settings, sidebar, status, tab_surface};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Block;
 use ratatui::Frame;
+
+/// Every rect the chrome renderers drew this frame; the run loop writes it
+/// back into `ViewState` with `apply_hits` so hit tests match the screen.
+#[derive(Debug, Clone, Default)]
+pub struct ChromeHits {
+    pub tab_bar: TabBarHits,
+    pub sidebar: SidebarHits,
+    pub control_indicator: Option<Rect>,
+    pub toast: Option<Rect>,
+    pub settings: Option<SettingsHits>,
+}
 
 /// Compose the whole frame; `content` paints each pane's terminal grid.
 pub fn render_workspace_with<W: WorkspaceView>(
@@ -17,23 +31,28 @@ pub fn render_workspace_with<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
     content: &mut PaneContent<'_>,
-) {
+) -> ChromeHits {
     let area = frame.area();
     frame.render_widget(
         Block::new().style(Style::new().bg(chrome.palette.panel_bg)),
         area,
     );
 
-    render_navigation_chrome(frame, ws, chrome);
-    render_content_column(frame, ws, chrome, content);
+    let sidebar = render_navigation_chrome(frame, ws, chrome);
+    let tab_bar = render_content_column(frame, ws, chrome, content);
+    let mut hits = ChromeHits {
+        tab_bar,
+        sidebar,
+        ..ChromeHits::default()
+    };
 
     let status_rect = chrome.view.status_rect;
     if !status_rect.is_empty() {
-        status::render_status_line(frame, status_rect, ws, chrome);
+        hits.control_indicator = status::render_status_line(frame, status_rect, ws, chrome);
     }
 
     // Ambient notifications sit above panes, but below interactive overlays.
-    render_notifications(frame, chrome);
+    hits.toast = render_notifications(frame, chrome);
 
     let terminal_area = chrome.view.terminal_area;
     let close_area = if terminal_area.is_empty() {
@@ -46,7 +65,7 @@ pub fn render_workspace_with<W: WorkspaceView>(
         Mode::Rename | Mode::Respond => render_dialog_overlay(frame, area, chrome),
         Mode::Settings => {
             dim_background(frame, area);
-            settings::render_settings(frame, area, chrome);
+            hits.settings = settings::render_settings(frame, area, chrome);
         }
         Mode::KeybindHelp => {
             dim_background(frame, area);
@@ -58,25 +77,34 @@ pub fn render_workspace_with<W: WorkspaceView>(
         }
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
     }
+    hits
 }
 
 /// Compose the whole frame with empty pane bodies.
-pub fn render_workspace<W: WorkspaceView>(frame: &mut Frame, ws: &W, chrome: &Chrome) {
+pub fn render_workspace<W: WorkspaceView>(
+    frame: &mut Frame,
+    ws: &W,
+    chrome: &Chrome,
+) -> ChromeHits {
     let mut none = |_: &mut Frame, _: Rect, _: PaneId| {};
-    render_workspace_with(frame, ws, chrome, &mut none);
+    render_workspace_with(frame, ws, chrome, &mut none)
 }
 
 /// herdr `render_navigation_chrome`: the sidebar column, collapsed or expanded.
 /// Hit areas are returned by the sidebar; the run loop stores them.
-fn render_navigation_chrome<W: WorkspaceView>(frame: &mut Frame, ws: &W, chrome: &Chrome) {
+fn render_navigation_chrome<W: WorkspaceView>(
+    frame: &mut Frame,
+    ws: &W,
+    chrome: &Chrome,
+) -> SidebarHits {
     let rect = chrome.view.sidebar_rect;
     if rect.width == 0 {
-        return;
+        return SidebarHits::default();
     }
     if chrome.sidebar.collapsed {
-        sidebar::render_collapsed_sidebar(frame, rect, ws, chrome);
+        sidebar::render_collapsed_sidebar(frame, rect, ws, chrome)
     } else {
-        sidebar::render_sidebar(frame, rect, ws, chrome);
+        sidebar::render_sidebar(frame, rect, ws, chrome)
     }
 }
 
@@ -87,32 +115,30 @@ fn render_content_column<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
     content: &mut PaneContent<'_>,
-) {
+) -> TabBarHits {
     let terminal_area = chrome.view.terminal_area;
     if terminal_area.is_empty() {
-        return;
+        return TabBarHits::default();
     }
     if chrome.tabs.is_empty() {
         panes::render_empty(frame, terminal_area, chrome);
-        return;
+        return TabBarHits::default();
     }
     let surface = chrome
         .view
         .tab_bar_rect
         .map_or(terminal_area, |tabs| tabs.union(terminal_area));
-    tab_surface::render_tab_surface(frame, surface, ws, chrome, content);
+    tab_surface::render_tab_surface(frame, surface, ws, chrome, content)
 }
 
 /// herdr `render_notifications`: diagnostic bar, then the toast, both over
-/// the whole frame.
-fn render_notifications(frame: &mut Frame, chrome: &Chrome) {
+/// the whole frame. Returns the toast's rect when one was drawn.
+fn render_notifications(frame: &mut Frame, chrome: &Chrome) -> Option<Rect> {
     let area = frame.area();
     if let Some(message) = &chrome.status_message {
         status::render_diagnostic(frame, area, chrome, message);
     }
-    if chrome.toast.is_some() {
-        status::render_toast_notification(frame, area, chrome);
-    }
+    status::render_toast_notification(frame, area, chrome)
 }
 
 /// Dim `area` and draw the pending dialog over it; nothing when no dialog

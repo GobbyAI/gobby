@@ -134,16 +134,27 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     }
 }
 
-pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) {
+/// Rects the settings overlay drew: the popup (border included) and every
+/// row that fit, keyed by its index into `SettingsRow::ALL`.
+#[derive(Debug, Clone, Default)]
+pub struct SettingsHits {
+    pub dialog: Rect,
+    pub rows: Vec<(usize, Rect)>,
+}
+
+/// Draw the settings overlay; `None` when `area` cannot fit the popup.
+pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option<SettingsHits> {
     let p = &chrome.palette;
-    let Some(popup) = centered_popup_rect(area, SETTINGS_POPUP_WIDTH, SETTINGS_POPUP_HEIGHT) else {
-        return;
+    let popup = centered_popup_rect(area, SETTINGS_POPUP_WIDTH, SETTINGS_POPUP_HEIGHT)?;
+    let mut hits = SettingsHits {
+        dialog: popup,
+        rows: Vec::new(),
     };
     let Some(inner) = render_panel_shell(frame, popup, p.accent, p.panel_bg) else {
-        return;
+        return Some(hits);
     };
     if inner.height < 4 || inner.width < 10 {
-        return;
+        return Some(hits);
     }
 
     let stack = modal_stack_areas(inner, 3, 2, 0, 1);
@@ -182,6 +193,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) {
             .iter()
             .position(|candidate| candidate == row)
             .unwrap_or(0);
+        hits.rows.push((index, rect));
         let is_selected = index == chrome.settings.selected;
         let marker = if is_selected { " ▸ " } else { "   " };
         let style = if is_selected {
@@ -202,7 +214,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     }
 
     let Some(footer) = stack.footer else {
-        return;
+        return Some(hits);
     };
     let [hint_row, _] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas::<2>(footer);
@@ -252,6 +264,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) {
                 .add_modifier(Modifier::BOLD),
         );
     }
+    Some(hits)
 }
 
 #[cfg(test)]

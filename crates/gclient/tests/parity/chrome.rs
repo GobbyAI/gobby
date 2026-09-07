@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use gobby_client::app::{PaneId, Workspace};
-use gobby_client::ui::chrome::{Chrome, Mode};
+use gobby_client::ui::chrome::{terminal_label, Chrome, Mode};
 use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
 };
@@ -16,12 +16,13 @@ use gobby_client::ui::scrollbar::{
     pane_scrollbar_rect, scrollbar_offset_from_drag_row, scrollbar_offset_from_row,
     scrollbar_thumb, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
+use gobby_client::ui::settings::{SettingsRow, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH};
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, render_toast_notification, toast_notification_rect,
     Toast, ToastKind,
 };
 use gobby_client::ui::tab_surface::render_tab_surface;
-use gobby_client::ui::tabs::{render_tab_bar, TabBarHits};
+use gobby_client::ui::tabs::{render_tab_bar, tab_display_name, TabBarHits};
 use gobby_client::ui::text::{display_width, middle_elide, truncate_end};
 use gobby_client::ui::widgets::centered_popup_rect;
 use gobby_terminal::layout::{self, PaneInfo, ScrollMetrics};
@@ -30,6 +31,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::widgets::{Borders, Paragraph};
 use ratatui::{Frame, Terminal};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::fixtures::{cell, rect_rows, render, screen};
@@ -1187,6 +1189,142 @@ switch_terminal = "ctrl+1..9"
             assert!(text.contains('…'));
             assert!(display_width(&text) <= 12);
         }
+    }
+}
+
+// ------------------------------------------------------- gclient hit map
+//
+// gclient-only: herdr wrote its hit rects back from `render`; gclient carries
+// them through `ChromeHits` into `ViewState::apply_hits`. These pin the rects
+// to the cells the renderers actually drew.
+
+/// Draw the whole frame the way the run loop does and write the hits back.
+fn render_with_hits(ws: &Workspace, chrome: &mut Chrome, area: Rect) -> Terminal<TestBackend> {
+    chrome.compute_view(ws, area);
+    let mut hits = None;
+    let terminal = render(area.width, area.height, |frame| {
+        hits = Some(render_workspace(frame, ws, chrome));
+    });
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    terminal
+}
+
+/// Row `rect.y` of `rect`, trailing spaces trimmed.
+fn hit_text(terminal: &Terminal<TestBackend>, rect: Rect) -> String {
+    buffer_row_text(terminal, rect, rect.y)
+}
+
+#[test]
+fn rendered_hits_match_drawn_cells() {
+    // Twenty roster terminals overflow an 18-row sidebar, and twelve tabs
+    // overflow a 74-column bar, so every scroll affordance is drawn.
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-alpha", "native", "epoch")
+        .expect("open term-alpha");
+    for n in 2..=20 {
+        ws.open_terminal(&format!("t{n:02}"), "native", "epoch")
+            .expect("open scripted terminal");
+    }
+    let mut chrome = chrome_for(&ws, "term-alpha");
+    for n in 2..=12 {
+        add_tab(&mut chrome, &format!("tab-{n:02}"));
+    }
+    chrome.active_tab = chrome.tabs.len() - 1;
+    let terminal = render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 18));
+    let view = &chrome.view;
+
+    assert!(
+        view.tab_hit_areas.len() < chrome.tabs.len(),
+        "tabs overflow"
+    );
+    for (index, rect) in &view.tab_hit_areas {
+        let name = tab_display_name(&chrome.tabs, *index).expect("tab name");
+        let text = hit_text(&terminal, *rect);
+        assert!(text.contains(&name), "tab {index} at {rect:?}: {text:?}");
+    }
+    let arrows = [
+        (view.tab_scroll_left_hit_area, "<"),
+        (view.tab_scroll_right_hit_area, ">"),
+    ];
+    assert!(
+        arrows.iter().any(|(rect, _)| rect.is_some()),
+        "scroll arrows"
+    );
+    for (rect, glyph) in arrows {
+        if let Some(rect) = rect {
+            assert_eq!(hit_text(&terminal, rect).trim(), glyph);
+        }
+    }
+    if let Some(rect) = view.new_tab_hit_area {
+        assert_eq!(hit_text(&terminal, rect).trim(), "+");
+    }
+
+    let divider_x = view.sidebar_divider_x.expect("sidebar divider");
+    assert_eq!(
+        cell(&terminal, divider_x, view.sidebar_rect.y).symbol(),
+        "│"
+    );
+    let section_y = view.sidebar_section_divider_y.expect("section divider");
+    assert_eq!(
+        cell(&terminal, view.sidebar_rect.x, section_y).symbol(),
+        "─"
+    );
+    let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
+    assert_eq!(cell(&terminal, toggle.x, toggle.y).symbol(), "«");
+    assert!(!view.roster_hit_areas.is_empty());
+    assert!(view.roster_hit_areas.len() < 20, "roster overflows");
+    for (id, rect) in &view.roster_hit_areas {
+        let label = terminal_label(&ws, id);
+        let text = hit_text(&terminal, *rect);
+        assert!(text.contains(&label), "roster {id} at {rect:?}: {text:?}");
+    }
+    let (entry, rect) = view.attention_hit_areas.first().expect("attention row");
+    assert_eq!(entry, "run:term-alpha");
+    assert!(hit_text(&terminal, *rect).contains("term-alpha"));
+    let lane = view.roster_scrollbar_hit_area.expect("roster scrollbar");
+    assert_eq!(view.attention_scrollbar_hit_area, None);
+    for y in lane.y..lane.bottom() {
+        assert_eq!(cell(&terminal, lane.x, y).symbol(), "▕", "lane row {y}");
+    }
+
+    let indicator = view.control_indicator_hit_area.expect("control indicator");
+    assert_eq!(indicator.y, view.status_rect.y);
+    assert_eq!(hit_text(&terminal, indicator), " ○ observe");
+    assert_eq!(usize::from(indicator.width), display_width(" ○ observe"));
+}
+
+#[test]
+fn rendered_settings_hits_match_drawn_rows() {
+    let ws = scripted(&["term-alpha"]);
+    let mut chrome = chrome_for(&ws, "term-alpha");
+    chrome.mode = Mode::Settings;
+    let area = Rect::new(0, 0, 100, 30);
+    let terminal = render_with_hits(&ws, &mut chrome, area);
+    let view = &chrome.view;
+
+    let popup = centered_popup_rect(area, SETTINGS_POPUP_WIDTH, SETTINGS_POPUP_HEIGHT);
+    assert_eq!(view.settings_dialog_area, popup);
+    assert_eq!(view.settings_row_hit_areas.len(), SettingsRow::ALL.len());
+    let labels = [
+        "theme",
+        "mouse capture",
+        "pane borders",
+        "pane scrollbars",
+        "pane gaps",
+        "confirm close",
+        "hide tab bar with one tab",
+        "sidebar width",
+    ];
+    for (index, rect) in &view.settings_row_hit_areas {
+        let text = hit_text(&terminal, *rect);
+        assert!(text.contains(labels[*index]), "row {index}: {text:?}");
+        assert_eq!(text.contains('▸'), *index == chrome.settings.selected);
     }
 }
 

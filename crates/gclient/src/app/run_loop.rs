@@ -183,7 +183,8 @@ fn render_workspace<B: Backend>(
             let mut content = |frame: &mut ratatui::Frame<'_>, area, pane| {
                 crate::views::grid::render(frame, area, workspace.pane(pane));
             };
-            crate::ui::render_workspace_with(frame, workspace, chrome, &mut content);
+            let hits = crate::ui::render_workspace_with(frame, workspace, chrome, &mut content);
+            chrome.view.apply_hits(hits);
         })
         .map(|_| ())
         .map_err(|error| FrameError::Other(error.to_string()))

@@ -7,7 +7,7 @@
 //! around a `─` divider.
 
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
+use crate::ui::chrome::{Chrome, Mode, SidebarState, WorkspaceView};
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::sidebar_rows::{attention_rows, roster_rows, row_line, SidebarRow};
 use crate::ui::status::state_dot;
@@ -29,6 +29,23 @@ const DEFAULT_SECTION_SPLIT: f32 = 0.5;
 pub struct SidebarHits {
     pub roster: Vec<(String, Rect)>,
     pub attention: Vec<(String, Rect)>,
+    /// Scrollbar lane beside the roster, when one was drawn.
+    pub roster_scrollbar: Option<Rect>,
+    /// Scrollbar lane beside the attention list, when one was drawn.
+    pub attention_scrollbar: Option<Rect>,
+    /// The `«`/`»` collapse toggle cell.
+    pub toggle: Option<Rect>,
+}
+
+/// Screen row of the `─` rule between the roster and attention sections, when
+/// the sidebar draws one (the collapsed rail's divider or the attention
+/// header's rule).
+pub fn section_divider_y(area: Rect, sidebar: &SidebarState) -> Option<u16> {
+    if sidebar.collapsed {
+        return collapsed_sections(area).1;
+    }
+    let (_, attention) = expanded_sections(area, sidebar.section_split);
+    (attention.width > 0 && attention.height >= ATTENTION_HEADER_ROWS).then_some(attention.y)
 }
 
 /// Expanded sidebar; returns the row hit areas.
@@ -59,9 +76,11 @@ pub fn render_sidebar<W: WorkspaceView>(
     );
 
     let (roster_area, attention_area) = expanded_sections(area, chrome.sidebar.section_split);
-    hits.roster = render_roster(frame, roster_area, ws, chrome, is_navigating);
-    hits.attention = render_attention(frame, attention_area, ws, chrome);
-    render_toggle(frame, expanded_toggle_rect(area), "«", p);
+    (hits.roster, hits.roster_scrollbar) =
+        render_roster(frame, roster_area, ws, chrome, is_navigating);
+    (hits.attention, hits.attention_scrollbar) =
+        render_attention(frame, attention_area, ws, chrome);
+    hits.toggle = render_toggle(frame, expanded_toggle_rect(area), "«", p);
     hits
 }
 
@@ -94,7 +113,7 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
 
     let (roster_area, divider_y, attention_area) = collapsed_sections(area);
     if roster_area == Rect::default() {
-        render_toggle(frame, collapsed_toggle_rect(area), "»", p);
+        hits.toggle = render_toggle(frame, collapsed_toggle_rect(area), "»", p);
         return hits;
     }
 
@@ -166,7 +185,7 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         }
     }
 
-    render_toggle(frame, collapsed_toggle_rect(area), "»", p);
+    hits.toggle = render_toggle(frame, collapsed_toggle_rect(area), "»", p);
     hits
 }
 
@@ -176,10 +195,10 @@ fn render_roster<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
     is_navigating: bool,
-) -> Vec<(String, Rect)> {
+) -> (Vec<(String, Rect)>, Option<Rect>) {
     let p = &chrome.palette;
     if area.width == 0 || area.height == 0 {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -198,11 +217,11 @@ fn render_roster<W: WorkspaceView>(
     let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.scroll);
     let body = roster_body_rect(area, should_show_scrollbar(metrics));
     let hits = render_rows(frame, body, &rows, metrics, chrome);
-    if should_show_scrollbar(metrics) {
-        let track = scrollbar_track(area, body);
+    let track = should_show_scrollbar(metrics).then(|| scrollbar_track(area, body));
+    if let Some(track) = track {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
-    hits
+    (hits, track)
 }
 
 fn render_attention<W: WorkspaceView>(
@@ -210,10 +229,10 @@ fn render_attention<W: WorkspaceView>(
     area: Rect,
     ws: &W,
     chrome: &Chrome,
-) -> Vec<(String, Rect)> {
+) -> (Vec<(String, Rect)>, Option<Rect>) {
     let p = &chrome.palette;
     if area.width == 0 || area.height < ATTENTION_HEADER_ROWS {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     frame.render_widget(
         Paragraph::new(Span::styled(
@@ -234,11 +253,11 @@ fn render_attention<W: WorkspaceView>(
     let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.attention_scroll);
     let body = attention_body_rect(area, should_show_scrollbar(metrics));
     let hits = render_rows(frame, body, &rows, metrics, chrome);
-    if should_show_scrollbar(metrics) {
-        let track = scrollbar_track(area, body);
+    let track = should_show_scrollbar(metrics).then(|| scrollbar_track(area, body));
+    if let Some(track) = track {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
-    hits
+    (hits, track)
 }
 
 /// One line per visible row; selected rows sit on `surface1`, the focused
@@ -409,14 +428,16 @@ pub fn collapsed_toggle_rect(area: Rect) -> Rect {
     )
 }
 
-fn render_toggle(frame: &mut Frame, rect: Rect, icon: &str, p: &Palette) {
+/// Draw the collapse toggle and return its cell, if there was room for one.
+fn render_toggle(frame: &mut Frame, rect: Rect, icon: &str, p: &Palette) -> Option<Rect> {
     if rect == Rect::default() {
-        return;
+        return None;
     }
     frame.render_widget(
         Paragraph::new(Span::styled(icon, Style::default().fg(p.overlay0))),
         rect,
     );
+    Some(rect)
 }
 
 fn draw_separator_column(frame: &mut Frame, area: Rect, color: Color) {

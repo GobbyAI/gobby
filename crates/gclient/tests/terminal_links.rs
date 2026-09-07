@@ -164,21 +164,27 @@ fn selection_highlights_only_its_pane() {
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     chrome.selection = Some(selection_across(alpha_slot, alpha_inner));
     terminal
-        .draw(|frame| render_workspace(frame, &ws, &chrome))
+        .draw(|frame| {
+            render_workspace(frame, &ws, &chrome);
+        })
         .unwrap();
     assert_highlighted_row(&terminal, alpha_inner, highlight);
     assert_untouched(&terminal, beta_inner, highlight, "term-beta");
 
     chrome.selection = Some(selection_across(beta_slot, beta_inner));
     terminal
-        .draw(|frame| render_workspace(frame, &ws, &chrome))
+        .draw(|frame| {
+            render_workspace(frame, &ws, &chrome);
+        })
         .unwrap();
     assert_highlighted_row(&terminal, beta_inner, highlight);
     assert_untouched(&terminal, alpha_inner, highlight, "term-alpha");
 
     chrome.selection = Some(Selection::anchor(alpha_slot, 0, 0, None));
     terminal
-        .draw(|frame| render_workspace(frame, &ws, &chrome))
+        .draw(|frame| {
+            render_workspace(frame, &ws, &chrome);
+        })
         .unwrap();
     assert_untouched(&terminal, alpha_inner, highlight, "anchored term-alpha");
 }

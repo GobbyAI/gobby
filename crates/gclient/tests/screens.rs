@@ -106,7 +106,9 @@ fn render(ws: &Workspace, chrome: &mut Chrome) -> Terminal<TestBackend> {
     chrome.compute_view(ws, area);
     let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
     terminal
-        .draw(|frame| render_workspace(frame, ws, chrome))
+        .draw(|frame| {
+            render_workspace(frame, ws, chrome);
+        })
         .expect("draw frame");
     terminal
 }

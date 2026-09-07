@@ -3,7 +3,7 @@
 
 use crate::ui::chrome::{Chrome, WorkspaceView};
 use crate::ui::panes::{render_empty, render_panes, PaneContent};
-use crate::ui::tabs::render_tab_bar;
+use crate::ui::tabs::{render_tab_bar, TabBarHits};
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -35,22 +35,26 @@ pub fn compute_tab_surface(area: Rect, show_tab_bar: bool) -> TabSurfaceLayout {
 
 /// Render the tab bar, then the active tab's panes (or the empty state) from
 /// the geometry `chrome.compute_view` already resolved into `chrome.view`.
+/// Returns the tab bar's hit areas (empty when no bar was drawn).
 pub fn render_tab_surface<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
     ws: &W,
     chrome: &Chrome,
     content: &mut PaneContent<'_>,
-) {
+) -> TabBarHits {
     let surface = compute_tab_surface(area, chrome.show_tab_bar());
-    if surface.tabs.height > 0 {
-        render_tab_bar(frame, surface.tabs, ws, chrome);
-    }
+    let hits = if surface.tabs.height > 0 {
+        render_tab_bar(frame, surface.tabs, ws, chrome)
+    } else {
+        TabBarHits::default()
+    };
     if chrome.view.pane_infos.is_empty() {
         render_empty(frame, surface.body, chrome);
     } else {
         render_panes(frame, ws, chrome, content);
     }
+    hits
 }
 
 #[cfg(test)]

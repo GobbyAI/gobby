@@ -144,7 +144,9 @@ async fn respond_reaches_daemon() {
     );
 
     terminal
-        .draw(|frame| render_workspace(frame, &workspace, &chrome))
+        .draw(|frame| {
+            render_workspace(frame, &workspace, &chrome);
+        })
         .expect("render attention dialog");
     let screen: String = terminal
         .backend()

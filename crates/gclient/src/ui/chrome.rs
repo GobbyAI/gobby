@@ -4,12 +4,14 @@
 
 use crate::app::{short_terminal_id, Pane, PaneId, Workspace};
 use crate::theme::{Palette, Theme, ThemeKind};
+use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
 use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::keymap::Keymap;
 use crate::ui::navigator::NavigatorState;
 use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
+use crate::ui::sidebar;
 use crate::ui::status::Toast;
 use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
@@ -249,6 +251,47 @@ pub struct ViewState {
     pub roster_hit_areas: Vec<(String, Rect)>,
     /// Attention rows drawn in the sidebar, by entry id.
     pub attention_hit_areas: Vec<(String, Rect)>,
+    /// The `│` column between the sidebar and the content column.
+    pub sidebar_divider_x: Option<u16>,
+    /// The `─` row between the roster and attention sections.
+    pub sidebar_section_divider_y: Option<u16>,
+    pub sidebar_toggle_hit_area: Option<Rect>,
+    pub roster_scrollbar_hit_area: Option<Rect>,
+    pub attention_scrollbar_hit_area: Option<Rect>,
+    /// Leading control-state span of the status line.
+    pub control_indicator_hit_area: Option<Rect>,
+    /// Settings popup including its border, while the overlay is drawn.
+    pub settings_dialog_area: Option<Rect>,
+    /// Settings rows drawn, as indexes into `SettingsRow::ALL`.
+    pub settings_row_hit_areas: Vec<(usize, Rect)>,
+}
+
+impl ViewState {
+    /// Record the rects the renderers drew this frame so `hit_test` sees the
+    /// frame the user saw (herdr wrote them back from `render`).
+    pub fn apply_hits(&mut self, hits: ChromeHits) {
+        let ChromeHits {
+            tab_bar,
+            sidebar,
+            control_indicator,
+            toast,
+            settings,
+        } = hits;
+        self.tab_hit_areas = tab_bar.tabs;
+        self.tab_scroll_left_hit_area = tab_bar.scroll_left;
+        self.tab_scroll_right_hit_area = tab_bar.scroll_right;
+        self.new_tab_hit_area = tab_bar.new_tab;
+        self.roster_hit_areas = sidebar.roster;
+        self.attention_hit_areas = sidebar.attention;
+        self.roster_scrollbar_hit_area = sidebar.roster_scrollbar;
+        self.attention_scrollbar_hit_area = sidebar.attention_scrollbar;
+        self.sidebar_toggle_hit_area = sidebar.toggle;
+        self.control_indicator_hit_area = control_indicator;
+        self.toast_hit_area = toast;
+        let (dialog, rows) = settings.map_or((None, Vec::new()), |s| (Some(s.dialog), s.rows));
+        self.settings_dialog_area = dialog;
+        self.settings_row_hit_areas = rows;
+    }
 }
 
 /// UI view-state the run loop owns and every render module reads.
@@ -449,6 +492,9 @@ impl Chrome {
         if roster_len > 0 && self.sidebar.selected >= roster_len {
             self.sidebar.selected = roster_len - 1;
         }
+        let sidebar_divider_x =
+            (sidebar_rect.width > 0).then(|| sidebar_rect.x + sidebar_rect.width - 1);
+        let sidebar_section_divider_y = sidebar::section_divider_y(sidebar_rect, &self.sidebar);
         self.view = ViewState {
             sidebar_rect,
             tab_bar_rect,
@@ -456,6 +502,8 @@ impl Chrome {
             status_rect,
             pane_infos,
             split_borders,
+            sidebar_divider_x,
+            sidebar_section_divider_y,
             ..ViewState::default()
         };
     }

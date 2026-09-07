@@ -243,7 +243,9 @@ fn render_workspace_composes_imported_chrome() {
 
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal
-            .draw(|frame| render_workspace(frame, &ws, &chrome))
+            .draw(|frame| {
+                render_workspace(frame, &ws, &chrome);
+            })
             .unwrap();
         let text = screen(&terminal);
         for needle in [
@@ -276,7 +278,9 @@ fn render_workspace_composes_imported_chrome() {
         chrome.mode = Mode::KeybindHelp;
         chrome.dialog = None;
         terminal
-            .draw(|frame| render_workspace(frame, &ws, &chrome))
+            .draw(|frame| {
+                render_workspace(frame, &ws, &chrome);
+            })
             .unwrap();
         let help = screen(&terminal);
         assert!(
