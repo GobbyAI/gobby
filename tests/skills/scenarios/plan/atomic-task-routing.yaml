@@ -1,0 +1,39 @@
+skill: plan
+agent: default
+description: Investigation routes one independently closeable refactor to the existing task workflow.
+prompt: |
+  Plan a risky-sounding cache refactor. Repository inspection shows one bounded
+  symbol and its focused tests form a single independently closeable deliverable
+  that one agent can complete in a focused session.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: draft_plan
+      - action: respond
+        text: A refactor needs a plan because its risk sounds high.
+  loaded:
+    loaded_skills: [plan]
+    actions:
+      - action: investigate_repository
+      - action: map_deliverables
+        deliverables: [refactor cache key normalization]
+        dependencies: []
+      - action: route_work
+        route: task
+      - action: load_reference
+        path: references/work-routing.md
+      - action: define_task_scope
+        scope: Refactor cache key normalization and its focused tests as one deliverable.
+      - action: define_validation_criteria
+        criteria: Focused cache tests pass and prove normalized keys remain behaviorally equivalent.
+      - action: hand_to_task_workflow
+      - action: respond
+        text: One independently closeable, expected-one-session deliverable uses the existing task workflow.
+assertions:
+  baseline_action_order: [draft_plan, respond]
+  loaded_action_order:
+    [investigate_repository, map_deliverables, route_work, load_reference, define_task_scope, define_validation_criteria, hand_to_task_workflow, respond]
+  baseline_text_contains: [risk sounds high]
+  loaded_text_contains: [independently closeable, expected-one-session, existing task workflow]
+  loaded_text_forbids: [select_depth]

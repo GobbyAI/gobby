@@ -1,7 +1,7 @@
 ---
 name: plan
-description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "4.2.0"
+description: Use when turning a request into an implementation task or a decision-complete plan.
+version: "5.0.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -13,77 +13,79 @@ metadata:
 # /gobby plan
 
 Both `$gobby plan` and `/gobby plan` invoke this workflow. Interactive Plan Mode
-also loads this skill on its first submitted prompt; select depth here after
+also loads this skill on its first submitted prompt; route the work here after
 investigating the request.
 
-## Depth Selection and Required Elicitation
+## Investigation, Routing, and Required Elicitation
 
-1. Investigate the request and repository before recommending a planning depth.
-   Resolve discoverable facts with repository inspection, using `gcode` for code
+1. Investigate the request and repository before choosing a route. Resolve
+   discoverable facts through repository inspection, using `gcode` for code
    navigation. Do not ask the user for facts the repository can answer.
-2. Classify the work kind before considering breadth or risk. Bug fixes and
-   maintenance always recommend **Lightweight**, regardless of breadth, risk,
-   affected subsystems, public API or schema involvement, or coordination needs.
-   Full-depth candidates are limited to:
-   - a complex new feature with multiple dependent deliverables across
-     subsystems;
-   - a complex refactor or subsystem rework that changes multiple components and
-     their consumers; or
-   - a broad migration or architecture/security-model rework with many consumers
-     and a coordinated rollout.
-3. Recommend **Full** only for those complex feature, refactor, rework, and
-   migration candidates. Recommend **Lightweight** for every bug fix, maintenance
-   change, localized feature or refactor, configuration change, and documentation
-   change. Breadth and risk do not promote bug fixes or maintenance to Full. Security or destructive risk,
-   unresolved product decisions, multi-agent coordination, durable handoff, and a
-   desire for lifecycle automation or adversarial review increase rigor within
-   the chosen depth.
-   Ask the user to choose between the two depths. If the user already selected a
-   depth, honor that choice without asking again.
-4. Load `restraint` and `elicit` for every Gobby plan:
+2. Inventory independently closeable deliverables and their real dependency
+   edges. A deliverable has one outcome, one bounded scope, and criteria that let
+   it close without waiting for another deliverable.
+3. Route one atomic, independently closeable deliverable expected to fit one
+   focused agent session to the existing task workflow. Route multiple dependent
+   deliverables to a plan. Apply the same boundary to bugs, maintenance, features,
+   and refactors. Duration is an estimate, never the routing rule: a short change
+   with dependent deliverables still needs a plan, while a high-risk atomic change
+   may remain one task.
+4. Load `restraint` and `elicit` for every Gobby planning request:
 
-```text
-get_skill(name="restraint") on gobby-skills
-get_skill(name="elicit") on gobby-skills
-```
+   ```text
+   get_skill(name="restraint") on gobby-skills
+   get_skill(name="elicit") on gobby-skills
+   ```
 
-Run its grill-me protocol in both depths. Resolve discoverable facts through
-repository inspection, ask one material decision at a time with a recommendation,
-and finish with a confirmed Decision Record before drafting either plan. Every
-recommendation you put to the user, and every choice you make unattended, walks
-`restraint`'s decision ladder and names the rung it stopped at; the ladder
-chooses among complete solutions only.
+5. Resolve every material decision before finalizing either route. Run its
+   grill-me protocol before finalizing either route: ask one material decision at
+   a time with a recommendation, apply `restraint`'s decision ladder, and present
+   a confirmed Decision Record in plain conversation text.
 
 ## Common Path
 
-Select depth and elicit every decision that changes scope or architecture.
-Lightweight plans stay in the conversation, remain artifact-free, and stop after
-their compact checkpoint. Full plans preserve one canonical plan artifact and
-pass through draft, checkpoint, enhancement, and adversarial review before
-approval.
+Investigate first, map the deliverable graph, elicit material decisions, then use
+exactly one route:
+
+- An atomic deliverable becomes one concrete implementation task through the
+  existing `tasks` workflow.
+- Dependent deliverables become one plan whose authority is either the canonical
+  project file or, while that write is unavailable, the complete latest draft in
+  the existing structured session handoff.
 
 ## Topic Index
 
-- **Lightweight request:** call `get_skill_file(name="plan", path="references/lightweight.md")`. Do not load adversarial material.
-- **Full draft or enhancement:** call `get_skill_file(name="plan", path="references/full-drafting.md")`.
-- **Adversarial review after a Full draft checkpoint:** call `get_skill_file(name="plan", path="references/adversarial-review.md")`.
-- **Review evidence, continuation, manifest, or recovery:** call `get_skill_file(name="plan", path="references/evidence-and-recovery.md")`.
-- **Approved plan entering implementation:** call `get_skill_file(name="plan", path="references/build-handoff.md")`.
+- **Atomic task or delivery-graph routing:** call
+  `get_skill_file(name="plan", path="references/work-routing.md")`.
+- **Plan drafting, provider write restrictions, materialization, or enhancement:**
+  call `get_skill_file(name="plan", path="references/drafting-and-staging.md")`.
+- **Optional adversarial review:** call
+  `get_skill_file(name="plan", path="references/adversarial-review.md")`.
+- **Review evidence, checkpoints, continuation, manifest, or recovery:** call
+  `get_skill_file(name="plan", path="references/evidence-and-recovery.md")`.
+- **Approved plan entering expansion or build:** call
+  `get_skill_file(name="plan", path="references/build-handoff.md")`.
 
-Load at most three references for one planning phase. Finish or discard the current phase before loading handoff guidance.
+Load at most three references for one planning phase. Finish or discard the
+current phase before loading handoff guidance.
 
 ## Boundaries
 
-- Do not create or claim tasks during plan drafting or plan review.
-- Lightweight plans never create, update, validate, or hand off files under
-  `.gobby/plans/`; those artifact operations belong exclusively to Full planning.
-- Any `.md` under `.gobby/`, `.claude/`, or `.codex/` (CLI-owned artifact
-  trees) is exempt from `require-task-before-edit` when Full planning creates an
-  artifact.
-- Enhancement (step 4.5) is advisory: apply only user-accepted suggestions, and
-  never let it gate, approve, reject, or block the adversary review. The human
-  is the scope gate.
-- Do not emit `[TDD]`, `[IMPL]`, or `[REF]` tasks in the plan.
-- Do not leave unanswered questions in the final plan. Resolve them before
-  approval or record them as explicit out-of-scope deferrals.
-- Do not bypass expansion-mode validation before build handoff.
+- The plan route creates no planning or per-round review tasks. Draft and review
+  without creating task records for planning or per-round reviews. The atomic
+  route may create the one real implementation task it is handing off. Do not
+  create planning or per-round review tasks.
+- Keep one authority. Use `.gobby/plans/<slug>.md` when the provider permits the
+  project write; otherwise use only the existing structured handoff staging path.
+- Never bypass provider write restrictions with shell redirection, an MCP write,
+  a subagent, or another provider. Any `.md` under `.gobby/`, `.claude/`, or
+  `.codex/` (CLI-owned artifact trees) is exempt from `require-task-before-edit`
+  when the provider allows the write; that exemption grants no new provider
+  capability.
+- Enhancement and adversarial review are recommended and optional. File-based
+  base validation is mandatory before review or approval, and explicit user
+  approval remains mandatory before expansion.
+- Do not emit `[TDD]`, `[IMPL]`, or `[REF]` tasks in a plan.
+- Do not leave unanswered material questions in a finalized plan. Resolve them
+  before approval or record them as explicit out-of-scope deferrals.
+- Do not bypass expansion-mode validation before implementation handoff.

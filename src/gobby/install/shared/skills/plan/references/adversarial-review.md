@@ -2,25 +2,28 @@
 
 ### Adversarial review phase
 
-Start only after explicit adversarial-review approval.
+Adversarial review is recommended and optional. Start only after explicit
+adversarial-review approval and only against a materialized canonical plan file.
 
 0. Immediately before every adversary round, and after any plan-byte change since
-   the previous clean gate, run the deterministic sweep from the project root:
+   the previous clean gate, run the file-based deterministic sweep from the
+   project root:
 
    ```bash
    uv run gobby plans validate <plan-file> -p <project-root>
-   uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
    ```
 
-   When either mode reports residue, use a mid-tier internal subagent with this
-   prompt: "Load `restraint`, `plan-draft`, and `plan-mechanic`; apply only bounded
-   validator-driven repairs to the canonical artifact; rerun both project-aware
-   modes; return the `plan-mechanic` report." This is the validator
-   rerun-until-clean loop. A `needs-planner` result returns to the planner role;
-   repeat the deterministic gate after its semantic repair. Prepare no evidence
-   and launch no adversary until both modes are clean. Preserve the final clean
-   `plan-mechanic` result, or a zero-residue direct-run result with the same fields,
-   as the deterministic sweep report.
+   The first-draft narrative has no manifest yet, so expansion-mode validation
+   cannot run at this boundary. When base validation reports residue, use a
+   mid-tier internal subagent with this prompt: "Load `restraint`, `plan-draft`,
+   and `plan-mechanic`; apply only bounded validator-driven repairs to the
+   canonical artifact; rerun project-aware base validation; return the
+   `plan-mechanic` report." This is the validator rerun-until-clean loop. A
+   `needs-planner` result returns to the planner role; repeat the deterministic
+   gate after its semantic repair. Prepare no evidence and launch no adversary
+   until base validation is clean. Preserve the final clean `plan-mechanic`
+   result, or a zero-residue direct-run result with the same fields, as the
+   deterministic sweep report.
 1. Call `prepare_plan_review_round` immediately before spawning
    `plan-adversary-taskless` without `task_id`, using `isolation="none"`. Pass
    only `plan_path`, `round_number`, and optional `project`, `session_id`,

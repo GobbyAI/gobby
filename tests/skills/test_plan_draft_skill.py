@@ -148,3 +148,12 @@ class TestPlanDraftContent:
         not resurrect `requirement-source:` markers."""
         assert "requirement-source" not in body
         assert "needs_requirements" not in body
+
+    def test_drafting_respects_staging_and_canonical_authority(self, body: str) -> None:
+        """Narrative drafting must not make a restricted draft look validated."""
+        assert "complete latest draft" in body
+        assert "existing structured handoff" in body
+        assert "has not passed deterministic validation" in body
+        assert "Materialize" in body
+        assert "sole authority" in body
+        assert "scratch store" in body

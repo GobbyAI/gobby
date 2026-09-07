@@ -1,0 +1,142 @@
+skill: plan
+agent: default
+description: A write-restricted provider preserves a complete conversational plan draft through compaction and retrieval.
+prompt: |
+  The provider currently forbids project-file writes. Preserve this substantial
+  plan draft through the imminent compaction, including its code fences,
+  decisions, unresolved questions, and review-stage approvals. Resume it after
+  compaction without inventing a scratch store or claiming file validation.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: draft_plan
+        text: Drafted the session recovery plan with implementation details.
+      - action: write_scratch_file
+        path: /tmp/session-recovery-plan.md
+      - action: summarize_handoff
+        current_state: Draft exists; continue later.
+      - action: compact
+      - action: get_handoff
+      - action: fail_to_restore_exact_draft
+      - action: respond
+        text: The detailed Markdown and code examples were lost during compaction.
+  loaded:
+    loaded_skills: [plan]
+    actions:
+      - action: draft_plan
+        text: &draft |
+          Plan target: `.gobby/plans/session-recovery.md` (staged until project writes are allowed)
+
+          # Session Recovery Boundaries
+
+          ## Overview
+          `kind: framing`
+
+          Preserve exact planning state across compaction, then materialize one
+          canonical plan file before deterministic validation or review.
+
+          ## Constraints
+          `kind: framing`
+
+          - Do not create a draft-storage service, scratch file, or autosave loop.
+          - Provider write permissions remain authoritative.
+          - User approval remains mandatory before expansion.
+
+          ## P1: Persist the staged draft
+          `kind: framing`
+
+          ### 1.1 Carry complete Markdown in the handoff [category: code]
+          `kind: deliverable`
+
+          Targets:
+          - `src/gobby/sessions/handoff_records.py::HandoffRecord`
+          - `tests/sessions/test_handoff.py::test_plan_draft_round_trip`
+
+          Preserve the complete latest draft in `current_state`, including fenced
+          examples such as:
+
+          ```python
+          def restore_plan(handoff: HandoffRecord) -> str:
+              return handoff.current_state
+          ```
+
+          The decision record and stage approvals travel in `key_decisions`;
+          unresolved material questions travel in `notes`; concrete continuation
+          work travels in `next_steps`.
+
+          **Acceptance:**
+
+          - 1.1.1 - Full Markdown survives compaction byte-for-byte. test: `tests/sessions/test_handoff.py::test_plan_draft_round_trip`.
+          - 1.1.2 - Code fences remain intact. behavior: "fenced draft recovery" in `tests/sessions/test_handoff.py`.
+
+          ## P2: Materialize and validate
+          `kind: framing`
+
+          ### 2.1 Establish the canonical plan authority [category: docs] (depends: P1)
+          `kind: deliverable`
+
+          Target: `.gobby/plans/session-recovery.md`
+
+          Once project writes are allowed, write this exact staged draft to the
+          target path, treat that file as the sole authority, and run base
+          validation before any optional review.
+
+          ```yaml
+          approvals:
+            enhancement: declined
+            adversarial_review: pending
+            expansion: not-approved
+          ```
+
+          **Acceptance:**
+
+          - 2.1.1 - The canonical file is materialized before validation. file: `.gobby/plans/session-recovery.md`.
+          - 2.1.2 - Expansion cannot begin without explicit user approval. behavior: "approval gate" in `.gobby/plans/session-recovery.md`.
+
+          ## Open Questions
+          `kind: framing`
+
+          - Must resumed drafts retain the original slug when the provider changes?
+      - action: stage_handoff
+        current_state: *draft
+        key_decisions: &decisions |
+          Decision Record:
+          - Authority: existing structured handoff until materialization; canonical file afterward.
+          - Persistence: exact latest draft, never a summary or scratch copy.
+          Stage approvals:
+          - enhancement: declined (optional)
+          - adversarial review: pending (optional)
+          - expansion: not approved (mandatory user gate)
+        notes: &notes |
+          Unresolved material questions:
+          - Confirm whether a provider change must retain the original slug.
+        next_steps: &next_steps |
+          1. Call get_handoff with no arguments after compaction.
+          2. Resolve the slug question with the user.
+          3. Materialize the exact draft once project writes are permitted.
+          4. Validate the materialized file before review or approval.
+      - action: set_handoff
+        clear_session: false
+        current_state: *draft
+        key_decisions: *decisions
+        notes: *notes
+        next_steps: *next_steps
+      - action: deliver_compaction
+      - action: get_handoff
+        arguments: {}
+      - action: restore_staged_draft
+        current_state: *draft
+        key_decisions: *decisions
+        notes: *notes
+        next_steps: *next_steps
+      - action: respond
+        text: Exact staged draft recovered; it remains unvalidated until canonical materialization.
+assertions:
+  baseline_action_order:
+    [draft_plan, write_scratch_file, summarize_handoff, compact, get_handoff, fail_to_restore_exact_draft, respond]
+  loaded_action_order:
+    [draft_plan, stage_handoff, set_handoff, deliver_compaction, get_handoff, restore_staged_draft, respond]
+  baseline_text_contains: [lost during compaction]
+  loaded_text_contains: [Session Recovery Boundaries, remains unvalidated]
+  loaded_text_forbids: [/tmp/session-recovery-plan.md, passed deterministic validation]

@@ -1,7 +1,7 @@
 ---
 name: plan-draft
 description: Methodology for drafting a gobby plan document — phases, task format, TDD compatibility, categories, hierarchy, and dependency notation. Use when drafting or revising a plan artifact.
-version: "1.2.1"
+version: "1.3.0"
 category: methodology
 internal: true
 triggers: plan drafting, plan format, plan specification
@@ -13,7 +13,24 @@ metadata:
 
 # plan-draft — Gobby Plan Drafting Methodology
 
-Author the canonical plan narrative after depth and design decisions are settled. Every task must be implementation-ready, self-contained, dependency-ordered, and verifiable. The expansion compiler owns manifests; this skill owns narrative quality.
+Author the plan narrative after scope and design decisions are settled. Every
+task must be implementation-ready, self-contained, dependency-ordered, and
+verifiable. The expansion compiler owns manifests; this skill owns narrative
+quality.
+
+## Draft Authority Boundary
+
+When the provider can write project files, author the canonical plan at
+`.gobby/plans/<slug>.md`. When writes are unavailable, the `plan` coordinator
+may supply the complete latest draft from the existing structured handoff for
+narrative work. That staged conversation has not passed deterministic validation.
+Do not create a scratch store, draft-storage tool, autosave path,
+planning task, or indirect write to evade provider permissions.
+
+Materialize the complete staged draft when writes become available. From that
+point the canonical file is the sole authority: read and revise it rather than
+maintaining parallel conversational content. File-based validators, review,
+registration, and expansion begin only after materialization.
 
 ## Common Drafting Flow
 

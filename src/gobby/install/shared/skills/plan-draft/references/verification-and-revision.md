@@ -4,6 +4,12 @@
 
 Before handing the plan off for review or expansion, confirm ALL of the following:
 
+This checklist may improve a conversational draft, but it is not deterministic
+validation. If the complete latest draft is still staged in the existing
+structured handoff, preserve it there until provider writes are available.
+Materialize it at `.gobby/plans/<slug>.md` before running any file validator or
+review. The materialized file then becomes the sole authority.
+
 After this narrative checklist passes, the orchestrating `plan` workflow MUST
 run `uv run gobby plans validate <plan-file>` before adversary review or
 expansion. Use `gobby tasks expand validate-plan` only from task-expansion

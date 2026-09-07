@@ -25,38 +25,50 @@ After drafting, enhancement, every finalized adversary round, and final
 approval, present exactly these choices:
 
 1. `continue interactively`
-2. `hand off to build`
-3. `stop`
+2. `run enhancement` (when that optional stage is still available)
+3. `run adversarial review` (when that optional stage is still available)
+4. `approve for implementation`
+5. `stop`
 
-`stop` leaves the latest base-validated canonical artifact in place and starts
-no build.
+Enhancement and adversarial review are recommended and optional. Base
+validation is mandatory before review or approval, and explicit user approval
+is mandatory before expansion. A choice to continue drafting does not imply
+approval. `stop` preserves the complete latest draft in its current authority
+and starts no review, expansion, or build.
 
-`hand off to build` is explicit human approval to skip all remaining
-enhancement and adversarial rounds. Handoff always:
+`approve for implementation` is the human gate and skips any optional review
+stages the user declined. Approval always:
 
-1. Materializes a complete canonical artifact. During elicitation or drafting,
-   use recorded decisions and explicit named defaults for unresolved
-   non-material details; include those defaults in `## Constraints`. Resolve
-   every material gap before handoff.
-2. Runs base validation.
-3. Derives explicit routing decisions for every deliverable, calls
-   `derive_plan_handoff_manifest(plan_path, routing_decisions)`, and passes its
+1. Materialize the complete latest draft as the canonical artifact if it is
+   still staged in the structured handoff. If provider writes remain
+   unavailable, preserve the staged draft and do not claim approval completed.
+2. Resolve every material question. Explicit named defaults are allowed only
+   for non-material details and belong in `## Constraints`.
+3. Run base validation against the canonical file.
+4. Produce a complete M1 manifest through one of the established paths. An
+   accepted adversary result uses the review-evidence protocol below. Skipping
+   adversarial review uses the explicit human-handoff route: derive routing
+   decisions for every deliverable, call
+   `derive_plan_handoff_manifest(plan_path, routing_decisions)`, then pass its
    exact `source_plan_hash`, `rendered_plan_hash`, and `manifest_digest` to
    `apply_plan_handoff_manifest`. These coordinator-only tools perform the only
-   handoff manifest write.
-4. Runs `uv run gobby plans validate <plan-file> --mode expansion`.
-5. Invokes build with `planning_seed_state=approved` and the count of finalized
-   adversary rounds:
+   evidence-independent manifest write.
+5. Run `uv run gobby plans validate <plan-file> --mode expansion`.
 
-   ```bash
-   uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
-   ```
+After approval, offer both manual expansion and `gobby build`. Build uses
+`planning_seed_state=approved` and reports `completed_plan_review_rounds` only
+when finalization succeeds:
+
+```bash
+uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
+```
 
 If handoff is requested while an enhancer or adversary is active, mark it
 pending and wait for that run to finish. Present every returned suggestion or
 finding for individual voting, apply accepted edits, complete the normal
 changelog/checkpoint/finalization work for that phase, and base-validate. Then
-perform handoff without launching another enhancement or adversary round.
+perform the approved handoff without launching another enhancement or
+adversary round.
 
 Human handoff never manufactures an adversary verdict, findings,
 `coverage_attestation`, or review evidence. Never invoke `emit_stub_manifest`;

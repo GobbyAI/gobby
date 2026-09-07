@@ -27,8 +27,8 @@ def _normalize_prose(value: str) -> str:
 @pytest.fixture(scope="module")
 def body() -> str:
     reference_order = (
-        "lightweight.md",
-        "full-drafting.md",
+        "work-routing.md",
+        "drafting-and-staging.md",
         "adversarial-review.md",
         "evidence-and-recovery.md",
         "build-handoff.md",
@@ -47,7 +47,7 @@ def body() -> str:
     [
         ("build-coordinator", 1),
         ("bridge", 1),
-        ("plan", 2),
+        ("plan", 3),
     ],
 )
 def test_set_handoff_interrupt_warning_is_shared_by_skills(
@@ -67,63 +67,61 @@ def test_set_handoff_interrupt_warning_is_shared_by_skills(
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "4.2.0"' in body
+    assert 'version: "5.0.0"' in body
 
 
-def test_plan_investigates_before_recommending_depth(body: str) -> None:
+def test_plan_investigates_before_routing_by_deliverable_graph(body: str) -> None:
     section = _normalize_prose(
         body[
-            body.index("## Depth Selection and Required Elicitation") : body.index(
-                "## Lightweight Workflow"
+            body.index("## Investigation, Routing, and Required Elicitation") : body.index(
+                "## Work Routing"
             )
         ]
     )
     investigate = section.index("Investigate the request and repository")
-    classify = section.index("Classify the work kind before considering breadth or risk")
-    recommend = section.index("Recommend **Full** only for those complex feature")
-    ask = section.index("Ask the user to choose")
+    inventory = section.index("Inventory independently closeable deliverables")
+    route = section.index("Route one atomic")
+    elicit = section.index("Resolve every material decision")
 
-    assert investigate < classify < recommend < ask
+    assert investigate < inventory < route < elicit
     for signal in (
-        "complex new feature with multiple dependent deliverables",
-        "complex refactor or subsystem rework",
-        "broad migration or architecture/security-model rework",
-        "Bug fixes and maintenance always recommend **Lightweight**",
-        "regardless of breadth, risk, affected subsystems",
-        "Breadth and risk do not promote bug fixes or maintenance to Full",
+        "independently closeable deliverable",
+        "expected to fit one focused agent session",
+        "multiple dependent deliverables",
+        "bugs, maintenance, features, and refactors",
+        "Duration is an estimate",
     ):
         assert signal in section
-    assert "honor that choice without asking again" in section
+    assert "Do not ask the user for facts the repository can answer" in section
 
 
-def test_elicit_is_mandatory_for_both_depths(body: str) -> None:
+def test_elicit_is_mandatory_before_either_route_is_finalized(body: str) -> None:
     section = body[
-        body.index("## Depth Selection and Required Elicitation") : body.index(
-            "## Lightweight Workflow"
+        body.index("## Investigation, Routing, and Required Elicitation") : body.index(
+            "## Work Routing"
         )
     ]
     normalized = " ".join(section.split())
 
     assert 'get_skill(name="elicit")' in section
-    assert "Run its grill-me protocol in both depths" in normalized
+    assert "Run its grill-me protocol before finalizing either route" in normalized
     assert "ask one material decision at a time with a recommendation" in normalized
-    assert "confirmed Decision Record before drafting either plan" in normalized
+    assert "confirmed Decision Record" in normalized
     assert "Do not ask the user for facts the repository can answer" in normalized
 
 
-def test_lightweight_is_conversational_and_skips_artifact_workflow(body: str) -> None:
-    section = body[body.index("## Lightweight Workflow") : body.index("## Full Workflow")]
+def test_atomic_route_uses_existing_task_workflow_and_skips_plan_lifecycle(body: str) -> None:
+    section = body[body.index("## Work Routing") : body.index("## Plan Drafting and Staging")]
     normalized = " ".join(section.split())
 
-    assert "conversational, decision-complete plan" in normalized
-    assert "Lightweight depth is artifact-free" in normalized
+    assert "one independently closeable deliverable" in normalized
+    assert "concrete scope" in normalized
+    assert "validation criteria" in normalized
+    assert "existing `tasks` workflow" in normalized
+    assert "real implementation task" in normalized
+    assert "no plan file, plan registry row, manifest, or planning task" in normalized
     assert "Do not load `plan-draft`" in normalized
-    assert "Present the plan directly in the conversation" in normalized
-    assert "switch to Full" in normalized
-    assert "Write the decision-complete plan to" not in normalized
-    assert "uv run gobby plans validate" not in section
-    assert "build handoff" in normalized
-    assert "Before presenting, run a mechanism audit" in normalized
+    assert "Before handoff, run a mechanism audit" in normalized
     for mechanism in (
         "new subsystem",
         "dependency",
@@ -139,47 +137,71 @@ def test_explicit_commands_are_both_documented(body: str) -> None:
     assert "Both `$gobby plan` and `/gobby plan` invoke this workflow." in body
     assert (
         "Interactive Plan Mode also loads this skill on its first submitted prompt; "
-        "select depth here after investigating the request."
+        "route the work here after investigating the request."
     ) in _normalize_prose(body)
     assert "Plan Mode Consider prompt" not in body
 
 
-def test_plan_is_artifact_first_and_taskless(body: str) -> None:
+def test_plan_drafting_has_one_authority_and_no_planning_tasks(body: str) -> None:
     lowered = body.lower()
     normalized = " ".join(lowered.split())
 
-    assert "artifact-first" in lowered
+    assert "one authority" in lowered
     assert "creating task records for planning or per-round reviews" in lowered
-    assert "do not create or claim tasks" in lowered
+    assert "do not create planning or per-round review tasks" in normalized
     assert (
         "any `.md` under `.gobby/`, `.claude/`, or `.codex/` (cli-owned artifact "
-        "trees) is exempt from `require-task-before-edit`" in normalized
+        "trees) is exempt from `require-task-before-edit` when the provider allows the write"
+        in normalized
     )
+    assert "never bypass provider write restrictions" in lowered
     assert "review-anchor" not in lowered
     assert "review anchor" not in lowered
 
 
-def test_full_plan_body_starts_with_authoritative_artifact_path(body: str) -> None:
-    full_workflow = (SKILL_DIR / "references" / "full-drafting.md").read_text()
-    normalized = " ".join(full_workflow.split())
+def test_canonical_plan_body_starts_with_authoritative_artifact_path(body: str) -> None:
+    drafting = (SKILL_DIR / "references" / "drafting-and-staging.md").read_text()
+    normalized = " ".join(drafting.split())
 
-    assert "every user-facing Full plan body" in normalized
+    assert "every user-facing canonical plan body" in normalized
     assert "first line" in normalized
-    assert "Plan artifact: `.gobby/plans/<slug>.md`" in full_workflow
+    assert "Plan artifact: `.gobby/plans/<slug>.md`" in drafting
     assert "A link outside the plan body does not satisfy this requirement" in normalized
 
     parsed = SkillLoader().load_skill(SKILL_DIR, validate=True)
     assert parsed.name == "plan"
 
 
-def test_full_plan_loads_draft_methodology_and_validates_before_review(body: str) -> None:
+def test_plan_loads_draft_methodology_and_validates_only_after_materialization(
+    body: str,
+) -> None:
     normalized = _normalize_prose(body)
 
     assert 'get_skill(name="plan-draft")' in body
     assert "uv run gobby plans validate <plan-file>" in body
-    assert "ask separately whether to run enhancement" in normalized
-    assert "Declining enhancement does not imply adversarial-review approval" in normalized
-    assert "ask separately whether to begin adversarial review" in normalized
+    assert "A conversational draft has not passed deterministic validation" in normalized
+    assert "Materialize the complete latest draft" in normalized
+    assert "before starting any review" in normalized
+
+
+def test_write_restricted_draft_uses_existing_structured_handoff(body: str) -> None:
+    section = _normalize_prose(
+        body[body.index("### Write-restricted staging") : body.index("### Draft checkpoint")]
+    )
+
+    assert "complete latest draft" in section
+    assert "`current_state`" in section
+    assert "Decision Record and review-stage approvals" in section
+    assert "`key_decisions`" in section
+    assert "unresolved material questions" in section
+    assert "`notes`" in section
+    assert "`next_steps`" in section
+    assert "`clear_session=false`" in section
+    assert "`gobby-sessions:get_handoff` with no arguments" in section
+    assert "no scratch file, draft-storage tool, or periodic autosave" in section
+    assert "not a validated artifact" in section
+    assert "Never ask another agent or MCP tool to write around the restriction" in section
+    assert HANDOFF_INTERRUPT_WARNING in section
 
 
 def test_review_runs_deterministic_gate_and_bounded_mechanic_before_adversary(
@@ -194,12 +216,10 @@ def test_review_runs_deterministic_gate_and_bounded_mechanic_before_adversary(
     )
 
     base_gate = section.index("uv run gobby plans validate <plan-file> -p <project-root>")
-    expansion_gate = section.index(
-        "uv run gobby plans validate <plan-file> -p <project-root> --mode expansion"
-    )
     prepare = section.index("prepare_plan_review_round")
 
-    assert base_gate < expansion_gate < prepare
+    assert base_gate < prepare
+    assert "--mode expansion" not in section[:prepare]
     assert "mid-tier internal subagent" in section
     assert "plan-mechanic" in section
     assert "validator rerun-until-clean" in section
@@ -220,22 +240,18 @@ def test_plan_review_orchestration_uses_roles_and_tiers(body: str) -> None:
         assert model_name not in body
 
 
-def test_selecting_full_does_not_launch_later_phases(body: str) -> None:
-    full_intro = body[body.index("## Full Workflow") : body.index("### Draft checkpoint")]
-    normalized = " ".join(full_intro.split())
+def test_selecting_plan_route_does_not_launch_optional_phases(body: str) -> None:
+    drafting_intro = body[
+        body.index("## Plan Drafting and Staging") : body.index("### Draft checkpoint")
+    ]
+    normalized = " ".join(drafting_intro.split())
 
-    assert "Choosing Full authorizes investigation, elicitation, and drafting only" in normalized
-    assert (
-        "explicit approvals described below before enhancement, adversarial review, "
-        "or build handoff" in normalized
+    assert "Choosing the plan route authorizes investigation, elicitation, and drafting only" in (
+        normalized
     )
-    assert "Selecting Full alone never launches any of those phases" in normalized
-    # Handoff stays an explicitly approved menu choice, never an automatic step.
-    assert "`hand off to build`" in body
-    assert (
-        "explicit human approval to skip all remaining enhancement and adversarial rounds"
-        in _normalize_prose(body)
-    )
+    assert "explicit approval before enhancement or adversarial review" in normalized
+    assert "The route alone never launches either optional phase or implementation" in normalized
+    assert "explicit user approval remains mandatory before expansion" in _normalize_prose(body)
 
 
 def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None:
@@ -336,6 +352,11 @@ def test_review_history_uses_v1_changelog_verification_entries(body: str) -> Non
 def test_build_handoff_uses_manifest_and_seed_flags(body: str) -> None:
     assert "## M1 Task Manifest" in body
     assert "uv run gobby plans validate <plan-file> --mode expansion" in body
+    assert "offer both manual expansion and `gobby build`" in _normalize_prose(body)
+    assert "gobby-plans:create_plan" in body
+    assert "requires a real `root_task_ref`" in _normalize_prose(body)
+    assert "generates the initial coverage manifest" in _normalize_prose(body)
+    assert "Never create a planning task merely to obtain a registry root" in body
     assert "uv run gobby build <plan-file>" in body
     assert "--planning-seed-state approved" in body
     assert "--completed-plan-review-rounds <N>" in body
@@ -345,15 +366,14 @@ def test_build_handoff_uses_manifest_and_seed_flags(body: str) -> None:
 
 
 def test_enhancement_phase_precedes_adversary_gate(body: str) -> None:
-    # Step 4.5: constructive enhancement runs after approval, before the adversary.
-    assert "step 4.5" in body
+    # Constructive enhancement remains an optional stage before the adversary.
     assert "plan-enhancer-taskless" in body
     assert body.index("### Enhancement phase") < body.index("### Adversarial review phase")
-    assert "after enhancement approval and before the adversary gate" in _normalize_prose(body)
+    assert "before an optional adversarial review" in _normalize_prose(body)
 
     normalized = _normalize_prose(body)
-    # Advisory and capped: accepted suggestions only, one round unless changed.
-    assert "Enhancement is advisory, default-on for Full, and capped at one round" in normalized
+    # Recommended, optional, and capped: accepted suggestions only, one round unless changed.
+    assert "Enhancement is recommended, optional, advisory, and capped at one round" in normalized
     assert "Apply only accepted suggestions" in normalized
     assert "converged: true | false" in normalized
     # Human is the scope gate; the enhancer never gates the adversary.
@@ -361,6 +381,25 @@ def test_enhancement_phase_precedes_adversary_gate(body: str) -> None:
         "never let it gate, approve, reject, or block the adversary review. The human is the "
         "scope gate" in normalized
     )
+
+
+def test_optional_reviews_do_not_weaken_validation_or_user_approval(body: str) -> None:
+    normalized = _normalize_prose(body)
+
+    assert "Enhancement and adversarial review are recommended and optional" in normalized
+    assert "base validation is mandatory before review or approval" in normalized
+    assert "explicit user approval is mandatory before expansion" in normalized
+    assert "Skipping adversarial review" in normalized
+    assert "derive_plan_handoff_manifest(plan_path, routing_decisions)" in normalized
+    assert "apply_plan_handoff_manifest" in normalized
+
+
+def test_unattended_build_keeps_stage_native_sequence(body: str) -> None:
+    normalized = _normalize_prose(body)
+
+    assert "Unattended `gobby build` keeps its existing stage-manifest sequence" in normalized
+    assert "review policy and configured round counts" in normalized
+    assert "Do not inject interactive menus" in normalized
 
 
 def test_enhancement_presentation_contract(body: str) -> None:
