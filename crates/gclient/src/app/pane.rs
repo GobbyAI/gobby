@@ -50,7 +50,7 @@ pub struct Pane {
     pub(super) status_message: Option<String>,
     pub(super) terminating: bool,
     pub(super) viewport: (u16, u16),
-    pub(super) latest_frame: Option<FrameData>,
+    pub(crate) latest_frame: Option<FrameData>,
 }
 
 impl Pane {
@@ -102,7 +102,7 @@ impl Pane {
         }
     }
 
-    pub(super) fn new_detached(
+    pub(crate) fn new_detached(
         id: PaneId,
         terminal_id: impl Into<String>,
         backend: impl Into<String>,
