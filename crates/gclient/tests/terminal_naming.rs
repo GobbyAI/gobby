@@ -178,7 +178,10 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
     )
     .await;
 
-    assert_eq!(attention[0].label, "gobby-codex-d0");
+    assert_eq!(
+        attention[0].label, "gobby-codex-d0 %533",
+        "the attention label carries the same address-qualified name as the roster row"
+    );
     assert_eq!(
         roster[0].state,
         RowState::Attention,
