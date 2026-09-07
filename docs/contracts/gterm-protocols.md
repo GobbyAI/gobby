@@ -58,6 +58,36 @@ After `hello { protocol_version, control_token }`, the daemon may call `ping`,
 reconnect the ledger is new: `spawn` reconciles, `kill`/`resize` may retry,
 `write` is indeterminate and must not be blind-retried.
 
+## Daemon WebSocket messages
+
+Clients authenticate to the daemon's public `/ws` endpoint with
+`Authorization: Bearer <local_cli_token>`. This JSON protocol coordinates
+attachments and writes; it also relays frames when direct host access is
+unavailable. Golden messages live in `tests/fixtures/terminal_ws_golden/`.
+
+| Message | Direction | Fields and behavior |
+| --- | --- | --- |
+| `terminal_attach` | Client → daemon | `request_id`, `terminal_id`, `frame_delivery` (`proxy` by default, or `direct`), and `encoding`. Encoding defaults to `terminal_ansi`; `semantic_frame` selects semantic frames for the proxy. Other encodings receive `terminal_error` with `code: "invalid_encoding"`. |
+| `terminal_attach_result` | Daemon → client | Correlates `request_id`; success carries `terminal_id`, `attachment_id`, `backend`, `rows`, `cols`, `frame_delivery`, `lease_generation`, and `direct`. Failure carries `success: false` and a typed `code`. |
+| `terminal_frame` | Daemon → client | Semantic proxy envelope: `terminal_id`, `attachment_id`, `encoding: "bincode-b64"`, and `payload` containing a base64-encoded bincode host message. Decode with the host wire codec; it is not ANSI text. |
+| `terminal_output` | Daemon → client | ANSI/text proxy envelope: `terminal_id`, `attachment_id`, and `data`. Browsers use the default `terminal_ansi` encoding. |
+| `terminal_list` | Client ↔ daemon | A request supplies `request_id` and optional filters/cursor. A response carries `items`, `next_cursor`, and `snapshot: {daemon_epoch, seq}` (nullable in the wire shape). The first page's snapshot pins the lifecycle watermark for roster reconciliation. |
+| `terminal_event`, `terminal_lease_lost`, `terminal_attachment_finalized` | Daemon → client | Lifecycle messages carry `daemon_epoch` and `seq`. Apply events newer than the pinned snapshot in the same epoch; reconcile on an epoch change. |
+
+For direct delivery, `terminal_attach_result.direct` contains
+`{host_epoch, frame_socket_path, host_terminal_id, pane}`. A native terminal has
+`pane: null`; a tmux terminal has
+`pane: {socket_path, pane_id, server_pid, server_start_time}`. The client connects
+to `frame_socket_path`, performs the read-only host handshake, and verifies the
+host epoch before attaching. Proxy delivery returns `direct: null`. Neither a
+direct locator nor a frame grants write authority: input and PTY resize still go
+through the daemon's lease checks.
+
+The `terminal_list.snapshot` watermark is the daemon's published lifecycle
+position, not a terminal screen capture. The client pins page one's watermark,
+collects all pages, and reconciles buffered lifecycle events against it.
+`seq` is a JSON-safe integer; epoch rotation prevents sequence overflow.
+
 ## Backpressure
 
 Each attachment has a droppable 64-entry / 2 MiB delta queue (overflow resyncs

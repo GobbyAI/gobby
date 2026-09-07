@@ -15,7 +15,7 @@ binary and its CI jobs). `gobby-client` never invokes Zig.
 
 ```bash
 # Host (requires zig 0.15 on PATH)
-cargo build --release -p gobby-terminal --features vt-engine
+cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 
 # Workspace client (Zig-free)
 cargo build --release -p gobby-client
@@ -32,7 +32,7 @@ A crate change is live only after rebuild **and** reinstall via a new inode.
 macOS kills processes that exec an in-place-overwritten signed binary:
 
 ```bash
-cargo build --release -p gobby-terminal --features vt-engine
+cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 cargo build --release -p gobby-client
 mkdir -p ~/.gobby/bin
 cp target/release/gterm ~/.gobby/bin/.gterm.new
@@ -78,9 +78,9 @@ version is unpublished or yanked. Do not invent a combined workflow.
 native` on the spawn request, or `terminals.default_backend: native` — and requires
 an installed `gterm`. When the host is unavailable a native spawn fails before fork
 with the typed refusal `host_unavailable` (`HostUnavailableError`, a
-`HostCommandError`); there is no silent tmux fallback. The native path is incomplete
-pending the follow-on epic (*herdr client completion*): pending-row lifecycle, host
-respawn, the `WriteCoordinator` composition graph, and `gclient`. The flip's
+`HostCommandError`); there is no silent tmux fallback. Native lifecycle, host
+recovery, coordinated writes, and the workspace client are implemented; native
+launches remain opt-in. The default flip's
 fabricated evidence artifact and its weekly parity producer were removed in
 `d091addeab`; leaf 1.3 of `.gobby/plans/herdr-foundation-landing.md` reverted the
 default it had justified.
@@ -106,7 +106,8 @@ default it had justified.
   bytes to the PTY; a `native` row goes through the gterm host proxy. The #20805
   no-op-resize guard lives in `TmuxPTYBridge.resize` for tmux rows and in
   `src/gobby/servers/websocket/terminal_ws.py::_handle_terminal_resize` for native
-  rows. Rendering tmux rows through gterm is the gclient epic's to solve.
+  rows. The current gclient renders tmux rows through a gterm host observer
+  (see *Client status*).
 
 ## Sandboxed validation by operating system
 
@@ -122,8 +123,8 @@ Linux and WSL2 receive no additional Unix-socket grant. Run-local directory
 creation and writes remain allowed on both platforms. This change applies to
 managed agents; web-chat socket permissions are separate.
 
-The current follow-on plan, `.gobby/plans/herdr-client-completion.md`, defines
-Guard H. Socket-dependent validation includes group 2 (Rust terminal tests),
+The *Guard set H* section below carries the client-completion gate.
+Socket-dependent validation includes group 2 (Rust terminal tests),
 group 3 (Python terminal/runtime and websocket contracts), and group 6 (terminal
 client stack e2e), plus `tests/e2e/test_external_terminal_attach.py`.
 `tests/terminals/test_runtime_contract.py` belongs to group 3. Group 7 compares
@@ -171,32 +172,130 @@ if the default revert in 1.3 turns it red). A carved-out test must fail for the
 behavioural reason recorded at `518cec5c41` (an assertion or mock-call failure),
 never at collection.
 
-## Landing status
+## Client status
 
-Landed on `0.5.0` through `0.5.0-test` (`.gobby/plans/herdr-foundation-landing.md`,
-epic #21120):
+`gclient` is the workspace TUI: it lists terminals by project, renders terminal
+panes, manages tabs and splits, persists layouts, shows attention, and takes or
+releases control for input and resize. Roster, lifecycle, attention, and writes
+use the daemon's public HTTP/WS API. Frame sockets remain read-only.
 
-- **P1** — vendored herdr sources and the `gobby-terminal` crate import.
-- **P2** — the `terminals` table, `agent_runs.terminal_id`, `TerminalRuntime`, and the
-  tmux runtime behind it. The DDL shipped as migration **411** (`411_terminals.sql`),
-  not 408: `0.5.0` landed 408–410 while the landing epic was in flight, so leaf 2.1's
-  merge of `0.5.0` renumbered it. The "pins stay at 407 until migration 408 lands"
-  wording under *Landing worktree* describes leaf 1.1 historically.
-- **§3.1/§3.2** — the `gterm` host and the control/frame protocols.
-- **P4, opt-in only** — `NativeTerminalRuntime`, the native web proxy, and the
-  `gobby-client` crate skeleton, behind `backend: native` with `tmux` as the shipped
-  default (see *Backend status*).
+Three terminal paths are available:
 
-Not landed, owned by the follow-on epic (working title *herdr client completion*,
-planned on the landed tree):
+| Terminal path | Frame delivery |
+| --- | --- |
+| Local native terminal | Direct semantic frames from `gterm-frames.sock`. |
+| Local tmux terminal | Direct semantic frames from the gterm host's tmux observer, identified by socket, server PID/start time, and pane ID. |
+| Remote terminal | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. |
 
-- the `gclient` workspace and herdr UI parity;
-- native launches as the default backend and the honest flip gate;
-- the parity suites and their weekly producer;
-- the E1 stack test's host-driven assertions (the tautological clauses were deleted
-  in leaf 1.3; the surviving clauses assert tmux rows, roster, attention, and
-  finalisation through the isolated daemon).
+The status bar reports `direct` or `proxy`. A failed direct connection falls back
+to the proxy for that pane. The browser uses the ANSI proxy path described in
+[the protocol contract](../contracts/gterm-protocols.md#daemon-websocket-messages).
 
-`.gobby/plans/herdr-terminal-client-qa-fixes.md` is superseded by the follow-on epic
-and is kept only as source material. The live-window evidence for the landing is
-`docs/evidence/herdr-foundation-landing.md`.
+### Remote use
+
+The operator supplies the remote daemon endpoint and its credential:
+
+1. On the daemon machine, set `bind_host` in `~/.gobby/bootstrap.yaml` to its
+   tailnet address. Apply the change with a coordinated daemon restart from the
+   main checkout. Ensure the daemon's HTTP port (default `60887`) is reachable
+   over the tailnet and its gterm host is healthy.
+2. Securely copy that machine's `~/.gobby/local_cli_token` to an owner-only file
+   on the client machine, for example `~/.gobby/remote_local_cli_token`, and run
+   `chmod 600 ~/.gobby/remote_local_cli_token`.
+3. Run the client against that endpoint:
+
+   ```bash
+   gclient --daemon-url http://100.101.102.103:60887 --token-file ~/.gobby/remote_local_cli_token
+   ```
+
+Replace the example address with the daemon's tailnet address. The client uses
+Bearer authentication for HTTP and `/ws` on that same endpoint.
+`--token-file` defaults to `~/.gobby/local_cli_token`; use the explicit file to
+keep the remote credential separate. Remote use needs no local gterm host, but
+startup refuses an unavailable remote host. Machine registration alone supplies
+neither the endpoint nor this credential.
+
+## Guard set H
+
+The authoritative seven checks follow unchanged. Apply the operational notes
+below when executing them.
+
+**Guard set H.** Every leaf's close gate runs from the `0.5.0` checkout with
+`DATABASE_URL` pointed at the isolated test hub
+(`postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`) and
+`GOBBY_TEST_PROTECT=1`:
+
+1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
+2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
+   assertion and the host contract stay green)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_tmux_mixin.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
+5. `cd web && npx vitest run src/hooks src/components/activity`
+6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`
+   against `gclient` and `gterm` rebuilt from the tree and installed via new inode
+   (`cp` to a dotfile, `mv -f` over the name, per this guide's § "Rebuild and
+   reinstall"). macOS kills processes that exec an in-place-overwritten signed binary,
+   so overwriting the installed path directly is not an option.
+7. Host leak check: the set of `gterm host` PIDs after groups 2, 3, and 6 equals the
+   set before.
+
+### Operational notes
+
+Export the test environment before running any group from the `0.5.0` checkout:
+
+```bash
+cd /Users/josh/Projects/gobby
+export DATABASE_URL="postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+export GOBBY_TEST_PROTECT=1
+export GOBBY_POSTGRES_TEST_DSN="$DATABASE_URL"
+```
+
+**Groups 1 and 4: separate calls.** Run each command below unpiped in its own
+shell-tool call. Do not execute either group's `&&` chain: the task close gate
+credits only its core (first) command, leaving later clippy, nextest, or Python
+checks uncredited. Leading `cd path &&` and `VAR=value` prefixes are credited
+through; chaining multiple checks is the unsupported boundary.
+
+```bash
+cargo build --release -p gobby-client
+cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings
+cargo nextest run -p gobby-client
+uv run ruff check src/
+uv run ruff format --check src/
+uv run mypy src/
+uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new
+```
+
+**Group 5: working directory and worker limit.** Use this command:
+
+```bash
+cd /Users/josh/Projects/gobby/web && ./node_modules/.bin/vitest run src/hooks src/components/activity --maxWorkers=4
+```
+
+`vitest run --root <web>` does not change the working directory and can fail with
+ENOENT. `--maxWorkers=4` is required: unrestricted runs produced roughly 19–28
+spurious timeouts under load. The operator's verified run passed 116 test files
+and 1055 tests. Run group 6 from the repository root again.
+
+**Group 6: build the binary, then stage a new inode.** Before the stack test, run:
+
+```bash
+cargo build --release -p gobby-terminal --features vt-engine --bin gterm
+```
+
+Rebuild `gclient` as in group 1, then use the dotfile `cp` and `mv -f` sequence
+under *Rebuild and reinstall* for both binaries. The `gterm` binary requires
+`vt-engine`: bare `cargo build --release -p gobby-terminal` builds the library,
+prints `Finished`, and exits 0 without building the binary, leaving any stale
+`gterm` in place. Regression coverage:
+`tests/terminals/test_host_manager.py::test_gterm_bin_requires_vt_engine`.
+All `gobby-terminal` dependencies are third-party; it depends on no workspace
+crates, so a `gcore` change does not invalidate a built `gterm`. Compare hashes
+of built and installed binaries rather than inferring staleness from mtime.
+
+**Group 7: record the host PID set.** Capture the set of `gterm host` PIDs before
+the socket-dependent groups and compare it after each of groups 2, 3, and 6.
+Record start times to distinguish PID reuse. If the worker sandbox denies process
+inspection, obtain this evidence from the coordinator; mark the worker check
+unvalidated rather than attempting `ps`/`pgrep` repeatedly. Never stop the
+operator's baseline host to make the sets match.
