@@ -4,6 +4,7 @@ mod apply;
 mod attach;
 mod attention;
 mod live;
+mod live_attach;
 mod live_loop;
 mod pane;
 mod persistence;
@@ -50,6 +51,8 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     focus: Option<PaneId>,
     next_pane: u32,
     roster_ids: Vec<String>,
+    /// Tab order from the saved snapshot; the first roster page follows it.
+    saved_tab_order: Vec<String>,
     attention: AttentionState,
     pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
@@ -119,6 +122,7 @@ impl Workspace {
             focus: None,
             next_pane: 1,
             roster_ids: Vec::new(),
+            saved_tab_order: Vec::new(),
             attention: AttentionState {
                 epoch: String::new(),
                 seq: 0,
@@ -154,10 +158,6 @@ impl Workspace {
 
     pub fn select_project(&mut self, project_id: impl Into<String>) {
         self.project_id = Some(project_id.into());
-    }
-
-    pub fn set_gobby_home(&mut self, home: PathBuf) {
-        self.gobby_home = Some(home);
     }
 
     pub fn set_daemon_reachable(&mut self, reachable: bool) {

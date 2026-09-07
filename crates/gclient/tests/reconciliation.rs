@@ -1099,34 +1099,23 @@ async fn buffer_overflow_and_cursor_stale_restart_the_listing() {
 #[tokio::test]
 async fn roster_reorder_survives_the_next_page() {
     let mock = MockDaemon::start("local-token").await;
-    let page = |ids: &[&str]| {
-        let items: Vec<Value> = ids
-            .iter()
-            .map(|id| json!({"id": id, "terminal_id": id, "state": "live"}))
-            .collect();
-        json!({
-            "items": items,
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-        })
-    };
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
-        page(&["terminal-a", "terminal-b"]),
+        terminal_page(&["terminal-a", "terminal-b"]),
     );
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
-        page(&["terminal-a", "terminal-b"]),
+        terminal_page(&["terminal-a", "terminal-b"]),
     );
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
-        page(&["terminal-a", "terminal-b", "terminal-c"]),
+        terminal_page(&["terminal-a", "terminal-b", "terminal-c"]),
     );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -1159,5 +1148,72 @@ async fn roster_reorder_survives_the_next_page() {
         ["terminal-b", "terminal-a", "terminal-c"],
         "a new terminal joins at the end"
     );
+    mock.shutdown().await;
+}
+
+fn terminal_page(ids: &[&str]) -> Value {
+    let items: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"id": id, "terminal_id": id, "state": "live"}))
+        .collect();
+    json!({
+        "items": items,
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+    })
+}
+
+/// 2.3 roster reorder: the order a drag saved comes back on the next start,
+/// and a terminal outside it keeps daemon order after it.
+#[tokio::test]
+async fn saved_roster_order_restores_on_the_next_start() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&["terminal-a", "terminal-b", "terminal-c"]),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&["terminal-d", "terminal-a", "terminal-b", "terminal-c"]),
+    );
+    let home = tempfile::tempdir().expect("tempdir");
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut first = Workspace::live(daemon);
+    first.set_gobby_home(home.path().to_path_buf());
+    first
+        .restore_project("project-1")
+        .expect("no snapshot yet leaves daemon order in charge");
+    first.fetch_roster().await.expect("first listing");
+    assert_eq!(
+        first.roster_terminal_ids(),
+        ["terminal-a", "terminal-b", "terminal-c"]
+    );
+    first
+        .set_tab_order(&["terminal-c", "terminal-a", "terminal-b"])
+        .expect("reorder");
+    drop(first);
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("reconnect");
+    let mut second = Workspace::live(daemon);
+    second.set_gobby_home(home.path().to_path_buf());
+    second
+        .restore_project("project-1")
+        .expect("restore the saved order");
+    second.fetch_roster().await.expect("listing after restart");
+    assert_eq!(
+        second.roster_terminal_ids(),
+        ["terminal-c", "terminal-a", "terminal-b", "terminal-d"],
+        "the saved order leads and the new terminal follows in daemon order"
+    );
+    assert_eq!(second.tab_order(), second.roster_terminal_ids());
     mock.shutdown().await;
 }

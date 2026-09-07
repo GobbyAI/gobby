@@ -38,6 +38,10 @@ impl Workspace {
 }
 
 impl<D: Daemon> Workspace<D> {
+    pub fn set_gobby_home(&mut self, home: PathBuf) {
+        self.gobby_home = Some(home);
+    }
+
     pub fn tab_order(&self) -> Vec<String> {
         self.order
             .iter()
@@ -80,6 +84,7 @@ impl<D: Daemon> Workspace<D> {
         // The roster follows the pane order; ids without a pane keep their
         // place after it.
         let ordered = self.tab_order();
+        self.saved_tab_order = ordered.clone();
         self.roster_ids.retain(|id| !ordered.contains(id));
         self.roster_ids.splice(0..0, ordered);
         self.persist_workspace().map(|_| ())

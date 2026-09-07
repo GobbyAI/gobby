@@ -43,7 +43,10 @@ pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
             let daemon =
                 LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
             let mut workspace = Workspace::live(daemon);
-            workspace.select_project(ready.project);
+            workspace.set_gobby_home(ready.gobby_home);
+            workspace.restore_project(&ready.project).map_err(|error| {
+                anyhow::anyhow!("failed to restore the workspace snapshot: {error}")
+            })?;
             workspace.set_frame_delivery(ready.frame_delivery);
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
             chrome.prefs = ready.prefs;
