@@ -204,12 +204,13 @@ process group; detach, interrupt, timeout, session removal, and daemon shutdown
 terminate and await that group before releasing the session. No shared ACP or
 provider subprocess is allowed to outlive the owning web-chat session.
 
-Generated files live outside the workspace at
-`~/.gobby/run/sandbox/<agent-run-id>/`:
+Generated files live outside the workspace under
+`$GOBBY_HOME/runtime/managed-executions/<agent-run-id>/` (normally
+`~/.gobby/runtime/managed-executions/<agent-run-id>/`):
 
-- `settings.json` is mode `0600` and its canonical bytes determine the effective
+- `assets/settings.json` is mode `0600` and its canonical bytes determine the effective
   policy hash.
-- `violations.jsonl` is mode `0600` and receives SRT violation events.
+- `logs/violations.jsonl` is mode `0600` and receives SRT violation events.
 
 Agent-run records expose the backend, enforcement state, SRT version, policy
 hash, violation count, and up to the 100 most recent violation events. They do
