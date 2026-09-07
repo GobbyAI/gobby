@@ -15,11 +15,12 @@ use super::{on_roster, MouseGesture, MouseOutcome};
 
 /// The report an app that enabled `modes` gets for `kind` at pane cell
 /// (`col`, `row`); `None` when its tracking level never asked for that event,
-/// or the cell does not fit the X10 encoding.
+/// or the column does not fit the X10 encoding.
 ///
 /// SGR (`mouse_sgr`) is `ESC [ < Cb ; Cx ; Cy M`, `m` for a release. X10 is
-/// `ESC [ M` then `Cb + 32`, `Cx + 32`, `Cy + 32` as single bytes, so a cell
-/// past column 223 has no report. `Cb` is the button (0 left, 1 middle, 2
+/// `ESC [ M` then `Cb + 32`, `Cx + 32`, `Cy + 32` as single bytes: a cell past
+/// column 223 has no report, while `Cb` and `Cy` clamp to 255. `Cb` is the
+/// button (0 left, 1 middle, 2
 /// right; 3 for an X10 release or motion with no button) plus 4 shift, 8 alt,
 /// 16 ctrl, 32 motion, and 64 to 67 for wheel up, down, left, right. `Cx` and
 /// `Cy` are one-based.
@@ -62,8 +63,9 @@ pub fn encode_report(
         let terminator = if release { 'm' } else { 'M' };
         return Some(format!("\x1b[<{cb};{cx};{cy}{terminator}").into_bytes());
     }
-    let byte = |value: u32| u8::try_from(value + 32).ok();
-    Some(vec![0x1b, b'[', b'M', byte(cb)?, byte(cx)?, byte(cy)?])
+    let clamped = |value: u32| u8::try_from(value + 32).unwrap_or(u8::MAX);
+    let cx = u8::try_from(cx + 32).ok()?;
+    Some(vec![0x1b, b'[', b'M', clamped(cb), cx, clamped(cy)])
 }
 
 /// Whether `tracking` reports `kind`: X10 asks for presses only, normal adds
@@ -234,9 +236,13 @@ mod tests {
             );
         }
 
-        // X10: Cb + 32, one-based Cx/Cy + 32, a release is button 3, and a
-        // cell past column 223 does not fit.
+        // X10: Cb + 32, one-based Cx/Cy + 32, a release is button 3, a cell
+        // past column 223 does not fit, and a row past 223 clamps to 255.
         let x10 = modes_at(MouseTracking::AnyMotion, false);
+        assert_eq!(
+            encode_report(&x10, Down(MouseButton::Left), none, 0, 300).as_deref(),
+            Some(&[0x1b, b'[', b'M', 32, 33, 255][..])
+        );
         assert_eq!(
             encode_report(&x10, Down(MouseButton::Right), KeyModifiers::CONTROL, 0, 0).as_deref(),
             Some(&[0x1b, b'[', b'M', 50, 33, 33][..])
