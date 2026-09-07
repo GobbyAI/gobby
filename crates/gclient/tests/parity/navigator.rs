@@ -15,6 +15,7 @@ fn row(depth: u8, is_workspace: bool) -> NavigatorRow {
         title: String::new(),
         state: RowState::Idle,
         detail: String::new(),
+        pane: None,
         depth,
         is_workspace,
         expanded: true,

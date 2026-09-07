@@ -310,10 +310,11 @@ pub fn render_status_line<W: WorkspaceView>(
                 format!(" {glyph} {label}"),
                 base.fg(color).add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::styled(
-                format!(" │ {}", pane.terminal_id),
-                base.fg(p.text),
-            ));
+            let name = match pane.address.as_deref() {
+                Some(address) => format!("{} {address}", pane.display_name()),
+                None => pane.display_name().to_string(),
+            };
+            spans.push(Span::styled(format!(" │ {name}"), base.fg(p.text)));
             if let Some(transport) = pane.transport() {
                 spans.push(Span::styled(
                     format!(" │ {}", transport_label(transport)),

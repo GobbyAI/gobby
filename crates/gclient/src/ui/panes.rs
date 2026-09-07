@@ -22,10 +22,16 @@ use std::collections::HashMap;
 /// grid into its inner rect.
 pub type PaneContent<'a> = dyn FnMut(&mut Frame, Rect, PaneId) + 'a;
 
-/// Title text for a pane: terminal id, backend, and the control indicator.
+/// Title text for a pane: display name, backend, and the control indicator.
+/// The border is the one place the address is left out — it is the first thing
+/// a narrow pane truncates away, and the status bar carries it unconditionally.
 pub fn pane_title(pane: &Pane) -> String {
     let (glyph, label) = control_glyph_label(pane.control, pane.take_back);
-    format!("{} · {} · {glyph} {label}", pane.terminal_id, pane.backend)
+    format!(
+        "{} · {} · {glyph} {label}",
+        pane.display_name(),
+        pane.backend
+    )
 }
 
 /// Border label for a pane: padded, truncated to the top edge, and marked

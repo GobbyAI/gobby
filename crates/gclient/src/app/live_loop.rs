@@ -508,7 +508,7 @@ fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
             continue;
         };
         if !shown.contains(&pane_id) {
-            chrome.open_pane(pane_id, &terminal_id);
+            chrome.open_pane(pane_id, workspace.pane(pane_id).display_name());
         }
     }
 }

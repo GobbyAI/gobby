@@ -2,7 +2,7 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
-use crate::app::{Pane, PaneId, Workspace};
+use crate::app::{short_terminal_id, Pane, PaneId, Workspace};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::dialogs::Dialog;
 use crate::ui::keybind_help::KeybindHelpState;
@@ -87,23 +87,59 @@ impl RowState {
     ];
 }
 
-/// Attention entries are keyed `<kind>:<terminal>`; the terminal part is the
-/// roster row they point at.
-pub fn attention_terminal(entry_id: &str) -> &str {
+/// Attention entries are keyed `<kind>:<subject>`; this is the subject.
+pub fn attention_subject(entry_id: &str) -> &str {
     entry_id.rsplit_once(':').map_or(entry_id, |(_, id)| id)
 }
 
+/// The roster row an attention entry points at.
+///
+/// The subject is a run id for a spawned agent and a session id for an
+/// interactive session — the daemon keys every live entry `session:<uuid>` —
+/// while the roster is keyed by terminal. Matching the two by string alone
+/// therefore resolves nothing, which is why a blocked session never lit up its
+/// row. The terminal that hosts the session is the answer in both cases.
+pub fn attention_pane<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<PaneId> {
+    let subject = attention_subject(entry_id);
+    if let Some(pane) = ws.pane_for_terminal(subject) {
+        return Some(pane);
+    }
+    ws.roster_terminal_ids()
+        .iter()
+        .filter_map(|id| ws.pane_for_terminal(id))
+        .find(|id| ws.pane(*id).session_id.as_deref() == Some(subject))
+}
+
+/// What the chrome calls the terminal behind an attention entry.
+pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
+    match attention_pane(ws, entry_id) {
+        Some(pane) => ws.pane(pane).display_name().to_string(),
+        None => short_terminal_id(attention_subject(entry_id)).to_string(),
+    }
+}
+
+/// The one name every chrome surface shows for a terminal. Roster and attention
+/// rows are keyed by terminal id, and an attention row can name a terminal no
+/// pane owns yet, which is the case the short id covers.
+pub fn terminal_label<W: WorkspaceView>(ws: &W, terminal_id: &str) -> String {
+    match ws.pane_for_terminal(terminal_id) {
+        Some(id) => ws.pane(id).display_name().to_string(),
+        None => short_terminal_id(terminal_id).to_string(),
+    }
+}
+
 pub fn row_state<W: WorkspaceView>(ws: &W, terminal_id: &str) -> RowState {
+    let Some(pane_id) = ws.pane_for_terminal(terminal_id) else {
+        return RowState::Unknown;
+    };
     if ws
         .attention_entry_ids()
         .iter()
-        .any(|entry| attention_terminal(entry) == terminal_id)
+        .any(|entry| attention_pane(ws, entry) == Some(pane_id))
     {
         return RowState::Attention;
     }
-    let Some(pane) = ws.pane_for_terminal(terminal_id).map(|id| ws.pane(id)) else {
-        return RowState::Unknown;
-    };
+    let pane = ws.pane(pane_id);
     if pane.new_output && pane.live {
         RowState::Working
     } else if pane.new_output {

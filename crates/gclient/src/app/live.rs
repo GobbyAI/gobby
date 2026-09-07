@@ -98,10 +98,15 @@ impl Workspace<LiveDaemon> {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let pane_id = self.ensure_live_pane(&terminal_id, backend);
-            self.panes
-                .get_mut(&pane_id)
-                .expect("live pane exists")
-                .direct_available = row_has_direct_locator(&row);
+            let pane = self.panes.get_mut(&pane_id).expect("live pane exists");
+            pane.direct_available = row_has_direct_locator(&row);
+            pane.title = row_title(&row);
+            pane.address = row_address(&row);
+            pane.session_id = row
+                .fields
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             ids.push(terminal_id);
         }
         let wanted: HashSet<_> = ids.iter().cloned().collect();
@@ -842,6 +847,27 @@ fn is_cursor_error(error: &DaemonError) -> bool {
 /// The daemon's row producer leaves `host_terminal_id` null for tmux, so
 /// demanding it here matched no real tmux row and silently downgraded every one
 /// of them to proxy.
+/// The terminal's own name. A `null` title and a `""` title mean the same thing
+/// to the chrome, so both collapse to the empty string `display_name` handles.
+fn row_title(row: &TerminalRow) -> String {
+    row.fields
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The terminal's address on its backend. Only tmux has one the user can act
+/// on; a native row's host terminal id is another UUID, so it stays hidden.
+fn row_address(row: &TerminalRow) -> Option<String> {
+    let attach = row.fields.get("attach")?.as_object()?;
+    if attach.get("backend").and_then(Value::as_str) != Some("tmux") {
+        return None;
+    }
+    let pane_id = attach.get("pane_id").and_then(Value::as_str)?;
+    (!pane_id.is_empty()).then(|| pane_id.to_string())
+}
+
 fn row_has_direct_locator(row: &TerminalRow) -> bool {
     let Some(attach) = row.fields.get("attach").and_then(Value::as_object) else {
         return false;

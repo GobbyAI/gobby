@@ -59,7 +59,10 @@ impl Board {
     /// Adds a terminal; `backend` carries the herdr detected agent kind.
     fn add(&mut self, name: &str, backend: &str) -> PaneId {
         let id = PaneId(self.panes.len() as u32 + 1);
-        self.panes.push(Pane::new(id, name, backend, "epoch"));
+        let mut pane = Pane::new(id, name, backend, "epoch");
+        // herdr names its rows; the board's `name` is that name, not a UUID.
+        pane.title = name.to_string();
+        self.panes.push(pane);
         self.roster.push(name.to_string());
         id
     }

@@ -10,6 +10,16 @@ use gobby_terminal::protocol::FrameData;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
 
+/// The chrome's last-resort name for a terminal, used where no pane owns the
+/// row yet. A terminal id is a UUID, and four of them truncated into a sidebar
+/// are four identical rows, so only the leading segment is worth showing.
+pub fn short_terminal_id(terminal_id: &str) -> &str {
+    match terminal_id.char_indices().nth(8) {
+        Some((split, _)) => &terminal_id[..split],
+        None => terminal_id,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlState {
     Observe,
@@ -23,6 +33,18 @@ pub struct Pane {
     pub id: PaneId,
     pub terminal_id: String,
     pub backend: String,
+    /// The terminal's own name, as the daemon reports it: a tmux pane title
+    /// (`zsh`, `15`) or a spawned agent's session name (`gobby-codex-d0`).
+    /// Empty until a roster page arrives, which is what `display_name` covers.
+    pub title: String,
+    /// The terminal's address on its backend — the tmux pane id, `%15`. Unique
+    /// and stable where `title` is neither, and it is what the user types into
+    /// tmux, so the chrome shows it wherever two terminals could be confused.
+    pub address: Option<String>,
+    /// The Gobby session running in this terminal, when one is. Attention
+    /// entries are keyed by session, not by terminal, so this is what points
+    /// a blocked session at the row the user can act on.
+    pub session_id: Option<String>,
     pub expected_host_epoch: String,
     pub control: ControlState,
     // Chrome consumes this presentation mirror directly. AttachState remains
@@ -68,6 +90,9 @@ impl Pane {
             id,
             terminal_id: terminal_id.into(),
             backend: backend.into(),
+            title: String::new(),
+            address: None,
+            session_id: None,
             expected_host_epoch: epoch,
             control: ControlState::Observe,
             live: true,
@@ -113,6 +138,20 @@ impl Pane {
         pane.attach = AttachState::Detached;
         pane.live = false;
         pane
+    }
+
+    /// What every chrome surface calls this terminal. The daemon's title first,
+    /// then the backend address for a row that has not reported one, then a
+    /// short id — never the raw UUID, which says nothing and crowds out the
+    /// state and backend tokens that share the row.
+    pub fn display_name(&self) -> &str {
+        if !self.title.is_empty() {
+            return &self.title;
+        }
+        match self.address.as_deref() {
+            Some(address) => address,
+            None => short_terminal_id(&self.terminal_id),
+        }
     }
 
     pub fn is_observe(&self) -> bool {

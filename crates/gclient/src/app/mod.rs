@@ -11,7 +11,7 @@ pub mod run_loop;
 
 pub use attach::AttachState;
 pub use live_loop::run_live_loop;
-pub use pane::{ControlState, Pane, PaneId};
+pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
 
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
@@ -320,7 +320,10 @@ impl Workspace {
     ) -> Result<PaneId, FrameError> {
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
-        let pane = Pane::new(id, terminal_id, backend, epoch);
+        let mut pane = Pane::new(id, terminal_id, backend, epoch);
+        // A scripted run has no daemon row to carry a title, and its terminal
+        // ids are names rather than UUIDs, so the id is the honest title here.
+        pane.title = terminal_id.to_string();
         self.panes.insert(id, pane);
         self.order.push(id);
         if !self.roster_ids.iter().any(|t| t == terminal_id) {

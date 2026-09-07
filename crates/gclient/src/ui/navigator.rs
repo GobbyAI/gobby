@@ -6,7 +6,10 @@
 //! detail row, and a footer. Rows are flat (no workspace tree): every row
 //! sits at depth zero, so herdr's [`tree_prefix`] arithmetic yields `"  "`.
 
-use crate::ui::chrome::{attention_terminal, row_state, Chrome, RowState, WorkspaceView};
+use crate::app::PaneId;
+use crate::ui::chrome::{
+    attention_label, attention_pane, row_state, terminal_label, Chrome, RowState, WorkspaceView,
+};
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::sidebar_rows::{attention_kind, terminal_detail};
 use crate::ui::status::{state_dot, state_label, state_label_color};
@@ -49,22 +52,16 @@ pub struct NavigatorRow {
     pub title: String,
     pub state: RowState,
     pub detail: String,
+    /// Pane the row switches to, resolved when the row is built. An attention
+    /// entry names a session rather than a terminal, so it can only be matched
+    /// against the focused pane once the workspace has resolved it.
+    pub pane: Option<PaneId>,
     /// Tree depth; roster rows are flat, so `navigator_rows` emits zero.
     pub depth: u8,
     /// Workspace rows take an expand caret instead of a branch glyph.
     pub is_workspace: bool,
     /// Whether a workspace row's subtree is shown (ignored otherwise).
     pub expanded: bool,
-}
-
-impl NavigatorRow {
-    /// Roster terminal the row switches to.
-    fn terminal_id(&self) -> &str {
-        match &self.target {
-            NavigatorTarget::Terminal(id) => id,
-            NavigatorTarget::Attention(entry) => attention_terminal(entry),
-        }
-    }
 }
 
 /// Rows matching the navigator query and filter, in display order.
@@ -76,7 +73,8 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
         let state = row_state(ws, &id);
         NavigatorRow {
             detail: format!("{} · {}", state_label(state), terminal_detail(ws, &id, p)),
-            title: id.clone(),
+            title: terminal_label(ws, &id),
+            pane: ws.pane_for_terminal(&id),
             target: NavigatorTarget::Terminal(id),
             state,
             depth: 0,
@@ -88,13 +86,14 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
         .attention_entry_ids()
         .into_iter()
         .map(|entry| NavigatorRow {
-            title: attention_terminal(&entry).to_string(),
+            title: attention_label(ws, &entry),
             state: RowState::Attention,
             detail: format!(
                 "{} · {}",
                 state_label(RowState::Attention),
                 attention_kind(&entry)
             ),
+            pane: attention_pane(ws, &entry),
             target: NavigatorTarget::Attention(entry),
             depth: 0,
             is_workspace: false,
@@ -207,10 +206,7 @@ pub fn render_navigator<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W,
             Rect::new(inner.x, search.y + 1, inner.width, 1),
             chrome,
         );
-        let current = chrome
-            .focused_pane()
-            .map(|id| ws.pane(id).terminal_id.clone());
-        render_rows(frame, body, &rows, current.as_deref(), chrome);
+        render_rows(frame, body, &rows, chrome.focused_pane(), chrome);
         render_navigator_scrollbar(frame, body, rows.len(), chrome);
     }
     render_detail(frame, detail, &rows, chrome);
@@ -282,7 +278,7 @@ fn render_rows(
     frame: &mut Frame,
     body: Rect,
     rows: &[NavigatorRow],
-    current: Option<&str>,
+    current: Option<PaneId>,
     chrome: &Chrome,
 ) {
     let start = chrome.navigator.scroll.min(rows.len());
@@ -292,7 +288,7 @@ fn render_rows(
     for (visible_idx, idx) in (start..end).enumerate() {
         let rect = Rect::new(body.x, body.y + visible_idx as u16, body.width, 1);
         let selected = idx == chrome.navigator.selected;
-        let is_current = current == Some(rows[idx].terminal_id());
+        let is_current = current.is_some() && rows[idx].pane == current;
         let prefix = tree_prefix(rows, idx);
         render_row(
             frame, rect, &rows[idx], &prefix, selected, is_current, chrome,

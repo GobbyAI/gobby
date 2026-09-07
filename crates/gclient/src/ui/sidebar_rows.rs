@@ -7,7 +7,9 @@
 //! drop from the right before the title truncates.
 
 use crate::theme::Palette;
-use crate::ui::chrome::{attention_terminal, row_state, Chrome, RowState, WorkspaceView};
+use crate::ui::chrome::{
+    attention_label, attention_pane, row_state, terminal_label, Chrome, RowState, WorkspaceView,
+};
 use crate::ui::status::{control_indicator, state_dot, state_label, state_label_color};
 use crate::ui::text::{display_width, truncate_end};
 use ratatui::style::{Modifier, Style};
@@ -40,7 +42,7 @@ pub fn roster_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow>
         .into_iter()
         .enumerate()
         .map(|(index, id)| SidebarRow {
-            label: id.clone(),
+            label: terminal_label(ws, &id),
             kind: RowKind::Terminal,
             state: row_state(ws, &id),
             detail: terminal_detail(ws, &id, &chrome.palette),
@@ -53,16 +55,16 @@ pub fn roster_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow>
 
 /// Attention rows in arrival order.
 pub fn attention_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
-    let focused = focused_terminal(ws, chrome);
+    let focused = chrome.focused_pane();
     ws.attention_entry_ids()
         .into_iter()
         .map(|entry| SidebarRow {
-            label: attention_terminal(&entry).to_string(),
+            label: attention_label(ws, &entry),
             kind: RowKind::Attention,
             state: RowState::Attention,
             detail: attention_kind(&entry).to_string(),
             selected: false,
-            active: focused.as_deref() == Some(attention_terminal(&entry)),
+            active: focused.is_some() && attention_pane(ws, &entry) == focused,
             id: entry,
         })
         .collect()
@@ -81,7 +83,12 @@ pub(crate) fn terminal_detail<W: WorkspaceView>(ws: &W, terminal_id: &str, p: &P
     match ws.pane_for_terminal(terminal_id).map(|id| ws.pane(id)) {
         Some(pane) => {
             let (glyph, label, _) = control_indicator(pane.control, pane.take_back, p);
-            format!("{} {glyph} {label}", pane.backend)
+            // The address rides with the backend that owns it, which is what
+            // keeps two panes sharing a title (`zsh`, `zsh`) tellable apart.
+            match pane.address.as_deref() {
+                Some(address) => format!("{} {address} {glyph} {label}", pane.backend),
+                None => format!("{} {glyph} {label}", pane.backend),
+            }
         }
         None => "detached".to_string(),
     }
