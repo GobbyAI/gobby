@@ -26,6 +26,7 @@ class SummaryUpdateHost(Protocol):
         generation_mode: str,
         source_context_hash: str | None = None,
         summary_path: str | None | UnsetType = UNSET,
+        expected_session: Session | None = None,
     ) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...

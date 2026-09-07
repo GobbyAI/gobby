@@ -97,6 +97,7 @@ class SessionManagerProtocol(Protocol):
         generation_mode: str,
         source_context_hash: str | None = ...,
         summary_path: str | None = ...,
+        expected_session: Any = ...,
     ) -> Any: ...
 
     def reset_transcript_processing_failures(
@@ -399,6 +400,7 @@ async def _generate_delivered_handoff_summary(
         summary.source_hash,
         summary.markdown,
     )
+    generation_error = None
     if existing_summary is not None:
         markdown = existing_summary
         generation_mode = "noop"
@@ -406,18 +408,22 @@ async def _generate_delivered_handoff_summary(
         markdown = summary.markdown
         generation_mode = "agent_authored"
         if is_summary_markdown_valid(markdown):
-            await _persist_summary_markdown(
+            persisted = await _persist_summary_markdown(
                 session_id=session.id,
                 session_manager=session_manager,
                 db_runner=db_runner,
                 summary_markdown=markdown,
                 generation_mode=generation_mode,
                 source_hash=summary.source_hash,
+                expected_session=session,
             )
+            if not persisted:
+                markdown = ""
+                generation_error = "Session changed during summary generation"
     return _GeneratedSummary(
         markdown=markdown,
         generation_mode=generation_mode,
-        generation_error=None,
+        generation_error=generation_error,
         source_hash=summary.source_hash,
         context_summary=summary.context_summary,
     )
@@ -470,14 +476,18 @@ async def _generate_transcript_summary(
     else:
         markdown = generated or _format_transcript_summary(source.handoff_ctx)
     if is_summary_markdown_valid(markdown):
-        await _persist_summary_markdown(
+        persisted = await _persist_summary_markdown(
             session_id=session_id,
             session_manager=session_manager,
             db_runner=db_runner,
             summary_markdown=markdown,
             generation_mode="full",
             source_hash=source.source_hash,
+            expected_session=session,
         )
+        if not persisted:
+            markdown = ""
+            generation_error = "Session changed during summary generation"
     return _GeneratedSummary(
         markdown=markdown,
         generation_mode="full",

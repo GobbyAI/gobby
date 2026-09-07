@@ -221,7 +221,12 @@ class TranscriptProcessingMixin:
             transcript_reader=TranscriptReader(self.session_manager, archive_dir=archive_dir),
         )
         outcome = result.result
-        if not allow_llm and not outcome.get("success"):
+        if (
+            not allow_llm
+            and not outcome.get("success")
+            and outcome.get("generation_error")
+            == "Session summary LLM feature config not available"
+        ):
             # No-provider fallback is intentional for short/non-human sessions.
             # Its invalid output is deterministic, unlike an unavailable provider.
             outcome = dict(outcome)

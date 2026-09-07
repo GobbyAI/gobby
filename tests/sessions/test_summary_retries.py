@@ -393,6 +393,71 @@ async def test_archive_copy_does_not_reset_quarantine_but_explicit_success_does(
     assert current.transcript_processing_failure_count == 0
 
 
+@pytest.mark.parametrize("change", ["path", "source", "external_id", "active", "paused", "summary"])
+@pytest.mark.parametrize("scheduled", [False, True])
+async def test_stale_generation_preserves_replacement_summary(
+    lifecycle: SessionLifecycleManager,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    change: str,
+    scheduled: bool,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "summary-race").project
+    transcript = tmp_path / "live.jsonl"
+    transcript.write_bytes(GOLDEN.read_bytes())
+    session = register(lifecycle, project.id, "summary-race", str(transcript))
+    manager = lifecycle.session_manager
+    replacement = (
+        "## Current State\n\nThe replacement session has completed its implementation and "
+        "preserved its new source details for review.\n\n## Next Steps\n\n"
+        "Review the replacement source and validate its current implementation."
+    )
+    stale = replacement.replace("replacement", "outdated")
+
+    def replace_source(**kwargs: object) -> tuple[str, None]:
+        if change == "path":
+            manager.update(session.id, transcript_path=str(tmp_path / "replacement.jsonl"))
+        elif change == "source":
+            manager.update(session.id, source="codex")
+        elif change == "external_id":
+            manager.update(session.id, external_id="replacement-id")
+        elif change in {"active", "paused"}:
+            with temp_db.transaction() as conn:
+                conn.execute("UPDATE sessions SET status = %s WHERE id = %s", (change, session.id))
+        manager.persist_summary_state(
+            session.id,
+            summary_markdown=replacement,
+            generation_mode="full",
+            source_context_hash="replacement-hash",
+        )
+        manager.record_transcript_processing_failure(
+            session.id, error_code="missing_source", error="replacement unavailable"
+        )
+        return stale, None
+
+    with patch(
+        "gobby.sessions.summarize._generate_full_summary",
+        new=AsyncMock(side_effect=replace_source),
+    ):
+        if scheduled:
+            assert await lifecycle._process_pending_transcripts(lifecycle._capture_active()) == 0
+        else:
+            result = await generate_session_summaries(
+                session.id,
+                manager,
+                session_summary_config=lifecycle._capture_active().session_summary,
+                db=temp_db,
+            )
+            assert not result["success"]
+    saved = manager.get(session.id)
+    assert saved is not None
+    assert saved.summary_markdown == replacement
+    assert saved.summary_source_context_hash == "replacement-hash"
+    assert saved.transcript_processing_failure_count == (0 if change in {"active", "paused"} else 1)
+    assert not processed(lifecycle, session.id)
+
+
 async def test_archive_access_failure_is_transient_at_reader_boundary(
     lifecycle: SessionLifecycleManager,
     isolated_checkout_factory: IsolatedCheckoutFactory,

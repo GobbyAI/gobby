@@ -156,6 +156,12 @@ def _source_guard(session: Session | None) -> tuple[str, tuple[object, ...]]:
     return (
         " AND source = %s AND external_id = %s"
         " AND transcript_path IS NOT DISTINCT FROM %s"
-        " AND last_activity IS NOT DISTINCT FROM %s",
-        (session.source, session.external_id, session.transcript_path, session.last_activity),
+        " AND last_activity IS NOT DISTINCT FROM %s AND status = %s",
+        (
+            session.source,
+            session.external_id,
+            session.transcript_path,
+            session.last_activity,
+            session.status,
+        ),
     )

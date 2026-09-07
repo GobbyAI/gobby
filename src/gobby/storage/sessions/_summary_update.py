@@ -6,6 +6,7 @@ from typing import Any
 
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._summary_protocols import SummaryUpdateHost as _SummaryUpdateHost
+from gobby.storage.sessions._transcript import _source_guard
 from gobby.utils.datetime import utc_now
 
 from ._update_sentinel import UNSET, UnsetType, is_set
@@ -20,13 +21,18 @@ class _SummaryUpdateMixin:
         generation_mode: str,
         source_context_hash: str | None = None,
         summary_path: str | None | UnsetType = UNSET,
+        expected_session: Session | None = None,
     ) -> Session | None:
         """Persist the authoritative current summary fields atomically."""
         now = utc_now()
+        guard, params = _source_guard(expected_session)
+        if expected_session is not None:
+            guard += " AND summary_generated_at IS NOT DISTINCT FROM %s"
+            params += (expected_session.summary_generated_at,)
 
         with self.db.transaction() as conn:
-            conn.execute(
-                """
+            row = conn.execute(
+                f"""
                 UPDATE sessions
                 SET summary_path = CASE WHEN %s THEN %s ELSE summary_path END,
                     summary_markdown = %s,
@@ -38,7 +44,8 @@ class _SummaryUpdateMixin:
                     transcript_processing_last_error = NULL,
                     transcript_processing_last_failed_at = NULL,
                     updated_at = %s
-                WHERE id = %s
+                WHERE id = %s {guard}
+                RETURNING id
                 """,
                 (
                     is_set(summary_path),
@@ -49,9 +56,12 @@ class _SummaryUpdateMixin:
                     now,
                     now,
                     session_id,
+                    *params,
                 ),
-            )
+            ).fetchone()
 
+        if row is None:
+            return None
         updated = self.get(session_id)
         if updated is not None:
             self._notify_session_change("session_updated", session_id)
