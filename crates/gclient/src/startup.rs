@@ -1,5 +1,6 @@
 //! Independent `gclient` startup: discover the daemon, probe health, then TUI.
 
+use crate::frame_source::FrameDelivery;
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
 use gobby_terminal::protocol::PROTOCOL_VERSION;
 use serde::Deserialize;
@@ -9,14 +10,16 @@ use thiserror::Error;
 
 const HEALTH_PATH: &str = "/api/health";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
-const USAGE: &str =
-    "Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] [--version]";
+const USAGE: &str = "Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] \
+     [--frame-delivery auto|direct|proxy] [--version]";
+const FRAME_DELIVERY_USAGE: &str = "--frame-delivery requires auto, direct, or proxy";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliArgs {
     pub project: Option<String>,
     pub daemon_url: Option<String>,
     pub token_file: Option<PathBuf>,
+    pub frame_delivery: FrameDelivery,
     pub version: bool,
     pub help: bool,
 }
@@ -32,6 +35,7 @@ pub struct Ready {
     pub daemon_url: String,
     pub token: Option<String>,
     pub project: String,
+    pub frame_delivery: FrameDelivery,
     pub host: Option<GtermHostState>,
     pub host_notice: Option<String>,
 }
@@ -167,6 +171,7 @@ where
     let mut project = None;
     let mut daemon_url = None;
     let mut token_file = None;
+    let mut frame_delivery = FrameDelivery::default();
     let mut version = false;
     let mut help = false;
     while let Some(raw) = iter.next() {
@@ -241,6 +246,17 @@ where
             token_file = Some(PathBuf::from(value));
             continue;
         }
+        if let Some(value) = arg.strip_prefix("--frame-delivery=") {
+            frame_delivery = parse_frame_delivery(value)?;
+            continue;
+        }
+        if arg == "--frame-delivery" {
+            let value = iter.next().ok_or_else(|| StartupError::Usage {
+                message: FRAME_DELIVERY_USAGE.into(),
+            })?;
+            frame_delivery = parse_frame_delivery(value.as_ref())?;
+            continue;
+        }
         if arg == "--help" || arg == "-h" {
             help = true;
             continue;
@@ -253,8 +269,17 @@ where
         project,
         daemon_url,
         token_file,
+        frame_delivery,
         version,
         help,
+    })
+}
+
+/// The value set is closed, so this also rejects a missing value that swallowed
+/// the next flag — no separate `starts_with('-')` guard is needed.
+fn parse_frame_delivery(value: &str) -> Result<FrameDelivery, StartupError> {
+    FrameDelivery::parse(value).ok_or_else(|| StartupError::Usage {
+        message: FRAME_DELIVERY_USAGE.into(),
     })
 }
 
@@ -330,6 +355,7 @@ pub fn prepare_at(
         daemon_url: env.daemon_url,
         token: env.token,
         project,
+        frame_delivery: args.frame_delivery,
         host,
         host_notice,
     })

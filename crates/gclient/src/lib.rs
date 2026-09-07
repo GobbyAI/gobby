@@ -17,4 +17,6 @@ pub mod views;
 
 pub use app::Workspace;
 pub use daemon::{decode_message, encode_message, GOLDEN_NAMES, TERMINAL_WS_SAFE_INTEGER_MAX};
-pub use frame_source::{AttachLocator, FrameError, FrameSource, ScriptedFrameSource};
+pub use frame_source::{
+    AttachLocator, FrameDelivery, FrameError, FrameSource, ScriptedFrameSource,
+};

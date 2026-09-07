@@ -19,7 +19,8 @@ use crate::daemon::{
     Snapshot, TerminalRow,
 };
 use crate::frame_source::{
-    AttachLocator, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
+    AttachLocator, FrameDelivery, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource,
+    Transport,
 };
 use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use serde_json::{json, Value};
@@ -48,6 +49,7 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     attention: AttentionState,
     pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
+    frame_delivery: FrameDelivery,
     lifecycle: Option<Snapshot>,
     daemon_ready: bool,
     daemon_error: Option<DaemonError>,
@@ -121,6 +123,7 @@ impl Workspace {
             },
             pending_attention: None,
             gobby_home: None,
+            frame_delivery: FrameDelivery::Auto,
             lifecycle: None,
             daemon_ready: true,
             daemon_error: None,

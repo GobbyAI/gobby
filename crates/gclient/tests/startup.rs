@@ -5,6 +5,7 @@ use gobby_client::startup::{
     GtermHostState, HealthClient, HttpHealthClient, ProbeEnv, Ready, StartupError,
 };
 use gobby_client::teardown::{ModeBackend, TerminalGuard};
+use gobby_client::FrameDelivery;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
@@ -166,6 +167,72 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &unreadable)
         .expect_err("directory token path succeeded");
     assert!(error.to_string().contains("--token-file"));
+}
+
+/// `--frame-delivery` is the only way to reach the proxy transport on one
+/// machine, where the frame host socket is always reachable and `auto` always
+/// resolves to direct.
+#[test]
+fn frame_delivery_parses_both_spellings_and_defaults_to_auto() {
+    assert_eq!(
+        parse_args(["gclient"])
+            .expect("parse defaults")
+            .frame_delivery,
+        FrameDelivery::Auto,
+        "omitting the flag must not change today's negotiation"
+    );
+
+    for (value, expected) in [
+        ("auto", FrameDelivery::Auto),
+        ("direct", FrameDelivery::Direct),
+        ("proxy", FrameDelivery::Proxy),
+    ] {
+        assert_eq!(
+            parse_args(["gclient", "--frame-delivery", value])
+                .expect("parse separated value")
+                .frame_delivery,
+            expected
+        );
+        assert_eq!(
+            parse_args(["gclient", &format!("--frame-delivery={value}")])
+                .expect("parse joined value")
+                .frame_delivery,
+            expected
+        );
+    }
+}
+
+#[test]
+fn frame_delivery_rejects_unknown_values_and_a_swallowed_flag() {
+    // A missing value would otherwise consume the next flag as its argument.
+    for argv in [
+        vec!["gclient", "--frame-delivery"],
+        vec!["gclient", "--frame-delivery", "sideways"],
+        vec!["gclient", "--frame-delivery="],
+        vec!["gclient", "--frame-delivery", "--version"],
+    ] {
+        let message = parse_args(&argv)
+            .expect_err(&format!("{argv:?} parsed"))
+            .to_string();
+        assert!(
+            message.contains("--frame-delivery requires auto, direct, or proxy"),
+            "{argv:?} gave an unhelpful error: {message}"
+        );
+    }
+}
+
+#[test]
+fn help_text_lists_frame_delivery() {
+    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .arg("--help")
+        .output()
+        .expect("run gclient --help");
+    assert!(output.status.success(), "--help did not exit zero");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--frame-delivery auto|direct|proxy"),
+        "usage text omits the flag: {stdout}"
+    );
 }
 
 struct CountingBackend {

@@ -44,6 +44,44 @@ pub enum Transport {
     Proxy,
 }
 
+/// Which transports a client run is willing to negotiate.
+///
+/// The daemon advertises a direct locator on every row whose frame host is
+/// reachable, which on a single machine is always, so `Auto` never reaches the
+/// proxy transport locally no matter where `--daemon-url` points. Remoteness,
+/// not the flag, is what makes the host socket unreachable. These variants make
+/// the choice explicit so either path can be exercised and diagnosed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameDelivery {
+    /// Direct when the row offers a usable locator, proxy otherwise.
+    #[default]
+    Auto,
+    /// Direct only: a pane that cannot attach directly is refused rather than
+    /// silently downgraded, so a broken direct path stays visible.
+    Direct,
+    /// Proxy only: never attempt a direct attach.
+    Proxy,
+}
+
+impl FrameDelivery {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "direct" => Some(Self::Direct),
+            "proxy" => Some(Self::Proxy),
+            _ => None,
+        }
+    }
+
+    pub fn allows(self, transport: Transport) -> bool {
+        match self {
+            Self::Auto => true,
+            Self::Direct => transport == Transport::Direct,
+            Self::Proxy => transport == Transport::Proxy,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum FrameError {
     #[error("frame host epoch changed from {expected} to {actual}")]

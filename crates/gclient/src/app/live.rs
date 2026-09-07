@@ -24,6 +24,7 @@ impl Workspace<LiveDaemon> {
             },
             pending_attention: None,
             gobby_home: None,
+            frame_delivery: FrameDelivery::Auto,
             lifecycle: None,
             daemon_ready: false,
             daemon_error: None,
@@ -42,6 +43,10 @@ impl Workspace<LiveDaemon> {
 
     pub fn select_project(&mut self, project_id: impl Into<String>) {
         self.project_id = Some(project_id.into());
+    }
+
+    pub fn set_frame_delivery(&mut self, frame_delivery: FrameDelivery) {
+        self.frame_delivery = frame_delivery;
     }
 
     pub fn project_id(&self) -> Option<&str> {
@@ -123,7 +128,9 @@ impl Workspace<LiveDaemon> {
                 continue;
             }
             let terminal_id = self.panes[&pane_id].terminal_id.clone();
-            if self.panes[&pane_id].direct_available {
+            if self.frame_delivery.allows(Transport::Direct)
+                && self.panes[&pane_id].direct_available
+            {
                 let request_id = uuid::Uuid::new_v4().to_string();
                 self.panes
                     .get_mut(&pane_id)
@@ -418,6 +425,22 @@ impl Workspace<LiveDaemon> {
         terminal_id: &str,
         generation: Generation,
     ) -> Result<(), DaemonError> {
+        // The only route to the proxy transport, for both a row with no direct
+        // locator and the fallback after a direct attach dies. Refusing here
+        // rather than at each caller keeps `--frame-delivery direct` honest:
+        // a broken direct path stays visible instead of downgrading silently.
+        if !self.frame_delivery.allows(Transport::Proxy) {
+            self.panes
+                .get_mut(&pane_id)
+                .expect("pane exists")
+                .refuse_attach(
+                    "frame_delivery_direct_only",
+                    "proxy delivery declined by --frame-delivery direct",
+                );
+            self.attached_generation.insert(pane_id, generation);
+            self.clear_fallback_flight(pane_id);
+            return Ok(());
+        }
         let request_id = uuid::Uuid::new_v4().to_string();
         self.panes
             .get_mut(&pane_id)

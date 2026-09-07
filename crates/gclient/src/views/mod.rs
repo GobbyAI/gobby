@@ -44,6 +44,7 @@ pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
                 LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
             let mut workspace = Workspace::live(daemon);
             workspace.select_project(ready.project);
+            workspace.set_frame_delivery(ready.frame_delivery);
             let mut chrome = Chrome::new(Theme::new(ThemeKind::Dark));
             chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;

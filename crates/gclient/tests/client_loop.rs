@@ -196,6 +196,7 @@ fn live_entry_connects_before_running() {
         daemon_url: "not a URL".to_string(),
         token: Some("test-token".to_string()),
         project: "project-1".to_string(),
+        frame_delivery: gobby_client::FrameDelivery::Auto,
         host: None,
         host_notice: None,
     });
