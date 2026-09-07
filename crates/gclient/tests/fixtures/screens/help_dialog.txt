@@ -78,5 +78,5 @@
 37 : -/panel_bg+d*2 accent/panel_bg*1 overlay0/panel_bg*8 text/panel_bg*1 overlay0/panel_bg*10 text/panel_bg*16 overlay0/panel_bg*9 text/panel_bg*9 -/panel_bg*61 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 38 |  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘─┘|
 38 : -/panel_bg+d*2 accent/panel_bg*116 accent/panel_bg+d*2
-39 |                        «│ ○ observe │ term-beta │ proxy │ keys                                                         |
-39 : -/panel_bg+d*24 overlay0/panel_bg+d*1 surface_dim/panel_bg+d*1 subtext0/surface_dim+bd*10 text/surface_dim+d*12 subtext0/surface_dim+d*8 accent/surface_dim+d*7 -/surface_dim+d*57
+39 |                        «│ [○ observe] │ term-beta │ proxy │ keys                                                       |
+39 : -/panel_bg+d*24 overlay0/panel_bg+d*1 surface_dim/panel_bg+d*1 subtext0/surface_dim+bd*12 text/surface_dim+d*12 subtext0/surface_dim+d*8 accent/surface_dim+d*7 -/surface_dim+d*55

@@ -117,6 +117,8 @@ pub const MOUSE_SCROLL_LINES: usize = 3;
 /// mode owns the screen; what the release itself does belongs to the
 /// gesture's own surface (`pointer::up`). Modal modes own the whole screen
 /// while they are up, and copy mode leaves the mouse to the selection router.
+/// Motion with no button down only records what the pointer is over
+/// (`Chrome::hover`) for hover styling and stays unclaimed.
 pub fn route_mouse<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -145,6 +147,10 @@ pub fn route_mouse<W: WorkspaceView>(
         MouseEventKind::Up(_) => pointer::up(ws, chrome, hit, released),
         MouseEventKind::ScrollUp => wheel::wheel(ws, chrome, hit, mouse.row, true),
         MouseEventKind::ScrollDown => wheel::wheel(ws, chrome, hit, mouse.row, false),
+        MouseEventKind::Moved => {
+            chrome.hover = Some(hit);
+            MouseOutcome::Ignore
+        }
         _ => MouseOutcome::Ignore,
     }
 }
@@ -172,6 +178,7 @@ pub(super) fn on_roster<W: WorkspaceView>(ws: &W, pane: PaneId) -> bool {
 mod tests {
     use super::*;
     use crate::app::Workspace;
+    use crate::ui::hit::Hit;
     use crossterm::event::{KeyModifiers, MouseButton};
     use ratatui::layout::Rect;
 
@@ -279,6 +286,35 @@ mod tests {
             route_mouse(&empty, &mut chrome, &down(col, row, KeyModifiers::NONE)),
             MouseOutcome::Ignore,
             "a stale slot is not focused before the next chrome sync"
+        );
+    }
+
+    #[test]
+    fn route_mouse_motion_records_hover_and_stays_unclaimed() {
+        let (ws, mut chrome, _, _, (col, row)) = split_chrome();
+        let status = chrome.view.status_rect;
+        let moved = |column, row| event(MouseEventKind::Moved, column, row, KeyModifiers::NONE);
+        assert_eq!(
+            chrome.hover, None,
+            "nothing is hovered before the pointer moves"
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &moved(status.x, status.y)),
+            MouseOutcome::Ignore
+        );
+        assert_eq!(
+            chrome.hover,
+            Some(hit_test(&chrome.view, status.x, status.y)),
+            "motion records what the pointer is over"
+        );
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &moved(col, row)),
+            MouseOutcome::Ignore
+        );
+        assert!(
+            matches!(chrome.hover, Some(Hit::Pane { .. })),
+            "moving on replaces the hover: {:?}",
+            chrome.hover
         );
     }
 

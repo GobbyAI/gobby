@@ -4,7 +4,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent};
 use gobby_terminal::layout::{self, ScrollMetrics};
 use ratatui::layout::{Direction, Rect};
 
-use crate::app::PaneId;
+use crate::app::{ControlState, PaneId};
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::pane_layout::metrics_for;
@@ -12,7 +12,7 @@ use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
 use crate::ui::sidebar::section_metrics;
-use crate::ui::{Chrome, WorkspaceView};
+use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::{
     focus_active_tab, on_roster, MouseGesture, MouseOutcome, Placement, ROSTER_DRAG_THRESHOLD,
@@ -41,7 +41,13 @@ use super::{
 ///
 /// A split border starts the drag that resizes the panes either side of it
 /// (herdr `SetSplitRatio`); a pane scrollbar thumb starts a thumb drag and
-/// the track beside it jumps the scrollback there. Every other region is
+/// the track beside it jumps the scrollback there.
+///
+/// The status line's control indicator is a button for the focused pane's
+/// lease, dispatched as the chord would be: held releases control, observed
+/// (or lease lost, or read-only after an indeterminate write) takes it, and a
+/// pending take-back accepts it. It is the mouse escape from a held lease
+/// that the keyboard lacks under a captured prefix. Every other region is
 /// ignored until its section lands.
 pub(super) fn down<W: WorkspaceView>(
     ws: &W,
@@ -161,6 +167,19 @@ pub(super) fn down<W: WorkspaceView>(
                     scrollbar_offset_from_row(metrics, track, row),
                 ),
             }
+        }
+        Hit::ControlIndicator => {
+            let Some(pane) = chrome.focused_pane().filter(|pane| on_roster(ws, *pane)) else {
+                return MouseOutcome::Ignore;
+            };
+            let pane = ws.pane(pane);
+            MouseOutcome::Action(if pane.take_back {
+                Action::TakeBack
+            } else if pane.control == ControlState::Held {
+                Action::ReleaseControl
+            } else {
+                Action::TakeControl
+            })
         }
         _ => MouseOutcome::Ignore,
     }

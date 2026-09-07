@@ -6,7 +6,7 @@ use crate::app::{short_terminal_id, MouseGesture, Pane, PaneId, Workspace};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
-use crate::ui::hit::SidebarSection;
+use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::keymap::Keymap;
 use crate::ui::navigator::NavigatorState;
@@ -355,6 +355,9 @@ pub struct Chrome {
     pub selection: Option<Selection>,
     /// The press-and-drag in progress, if any; `route_mouse` owns it.
     pub gesture: Option<MouseGesture>,
+    /// What the pointer was over when it last moved with no button down,
+    /// for hover styling; `route_mouse` owns it.
+    pub hover: Option<Hit>,
 }
 
 impl Chrome {
@@ -381,6 +384,7 @@ impl Chrome {
             keymap: Keymap::defaults(),
             selection: None,
             gesture: None,
+            hover: None,
         }
     }
 

@@ -6,6 +6,7 @@ use crate::app::ControlState;
 use crate::frame_source::Transport;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
+use crate::ui::hit::Hit;
 use crate::ui::text::display_width_u16;
 use crate::ui::widgets::panel_contrast_fg;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -291,6 +292,11 @@ pub fn render_diagnostic(frame: &mut Frame, area: Rect, chrome: &Chrome, message
 
 /// Gobby status line: daemon reachability, focused pane control state, mode.
 /// Returns the control indicator's cells, when a focused pane put one there.
+///
+/// The indicator is a button (`pointer::down` dispatches its press): the
+/// glyph and label sit in brackets, and the pointer resting on it
+/// (`Chrome::hover`) underlines it. Colour stays the state's own token
+/// because glyph and label already carry the state without hue.
 pub fn render_status_line<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
@@ -308,17 +314,18 @@ pub fn render_status_line<W: WorkspaceView>(
     match chrome.focused_pane().map(|id| ws.pane(id)) {
         Some(pane) => {
             let (glyph, label, color) = control_indicator(pane.control, pane.take_back, p);
-            let text = format!(" {glyph} {label}");
+            let text = format!(" [{glyph} {label}]");
             indicator = Some(Rect::new(
                 area.x,
                 area.y,
                 display_width_u16(&text).min(area.width),
                 1,
             ));
-            spans.push(Span::styled(
-                text,
-                base.fg(color).add_modifier(Modifier::BOLD),
-            ));
+            let mut style = base.fg(color).add_modifier(Modifier::BOLD);
+            if matches!(chrome.hover, Some(Hit::ControlIndicator)) {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            spans.push(Span::styled(text, style));
             let name = match pane.address.as_deref() {
                 Some(address) => format!("{} {address}", pane.display_name()),
                 None => pane.display_name().to_string(),

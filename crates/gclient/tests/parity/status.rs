@@ -1,12 +1,24 @@
 //! herdr `src/ui/status.rs` (4) keep-set render tests.
 
+use std::collections::BTreeSet;
+
+use gobby_client::app::ControlState;
 use gobby_client::ui::chrome::RowState;
+use gobby_client::ui::hit::Hit;
 use gobby_client::ui::status::{
-    copy_feedback_rect, state_dot, toast_cue_width, toast_notification_rect, Toast, ToastKind,
+    control_indicator, copy_feedback_rect, render_status_line, state_dot, toast_cue_width,
+    toast_notification_rect, Toast, ToastKind,
 };
 use gobby_client::ui::text::display_width_u16;
+use gobby_client::ui::Chrome;
+use gobby_client::Workspace;
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+use ratatui::Terminal;
+use serde_json::json;
 
+use super::fixtures::{cell, rect_rows, render};
 use super::token_map::palette;
 
 // herdr `ToastKind::Finished` / `ToastKind::NeedsAttention` map onto gclient's
@@ -103,4 +115,92 @@ parity_tests! {
             );
         }
     }
+}
+
+/// 2.5.2 (gclient-only, outside the keep-set): the status line draws the
+/// focused pane's control indicator as a button. Glyph and label sit in
+/// brackets, the pointer resting on it underlines the whole button, the
+/// colour is the state's own token, and no state is told apart by hue
+/// alone: every state has its own glyph and label.
+#[test]
+fn control_indicator_is_a_button() {
+    let palette = palette();
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": []
+    }));
+    ws.reconcile_subscribe_first().expect("install roster");
+    ws.open_terminal("term-alpha", "native", "epoch")
+        .expect("open terminal");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(
+        ws.pane_for_terminal("term-alpha").expect("term-alpha pane"),
+        "alpha",
+    );
+
+    let mut indicator = None;
+    let idle = render(80, 1, |frame| {
+        indicator = render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    let indicator = indicator.expect("a focused pane draws the indicator");
+    let button = vec![" [○ observe]".to_string()];
+    let underlined = |terminal: &Terminal<TestBackend>| -> Vec<bool> {
+        (indicator.x..indicator.right())
+            .map(|x| {
+                cell(terminal, x, indicator.y)
+                    .modifier
+                    .contains(Modifier::UNDERLINED)
+            })
+            .collect()
+    };
+    assert_eq!(
+        rect_rows(&idle, indicator),
+        button,
+        "brackets frame the button"
+    );
+    assert!(
+        underlined(&idle).iter().all(|cell| !cell),
+        "nothing is underlined until the pointer rests on the button"
+    );
+    assert_eq!(
+        cell(&idle, indicator.x + 1, indicator.y).fg,
+        palette.subtext0,
+        "the colour stays the state's own token"
+    );
+
+    chrome.hover = Some(Hit::ControlIndicator);
+    let hovered = render(80, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    assert!(
+        underlined(&hovered).iter().all(|cell| *cell),
+        "hover underlines the whole button"
+    );
+    assert_eq!(
+        rect_rows(&hovered, indicator),
+        button,
+        "hover changes no text"
+    );
+
+    let states = [
+        (ControlState::Observe, false),
+        (ControlState::Held, false),
+        (ControlState::LeaseLost, false),
+        (ControlState::UncertainReadOnly, false),
+        (ControlState::Held, true),
+    ];
+    let readings: BTreeSet<String> = states
+        .iter()
+        .map(|(control, take_back)| {
+            let (glyph, label, _) = control_indicator(*control, *take_back, &palette);
+            format!("{glyph} {label}")
+        })
+        .collect();
+    assert_eq!(
+        readings.len(),
+        states.len(),
+        "every state reads without hue: {readings:?}"
+    );
 }

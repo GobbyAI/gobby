@@ -3300,3 +3300,164 @@ async fn wheel_and_scrollbar_drive_scrollback() {
     );
     mock.shutdown().await;
 }
+
+/// 2.5.1: the status line's control indicator is a button for the focused
+/// pane's lease. A click while the pane is held releases control, a click
+/// while it is observed takes control, and once the daemon reports the lease
+/// lost the same click accepts the pending take-back.
+#[tokio::test]
+async fn control_indicator_click_toggles_control() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [{"terminal_id": "terminal-lease", "backend": "native", "state": "live"}],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane = workspace
+        .pane_for_terminal("terminal-lease")
+        .expect("roster pane");
+    let attachment = workspace.pane(pane).attachment_id().to_string();
+
+    // Mirror the loop's one-pane chrome to learn where the status line is
+    // drawn; the indicator leads it.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.open_pane(pane, "terminal-lease");
+    probe.compute_view(&workspace, area);
+    let status = probe.view.status_rect;
+    let (column, row) = (status.x + 1, status.y);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        let click = || async {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+            .await;
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Up(MouseButton::Left),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+            .await;
+        };
+        let lease_requests = |kind: &str| -> Vec<(Option<String>, Option<String>)> {
+            websocket_requests(&mock, kind)
+                .iter()
+                .map(|request| {
+                    (
+                        request
+                            .get("terminal_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        request
+                            .get("attachment_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    )
+                })
+                .collect()
+        };
+        let lease = (Some("terminal-lease".to_string()), Some(attachment.clone()));
+
+        // Startup focus took the lease, so the first click releases it.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        click().await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        settle_live_event().await;
+        assert_eq!(
+            lease_requests("terminal_release_control"),
+            vec![lease.clone()],
+            "a click on a held pane releases its lease"
+        );
+        assert_eq!(
+            lease_requests("terminal_take_control").len(),
+            1,
+            "the release click takes nothing"
+        );
+
+        // The pane is observed now, so the next click takes the lease back.
+        click().await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        settle_live_event().await;
+        assert_eq!(
+            lease_requests("terminal_take_control")[1],
+            lease,
+            "a click on an observed pane takes its lease"
+        );
+        assert_eq!(
+            lease_requests("terminal_release_control").len(),
+            1,
+            "the take click releases nothing"
+        );
+
+        // A peer takes the lease; the daemon offers a take-back, and the
+        // click accepts it with a fresh grant at the peer's generation.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_lease_lost",
+            "terminal_id": "terminal-lease",
+            "attachment_id": attachment,
+            "holder": "peer",
+            "lease_generation": 2,
+            "daemon_epoch": "epoch-1",
+            "seq": 2
+        }))
+        .await;
+        settle_live_event().await;
+        mock.enqueue_take_control_reply(true, 2, None);
+        click().await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        settle_live_event().await;
+        assert_eq!(
+            lease_requests("terminal_take_control")[2],
+            lease,
+            "a click with a take-back pending accepts it"
+        );
+        assert_eq!(
+            lease_requests("terminal_release_control").len(),
+            1,
+            "accepting a take-back releases nothing"
+        );
+        drop(input_tx);
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane = workspace.pane(pane);
+    assert!(
+        pane.is_held() && !pane.has_take_back(),
+        "the accepted take-back holds the lease again: {:?} take_back={}",
+        pane.control,
+        pane.has_take_back()
+    );
+    mock.shutdown().await;
+}
