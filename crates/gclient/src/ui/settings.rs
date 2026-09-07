@@ -21,9 +21,12 @@ pub const SETTINGS_POPUP_HEIGHT: u16 = 22;
 const VALUE_COLUMN: usize = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ClientPrefs {
     pub theme: String,
+    /// Capture mouse events for gclient; `false` leaves the terminal's native
+    /// selection and scrolling untouched (`--no-mouse` forces it off).
+    pub mouse_capture: bool,
     /// Override file for the keymap; empty means the default path.
     pub keybinds: String,
     pub layout: String,
@@ -39,6 +42,7 @@ impl Default for ClientPrefs {
     fn default() -> Self {
         Self {
             theme: "dark".to_string(),
+            mouse_capture: true,
             keybinds: String::new(),
             layout: "default".to_string(),
             pane_borders: true,
@@ -65,6 +69,7 @@ impl ClientPrefs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     Theme,
+    MouseCapture,
     PaneBorders,
     PaneScrollbars,
     PaneGaps,
@@ -74,8 +79,9 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 7] = [
+    pub const ALL: [SettingsRow; 8] = [
         SettingsRow::Theme,
+        SettingsRow::MouseCapture,
         SettingsRow::PaneBorders,
         SettingsRow::PaneScrollbars,
         SettingsRow::PaneGaps,
@@ -95,6 +101,7 @@ pub struct SettingsState {
 fn row_label(row: SettingsRow) -> &'static str {
     match row {
         SettingsRow::Theme => "theme",
+        SettingsRow::MouseCapture => "mouse capture",
         SettingsRow::PaneBorders => "pane borders",
         SettingsRow::PaneScrollbars => "pane scrollbars",
         SettingsRow::PaneGaps => "pane gaps",
@@ -115,6 +122,7 @@ fn on_off(value: bool) -> &'static str {
 fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     match row {
         SettingsRow::Theme => prefs.theme.clone(),
+        SettingsRow::MouseCapture => on_off(prefs.mouse_capture).to_string(),
         SettingsRow::PaneBorders => on_off(prefs.pane_borders).to_string(),
         SettingsRow::PaneScrollbars => on_off(prefs.pane_scrollbars).to_string(),
         SettingsRow::PaneGaps => on_off(prefs.pane_gaps).to_string(),
@@ -253,11 +261,15 @@ mod tests {
     #[test]
     fn row_values_follow_prefs() {
         let mut prefs = ClientPrefs::default();
+        assert_eq!(SettingsRow::ALL[1], SettingsRow::MouseCapture);
         assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
+        assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "on");
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "on");
         prefs.pane_gaps = false;
         prefs.sidebar_width = 30;
+        prefs.mouse_capture = false;
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "off");
         assert_eq!(row_value(SettingsRow::SidebarWidth, &prefs), "30");
+        assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "off");
     }
 }

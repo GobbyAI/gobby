@@ -5,7 +5,7 @@ pub mod grid;
 use crate::app::run_live_loop;
 use crate::daemon::LiveDaemon;
 use crate::frame_source::AttachLocator;
-use crate::theme::{Theme, ThemeKind};
+use crate::theme::Theme;
 use crate::ui::Chrome;
 use crate::Workspace;
 use gobby_terminal::protocol::{ClientMessage, RenderEncoding, PROTOCOL_VERSION};
@@ -45,7 +45,8 @@ pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
             let mut workspace = Workspace::live(daemon);
             workspace.select_project(ready.project);
             workspace.set_frame_delivery(ready.frame_delivery);
-            let mut chrome = Chrome::new(Theme::new(ThemeKind::Dark));
+            let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
+            chrome.prefs = ready.prefs;
             chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();

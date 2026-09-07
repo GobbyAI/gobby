@@ -3,6 +3,8 @@
 use gobby_client::persist::{
     load_snapshot, save_snapshot, LayoutNode, SplitAxis, WorkspaceSnapshot,
 };
+use gobby_client::prefs::{load_prefs, prefs_path, save_prefs, PrefsError};
+use gobby_client::ui::settings::ClientPrefs;
 use gobby_client::Workspace;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -142,4 +144,64 @@ fn workspace_mutations_persist_atomically() {
     ws.set_tab_order(&["term-b", "term-a"]).unwrap();
     let reordered = load_snapshot(&home, "proj-mutations").unwrap();
     assert_eq!(reordered.tab_order, vec!["term-b", "term-a"]);
+}
+
+#[test]
+fn prefs_round_trip_and_reject_unknown_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+
+    let defaults = load_prefs(&home).expect("missing file yields defaults");
+    assert_eq!(defaults, ClientPrefs::default());
+    assert!(defaults.mouse_capture);
+
+    let prefs = ClientPrefs {
+        theme: "light".to_string(),
+        keybinds: "/tmp/keys.toml".to_string(),
+        mouse_capture: false,
+        pane_gaps: false,
+        sidebar_width: 32,
+        ..ClientPrefs::default()
+    };
+    let path = save_prefs(&home, &prefs).expect("save");
+    assert_eq!(path, prefs_path(&home));
+    assert_eq!(path, home.join("client").join("prefs.toml"));
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with("[ui]\n"), "{text}");
+    assert!(text.contains("mouse_capture = false\n"), "{text}");
+    assert!(
+        text.contains("[keymap]\npath = \"/tmp/keys.toml\"\n"),
+        "{text}"
+    );
+    assert!(!text.contains("layout"), "{text}");
+    assert_eq!(load_prefs(&home).unwrap(), prefs);
+    let leftovers = fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(leftovers, 0);
+
+    fs::write(&path, "[ui]\nsidebar_width = 40\n").unwrap();
+    let partial = load_prefs(&home).expect("every key is optional");
+    assert_eq!(
+        partial,
+        ClientPrefs {
+            sidebar_width: 40,
+            ..ClientPrefs::default()
+        }
+    );
+
+    fs::write(&path, "[ui]\nmouse_captre = false\n").unwrap();
+    let error = load_prefs(&home).expect_err("unknown key must fail");
+    assert!(matches!(error, PrefsError::Parse(_)), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("mouse_captre"), "{message}");
+    assert!(message.contains("line 2"), "{message}");
+
+    fs::write(&path, "[keymapp]\npath = \"\"\n").unwrap();
+    let message = load_prefs(&home)
+        .expect_err("unknown table must fail")
+        .to_string();
+    assert!(message.contains("keymapp"), "{message}");
 }

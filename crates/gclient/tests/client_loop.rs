@@ -199,6 +199,8 @@ fn live_entry_connects_before_running() {
         frame_delivery: gobby_client::FrameDelivery::Auto,
         host: None,
         host_notice: None,
+        prefs: gobby_client::ui::settings::ClientPrefs::default(),
+        gobby_home: std::path::PathBuf::new(),
     });
 
     assert!(

@@ -5,6 +5,7 @@ use gobby_client::startup::{
     GtermHostState, HealthClient, HttpHealthClient, ProbeEnv, Ready, StartupError,
 };
 use gobby_client::teardown::{ModeBackend, TerminalGuard};
+use gobby_client::ui::settings::ClientPrefs;
 use gobby_client::FrameDelivery;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
 use std::io::{self, Read, Write};
@@ -534,8 +535,14 @@ fn project_is_resolved_before_raw_mode() {
     let outside = tempfile::tempdir().expect("outside project");
     let args = parse_args(["gclient"]).expect("parse discovery");
     let (health, health_calls) = CountingHealth::new();
-    let error = prepare_at(&args, env_at("http://unused"), &health, outside.path())
-        .expect_err("outside-project startup succeeded");
+    let error = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &health,
+        outside.path(),
+        outside.path(),
+    )
+    .expect_err("outside-project startup succeeded");
     assert_eq!(health_calls.load(Ordering::SeqCst), 0);
     let message = error.to_string();
     assert!(message.contains(&outside.path().display().to_string()));
@@ -548,8 +555,14 @@ fn project_is_resolved_before_raw_mode() {
     std::fs::write(unreadable_gobby.join("project.json"), "not JSON")
         .expect("write malformed project id");
     let (health, health_calls) = CountingHealth::new();
-    let error = prepare_at(&args, env_at("http://unused"), &health, unreadable.path())
-        .expect_err("unreadable project id succeeded");
+    let error = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &health,
+        unreadable.path(),
+        unreadable.path(),
+    )
+    .expect_err("unreadable project id succeeded");
     assert_eq!(health_calls.load(Ordering::SeqCst), 0);
     let message = error.to_string();
     assert!(message.contains(&unreadable.path().display().to_string()));
@@ -572,5 +585,86 @@ fn ready_carries_a_resolved_project() {
     assert!(
         !views_source.contains("if let Some(project) = ready.project"),
         "run_ready retained a project-less branch"
+    );
+}
+
+struct HealthyHost;
+
+impl HealthClient for HealthyHost {
+    fn fetch_health(&self, _daemon_url: &str) -> Result<Option<GtermHostState>, StartupError> {
+        Ok(Some(GtermHostState {
+            enabled: true,
+            running: true,
+            adopted: false,
+            host_epoch: Some("epoch-ok".to_string()),
+            protocol_version: Some(PROTOCOL_VERSION),
+            restart_count: 0,
+            backoff_seconds: 0.0,
+            last_error: None,
+        }))
+    }
+}
+
+#[test]
+fn no_mouse_flag_and_prefs_file_shape_ready() {
+    let project_id = "44444444-4444-4444-8444-444444444444";
+    assert!(!parse_args(["gclient"]).expect("parse defaults").no_mouse);
+    let plain = parse_args(["gclient", "--project", project_id]).expect("parse --project");
+    let no_mouse =
+        parse_args(["gclient", "--project", project_id, "--no-mouse"]).expect("parse --no-mouse");
+    assert!(no_mouse.no_mouse);
+
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let env = || env_at("http://unused");
+
+    // No prefs file: defaults, and the flag forces mouse capture off.
+    let ready = prepare_at(&plain, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("missing prefs file yields defaults");
+    assert_eq!(ready.prefs, ClientPrefs::default());
+    assert!(ready.prefs.mouse_capture);
+    assert_eq!(ready.gobby_home.as_path(), home.path());
+    let ready = prepare_at(&no_mouse, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("--no-mouse without a prefs file");
+    assert!(!ready.prefs.mouse_capture);
+
+    // The [ui]/[keymap] file shape is honored; --no-mouse still wins.
+    let path = home.path().join("client").join("prefs.toml");
+    std::fs::create_dir_all(path.parent().expect("prefs parent")).expect("create client dir");
+    std::fs::write(
+        &path,
+        "[ui]\ntheme = \"light\"\nmouse_capture = true\nsidebar_width = 31\n[keymap]\npath = \"custom.toml\"\n",
+    )
+    .expect("write prefs");
+    let ready = prepare_at(&plain, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("shaped prefs file");
+    assert_eq!(ready.prefs.theme, "light");
+    assert_eq!(ready.prefs.sidebar_width, 31);
+    assert_eq!(ready.prefs.keybinds, "custom.toml");
+    assert!(ready.prefs.mouse_capture);
+    let ready = prepare_at(&no_mouse, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("--no-mouse over a prefs file");
+    assert!(!ready.prefs.mouse_capture);
+
+    // A malformed file fails before the health probe and names the path and key.
+    std::fs::write(&path, "[ui]\nmouse_captur = false\n").expect("write malformed prefs");
+    let (health, health_calls) = CountingHealth::new();
+    let error = prepare_at(&plain, env(), &health, cwd.path(), home.path())
+        .expect_err("malformed prefs file succeeded");
+    assert_eq!(health_calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(error, StartupError::Prefs { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert!(message.contains("mouse_captur"), "{message}");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .arg("--help")
+        .output()
+        .expect("run gclient --help");
+    assert!(output.status.success(), "--help did not exit zero");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--no-mouse"),
+        "usage text omits --no-mouse: {stdout}"
     );
 }

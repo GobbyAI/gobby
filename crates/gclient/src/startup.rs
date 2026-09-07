@@ -1,7 +1,9 @@
 //! Independent `gclient` startup: discover the daemon, probe health, then TUI.
 
 use crate::frame_source::FrameDelivery;
+use crate::prefs::{load_prefs, prefs_path, PREFS_FILE};
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
+use crate::ui::settings::ClientPrefs;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -11,7 +13,7 @@ use thiserror::Error;
 const HEALTH_PATH: &str = "/api/health";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 const USAGE: &str = "Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] \
-     [--frame-delivery auto|direct|proxy] [--version]";
+     [--frame-delivery auto|direct|proxy] [--no-mouse] [--version]";
 const FRAME_DELIVERY_USAGE: &str = "--frame-delivery requires auto, direct, or proxy";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +22,7 @@ pub struct CliArgs {
     pub daemon_url: Option<String>,
     pub token_file: Option<PathBuf>,
     pub frame_delivery: FrameDelivery,
+    pub no_mouse: bool,
     pub version: bool,
     pub help: bool,
 }
@@ -38,6 +41,8 @@ pub struct Ready {
     pub frame_delivery: FrameDelivery,
     pub host: Option<GtermHostState>,
     pub host_notice: Option<String>,
+    pub prefs: ClientPrefs,
+    pub gobby_home: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,6 +103,11 @@ pub enum StartupError {
         backoff_seconds: f64,
         last_error: String,
     },
+    #[error(
+        "failed to load client prefs from {path}: {detail}\n\
+         Every key in the file is optional; fix or remove the offending line."
+    )]
+    Prefs { path: String, detail: String },
     #[error("terminal mode: {0}")]
     Terminal(#[from] std::io::Error),
 }
@@ -172,6 +182,7 @@ where
     let mut daemon_url = None;
     let mut token_file = None;
     let mut frame_delivery = FrameDelivery::default();
+    let mut no_mouse = false;
     let mut version = false;
     let mut help = false;
     while let Some(raw) = iter.next() {
@@ -257,6 +268,10 @@ where
             frame_delivery = parse_frame_delivery(value.as_ref())?;
             continue;
         }
+        if arg == "--no-mouse" {
+            no_mouse = true;
+            continue;
+        }
         if arg == "--help" || arg == "-h" {
             help = true;
             continue;
@@ -270,6 +285,7 @@ where
         daemon_url,
         token_file,
         frame_delivery,
+        no_mouse,
         version,
         help,
     })
@@ -333,7 +349,11 @@ pub fn prepare(
         search_dir: "current directory".into(),
         detail: err.to_string(),
     })?;
-    prepare_at(args, env, health, &current_dir)
+    let gobby_home = gobby_core::gobby_home().map_err(|err| StartupError::Prefs {
+        path: format!("~/.gobby/{PREFS_FILE}"),
+        detail: err.to_string(),
+    })?;
+    prepare_at(args, env, health, &current_dir, &gobby_home)
 }
 
 pub fn prepare_at(
@@ -341,8 +361,16 @@ pub fn prepare_at(
     env: ProbeEnv,
     health: &impl HealthClient,
     current_dir: &Path,
+    gobby_home: &Path,
 ) -> Result<Ready, StartupError> {
     let project = resolve_project_at(args.project.as_deref(), current_dir)?;
+    let mut prefs = load_prefs(gobby_home).map_err(|error| StartupError::Prefs {
+        path: prefs_path(gobby_home).display().to_string(),
+        detail: error.to_string(),
+    })?;
+    if args.no_mouse {
+        prefs.mouse_capture = false;
+    }
     let host = health.fetch_health(&env.daemon_url)?;
     if !host
         .as_ref()
@@ -358,6 +386,8 @@ pub fn prepare_at(
         frame_delivery: args.frame_delivery,
         host,
         host_notice,
+        prefs,
+        gobby_home: gobby_home.to_path_buf(),
     })
 }
 
