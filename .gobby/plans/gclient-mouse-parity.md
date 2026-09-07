@@ -77,6 +77,12 @@ the hit map, and dispatch.
   hue alone, no pure black/white, no red/green, no exclamation marks or emoji in
   client text. Menus, hover states and the control indicator use the existing
   `Palette` tokens in `crates/gclient/src/theme.rs`.
+- herdr workspace surface. A herdr workspace is a repository checkout that owns
+  tabs and is listed in the sidebar; gclient serves one daemon whose roster is
+  flat (every terminal, whatever its project) and whose only grouping above a
+  pane is the tab. gclient therefore has no workspace list: every herdr
+  workspace mouse action lands on the tab bar, the roster or the settings
+  dialog, or is disposed by name in the table at the end of this section.
 - Non-goals: the nested-tmux prefix lockout is #21923 (open, needs-decision) and is
   not scheduled here; 2.5 gives a Held pane a mouse escape, which narrows #21923
   to the keyboard-only case. The scrollback editor (`edit_scrollback`) is removed
@@ -91,6 +97,18 @@ the hit map, and dispatch.
   `cargo clippy -p gobby-client --all-targets -- -D warnings`,
   `cargo test -p gobby-client <filter>` (never bare `cargo test`), and for 1.5
   `cargo test -p gobby-terminal <filter>`.
+
+herdr workspace surface, mapped action by action:
+
+| herdr action | gclient surface | section |
+| --- | --- | --- |
+| sidebar workspace row click (`FocusWorkspace`) | tab click (`Hit::Tab`); in the collapsed rail herdr focuses a workspace glyph and gclient focuses the roster index glyph (`Hit::Roster`) | 2.2, 2.3 |
+| workspace drag reorder (`MoveWorkspace`, `WORKSPACE_DRAG_THRESHOLD`) | tab drag reorder (`TAB_DRAG_THRESHOLD`); roster drag reorder for daemon rows | 2.2, 2.3 |
+| worktree group drag (`MoveWorkspaceBlock`) | none: tabs and roster rows have no parent/child grouping, so there is no block to move; disposed | none |
+| `[+ New]` sidebar button (`NewWorkspace`) | `[+]` new-tab button at the end of the tab bar (`Hit::NewTab`, `Spawn { placement: Placement::Tab }`); with `hide_tab_bar_when_single_tab` the button hides with the bar and the global menu `new tab` item plus the `NewTab` chord remain | 2.2, 5.1 |
+| workspace list scrollbar thumb drag and track click (`workspace_list_scrollbar_target_at`) | roster and attention list scrollbars (`Hit::SidebarScrollbar`) | 1.3, 2.3 |
+| workspace context menu (`ContextMenuKind::Workspace`: rename, close; `GitWorkspace` adds worktree items) | tab menu (`rename tab`, `close tab`, `new tab`); the worktree items have no client counterpart because gobby worktrees belong to the daemon's agent runs, not to a client checkout; disposed | 5.1 |
+| settings overlay clicks (`handle_settings_mouse`) | settings dialog rows (`Hit::SettingsRow`) | 1.3, 4.2 |
 
 ## P1: Mouse foundation
 `kind: framing`
@@ -224,6 +242,9 @@ Targets:
 - `crates/gclient/src/ui/tabs.rs::render_tab_bar`
 - `crates/gclient/src/ui/sidebar.rs::render_sidebar`
 - `crates/gclient/src/ui/sidebar.rs::render_collapsed_sidebar`
+- `crates/gclient/src/ui/sidebar.rs::render_roster`
+- `crates/gclient/src/ui/sidebar.rs::render_attention`
+- `crates/gclient/src/ui/settings.rs::render_settings`
 - `crates/gclient/src/ui/status.rs::render_status_line`
 - `crates/gclient/src/ui/mod.rs`
 - `crates/gclient/src/app/live_loop.rs::render_live_workspace`
@@ -242,7 +263,16 @@ inside the draw closure (`chrome` is `&mut` there): `chrome.view.apply_hits(hits
 `sidebar_toggle_hit_area: Option<Rect>`, `sidebar_divider_x: Option<u16>` (the
 separator column between sidebar and content) and
 `sidebar_section_divider_y: Option<u16>` (the row between roster and attention
-sections, from `expanded_sections`). `compute_view` fills `split_borders`,
+sections, from `expanded_sections`). `render_roster` and `render_attention`
+return the scrollbar track `Rect` (`scrollbar_track`, `None` when the list
+fits) next to the row hits, `SidebarHits` carries them as `roster_scrollbar` and
+`attention_scrollbar`, and `ViewState` stores them as
+`roster_scrollbar_hit_area` and `attention_scrollbar_hit_area`. `render_settings`
+in `crates/gclient/src/ui/settings.rs` returns `SettingsHits { dialog: Rect, rows: Vec<Rect> }`
+(one rect per drawn `SettingsRow`) and the `Mode::Settings` arm of
+`render_workspace_with` folds it into `ChromeHits`; `ViewState` keeps them as
+`settings_dialog_area: Option<Rect>` and `settings_row_hit_areas: Vec<Rect>`,
+cleared by every render outside settings mode. `compute_view` fills `split_borders`,
 `pane_infos`, `sidebar_divider_x` and `sidebar_section_divider_y` itself; the
 render pass fills the rest. Hits survive until the next render, so a click that
 arrives between frames tests against the last drawn frame, which is what the
@@ -256,22 +286,26 @@ applies the hits; the hit test itself is split into the new
 pub enum Hit {
     Tab(usize), TabScrollLeft, TabScrollRight, NewTab, TabBarEmpty,
     Roster(String), Attention(String), SidebarToggle, SidebarDivider, SidebarSectionDivider, SidebarEmpty,
+    SidebarScrollbar { section: SidebarSection, row: u16 }, // roster or attention list scrollbar lane
     Pane { slot: layout::PaneId, col: u16, row: u16 },     // inner cell coordinates
     PaneBorder(layout::PaneId), PaneScrollbar { slot: layout::PaneId, row: u16 },
     SplitBorder(usize),                                    // index into view.split_borders
+    SettingsRow(usize), SettingsDialog,                   // only while view.settings_dialog_area is set
     ControlIndicator, Status, Toast, Empty,
 }
+pub enum SidebarSection { Roster, Attention }
 pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit;
 ```
 
-Order of tests mirrors herdr `handle_mouse` (toast, tab bar, sidebar, split
-borders, panes by `inner_rect`, then `rect` for borders, then scrollbar lanes,
+Order of tests mirrors herdr `handle_mouse` (settings dialog while
+`settings_dialog_area` is set, toast, tab bar, sidebar with its scrollbar lanes,
+split borders, panes by `inner_rect`, then `rect` for borders, then scrollbar lanes,
 status row). `SplitBorder` matches a divider when the pointer is on `pos` (the
 divider column or row) within `area`, same as herdr `find_border_at`.
 
 **Acceptance:**
 
-- 1.3.1 - After a render, `chrome.view` carries tab, roster, attention, new-tab, scroll-arrow, sidebar toggle and control-indicator hit rects that match the drawn cells. symbol: `crates/gclient/src/ui/chrome_render.rs::render_workspace_with`. test: `crates/gclient/tests/parity/chrome.rs::rendered_hits_match_drawn_cells`.
+- 1.3.1 - After a render, `chrome.view` carries tab, roster, attention, new-tab, scroll-arrow, sidebar toggle, sidebar scrollbar, settings-row and control-indicator hit rects that match the drawn cells. symbol: `crates/gclient/src/ui/chrome_render.rs::render_workspace_with`. test: `crates/gclient/tests/parity/chrome.rs::rendered_hits_match_drawn_cells`.
 - 1.3.2 - `hit_test` classifies every region of the `split_live` fixture layout (tabs, sidebar rows, both panes, the split border, scrollbar lane, status row, control indicator) and returns `Empty` elsewhere. file: `crates/gclient/src/ui/hit.rs`. test: `crates/gclient/src/ui/hit.rs::hit_test_covers_split_live_layout`.
 
 ### 1.4 Split `live_loop.rs` into control, actions and loop modules [category: refactor] (depends: 1.3)
@@ -385,6 +419,7 @@ pub enum MouseGesture {
     SplitDrag { border: usize },
     SidebarDrag,
     SectionDrag,
+    SidebarScrollbarDrag { section: SidebarSection, grab_offset: u16 }, // 2.3
     ScrollbarDrag { slot: layout::PaneId, grab_offset: u16 },
     Select { slot: layout::PaneId },            // 3.1
     Forwarding { slot: layout::PaneId },        // 3.3 button held inside a reporting pane
@@ -453,6 +488,14 @@ over the tab bar switches tabs (up = previous, down = next, herdr
 `handle_tab_bar_wheel`). `render_tab_bar` draws the dragged tab with the
 `p.surface0` background and `Modifier::REVERSED` while `moved`.
 
+The tab bar is where herdr's workspace surface lands (Constraints table): a
+herdr workspace owns tabs the way a gclient tab owns panes, so `Hit::Tab` is
+`FocusWorkspace`, the tab drag is `MoveWorkspace`, and `Hit::NewTab` is the
+sidebar `NewWorkspace` button. `MoveWorkspaceBlock` has no counterpart because
+tabs have no parent/child grouping. When `hide_tab_bar_when_single_tab` hides
+the bar, the new-tab button hides with it; the global menu item `new tab` (5.1)
+and the `NewTab` chord stay available, and the bar returns with the second tab.
+
 **Acceptance:**
 
 - 2.2.1 - Clicking a tab activates it and focuses its pane; the new-tab button spawns a terminal into a new tab; scroll arrows move `tab_scroll`. symbol: `crates/gclient/src/app/live_loop/mouse/pointer.rs`. test: `crates/gclient/tests/parity/tabs.rs::tab_bar_clicks_activate_spawn_and_scroll`.
@@ -502,12 +545,23 @@ Gobby-native affordances:
 - Wheel over the roster or attention section scrolls `sidebar.scroll` /
   `sidebar.attention_scroll` by `MOUSE_SCROLL_LINES = 3` rows, clamped by
   `list_metrics`.
+- The collapsed rail: `render_collapsed_sidebar` already returns roster hits for
+  the index glyphs, so `Hit::Roster` behaves the same in both sidebar states
+  (herdr `collapsed_workspace_at_row` focuses a workspace from the rail; gclient
+  focuses the terminal).
+- `Hit::SidebarScrollbar { section, row }` (herdr
+  `workspace_list_scrollbar_target_at`): Down on the thumb starts
+  `SidebarScrollbarDrag { section, grab_offset }` and each Drag moves
+  `sidebar.scroll` or `sidebar.attention_scroll` so the thumb follows the
+  pointer; Down on the track jumps the list to the offset that row represents.
+  Both keep the offset-from-bottom form `list_metrics` clamps; Up ends the
+  gesture.
 
 **Acceptance:**
 
 - 2.3.1 - Clicking a roster row focuses and takes control of that terminal, opening a slot when it is not shown. symbol: `crates/gclient/src/app/live_loop/mouse/pointer.rs`. test: `crates/gclient/tests/parity/sidebar.rs::roster_click_focuses_the_terminal`.
 - 2.3.2 - Clicking an attention row focuses the pane that raised it and opens the Respond dialog for prompt entries; attention rows label the terminal, never a raw UUID, when a pane maps. symbol: `crates/gclient/src/ui/chrome.rs::attention_label`. test: `crates/gclient/tests/attention_flow.rs::attention_click_jumps_and_labels_the_terminal`.
-- 2.3.3 - Roster drag reorders and persists; the toggle collapses; divider drags resize width and section split within bounds; wheel scrolls the lists. symbol: `crates/gclient/src/app/persistence.rs::set_tab_order`. test: `crates/gclient/tests/parity/sidebar.rs::sidebar_drags_reorder_resize_and_scroll`.
+- 2.3.3 - Roster drag reorders and persists; the toggle collapses; divider drags resize width and section split within bounds; wheel scrolls the lists; scrollbar thumb drags and track clicks scroll the list they belong to. symbol: `crates/gclient/src/app/persistence.rs::set_tab_order`. test: `crates/gclient/tests/parity/sidebar.rs::sidebar_drags_reorder_resize_and_scroll`.
 
 ### 2.4 Split-border drag, pane scrollbar, wheel scrollback [category: code] (depends: 2.3)
 `kind: deliverable`
@@ -774,6 +828,7 @@ and its spec, so it shrinks.
 
 Targets:
 - `crates/gclient/src/app/live_loop/modal_input.rs`
+- `crates/gclient/src/app/live_loop/mouse/mod.rs`
 - `crates/gclient/src/app/live_loop.rs::route_live_input`
 - `crates/gclient/src/app/live_loop.rs::run_live_loop`
 - `crates/gclient/src/app/run_loop.rs::route_scripted_input`
@@ -807,7 +862,14 @@ for every mode except `Terminal`, `Prefix`, `Copy` and `Respond` (which keeps
   `&mut dyn MouseCaptureSwitch` (a one-method trait implemented by
   `TerminalGuard` over `set_mouse_capture`, and by a recording stub in tests)
   and applies the pending value after each input event, so `run_ready` passes
-  the guard it already owns through `start_session`.
+  the guard it already owns through `start_session`. Mouse in `Mode::Settings`
+  (herdr `handle_settings_mouse`): the modal branch of `route_mouse` in
+  `crates/gclient/src/app/live_loop/mouse/mod.rs` maps left Down on
+  `Hit::SettingsRow(i)` to `settings.selected = i` followed by the activation
+  enter performs (`activate_settings_row` in
+  `crates/gclient/src/app/live_loop/modal_input.rs`, shared by the key and mouse
+  paths), wheel over `Hit::SettingsDialog` moves `selected` by one, and a Down
+  outside the dialog closes it like esc.
 - `ConfirmClose`: `y`/enter yields `Confirm(target)` (terminal, pane or every
   pane of the tab, each through `terminate_live_terminal`), `n`/esc cancels.
 - `Rename`: printable keys insert at `cursor`, backspace/delete/left/right/
@@ -827,6 +889,7 @@ pending-capture check.
 
 - 4.2.1 - Each modal mode consumes its keys as listed: help and navigator filter on typing, the navigator's enter focuses the row, confirm-close accepts and cancels, rename commits the edited text, resize steps the ratio, navigate moves the roster selection. symbol: `crates/gclient/src/app/live_loop/modal_input.rs`. test: `crates/gclient/tests/parity/dialogs.rs::modal_keys_drive_every_mode`.
 - 4.2.2 - Toggling `mouse capture` in settings flips capture on the guard immediately and persists `mouse_capture` in the prefs file; toggling it back re-enables capture. symbol: `crates/gclient/src/app/live_loop.rs::run_live_loop`. test: `crates/gclient/tests/client_loop.rs::settings_toggle_switches_mouse_capture_and_saves_prefs`.
+- 4.2.3 - Clicking a settings row selects and activates it with the same effect as enter (a boolean flips, `theme` cycles) and a click outside the dialog closes it. symbol: `crates/gclient/src/app/live_loop/modal_input.rs`. test: `crates/gclient/tests/parity/dialogs.rs::settings_rows_respond_to_clicks`.
 
 ### 4.3 Load keymap overrides at startup and on reload [category: code] (depends: 4.2)
 `kind: deliverable`
@@ -940,7 +1003,9 @@ Items, in order (labels are lowercase verbs, no punctuation, per the contract):
   when an attention entry maps to the pane), `copy mode`, `split right`, `split
   down`, `zoom` / `unzoom`, `send right-clicks to pane` / `use gclient menu`
   (`TogglePassthrough`, 3.3), `close terminal`.
-- Tab: `new tab`, `rename tab`, `close tab`.
+- Tab: `new tab`, `rename tab`, `close tab` (herdr's workspace menu is `Rename`,
+  `Close`; its `GitWorkspace` worktree items have no client counterpart, see
+  the Constraints table).
 - Roster row: `focus`, `take control` / `release control`, `open in new tab`,
   `rename terminal`, `close terminal`.
 - Attention row: `respond` (prompts only), `jump to terminal`, `mark seen`
@@ -998,6 +1063,11 @@ and the existing dialogs.
   in `crates/gclient/src/app/live_loop/mouse/`, forwarding as `terminal_input` bytes, lease semantics kept
   with alt+click as the observe-only modifier, `edit_scrollback` removed,
   `custom_command` left to #20201, #21923 not scheduled.
+- 2026-09-07 (close review): the herdr workspace surface (sidebar workspace
+  click, drag reorder, worktree block moves, `[+ New]`, list scrollbar,
+  workspace menu, settings-overlay clicks) is mapped or disposed by name in the
+  Constraints table; the tab bar is the landing surface (2.2), sidebar
+  scrollbars (1.3, 2.3) and settings-row clicks (1.3, 4.2) are added.
 
 ## Task Mapping
 `kind: framing`
