@@ -173,4 +173,6 @@ notes for the round back to the coordinator, who records the round entry via
 `append_plan_changelog_round` before the next taskless review round.
 
 First drafts author narrative sections only. The `## M1 Task Manifest` is
-emitted by `plan-adversary-taskless` or the interactive coordinator on approval.
+returned as server-derived entries by `plan-adversary-taskless` and applied by
+the interactive coordinator after approval. When adversarial review is skipped,
+the coordinator uses the explicit human-handoff derive/apply path.

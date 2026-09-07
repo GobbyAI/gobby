@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from textwrap import dedent
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
@@ -600,6 +601,183 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     assert cleared is not None and cleared.session_id == predecessor.id
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(successor_id)
     assert consume_pending_handoff(temp_db, successor_id) is None
+
+
+@pytest.mark.asyncio
+async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_handoff(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    """A substantial staged plan survives authored storage and one compact delivery."""
+    session = _registered_session(session_manager)
+    draft = dedent(
+        """\
+        # Session-Recoverable Planning Draft
+
+        Plan artifact: staged conversational draft; materialize at
+        `.gobby/plans/session-recovery.md` when project writes become available.
+
+        **Plan ID:** session-recovery
+
+        ## Overview
+        `kind: framing`
+
+        Preserve one complete planning authority across a write-restricted provider
+        boundary. The draft must retain implementation details, exact commands,
+        acceptance criteria, and fenced examples without a scratch store. The
+        continuation restores the authored payload before doing more planning.
+
+        ## Constraints
+        `kind: framing`
+
+        - No project or home-directory writes while provider permissions are absent.
+        - No plan registration before a real expansion root exists.
+        - Base validation runs only after canonical materialization.
+        - Expansion remains blocked until manifest application and explicit approval.
+
+        ## P1: Preserve the staged authority
+        `kind: framing`
+
+        ### 1.1 Store the complete narrative
+        `kind: deliverable`
+
+        Targets:
+        - `src/gobby/sessions/handoff_records.py::build_handoff_payload`
+        - `tests/sessions/test_handoff.py::*` — scope-reason: verify persisted handoff behavior
+
+        Keep the entire Markdown draft in `current_state`. Store decision and stage
+        state in `key_decisions`, unresolved material questions in `notes`, and the
+        exact continuation point in `next_steps`. The authored record and rendered
+        Markdown must represent the same payload.
+
+        ```python
+        def restore_plan(handoff: HandoffPayload) -> str:
+            assert handoff.next_steps
+            return handoff.current_state
+        ```
+
+        **Acceptance:**
+
+        - 1.1.1 - The authored record preserves the exact plan body. behavior: "current_state roundtrip" in `tests/sessions/test_handoff.py`.
+        - 1.1.2 - Structured decisions and unresolved questions survive rendering. behavior: "structured metadata roundtrip" in `tests/sessions/test_handoff.py`.
+        - 1.1.3 - The first argumentless retrieval consumes the compact handoff exactly once. test: `tests/sessions/test_handoff.py::test_plan_draft_round_trips_through_compaction_and_argumentless_get_handoff`.
+
+        ### 1.2 Materialize and validate
+        `kind: deliverable`
+
+        Targets:
+        - `src/gobby/install/shared/skills/plan/references/drafting-and-staging.md`
+
+        When writes become available, materialize this whole draft at its canonical
+        path, replace staging-only provenance, and run project-aware base validation.
+        Review is optional; user approval and post-manifest expansion validation are
+        mandatory.
+
+        ```yaml
+        approvals:
+          drafting: approved
+          enhancement: declined
+          adversarial_review: pending
+          expansion: blocked
+        ```
+
+        **Acceptance:**
+
+        - 1.2.1 - Materialization establishes one canonical file authority. file: `.gobby/plans/session-recovery.md`.
+        - 1.2.2 - No staged draft is represented as already validated. behavior: "validation boundary" in `.gobby/plans/session-recovery.md`.
+
+        ## Verification
+        `kind: verification`
+
+        Query the isolated authored row, consume it through the session MCP registry,
+        inspect the compact delivery receipt, and prove a second argumentless
+        retrieval returns no handoff.
+
+        ## Open Questions
+        `kind: framing`
+
+        - Must a resumed provider preserve the original slug after permissions change?
+        - Which review stages has the user explicitly approved?
+        """
+    ).strip()
+    assert len(draft) > 2_000
+    assert "```python" in draft
+    assert "```yaml" in draft
+    assert "## Open Questions" in draft
+
+    key_decisions = (
+        "Decision Record: the canonical path is .gobby/plans/session-recovery.md.",
+        "Stage approvals: drafting approved; enhancement declined; adversarial review pending.",
+    )
+    notes = ("Unresolved material questions: preserve the slug after provider permissions change.",)
+    next_steps = (
+        "Materialize the complete draft when project writes are allowed.",
+        "Run project-aware base validation before any optional review.",
+    )
+    payload = build_handoff_payload(
+        current_state=draft,
+        next_steps=next_steps,
+        key_decisions=key_decisions,
+        notes=notes,
+    )
+    attempt_id = "7" * 32
+    attempt = stage_handoff_attempt(
+        temp_db,
+        session.id,
+        attempt_id=attempt_id,
+        handoff=payload,
+        clear_session=False,
+    )
+
+    authored = temp_db.fetchone(
+        """
+        SELECT current_state, next_steps_json, key_decisions_json, notes_json,
+               rendered_markdown
+        FROM session_handoffs
+        WHERE id = %s
+        """,
+        (attempt.handoff_record_id,),
+    )
+    assert authored is not None
+    assert authored["current_state"] == draft
+    assert json.loads(str(authored["next_steps_json"])) == list(next_steps)
+    assert json.loads(str(authored["key_decisions_json"])) == list(key_decisions)
+    assert json.loads(str(authored["notes_json"])) == list(notes)
+    assert authored["rendered_markdown"] == payload.rendered_markdown
+
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+    with session_context_for_test(session.id):
+        delivered = await registry.call("get_handoff", {})
+        consumed = await registry.call("get_handoff", {})
+
+    assert delivered == {
+        "success": True,
+        "found": True,
+        "session_id": session.id,
+        "handoff": payload.rendered_markdown,
+    }
+    assert draft in delivered["handoff"]
+    for item in (*key_decisions, *notes, *next_steps):
+        assert item in delivered["handoff"]
+    assert consumed == {
+        "success": True,
+        "found": False,
+        "session_id": None,
+        "handoff": "",
+    }
+
+    receipt = temp_db.fetchone(
+        """
+        SELECT attempt_id, boundary_kind, continuation_session_id
+        FROM session_handoff_deliveries
+        WHERE handoff_id = %s
+        """,
+        (attempt.handoff_record_id,),
+    )
+    assert receipt is not None
+    assert receipt["attempt_id"] == attempt_id
+    assert receipt["boundary_kind"] == "compact"
+    assert receipt["continuation_session_id"] == session.id
 
 
 def test_failed_attempt_restores_handoff_and_deletes_only_staged_content(

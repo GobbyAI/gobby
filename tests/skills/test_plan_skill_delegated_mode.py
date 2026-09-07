@@ -18,6 +18,12 @@ HANDOFF_INTERRUPT_WARNING = (
     "compaction command, never a refusal: do not stop, do not ask the user about it, "
     "and resume from the continuation prompt."
 )
+PLAN_HANDOFF_INTERRUPT_WARNING = (
+    "In a terminal session, the `set_handoff` call comes back as a rejected or cancelled "
+    "tool use attributed to the user. That is the daemon interrupting the turn to deliver "
+    "the compaction command, never a refusal: do not stop, do not ask the user about it, "
+    "and resume from the continuation prompt."
+)
 
 
 def _normalize_prose(value: str) -> str:
@@ -43,15 +49,16 @@ def body() -> str:
 
 
 @pytest.mark.parametrize(
-    ("skill_name", "expected_count"),
+    ("skill_name", "warning", "expected_count"),
     [
-        ("build-coordinator", 1),
-        ("bridge", 1),
-        ("plan", 3),
+        ("build-coordinator", HANDOFF_INTERRUPT_WARNING, 1),
+        ("bridge", HANDOFF_INTERRUPT_WARNING, 1),
+        ("plan", PLAN_HANDOFF_INTERRUPT_WARNING, 3),
     ],
 )
 def test_set_handoff_interrupt_warning_is_shared_by_skills(
     skill_name: str,
+    warning: str,
     expected_count: int,
 ) -> None:
     skill_path = SKILL_ROOT / skill_name / "SKILL.md"
@@ -63,7 +70,7 @@ def test_set_handoff_interrupt_warning_is_shared_by_skills(
         )
     skill_body = _normalize_prose(content)
 
-    assert skill_body.count(HANDOFF_INTERRUPT_WARNING) == expected_count
+    assert skill_body.count(warning) == expected_count
 
 
 def test_plan_skill_version(body: str) -> None:
@@ -201,7 +208,7 @@ def test_write_restricted_draft_uses_existing_structured_handoff(body: str) -> N
     assert "no scratch file, draft-storage tool, or periodic autosave" in section
     assert "not a validated artifact" in section
     assert "Never ask another agent or MCP tool to write around the restriction" in section
-    assert HANDOFF_INTERRUPT_WARNING in section
+    assert PLAN_HANDOFF_INTERRUPT_WARNING in section
 
 
 def test_review_runs_deterministic_gate_and_bounded_mechanic_before_adversary(
@@ -220,6 +227,10 @@ def test_review_runs_deterministic_gate_and_bounded_mechanic_before_adversary(
 
     assert base_gate < prepare
     assert "--mode expansion" not in section[:prepare]
+    assert "`validation_scope=first-draft`" in section
+    assert "expansion-mode validation is unrun" in section
+    assert "`validation_scope=manifest-bearing`" in section
+    assert "runs both modes" in section
     assert "mid-tier internal subagent" in section
     assert "plan-mechanic" in section
     assert "validator rerun-until-clean" in section
@@ -291,7 +302,7 @@ def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
         wait = phase.index("**Waiting on Spawned Runs**", compact)
 
         assert launch < compact < wait
-        assert HANDOFF_INTERRUPT_WARNING in phase[compact:]
+        assert PLAN_HANDOFF_INTERRUPT_WARNING in phase[compact:]
 
 
 def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None:
@@ -378,7 +389,7 @@ def test_enhancement_phase_precedes_adversary_gate(body: str) -> None:
     assert "converged: true | false" in normalized
     # Human is the scope gate; the enhancer never gates the adversary.
     assert (
-        "never let it gate, approve, reject, or block the adversary review. The human is the "
+        "never gate, approve, reject, or block the adversary review. The human is the "
         "scope gate" in normalized
     )
 

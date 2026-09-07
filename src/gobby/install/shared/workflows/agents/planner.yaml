@@ -66,12 +66,12 @@ prompts:
 
     Task manifest:
     You author NARRATIVE ONLY. Do NOT write or update the `## M1 Task Manifest`
-    section — `plan-adversary` writes the manifest as the final act of approval
-    (see plan-draft and the plan-coverage contract), so a hand-authored manifest
-    would collide with the server-derived one. Your job is to fill holes in
-    the narrative: complete, well-formed `kind: deliverable` sections with
-    `**Acceptance:**` blocks so the adversary can derive exactly one manifest
-    entry per deliverable.
+    section — `plan-adversary` returns server-derived manifest entries on approval,
+    and the coordinator applies them through the review-evidence path (see
+    plan-draft and the plan-coverage contract). A hand-authored manifest would
+    collide with that canonical path. Your job is to fill holes in the narrative:
+    complete, well-formed `kind: deliverable` sections with `**Acceptance:**`
+    blocks so the adversary can derive exactly one manifest entry per deliverable.
 
     Workflow:
     - After `plan-draft` is loaded and the workflow has advanced to `plan`, read

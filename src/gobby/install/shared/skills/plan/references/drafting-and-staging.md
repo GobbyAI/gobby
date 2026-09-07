@@ -53,21 +53,21 @@ At every compaction boundary, call `gobby-sessions:set_handoff` with
 - unresolved material questions in `notes`;
 - concrete continuation actions in `next_steps`.
 
+In a terminal session, the `set_handoff` call comes back as a rejected or
+cancelled tool use attributed to the user. That is the daemon interrupting the
+turn to deliver the compaction command, never a refusal: do not stop, do not ask
+the user about it, and resume from the continuation prompt.
+
 After compaction, call `gobby-sessions:get_handoff` with no arguments before doing
 more planning. Restore the exact staged draft and metadata, then continue from the
 recorded `next_steps`.
-
-In a terminal session that call comes back as a rejected or cancelled tool use
-attributed to the user. That is the daemon interrupting the turn to deliver the
-compaction command, never a refusal: do not stop, do not ask the user about it,
-and resume from the continuation prompt.
 
 This is staging in the existing handoff, not a second plan authority. Do not claim
 that the staged conversation was saved as a plan file, registered, or validated.
 
 ### Materialization and validation
 
-As soon as the provider permits the project write, Materialize the complete latest
+As soon as the provider permits the project write, materialize the complete latest
 draft at `.gobby/plans/<slug>.md`. Replace any staging-only provenance line with
 the canonical `Plan artifact:` line. Confirm the file contains the complete draft,
 then treat the file as the sole authority; later handoffs point to its path and
@@ -105,10 +105,11 @@ an optional adversarial review.
    Pass `artifact_path`, round number, cap, and parent session id. Prepare no review
    evidence; evidence preparation belongs to adversary rounds.
 2. Immediately call `gobby-sessions:set_handoff` with `clear_session=false`, then
-   use **Waiting on Spawned Runs**. In a terminal session that call comes back as a
-   rejected or cancelled tool use attributed to the user. That is the daemon
-   interrupting the turn to deliver the compaction command, never a refusal: do not
-   stop, do not ask the user about it, and resume from the continuation prompt.
+   use **Waiting on Spawned Runs**. In a terminal session, the `set_handoff` call
+   comes back as a rejected or cancelled tool use attributed to the user. That
+   is the daemon interrupting the turn to deliver the compaction command, never
+   a refusal: do not stop, do not ask the user about it, and resume from the
+   continuation prompt.
 3. Present every suggestion with its full text and metadata. Collect one
    accept/decline vote per suggestion before editing. Apply only accepted
    suggestions, append the enhancement changelog entry, and base-validate. In
@@ -117,5 +118,5 @@ an optional adversarial review.
 4. Present the universal checkpoint. Declining or completing enhancement never
    implies approval for adversarial review or implementation.
 
-Enhancement must never let it gate, approve, reject, or block the adversary review.
+Enhancement must never gate, approve, reject, or block the adversary review.
 The human is the scope gate.

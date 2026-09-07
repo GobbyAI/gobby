@@ -431,10 +431,12 @@ validation strictness:
 The deadlock between "review the plan" and "manifest must exist" is resolved by
 construction: after materialization, the planner-side `validate_plan_file` gate
 parses in `draft` mode before each taskless adversary spawn. The adversary then
-runs qualitative review without re-parsing, writes the manifest on clean
-review, self-checks in `expansion` mode, and downstream `gobby expand` parses in
-`expansion` against the now-manifest-bearing plan. A staged conversational
-draft cannot enter this sequence.
+runs qualitative review without re-parsing and, on clean review, returns exact
+server-derived routing decisions and manifest entries without editing the plan.
+After user acceptance, the coordinator applies those entries through
+`apply_plan_review_manifest`; that apply re-derives and expansion-parses before
+its atomic write. Downstream `gobby expand` parses the now-manifest-bearing plan
+in `expansion` mode. A staged conversational draft cannot enter this sequence.
 
 ### Manifest-on-Approval Contract
 
@@ -450,13 +452,18 @@ enough category/domain data.
 
 Sequence on clean review (no blocking findings):
 
-1. Append or repair the `## M1 Task Manifest` section in the plan file.
-2. Self-check via `parse_plan(plan_path, parse_mode="expansion")`.
-3. On `PlanParseError`, fix the manifest in-place and retry up to 3 times.
-4. After the cap is exhausted, return `verdict: needs_review` with the parser
-   details. Do not approve.
-5. On success, return `verdict: approved` with manifest entry count and whether
-   fallback emission was used.
+1. The adversary returns `verdict: approved` with exact server-derived routing
+   decisions, manifest entries, and coverage attestation. It does not edit the
+   plan.
+2. After the user accepts the result, the coordinator calls
+   `apply_plan_review_manifest` with that complete approval payload.
+3. The apply path re-derives the manifest, verifies evidence and source
+   freshness, expansion-parses the rendered plan, and writes atomically.
+4. If apply returns typed diagnostics, preserve them and leave the plan
+   unchanged. Do not hand-edit a manifest or synthesize review evidence; repair
+   through a fresh review round.
+5. After apply succeeds, the coordinator runs expansion-mode validation before
+   expansion.
 
 On rejection rounds the adversary MUST NOT edit the plan file — plan edits
 between rounds are the parent planner's responsibility. Findings are recorded in

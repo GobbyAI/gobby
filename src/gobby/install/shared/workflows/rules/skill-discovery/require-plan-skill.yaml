@@ -17,4 +17,4 @@ rules:
       - type: block
         reason: |
           {{ skill_fetch_directive("plan") }}
-          `.gobby/plans/` is written by `gobby plans register`, never by copying a plan-mode file; Lightweight planning does not create a `.gobby/plans/` file at all.
+          `.gobby/plans/` is the canonical file authority for dependent multi-deliverable plans. Write the complete draft there when permissions allow, or materialize the complete conversational draft staged in the session handoff before file-based validation. Atomic deliverables stay in the task workflow, and plan registration waits for a real expansion root.

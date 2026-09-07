@@ -60,8 +60,8 @@ def test_plan_embeds_artifact_provenance_in_presented_canonical_plan() -> None:
     assert result.has_behavioral_delta
 
 
-def test_plan_staged_draft_round_trips_through_structured_handoff() -> None:
-    """A restricted provider preserves the exact substantial draft and its metadata."""
+def test_plan_staged_draft_scenario_preserves_full_payload_fields() -> None:
+    """The recorded skill scenario declares the complete handoff payload contract."""
     result = run_recorded_skill_scenario(SCENARIOS / "plan/staged-draft-handoff.yaml")
     loaded = {action["action"]: action for action in result.loaded.actions}
 
