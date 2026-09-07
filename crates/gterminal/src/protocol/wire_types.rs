@@ -366,6 +366,32 @@ pub struct PaneModes {
     pub pane_in_mode: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseTracking {
+    Off,
+    X10,
+    Normal,
+    ButtonMotion,
+    AnyMotion,
+}
+
+impl PaneModes {
+    /// Highest tracking level the app enabled; tmux reports all lower flags too.
+    pub fn mouse_tracking(&self) -> MouseTracking {
+        if self.mouse_all {
+            MouseTracking::AnyMotion
+        } else if self.mouse_button {
+            MouseTracking::ButtonMotion
+        } else if self.mouse_standard {
+            MouseTracking::Normal
+        } else if self.mouse_any {
+            MouseTracking::X10
+        } else {
+            MouseTracking::Off
+        }
+    }
+}
+
 /// Messages sent from the client to the host over the **read-only** frame socket.
 ///
 /// Variant indices 1–3 are reserved so a hand-built fork-point `Input` /
