@@ -9,11 +9,15 @@ use gobby_client::frame_source::{
     AttachLocator, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
     UnixSocketFrameSource,
 };
+use gobby_client::ui::{render_workspace_with, Chrome};
 use gobby_client::Workspace;
 use gobby_terminal::protocol::{
     read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
     PaneLocator, PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+use ratatui::Terminal;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -454,4 +458,127 @@ async fn direct_and_proxy_panes_run_together() {
     assert_eq!(workspace.pane(proxy_id).attachment_id(), proxy_attachment);
     assert_eq!(workspace.pane(proxy_id).transport(), Some(Transport::Proxy));
     mock.shutdown().await;
+}
+
+// -------------------------------------------- oversized tmux frame anchoring
+
+/// A cell that names its own coordinate, so a capture says exactly which region
+/// of the source frame was painted.
+fn coordinate_symbol(x: u16, y: u16) -> String {
+    let index = (usize::from(y) * 7 + usize::from(x)) % 26;
+    char::from(b'a' + u8::try_from(index).expect("index fits 0..26")).to_string()
+}
+
+/// #21913: a tmux frame larger than its pane body is painted from its origin.
+///
+/// This drives the real composition rather than the renderer in isolation:
+/// `Chrome::compute_view` supplies the pane geometry and `render_workspace_with`
+/// installs the same content painter both run loops install, so a regression in
+/// either the renderer or the pane rect fails here.
+///
+/// A terminal is anchored at its origin — column 0 begins every line and row 0
+/// is the earliest output — so an oversized frame must be clipped at its far
+/// edges, exactly as the native branch already does. Centering the source
+/// instead cropped equally from all four edges, discarding the prompt and the
+/// left of every line; a real 200x50 tmux pane rendered as an empty body.
+/// Restoring that source centering moves the origin cell and fails this test.
+#[tokio::test]
+async fn an_oversized_tmux_frame_renders_from_its_origin() {
+    const FRAME_WIDTH: u16 = 200;
+    const FRAME_HEIGHT: u16 = 50;
+
+    let cells = (0..FRAME_HEIGHT)
+        .flat_map(|y| {
+            (0..FRAME_WIDTH).map(move |x| CellData {
+                symbol: coordinate_symbol(x, y),
+                fg: 0,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            })
+        })
+        .collect();
+
+    let mut ws = Workspace::scripted();
+    let pane = ws
+        .open_terminal("term-tmux-oversized", "tmux", "epoch-tmux")
+        .expect("open tmux terminal");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(FrameData {
+        cells,
+        width: FRAME_WIDTH,
+        height: FRAME_HEIGHT,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes: PaneModes::default(),
+    }));
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("replace frame source");
+    ws.recv_pane_frame(pane).await.expect("receive frame");
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "tmux");
+    chrome.compute_view(&ws, area);
+    let inner = chrome
+        .view
+        .pane_infos
+        .iter()
+        .find(|info| info.id == slot)
+        .expect("pane geometry")
+        .inner_rect;
+    assert!(
+        inner.width < FRAME_WIDTH && inner.height < FRAME_HEIGHT,
+        "the frame must be wider and taller than the pane body for this to \
+         exercise clipping at all, got {inner:?}"
+    );
+
+    let mut painted = None;
+    let mut terminal =
+        Terminal::new(TestBackend::new(area.width, area.height)).expect("test backend");
+    terminal
+        .draw(|frame| {
+            let mut content = |frame: &mut ratatui::Frame<'_>, body: Rect, id| {
+                painted = Some(body);
+                gobby_client::views::grid::render(frame, body, ws.pane(id));
+            };
+            render_workspace_with(frame, &ws, &chrome, &mut content);
+        })
+        .expect("draw workspace");
+    let painted = painted.expect("the workspace painted a pane body");
+    assert_eq!(
+        painted, inner,
+        "the content painter receives the pane's inner rect"
+    );
+
+    let buffer = terminal.backend().buffer();
+    let symbol_at = |x: u16, y: u16| buffer[(x, y)].symbol().to_string();
+
+    assert_eq!(
+        symbol_at(painted.x, painted.y),
+        coordinate_symbol(0, 0),
+        "the frame's own (0,0) must land on the pane body's origin"
+    );
+
+    // No leading column is dropped: the body's first row reads the frame's
+    // first row starting at column 0.
+    for column in 0..painted.width {
+        assert_eq!(
+            symbol_at(painted.x + column, painted.y),
+            coordinate_symbol(column, 0),
+            "body column {column} of the first row must be frame column {column}"
+        );
+    }
+
+    // No leading row is dropped: the body's first column reads the frame's
+    // first column starting at row 0.
+    for row in 0..painted.height {
+        assert_eq!(
+            symbol_at(painted.x, painted.y + row),
+            coordinate_symbol(0, row),
+            "body row {row} of the first column must be frame row {row}"
+        );
+    }
 }
