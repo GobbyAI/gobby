@@ -1,6 +1,7 @@
 # Wiki rebuild — discussion draft
 
 Saved 2026-09-06 from Gobby session #12034; documentation task #21910.
+Updated after the follow-on discussion under documentation task #21916.
 
 Status: unfinished discussion record, not an approved or implementation-ready
 plan. This preserves decisions, research progress, and remaining design work so
@@ -17,14 +18,16 @@ wiki implementation or benchmark was performed during this discussion.
 - Durable engine: Rust `gwiki`, with a versioned contract and thin, replaceable
   daemon adapters during the `gdaemon` migration.
 - PostgreSQL owns canonical revisions. Original source bytes and Markdown
-  exports live under hub-owned `files_home`. Filesystem edits are not
-  automatically authoritative database edits.
+  exports live under hub-owned `files_home`. Filesystem saves must enter the
+  revision system with concurrency checks; they cannot bypass it.
 - Publish automatically after validation. AI replacements of human-edited
   articles require review; optimistic concurrency protects intervening edits.
-- Code-wiki parity+ targets: Graphify, Archify, Understand Anything, and the
-  DeepWiki family. General-knowledge parity+ targets: llm_wiki, WeKnora, RAGFlow.
-  This requires explicit capability and quality acceptance cases, not a short
-  list of selected adoption candidates.
+- Code-wiki parity+ uses two bakeoff lanes: `gcode` versus Graphify for evidence;
+  the DeepWiki family, Understand Anything, and Archify for wiki explanations,
+  guided exploration, and diagrams. General-knowledge parity+ targets:
+  `sdsrss/llm_wiki` (now confirmed), WeKnora, and RAGFlow. Record explicit
+  capability and quality acceptance cases, with evidence for every adoption,
+  adaptation, or exclusion; do not silently narrow a parity claim.
 - Credit and reuse current `gcode` and Gobby services: AI routing, normal agents,
   agent definitions, cron, pipelines, progress, cancellation, and recovery.
   Do not assume the deleted wiki engine or extraction subsystem still exists.
@@ -43,6 +46,110 @@ wiki implementation or benchmark was performed during this discussion.
 - Wiki remains a concurrent roadmap side quest. Implementation approval and
   production activation approval remain separate; existing explicit grant
   reservations remain unchanged and outside the rebuild's critical path.
+
+## Latest checkpoint: bakeoff-first design
+
+The user wants to settle the entire design with concrete example contents for
+every generated file. The next focus is planning a fresh **code bakeoff** on
+Game Goblins, before returning to the complete wiki implementation plan.
+Keep this checkpoint. Replace the old wiki bakeoff with two independent
+bakeoffs: code, and general knowledge using a fixed cohort of files and links.
+No new bakeoff has been created or run, and no old bakeoff files have been
+removed. The present task only updates this discussion record and its handoff.
+
+### Locked code-bakeoff decisions
+
+- **Corpus:** one pinned, isolated Game Goblins repository snapshot shared by
+  the comparators. Source selection, exact commit, and exclusions must be
+  recorded before runs; live working-tree changes are not implicit inputs.
+- **Evidence lane:** compare `gcode` with Graphify on structure, relationships,
+  provenance, rationale, document references, and the evidence needed to explain
+  workflows. Graphify is primarily a code-index comparator. Credit delivered
+  gcode functionality and identify only genuine upstream gaps.
+- **Wiki lane:** DeepWiki-family tools for repository articles, hierarchy, and
+  citations; Understand Anything for domain/component understanding and guided
+  tours; Archify for architecture, workflow, sequence, data-flow, and lifecycle
+  diagrams. Exact DeepWiki-family entrants and versions still need selection.
+- **Failure attribution:** trace a missed or incorrect explanation to source
+  ambiguity, indexing, retrieval, or synthesis. Code-index quality affects wiki
+  quality; distinguish unavailable evidence from evidence a writer failed to
+  use. Record whether each improvement belongs to `gcode`, wiki generation, or
+  both. Direct current-source inspection can supplement indexed evidence.
+- **Deliverables:** complete native output sets, evidence-backed feature
+  decisions, and a proposed Gobby output tree for Game Goblins with actual
+  example contents for every generated file. Include navigation, articles,
+  diagrams, evidence references, and supporting metadata; a few showcase pages
+  or empty templates do not satisfy this design checkpoint.
+
+The general cohort stays separate: `sdsrss/llm_wiki`, WeKnora, and RAGFlow against
+fixed supplied files and captured links. The actual source cohort is not yet
+selected. The immediate planning focus is the code cohort.
+
+### Read-only reconnaissance for the next planning discussion
+
+- `/Users/josh/Projects/game-goblins` was inspected on branch `main` at
+  `46c311507503cafd8c9400470dca95333f514328`. This is an observed candidate, not
+  a completed frozen cohort. Untracked documents, ZIP archives, and `var/` were
+  present and untouched. Isolated independent clones avoid contaminating the
+  source checkout or allowing a comparator's worktree redirect to write there.
+- Its committed README and architecture document describe a Python operations
+  platform with shared platform/integration/replenishment packages and separate
+  standalone `Restocks/` and `Buylist/` applications. Useful proposed questions
+  cover Lightspeed synchronization and normalization; reporting, forecasting,
+  and weekly planning; package/schema ownership; shadow versus approved live
+  writes; verification/recovery; and implemented versus future behavior.
+  These are documented expectations to verify against source, not benchmark
+  answers already validated by a run.
+- Source-only analysis does not require running operational jobs or connecting
+  to Lightspeed, Slack, or the application's live PostgreSQL. Review the input
+  inventory for secrets, live data, generated wikis, and untracked work before
+  exposing any cohort to a model. Model/provider authorization and budgets remain
+  to be settled for the bakeoff.
+- Upstream setup inspection found Graphify needs Python 3.10+; AST code parsing
+  is local, while semantic document analysis uses an assistant/model backend.
+  Archify needs Node.js 18+ and an agent to author typed JSON, with browser
+  evidence and visual review for delivered diagrams. Understand Anything's
+  analysis preflight asks for Node.js 22+, pnpm 10+, a built plugin, and an agent
+  capable of its analysis workflow. See the linked primary repositories below;
+  recheck requirements against the exact selected commits before installation.
+- Local checks found Node `v26.8.1`, uv `0.12.10`, Graphify `0.9.34`, and Claude
+  and Codex executables. `pnpm` was absent from PATH. No installations, upgrades,
+  model calls, comparator execution, or application operations were performed.
+
+Proposed run coverage, still to refine: cold generation, an unchanged rerun,
+and controlled code/document changes. Retain full output inventories, commands,
+prompts, tool/source versions, model settings, costs, warnings, and rendered
+evidence. Preserve native outputs so the evaluation can distinguish observed
+competitor behavior from a later Gobby design example. Models, budgets, prompts,
+quality thresholds, and the output-by-output approval process are not settled.
+
+The old bakeoff spans tracked evidence at
+`docs/evidence/wiki-bakeoff-2026-06/` and the dedicated local workspace
+`/Users/josh/Projects/wiki-bakeoff/` (comparator clones, inputs, outputs, and run
+records). The user requested replacing/trashing the old bakeoff, but the exact
+cleanup inventory and recoverable removal procedure remain to be planned.
+Do not infer that neighboring wiki directories or shared datastores are part
+of that cleanup. Do not restore old conclusions as new-run acceptance evidence.
+
+### Human authoring and upkeep discussion remains open
+
+The intended interaction is humans reading and writing in Obsidian, with agents
+reading and writing through MCP/CLI against the canonical data stack. Revision
+history must include both human and agent edits with authorship. Although the
+user selected the explicit-import option in a widget, their accompanying note
+said we probably want two-way sync, and they paused elicitation to ask questions.
+**Explicit import is not locked; automatic two-way sync is reopened.** Resolve
+sync triggers, conflicts, review, recovery, and human-authorship protection
+before finalizing the design. Database authority and the live-vault decision
+remain intact.
+
+The user also asked about a Gobby agent for upkeep. The proposed direction is a
+normal Gobby agent definition scheduled through existing cron/pipelines for gap
+finding, reconciliation, and proposed updates, while Rust `gwiki` enforces
+revisions, citations, review, and publication. Agent duties and their split with
+bounded engine synthesis are not yet finalized; no separate runtime or queue
+is authorized. Resume with code-bakeoff planning, not the previously paused
+sync interview or automatic wiki implementation.
 
 ## Baseline after retirement
 
@@ -130,9 +237,10 @@ Required design properties to preserve this decision safely:
 - Local-edit collision detection. Never silently overwrite locally changed
   generated files. Preserve user notes, `.obsidian` settings, bookmarks, and
   layouts; cleanup applies only to known managed files under validated paths.
-- PostgreSQL remains authoritative. Automatic bidirectional Obsidian ingestion
-  was not selected. An explicit CLI/MCP import-as-revision operation was proposed
-  for local edits, but its detailed review/conflict behavior is not settled.
+- PostgreSQL remains authoritative. The latest discussion reopened automatic
+  two-way sync; explicit CLI/MCP import-as-revision is an alternative, not a
+  settled requirement. Both human and agent edits must enter revision history.
+  Exact sync, review, and conflict behavior remains open as recorded above.
 - Portable Markdown links, evidence references, readable diagrams, and
   unambiguous paths for colliding titles. Rendered Mermaid alone does not supply
   Obsidian Graph relationships; ordinary note links must carry relevant edges.
@@ -170,11 +278,11 @@ or an exhaustive acceptance matrix.
 | [WeKnora](https://github.com/Tencent/WeKnora) | `main` · `3d3bb7f6d1acca8caa84bb73b189fe46c30967a9` | Wiki synthesis, interconnected Markdown, edit/revision/rollback, multimodal ingestion, metadata, hybrid and hierarchical retrieval/reranking, graph and reprocessing. |
 | [RAGFlow](https://github.com/infiniflow/ragflow) | `main` · `0c28d59ea1d362d9b6aa7481eed48c7fd9a95f0b` | Structured document parsing/tables/OCR, chunk inspection and curation, hybrid/reranked/graph retrieval, citation grounding, retrieval evaluation and workflow integration. |
 
-The exact `llm_wiki` repository remains a confirmation point: `sdsrss/llm_wiki`
-is the current working interpretation of the user's underscore name. Historical
-local evidence used `Pratiyush/llm-wiki`, a different, session-oriented project;
-do not silently substitute it. CodeWiki is an additional research comparator,
-not a separately confirmed user-named repository.
+The user confirmed `sdsrss/llm_wiki`. Historical local evidence used
+`Pratiyush/llm-wiki`, a different, session-oriented project; do not substitute
+it. CodeWiki remains a candidate within the DeepWiki-family research rather
+than a separately confirmed new-bakeoff entrant. The table's commits are prior
+research pins; fresh bakeoff run pins must be selected and recorded separately.
 
 For every relevant capability, the next plan must record: comparator/version,
 observable acceptance case, existing Gobby capability credited, remaining gap,
@@ -187,8 +295,10 @@ resolve any material auxiliary scope explicitly.
 Historical evidence under `docs/evidence/wiki-bakeoff-2026-06/` includes
 `ADOPTION-CANDIDATES.md`, `graphify-revalidation-2026-08.md`, and DeepWiki,
 OpenDeepWiki, CodeWiki, and llm-wiki setup notes. Those results are historical,
-not replacement certification. New comparisons need common public/synthetic
-corpora and recorded source versions, model/provider/settings, and costs.
+not replacement certification, and the user now wants the old bakeoff retired.
+The replacement code cohort is Game Goblins; the separate general cohort will
+use fixed files and links. Record source versions, model/provider/settings,
+and costs for each new run.
 
 ## Current reuse audit and gaps
 
@@ -276,7 +386,10 @@ render/layout validation. Diagram acceptance must exercise actual rendering.
 
 This carries forward the user's sequence without claiming complete targets,
 dependency ordering, or acceptance IDs. Convert it to the typed plan contract
-only after the remaining design decisions and audits are resolved.
+only after the remaining design decisions and audits are resolved. This is the
+earlier implementation sketch: the newly locked bakeoff-first design work above
+now precedes it and may refine its deliverables. Game Goblins is the bakeoff
+corpus; Gobby's own required project wiki remains in product scope.
 
 1. Establish namespaces, explicit evidence/revisions, and staged publication,
    exposed through the CLI/MCP/necessary daemon contract. Immediately prove two
@@ -339,28 +452,39 @@ documentation-only and does not validate the future implementation.
 
 ## Remaining work and resume instructions
 
-1. Confirm the exact `llm_wiki` URL and finish the primary-source capability
-   audit. Expand the preliminary table into acceptance cases with reuse credit,
-   quality metrics, and explicit treatment of auxiliary/platform capabilities.
-2. Finish extraction dependency/security/provider choices; do not resurrect
+1. Resume planning the code bakeoff using the locked two-lane decisions above.
+   Resolve the exact Game Goblins snapshot/input inventory, DeepWiki-family
+   entrants, comparator pins, isolated execution setup, models/budgets, prompts,
+   evidence questions, scoring, and full generated-file inventory/review method.
+   Plan scoped retirement of the old bakeoff separately from this checkpoint
+   update; no old assets have been deleted. Keep the general cohort separate
+   and select its fixed files/links later. Do not ask again which `llm_wiki` repo.
+2. Use the fresh bakeoffs to produce evidence-backed feature decisions and
+   complete example outputs before settling the whole redesign. Attribute code
+   gaps to `gcode`, wiki generation, or both. Record exclusions honestly rather
+   than treating deferred custom interfaces as delivered parity.
+3. Finish extraction dependency/security/provider choices; do not resurrect
    archived wiki extraction by assumption. Define original-byte and locator
    contracts, extraction completeness reporting, and input/resource limits.
-3. Specify versioned Rust/daemon/CLI/MCP contracts, schema, staged publication,
+4. Specify versioned Rust/daemon/CLI/MCP contracts, schema, staged publication,
    revision-gated projections, human review, and failure/recovery state. Audit
    consumers using current gcode before choosing exact file/symbol targets.
-4. Resolve general-wiki pipeline attribution without checkout, pinned-branch
-   evidence/index ownership, stage checkpoints, and maintenance invalidation.
-5. Detail live-vault manifest/recovery, local-edit conflicts, rename behavior,
-   and whether explicit import-as-revision and optional snapshot export are
-   included. Keep database authority and the accepted mixed-export window clear.
-6. Define synthesis/model budgets and repeatable evaluation settings/thresholds.
+5. Resolve general-wiki pipeline attribution without checkout, pinned-branch
+   evidence/index ownership, stage checkpoints, maintenance invalidation, and
+   the proposed upkeep agent's duties within existing Gobby orchestration.
+6. Return to the reopened two-way-sync decision after the code-bakeoff planning
+   discussion. Detail human/agent revision history, live-vault manifest/recovery,
+   local-edit conflicts, rename behavior, and optional snapshot export. Keep
+   database authority and the accepted mixed-export window clear.
+7. Define synthesis/model budgets and repeatable evaluation settings/thresholds.
    Confirm the completed Decision Record, then author and review the Full typed
    implementation plan under `docs/contracts/plan-coverage.md`. This discussion
    draft is not a substitute for that decision-complete plan.
-7. Obtain the respective implementation and activation approvals, preserving
+8. Obtain the respective implementation and activation approvals, preserving
    manual activation and the nonblocking roadmap relationship. Do not reopen
    obsolete wiki epics or alter explicit reserved grants.
 
-The immediate user request is only to save this discussion and reference it in
-`set_handoff` **without `clear_session=true`**. Use `clear_session=false`; do not
-automatically start implementation after writing the handoff.
+The immediate user request is to update this checkpoint and call `set_handoff`,
+then further refine the forward plan. Use `clear_session=false` for this ongoing
+planning handoff. Do not automatically begin wiki implementation, bakeoff
+execution, or old-bakeoff cleanup after saving it.
