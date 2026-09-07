@@ -1,9 +1,12 @@
 """Filesystem identity checks shared by coordinator-only bakeoff helpers."""
 
+import hashlib
 import json
 import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 
 def contained_file(root: Path, value: str | Path) -> Path:
@@ -32,6 +35,21 @@ def assert_owned_runtime(root: Path, owner_session: str) -> None:
     assert ownership["runtime_root"] == str(root)
     assert ownership["owner_task"] == "#21942"
     assert ownership["owner_session"] == owner_session, "runtime session owner mismatch"
+
+
+def file_record(root: Path, value: str | Path) -> dict[str, Any]:
+    path = contained_file(root, value)
+    with path.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
+    return {"path": str(path.relative_to(root)), "bytes": path.stat().st_size, "sha256": digest}
+
+
+def verify_file_record(root: Path, record: Mapping[str, Any]) -> Path:
+    path = contained_file(root, record["path"])
+    actual = file_record(root, path)
+    assert record["bytes"] == actual["bytes"], f"artifact size changed: {path}"
+    assert record["sha256"] == actual["sha256"], f"artifact hash changed: {path}"
+    return path
 
 
 def write_once(path: Path, payload: str, mode: int) -> None:

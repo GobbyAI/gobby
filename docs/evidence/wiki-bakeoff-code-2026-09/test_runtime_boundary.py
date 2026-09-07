@@ -4,8 +4,29 @@ from pathlib import Path
 
 import pytest
 from provision_environment import refresh_manifest
-from runtime_boundary import contained_file, write_once
+from runtime_boundary import contained_file, file_record, verify_file_record, write_once
 from validate_environment import ALLOWED_EXAMPLE_ENV, _scan_secrets
+
+
+def test_artifact_receipt_detects_same_size_tampering(tmp_path: Path) -> None:
+    artifact = tmp_path / "tool"
+    artifact.write_bytes(b"original")
+    record = file_record(tmp_path, artifact)
+    assert verify_file_record(tmp_path, record) == artifact
+    artifact.write_bytes(b"modified")
+    with pytest.raises(AssertionError, match="artifact hash changed"):
+        verify_file_record(tmp_path, record)
+
+
+def test_artifact_receipt_rejects_replacement_symlink(tmp_path: Path) -> None:
+    artifact = tmp_path / "tool"
+    artifact.write_bytes(b"original")
+    record = file_record(tmp_path, artifact)
+    target = tmp_path / "target"
+    artifact.rename(target)
+    artifact.symlink_to(target)
+    with pytest.raises(AssertionError, match="symlink in evidence path"):
+        verify_file_record(tmp_path, record)
 
 
 def test_existing_evidence_is_not_replaced(tmp_path: Path) -> None:

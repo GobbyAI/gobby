@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import copy
+import hashlib
 import json
 import os
 import re
 import socket
 import stat
 import subprocess
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -29,10 +34,10 @@ from provision_environment import (
     VOLUMES,
     build_manifest,
 )
-from service_safety import validate_rendered
+from runtime_boundary import contained_file, verify_file_record, write_once
+from service_safety import validate_container, validate_rendered
 
 GRAPHIFY_COMMIT = "c9f99018774e2e0380e9f65b3959944559a0d5f6"
-GRAPHIFY_SDIST_SHA256 = "8135a5a22b6b78745aa3ab040cb3f5cecd7126eef5b4e89764404e6e75b58568"
 GROK_DMG_SHA256 = "bbcccef258102a1f32e36947b1a6da059a828bf1cea552dfdb58ca35ab562e09"
 PINS = {
     "graphify": GRAPHIFY_COMMIT,
@@ -170,10 +175,8 @@ def validate_isolation(root: Path) -> None:
 
     before = _load_json(root / "isolation" / "external-state.before.json")
     after = _load_json(root / "isolation" / "external-state.after.json")
-    assert before["source"] == after["source"], "source checkout changed"
-    before_files = {item["path"]: item for item in before["stable_global_files"]}
-    after_files = {item["path"]: item for item in after["stable_global_files"]}
-    assert before_files == after_files, "stable global configuration, vault, or binary changed"
+    validate_external_changes(root, before, after)
+    validate_external_services(before, after)
 
     _assert_file_mode(root / "config" / "services.env", 0o600)
     _assert_file_mode(root / "gobby-home" / "bootstrap.yaml", 0o600)
@@ -181,6 +184,66 @@ def validate_isolation(root: Path) -> None:
     assert runtime["ports"] == PORTS
     assert runtime["bind_address"] == "127.0.0.1"
     assert runtime["gobby_home"] == str(root / "gobby-home")
+
+
+def validate_external_changes(root: Path, before: dict[str, Any], after: dict[str, Any]) -> None:
+    attribution = _load_json(contained_file(root, "isolation/concurrent-changes.json"))
+    source = attribution["source"]
+    assert source["before"] == before["source"]
+    assert source["after"] == after["source"]
+    assert source["owner_session"] and source["message"]
+    for key in ("repo", "status_porcelain_v1", "status_sha256"):
+        assert before["source"][key] == after["source"][key], f"source {key} changed"
+    history = verify_file_record(root, source["history"]).read_text()
+    assert before["source"]["head"] in history and after["source"]["head"] in history
+    before_files = {item["path"]: item for item in before["stable_global_files"]}
+    after_files = {item["path"]: item for item in after["stable_global_files"]}
+    trust = attribution["codex_trust"]
+    config_path = str(Path.home() / ".codex/config.toml")
+    assert trust["path"] == config_path
+    original = before_files.pop(config_path)
+    current = after_files.pop(config_path)
+    assert before_files == after_files, "unattributed global file change"
+    assert {k: v for k, v in original.items() if k != "sha256"} == {
+        k: v for k, v in current.items() if k != "sha256"
+    }
+    captured = verify_file_record(root, trust["capture"])
+    _assert_file_mode(captured, 0o600)
+    payload = captured.read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == current["sha256"]
+    old, new = trust["old_path"].encode(), trust["new_path"].encode()
+    prefix = str(Path.home() / ".gobby/worktrees/game-goblins/task-").encode()
+    assert old.startswith(prefix) and new.startswith(prefix) and old != new
+    assert payload.count(new) == 1 and old not in payload
+    assert hashlib.sha256(payload.replace(new, old, 1)).hexdigest() == original["sha256"], (
+        "config difference exceeds the attributed worktree trust replacement"
+    )
+    assert trust["owner_session"] == source["owner_session"] and trust["message"]
+
+
+def validate_external_services(before: dict[str, Any], after: dict[str, Any]) -> None:
+    snapshots = []
+    for snapshot in (before, after):
+        assert snapshot["docker_containers"]["exit_code"] == 0
+        assert snapshot["docker_volumes"]["exit_code"] == 0
+        assert snapshot["shared_port_listeners"]["exit_code"] == 0
+        snapshots.append(
+            {
+                row["Names"]: {
+                    key: value for key, value in row.items() if key not in {"RunningFor", "Status"}
+                }
+                for row in map(json.loads, snapshot["docker_containers"]["stdout"].splitlines())
+            }
+        )
+    old, new = snapshots
+    assert all(new.get(name) == value for name, value in old.items()), "shared container changed"
+    assert set(new) - set(old) == set(CONTAINERS.values()) | {
+        f"{COMPOSE_PROJECT}-21942-opendeepwiki"
+    }
+    old_volumes = set(before["docker_volumes"]["stdout"].splitlines())
+    new_volumes = set(after["docker_volumes"]["stdout"].splitlines())
+    assert old_volumes <= new_volumes and new_volumes - old_volumes == set(VOLUMES.values())
+    assert before["shared_port_listeners"] == after["shared_port_listeners"]
 
 
 def validate_compose(root: Path) -> None:
@@ -202,8 +265,28 @@ def validate_compose(root: Path) -> None:
     validate_rendered(rendered, images, _load_env_file(root / "config/services.env"))
 
 
+def _validate_source_manifest(root: Path, name: str, pin: str, record: dict[str, Any]) -> None:
+    manifest = _load_json(verify_file_record(root, record))
+    source_root = root / "sources" / name
+    assert manifest["source_commit"] == pin
+    assert manifest["root"] == str(source_root)
+    assert manifest["file_count"] == len(manifest["files"]) > 0
+    paths = [item["path"] for item in manifest["files"]]
+    assert len(paths) == len(set(paths)), "duplicate source path"
+    for item in manifest["files"]:
+        verify_file_record(root, {**item, "path": str(source_root / item["path"])})
+
+
+def _validate_installation_checks(root: Path, checks: list[dict[str, Any]]) -> None:
+    assert checks, "missing installation checks"
+    for check in checks:
+        assert check["argv"] and check["exit_code"] == 0
+        assert Path(check["cwd"]).resolve().is_relative_to(root.resolve())
+        verify_file_record(root, check["log"])
+
+
 def validate_installations(root: Path) -> None:
-    receipt = _load_json(root / "receipts" / "installations.json")
+    receipt = _load_json(contained_file(root, "receipts/installations.json"))
     comparators = receipt["comparators"]
     assert set(comparators) == set(PINS)
     for name, pin in PINS.items():
@@ -213,28 +296,43 @@ def validate_installations(root: Path) -> None:
         if item["status"] == "blocked":
             assert item["exit_code"] != 0
             assert item["error"]
-            assert (root / item["log_path"]).is_file()
+            verify_file_record(root, item["log"])
             assert item.get("substitution") is None
+            continue
+        assert item["entrypoints"], f"missing entrypoints for {name}"
+        for artifact in [*item["entrypoints"], *item["dependency_locks"], *item["evidence"]]:
+            verify_file_record(root, artifact)
+        _validate_installation_checks(root, item["checks"])
+        if name == "grok-wiki":
+            verify_file_record(root, item["release_artifact"])
+            assert item["release_artifact"]["sha256"] == GROK_DMG_SHA256
+            assert item["dependency_lock_status"] == "dependencies embedded in signed release"
+        else:
+            assert item["dependency_locks"], f"missing dependency lock for {name}"
+            _validate_source_manifest(root, name, pin, item["source_manifest"])
+            source = _load_json(verify_file_record(root, item["source_receipt"]))
+            assert source["required_pin"] == pin
+            assert source["archive_sha256"] == item["source_archive"]["sha256"]
+            assert source["archive"] == str(verify_file_record(root, item["source_archive"]))
 
     graphify = comparators["graphify"]
-    assert graphify["status"] == "installed"
-    assert graphify["version"] == "0.9.55"
-    assert graphify["sdist_sha256"] == GRAPHIFY_SDIST_SHA256
-    assert graphify["commit_byte_identity"] == "UNVERIFIED"
-    assert Path(graphify["executable"]).is_file()
-    assert Path(graphify["dependency_lock"]).is_file()
+    if graphify["status"] == "installed":
+        version_log = verify_file_record(root, graphify["version_log"])
+        assert "0.9.55" in version_log.read_text()
 
-    grok = comparators["grok-wiki"]
-    assert grok["required_artifact_sha256"] == GROK_DMG_SHA256
-
-    gcode = _load_json(root / "receipts" / "gcode.json")
+    gcode = _load_json(contained_file(root, "receipts/gcode.json"))
     assert gcode["source_commit"] == GOBBY_SHA
     assert gcode["version"] == "1.7.0"
     assert gcode["contract_version"] == 8
-    assert Path(gcode["executable"]) == root / "tools" / "gcode" / "bin" / "gcode"
-    assert Path(gcode["executable"]).is_file()
-    assert len(gcode["executable_sha256"]) == 64
-    assert Path(gcode["cargo_lock"]).is_file()
+    executable = verify_file_record(root, gcode["executable"])
+    assert executable == root / "tools/gcode/bin/gcode"
+    verify_file_record(root, gcode["gdaemon"])
+    verify_file_record(root, gcode["cargo_lock"])
+    _validate_source_manifest(root, "gobby", GOBBY_SHA, gcode["source_manifest"])
+    _validate_installation_checks(root, gcode["checks"])
+    assert verify_file_record(root, gcode["version_log"]).read_text().strip() == "gcode 1.7.0"
+    contract = _load_json(verify_file_record(root, gcode["contract_log"]))
+    assert contract["tool"] == "gcode" and contract["contract_version"] == 8
 
 
 def validate_receipts(root: Path) -> None:
@@ -249,24 +347,21 @@ def validate_receipts(root: Path) -> None:
         assert item["image_id"].startswith("sha256:")
         assert item["health"] == "healthy"
 
-    daemon = _load_json(root / "receipts" / "daemon.json")
-    assert daemon["status"] == "ready"
-    assert daemon["gobby_home"] == str(root / "gobby-home")
-    assert daemon["http_port"] == PORTS["daemon_http"]
-    assert daemon["websocket_port"] == PORTS["daemon_ws"]
-    assert daemon["pid"] > 1
-    assert not set(daemon["environment_present"]).intersection(MANAGED_ENV_NAMES)
-
-    grant = _load_json(root / "receipts" / "grant.json")
-    assert grant["status"] == "passed"
-    assert grant["source"] in {"handshake", "cache"}
-    assert grant["daemon_reachable"] is True
-    assert grant["unexpired"] is True
-    assert grant["postgres"] == "passed"
-    assert grant["qdrant"] == "passed"
-    assert grant["falkordb"] == "passed"
-    assert Path(grant["project_root"]) == root / "corpora" / "gcode" / "C0"
-    assert grant["project_marker_excluded_from_input_manifest"] is True
+    proof = _load_json(contained_file(root, "receipts/runtime-verification.json"))
+    assert proof["issued_at"] <= proof["observed_unix"] < proof["expires_at"]
+    assert proof["valid_signature_http"] == 200
+    assert proof["tampered_signature_http"] == 403
+    assert proof["tampered_signature_reason"] == "invalid_signature"
+    assert (
+        proof["project_id"]
+        == _load_json(contained_file(root, "corpora/gcode/C0/.gobby/project.json"))["id"]
+    )
+    assert proof["postgres_identity"] == ["gobby_bakeoff_21942", proof["postgres_role"], "public"]
+    assert proof["postgres_role"].startswith("gobby_ix_")
+    assert proof["qdrant_url"] == "http://127.0.0.1:61235"
+    assert proof["falkordb_endpoint"] == "127.0.0.1:61237"
+    for record in proof["launch_receipts"].values():
+        verify_file_record(root, record)
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -290,57 +385,120 @@ def _assert_port_open(port: int) -> None:
         pass
 
 
-def probe_live_environment(root: Path) -> None:
+def _validate_grant_binding(root: Path, grant: dict[str, Any], now: float) -> dict[str, str]:
+    from psycopg.conninfo import conninfo_to_dict
+
+    project = _load_json(contained_file(root, "corpora/gcode/C0/.gobby/project.json"))
+    assert grant["version"] == 2 and grant["api_contract"] == 1
+    assert grant["issued_at"] <= now < grant["expires_at"], "expired or future runtime grant"
+    principal = grant["principal"]
+    assert principal["project_id"] == project["id"], "foreign project grant"
+    assert (
+        principal["machine_id"] == contained_file(root, "gobby-home/machine_id").read_text().strip()
+    )
+    assert principal["kind"] == "interactive"
+    assert principal["session_id"] is None and principal["execution_id"] is None
+    postgres = grant["capabilities"]["postgres"]
+    assert postgres["mode"] == "direct" and now < postgres["valid_until"]
+    connection = conninfo_to_dict(postgres["dsn"])
+    assert connection["host"] == "127.0.0.1" and connection["port"] == "61234"
+    assert connection["dbname"] == "gobby_bakeoff_21942"
+    assert connection["user"] == postgres["role_name"]
+    assert connection["user"].startswith("gobby_ix_")
+    qdrant = grant["capabilities"]["qdrant"]
+    assert qdrant["mode"] == "direct" and qdrant["url"] == "http://127.0.0.1:61235"
+    falkor = grant["capabilities"]["falkordb"]
+    assert falkor["mode"] == "direct"
+    assert falkor["host"] == "127.0.0.1" and falkor["port"] == 61237
+    return connection
+
+
+def _present_grant(root: Path, grant: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    encoded = base64.urlsafe_b64encode(json.dumps(grant).encode()).decode().rstrip("=")
+    token = contained_file(root, "gobby-home/local_cli_token").read_text().strip()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{PORTS['daemon_http']}/api/runtime/config",
+        headers={"X-Gobby-Runtime-Grant": encoded, "X-Gobby-Local-Token": token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as error:
+        return error.code, json.load(error)
+
+
+def validate_live_processes(root: Path, launches: dict[str, Any]) -> None:
+    import psutil
+
+    assert set(launches) == {"daemon", "grok-wiki", "opendeepwiki-web", "opendeepwiki"}
+    expected_ports = {"daemon": {59480, 59481}, "grok-wiki": {61241}, "opendeepwiki-web": {61240}}
+    for name, ports in expected_ports.items():
+        launch = _load_json(verify_file_record(root, launches[name]))
+        process = psutil.Process(launch["pid"])
+        assert process.uids().real == os.getuid()
+        assert process.cwd() == launch["cwd"]
+        assert Path(process.cwd()).resolve().is_relative_to(root)
+        if name == "opendeepwiki-web":
+            # Next.js rewrites argv and clears the OS-visible environment on startup.
+            assert process.exe() == str(Path(launch["argv"][0]).resolve())
+            assert process.cmdline()[0].startswith("next-server (")
+            assert Path(process.cwd()) == root / "sources/opendeepwiki/web/.next/standalone"
+        else:
+            assert process.cmdline() == launch["argv"]
+            environment = process.environ()
+            assert not set(environment).intersection(MANAGED_ENV_NAMES)
+            assert environment["GOBBY_HOME"] == str(root / "gobby-home")
+            if name == "daemon":
+                assert environment["PATH"] == launch["path"]
+                assert environment["GOBBY_NATIVE_BIN_DIR"] == str(root / "gobby-home/bin")
+            else:
+                assert environment["GROK_WIKI_ROOT"] == str(root / "state/grok-wiki")
+                assert environment["RLM_WIKI_MAX_GENERATE"] == "1"
+                assert environment["RLM_WIKI_SERVER_TELEMETRY"] == "off"
+        listeners = {
+            (connection.laddr.ip, connection.laddr.port)
+            for connection in process.net_connections(kind="tcp")
+            if connection.status == psutil.CONN_LISTEN
+        }
+        assert listeners == {("127.0.0.1", port) for port in ports}, name
+
+    launch = _load_json(verify_file_record(root, launches["opendeepwiki"]))
+    container = json.loads(_run_probe(["docker", "inspect", launch["container_name"]]))[0]
+    assert container["Id"] == launch["stdout"].strip()
+    assert container["State"]["Running"] is True
+    assert container["Config"]["Labels"]["gobby.owner-task"] == "21942"
+    assert container["Config"]["Image"] in launch["argv"]
+    assert container["Config"]["Cmd"] == ["dotnet", "OpenDeepWiki.dll"]
+    assert set(container["NetworkSettings"]["Networks"]) == {NETWORK}
+    host = container["HostConfig"]
+    assert host["NetworkMode"] == NETWORK and host["Privileged"] is False
+    assert not host.get("CapAdd") and not host.get("Devices")
+    assert host["PortBindings"] == {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "61239"}]}
+    assert {(item["Source"], item["Destination"], item["RW"]) for item in container["Mounts"]} == {
+        (str(root / "tools/opendeepwiki/publish"), "/app", False),
+        (str(root / "state/opendeepwiki/service"), "/state", True),
+        (str(root / "corpora/opendeepwiki"), "/corpora", False),
+    }
+    expected_env = _load_env_file(contained_file(root, "config/opendeepwiki.env"))
+    actual_env = dict(item.split("=", 1) for item in container["Config"]["Env"])
+    assert all(actual_env.get(key) == value for key, value in expected_env.items())
+    for url in ("http://127.0.0.1:61239/health", "http://127.0.0.1:61240/"):
+        with urllib.request.urlopen(url, timeout=10) as response:
+            assert response.status == 200
+    with urllib.request.urlopen("http://127.0.0.1:61241/api/health", timeout=10) as response:
+        health = json.load(response)
+    assert health["storage"]["root"] == str(root / "state/grok-wiki")
+
+
+def probe_live_environment(root: Path) -> dict[str, Any]:
+    import psycopg
+    import redis
+    from prepare_daemon import isolated_environment
+    from runtime_boundary import file_record
+
     for port in PORTS.values():
         _assert_port_open(port)
-
-    service_env = _load_env_file(root / "config" / "services.env")
-    postgres_env = os.environ.copy()
-    postgres_env["PGPASSWORD"] = service_env["BAKEOFF_POSTGRES_PASSWORD"]
-    postgres = _run_probe(
-        [
-            "psql",
-            "-h",
-            "127.0.0.1",
-            "-p",
-            str(PORTS["postgres"]),
-            "-U",
-            service_env["BAKEOFF_POSTGRES_USER"],
-            "-d",
-            service_env["BAKEOFF_POSTGRES_DB"],
-            "-Atc",
-            "SELECT current_database(), current_user, "
-            "EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_search'), "
-            "EXISTS (SELECT 1 FROM pg_extension WHERE extname='pgaudit')",
-        ],
-        env=postgres_env,
-    )
-    assert "gobby_bakeoff_21942|gobby_bakeoff_21942|t|t" in postgres
-
-    redis_env = os.environ.copy()
-    redis_env["REDISCLI_AUTH"] = service_env["BAKEOFF_FALKORDB_PASSWORD"]
-    assert (
-        _run_probe(
-            ["redis-cli", "-h", "127.0.0.1", "-p", str(PORTS["falkordb"]), "PING"],
-            env=redis_env,
-        ).strip()
-        == "PONG"
-    )
-
-    with urllib.request.urlopen(
-        f"http://127.0.0.1:{PORTS['qdrant_http']}/healthz", timeout=5
-    ) as response:
-        assert response.status == 200
-    with urllib.request.urlopen(
-        f"http://127.0.0.1:{PORTS['daemon_http']}/api/auth/status", timeout=5
-    ) as response:
-        assert response.status == 200
-
-    gcode_env = os.environ.copy()
-    for name in MANAGED_ENV_NAMES:
-        gcode_env.pop(name, None)
-    gcode_env["GOBBY_HOME"] = str(root / "gobby-home")
-    gcode_env["GOBBY_TEST_PROTECT"] = "1"
+    gcode_env = isolated_environment(root, dict(os.environ))
     status = _run_probe(
         [
             str(root / "tools" / "gcode" / "bin" / "gcode"),
@@ -353,15 +511,77 @@ def probe_live_environment(root: Path) -> None:
         env=gcode_env,
     )
     parsed = json.loads(status)
-    assert parsed.get("project_id")
+    project_root = root / "corpora/gcode/C0"
+    project_id = _load_json(contained_file(root, project_root / ".gobby/project.json"))["id"]
+    assert parsed["id"] == project_id and parsed["root_path"] == str(project_root)
+    assert parsed["code_index"]["healthy"] is True
+
+    caches = list((root / "gobby-home/grants").glob(f"*/{project_id}.json"))
+    assert len(caches) == 1
+    cache = contained_file(root, caches[0])
+    _assert_file_mode(cache, 0o600)
+    grant = _load_json(cache)["grant"]
+    now = time.time()
+    connection = _validate_grant_binding(root, grant, now)
+    status_code, config = _present_grant(root, grant)
+    assert status_code == 200 and config["config_revision"] == grant["config_revision"]
+    tampered = copy.deepcopy(grant)
+    signature = tampered["signature"]
+    tampered["signature"] = ("A" if signature[0] != "A" else "B") + signature[1:]
+    rejected, reason = _present_grant(root, tampered)
+    assert rejected == 403 and reason["code"] == "invalid_signature"
+    with psycopg.connect(**connection, connect_timeout=5) as conn:
+        identity = conn.execute(
+            "SELECT current_database(), current_user, current_schema()"
+        ).fetchone()
+        assert identity == ("gobby_bakeoff_21942", connection["user"], "public")
+        extensions = conn.execute(
+            "SELECT extname FROM pg_extension WHERE extname IN ('pg_search', 'pgaudit')"
+        ).fetchall()
+        assert {row[0] for row in extensions} == {"pg_search", "pgaudit"}
+    falkor = grant["capabilities"]["falkordb"]
+    with redis.Redis(
+        host=falkor["host"],
+        port=falkor["port"],
+        password=falkor["password"],
+        socket_timeout=5,
+        socket_connect_timeout=5,
+    ) as client:
+        assert client.ping()
+    qdrant = grant["capabilities"]["qdrant"]
+    headers = {"api-key": qdrant["api_key"]} if qdrant.get("api_key") else {}
+    with urllib.request.urlopen(
+        urllib.request.Request(qdrant["url"] + "/collections", headers=headers), timeout=5
+    ) as response:
+        assert response.status == 200
 
     services = _load_json(root / "receipts" / "services.json")
     for service, expected_name in CONTAINERS.items():
         inspect = json.loads(_run_probe(["docker", "inspect", expected_name]))[0]
         expected = services["services"][service]
         assert inspect["Id"] == expected["container_id"]
-        assert inspect["Image"] == expected["image_id"]
+        validate_container(inspect, service, expected["image_id"])
         assert inspect["State"]["Health"]["Status"] == "healthy"
+    launches = _load_json(contained_file(root, "receipts/active-launches.json"))
+    for record in launches.values():
+        verify_file_record(root, record)
+    validate_live_processes(root, launches)
+    return {
+        "observed_unix": now,
+        "issued_at": grant["issued_at"],
+        "expires_at": grant["expires_at"],
+        "project_id": project_id,
+        "valid_signature_http": status_code,
+        "tampered_signature_http": rejected,
+        "tampered_signature_reason": reason["code"],
+        "postgres_identity": list(identity),
+        "postgres_role": connection["user"],
+        "qdrant_url": qdrant["url"],
+        "falkordb_endpoint": "127.0.0.1:61237",
+        "launch_receipts": launches,
+        "gcode_status_sha256": hashlib.sha256(status.encode()).hexdigest(),
+        "grant_cache_at_observation": file_record(root, cache),
+    }
 
 
 def validate_environment(root: Path, *, live: bool) -> None:
@@ -370,9 +590,12 @@ def validate_environment(root: Path, *, live: bool) -> None:
     validate_isolation(root)
     validate_compose(root)
     validate_installations(root)
-    validate_receipts(root)
     if live:
-        probe_live_environment(root)
+        proof = probe_live_environment(root)
+        receipt = root / "receipts/runtime-verification.json"
+        if not receipt.exists():
+            write_once(receipt, json.dumps(proof, indent=2) + "\n", 0o600)
+    validate_receipts(root)
 
 
 def _parse_args() -> argparse.Namespace:

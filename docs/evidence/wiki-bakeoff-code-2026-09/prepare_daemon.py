@@ -27,9 +27,54 @@ def isolated_environment(root: Path, ambient: dict[str, str]) -> dict[str, str]:
             "GOBBY_NATIVE_BIN_DIR": str(root / "gobby-home/bin"),
             "GOBBY_TEST_PROTECT": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
+            # Model discovery launches installed CLIs and seeds their global trust stores.
+            # This daemon serves gcode datastores only; comparator CLIs run separately.
+            "PATH": os.pathsep.join((str(root / "tools/gobby/venv/bin"), "/usr/bin", "/bin")),
         }
     )
     return result
+
+
+def preserve_image_probe(dsn: str) -> None:
+    """Keep the image's audit fixture outside Gobby's native public schema."""
+    import psycopg
+
+    with psycopg.connect(dsn, connect_timeout=5) as conn:
+        row = conn.execute("SELECT to_regclass('public._pgaudit_probe')::oid").fetchone()
+        assert row is not None
+        if row[0] is None:
+            return
+        target = conn.execute(
+            "SELECT to_regclass('bakeoff_image_audit._pgaudit_probe')::oid"
+        ).fetchone()
+        assert target == (None,), "ambiguous image audit probe; refusing to replace either table"
+        count = conn.execute("SELECT count(*) FROM public._pgaudit_probe").fetchone()
+        conn.execute("CREATE SCHEMA IF NOT EXISTS bakeoff_image_audit")
+        conn.execute("ALTER TABLE public._pgaudit_probe SET SCHEMA bakeoff_image_audit")
+        assert (
+            conn.execute("SELECT to_regclass('bakeoff_image_audit._pgaudit_probe')::oid").fetchone()
+            == row
+        )
+        assert (
+            conn.execute("SELECT count(*) FROM bakeoff_image_audit._pgaudit_probe").fetchone()
+            == count
+        )
+
+
+def record_preparation(root: Path, revision: int) -> None:
+    _write_json(
+        root / f"receipts/daemon-preparation-rev-{revision}.json",
+        {
+            "source_root": str(root / "sources/gobby"),
+            "gobby_home": str(root / "gobby-home"),
+            "native_bin_dir": str(root / "gobby-home/bin"),
+            "config_revision": revision,
+            "schema_applied": True,
+            "models_called": 0,
+            "automatic_indexing": False,
+            "cron_enabled": False,
+        },
+    )
 
 
 def prepare(root: Path) -> None:
@@ -53,7 +98,6 @@ def prepare(root: Path) -> None:
         f"postgresql://{credentials['BAKEOFF_POSTGRES_USER']}:"
         f"{quote(credentials['BAKEOFF_POSTGRES_PASSWORD'], safe='')}@127.0.0.1:"
         f"{PORTS['postgres']}/{credentials['BAKEOFF_POSTGRES_DB']}"
-        "?options=-csearch_path%3Dbakeoff_21942"
     )
     parsed = urlparse(dsn)
     assert parsed.hostname == "127.0.0.1" and parsed.port == 61234
@@ -69,7 +113,8 @@ def prepare(root: Path) -> None:
     }
     _write_text(root / "gobby-home/bootstrap.yaml", yaml.safe_dump(bootstrap), mode=0o600)
     print("private bootstrap ready; applying pinned schema to owned PostgreSQL", flush=True)
-    apply_schema(dsn, schema="bakeoff_21942")
+    preserve_image_probe(dsn)
+    apply_schema(dsn, schema="public")
     db = PostgresHubDatabase(dsn)
     try:
         mutations = ConfigMutations(db)
@@ -79,6 +124,8 @@ def prepare(root: Path) -> None:
             patch=ConfigPatch(
                 values={
                     "test_mode": True,
+                    "tmux.enabled": False,
+                    "terminal_host.enabled": False,
                     "cron.enabled": False,
                     "tmux.socket_path": str(root / "gobby-home/tmux.sock"),
                     "memory.dream.enabled": False,
@@ -101,19 +148,7 @@ def prepare(root: Path) -> None:
                 },
             ),
         )
-        _write_json(
-            root / "receipts/daemon-preparation.json",
-            {
-                "source_root": str(root / "sources/gobby"),
-                "gobby_home": str(root / "gobby-home"),
-                "native_bin_dir": str(root / "gobby-home/bin"),
-                "config_revision": revision.revision,
-                "schema_applied": True,
-                "models_called": 0,
-                "automatic_indexing": False,
-                "cron_enabled": False,
-            },
-        )
+        record_preparation(root, revision.revision)
     finally:
         db.close()
     print("isolated schema and config prepared; no daemon or model generation started")
