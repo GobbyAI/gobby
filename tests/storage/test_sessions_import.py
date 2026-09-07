@@ -83,7 +83,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "max_age_minutes: 'int' = 10, terminal_context: 'dict[str, Any] | str | None' = None, "
     "candidate_limit: 'int' = 1) -> 'Session | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
-    "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
+    "get_pending_transcript_sessions": "(self, limit: 'int' = 10, *, "
+    "after: 'tuple[datetime, str] | None' = None) -> 'list[Session]'",
     "get_session_id": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None' = None, session_type: 'str' = 'terminal') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
@@ -106,14 +107,18 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "mark_session_expired": (
         "(self, session_id: 'str', *, cause: 'ContestedExpiryCause') -> 'bool'"
     ),
-    "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
+    "mark_transcript_processed": "(self, session_id: 'str', *, "
+    "expected_session: 'Session | None' = None, source_hash: 'str | None' = None) -> 'Session | None'",
     "move_to_project": "(self, session_id: 'str', project_id: 'str') -> 'Session | None'",
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
     "generation_mode: 'str', source_context_hash: 'str | None' = None, "
-    "summary_path: 'str | None | UnsetType' = UNSET) -> 'Session | None'",
+    "summary_path: 'str | None | UnsetType' = UNSET, "
+    "expected_session: 'Session | None' = None) -> 'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",
+    "record_transcript_processing_failure": "(self, session_id: 'str', *, error_code: 'str', "
+    "error: 'str', expected_session: 'Session | None' = None) -> 'None'",
     "register": "(self, external_id: 'str', machine_id: 'str | None', source: 'str', "
     "project_id: 'str | None', title: 'str | None | UnsetType' = UNSET, "
     "transcript_path: 'str | None | UnsetType' = UNSET, "
@@ -140,6 +145,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "renumber_project_sessions": "(self, project_id: 'str', *, dry_run: 'bool' = True) -> "
     "'list[SessionRenumberMapping]'",
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
+    "reset_transcript_processing_failures": "(self, session_id: 'str', *, "
+    "expected_session: 'Session | None' = None) -> 'None'",
     "recover_session": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = 'terminal') -> 'Session | None'",
     "activate_web_chat_session": "(self, session_id: 'str') -> 'Session | None'",

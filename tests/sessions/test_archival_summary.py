@@ -62,6 +62,39 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 @pytest.mark.asyncio
+async def test_delivered_handoff_cannot_persist_after_session_revival(
+    isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
+) -> None:
+    checkout = isolated_checkout_factory(temp_db, "clear-summary-race")
+    manager = SessionManager(temp_db)
+    session_id = manager.register_session(
+        external_id="clear-race",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=checkout.project.id,
+    )
+    _record_handoff(temp_db, manager, session_id, boundary_kind="clear")
+
+    def revive_before_persist(*args: object) -> None:
+        with temp_db.transaction() as conn:
+            conn.execute("UPDATE sessions SET status = 'active' WHERE id = %s", (session_id,))
+
+    with patch(
+        "gobby.sessions.summarize.find_current_handoff_summary",
+        side_effect=revive_before_persist,
+    ):
+        result = await generate_session_summaries(session_id, manager, db=temp_db)
+
+    saved = manager.get(session_id)
+    assert saved is not None
+    assert saved.status == "active"
+    assert saved.summary_markdown is None
+    assert saved.summary_source_context_hash is None
+    assert not result["success"]
+    assert result["generation_error"] == "Session changed during summary generation"
+
+
+@pytest.mark.asyncio
 async def test_missing_transcript_leaves_archival_summary_empty(
     isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase
 ) -> None:

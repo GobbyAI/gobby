@@ -78,6 +78,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "808ebf7df06829502e1334a228341c7ac9a7ae6fa04ec2c0e251eb78967149c4",
         sql: include_str!("../../assets/schema/migrations/428_add_agent_end_handoff_boundary.sql"),
     },
+    EmbeddedMigration {
+        version: 429,
+        filename: "429_add_transcript_processing_failures.sql",
+        checksum: "39669edef7481e864653433ccb075dfb6ea21340168b3bf81c8465e314ea23d1",
+        sql: include_str!(
+            "../../assets/schema/migrations/429_add_transcript_processing_failures.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

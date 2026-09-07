@@ -23,12 +23,12 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
-from gobby.sessions.handoff_records import latest_delivered_clear_handoff
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
 from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -87,6 +87,22 @@ class _PendingTokenEvent:
     payload: dict[str, Any]
 
 
+def _deterministic_summary_failure(error: str) -> str | None:
+    """Only canonical source/validation failures consume the retry budget."""
+    if error == "Transcript file not found":
+        return "missing_source"
+    if error.startswith("Unsupported transcript source:"):
+        return "unsupported_source"
+    if error.startswith("Corrupt transcript record"):
+        return "corrupt_source"
+    if (
+        error.startswith("Generated session summary was invalid:")
+        or error == "Unable to generate a valid session summary"
+    ):
+        return "invalid_summary"
+    return None
+
+
 class TranscriptProcessingMixin:
     """Transcript-processing behavior shared by the session lifecycle manager."""
 
@@ -104,131 +120,84 @@ class TranscriptProcessingMixin:
         """Provided by the host; the lifecycle manager resolves it per use."""
         raise NotImplementedError
 
-    async def _process_pending_transcripts(self, active: DaemonConfig) -> int:
-        """Process transcripts for expired sessions.
+    _transcript_processing_cursor: tuple[datetime, str] | None = None
 
-        Runs summary generation outside `_process_session_transcript` after the
-        transcript parser persists authoritative stats. Missing transcripts can
-        still use a delivered clear handoff, without invoking an LLM.
-        """
+    async def _process_pending_transcripts(self, active: DaemonConfig) -> int:
+        """Attempt one bounded page, rotating past every failure before wrapping."""
         config = active.session_lifecycle
-        # Synchronous psycopg: a pool checkout runs its runtime-role check and
-        # the query itself inline, and this loop is on the event loop thread.
-        # The sampler caught this exact chain at 40% of a 2.44s stall (#20845).
+        limit = config.transcript_processing_batch_size
         sessions = await asyncio.to_thread(
             self.session_manager.get_pending_transcript_sessions,
-            limit=config.transcript_processing_batch_size,
+            limit=limit,
+            after=self._transcript_processing_cursor,
         )
-
-        if not sessions:
-            return 0
-
-        archive_dir = config.transcript_archive_dir
-
+        if not sessions and self._transcript_processing_cursor is not None:
+            self._transcript_processing_cursor = None
+            sessions = await asyncio.to_thread(
+                self.session_manager.get_pending_transcript_sessions,
+                limit=limit,
+                after=None,
+            )
         processed = 0
         for session in sessions:
-            agent_depth = getattr(session, "agent_depth", 0) or 0
-            source = getattr(session, "source", "") or ""
-
-            # Step 1: Process transcript (reads JSONL, stores messages, aggregates usage)
             try:
-                await self._process_session_transcript(session.id, session.transcript_path)
-            except Exception as e:
-                logger.error("Failed to process transcript for %s: %s", session.id, e)
-
-            skip_llm = agent_depth > 0 or source in ("pipeline", "cron")
-
-            # Missing transcripts leave archival summaries empty.
-            transcript_missing = not session.transcript_path or not os.path.exists(
-                session.transcript_path
-            )
-            if transcript_missing:
-                await self._generate_artifacts_if_needed(
-                    session.id,
-                    active.session_summary,
-                    allow_llm=False,
-                )
-                self.session_manager.mark_transcript_processed(session.id)
-                processed += 1
-                logger.info(
-                    "Marked session %s as processed (transcript file missing)",
-                    session.id,
-                )
-                continue
-
-            if not skip_llm:
-                # Parsing persists authoritative transcript stats. Refresh before
-                # deciding whether this was only a short Q&A; by 3+ turns there's
-                # likely something worth remembering.
-                refreshed_stats = self.session_manager.get(session.id)
-                turn_count = _session_int(getattr(refreshed_stats, "turn_count", 0))
-                skip_llm = turn_count < 3
-
-            # Skip LLM-heavy steps for non-human sessions — subagents, pipelines,
-            # and cron sessions are ephemeral and not worth the token cost.
-            if skip_llm:
-                await self._generate_artifacts_if_needed(
-                    session.id,
-                    active.session_summary,
-                    allow_llm=False,
-                )
-                self.session_manager.mark_transcript_processed(session.id)
-                processed += 1
-                logger.debug(
-                    "Processed transcript for %s session %s (depth=%s, skipped summary)",
-                    source,
-                    session.id,
-                    agent_depth,
-                )
-                continue
-
-            # Step 2: Generate the canonical summary (best-effort)
-            try:
-                await self._generate_artifacts_if_needed(session.id, active.session_summary)
-            except Exception as e:
-                logger.warning("Artifact generation failed for %s: %s", session.id, e)
-
-            # Step 3: Finalize when summary work is complete or unavailable.
-            refreshed = self.session_manager.get(session.id)
-            if not self.llm_service:
-                should_mark = bool(refreshed)
-            else:
-                should_mark = refreshed is not None and _session_artifacts_complete(refreshed)
-
-            if should_mark:
-                self.session_manager.mark_transcript_processed(session.id)
-                processed += 1
-                logger.debug("Processed transcript for session %s", session.id)
-            else:
-                logger.info(
-                    "Deferring transcript_processed for %s — archival summary incomplete",
-                    session.id,
-                )
-
-            # Step 4: Best-effort backup of the transcript archive
-            # Skipped when the file is already gone — nothing to archive.
-            if not transcript_missing and session.transcript_path and session.external_id:
+                # Stats reconstruction is independent from archival summary generation.
                 try:
-                    archive_path = await asyncio.to_thread(
+                    await self._process_session_transcript(session.id, session.transcript_path)
+                except Exception:
+                    logger.warning("Transcript stats failed for %s", session.id, exc_info=True)
+
+                current = await asyncio.to_thread(self.session_manager.get, session.id)
+                if current is None or current.status != "expired":
+                    continue
+                skip_llm = (
+                    (getattr(current, "agent_depth", 0) or 0) > 0
+                    or current.source in ("pipeline", "cron")
+                    or _session_int(getattr(current, "turn_count", 0)) < 3
+                )
+                result = await self._generate_artifacts_if_needed(
+                    session.id,
+                    active.session_summary,
+                    allow_llm=not skip_llm,
+                    archive_dir=config.transcript_archive_dir,
+                )
+                if result.get("success"):
+                    marked = await asyncio.to_thread(
+                        self.session_manager.mark_transcript_processed,
+                        session.id,
+                        expected_session=current,
+                        source_hash=result.get("source_context_hash"),
+                    )
+                    processed += int(marked is not None)
+                else:
+                    error = str(result.get("generation_error") or result.get("error") or "")
+                    code = _deterministic_summary_failure(error)
+                    if code:
+                        await asyncio.to_thread(
+                            self.session_manager.record_transcript_processing_failure,
+                            session.id,
+                            error_code=code,
+                            error=error,
+                            expected_session=current,
+                        )
+                    logger.info("Deferring transcript processing for %s: %s", session.id, error)
+
+                if (
+                    session.transcript_path
+                    and session.external_id
+                    and os.path.isfile(session.transcript_path)
+                ):
+                    await asyncio.to_thread(
                         backup_transcript,
                         session.external_id,
                         session.transcript_path,
-                        archive_dir,
+                        config.transcript_archive_dir,
                     )
-                    if archive_path:
-                        logger.debug(
-                            "Archived transcript for session %s (archived to %s)",
-                            session.id,
-                            archive_path,
-                        )
-                    else:
-                        logger.warning("Transcript backup returned None for %s", session.id)
-                except Exception as e:
-                    logger.warning("Transcript backup failed for %s: %s", session.id, e)
-
-        if processed > 0:
-            logger.debug("Processed %s session transcripts", processed)
-
+            except Exception:
+                # Database, filesystem permissions, and provider failures are transient.
+                logger.warning("Transcript retry failed for %s", session.id, exc_info=True)
+            finally:
+                self._transcript_processing_cursor = (session.created_at, session.id)
         return processed
 
     async def _generate_artifacts_if_needed(
@@ -237,50 +206,32 @@ class TranscriptProcessingMixin:
         session_summary_config: SessionSummaryConfig,
         *,
         allow_llm: bool = True,
-    ) -> None:
-        """Generate a missing or invalid canonical session summary.
+        archive_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Use the canonical pipeline, including provenance checks and archive fallback."""
+        from gobby.sessions.summarize import _generate_session_summary_core
 
-        This catches ungraceful exits that did not trigger session-end or clear
-        generation. A valid stored summary is sufficient regardless of files.
-        """
-        session = self.session_manager.get(session_id)
-        if not session:
-            return
-
-        if is_summary_markdown_valid(session.summary_markdown):
-            return
-
-        try:
-            has_delivered_handoff = session.status == "expired" and (
-                await asyncio.to_thread(
-                    latest_delivered_clear_handoff,
-                    self.db,
-                    session_id,
-                )
-                is not None
-            )
-        except Exception as exc:
-            logger.warning("Clear handoff lookup failed for session %s: %s", session_id, exc)
-            has_delivered_handoff = False
-
-        if not has_delivered_handoff and (not allow_llm or not self.llm_service):
-            return
-        if not session.transcript_path and not has_delivered_handoff:
-            return
-
-        try:
-            from gobby.sessions.summarize import generate_session_summaries
-
-            await generate_session_summaries(
-                session_id=session_id,
-                session_manager=self.session_manager,
-                llm_service=self.llm_service,
-                session_summary_config=session_summary_config,
-                db=self.db,
-                set_awaiting_handoff=False,  # already expired, don't change status
-            )
-        except Exception as e:
-            logger.warning("Artifact generation failed for session %s: %s", session_id, e)
+        result = await _generate_session_summary_core(
+            session_id,
+            self.session_manager,
+            self.llm_service if allow_llm else None,
+            session_summary_config,
+            self.db,
+            None,
+            transcript_reader=TranscriptReader(self.session_manager, archive_dir=archive_dir),
+        )
+        outcome = result.result
+        if (
+            not allow_llm
+            and not outcome.get("success")
+            and outcome.get("generation_error")
+            == "Session summary LLM feature config not available"
+        ):
+            # No-provider fallback is intentional for short/non-human sessions.
+            # Its invalid output is deterministic, unlike an unavailable provider.
+            outcome = dict(outcome)
+            outcome.pop("generation_error", None)
+        return outcome
 
     async def _process_session_transcript(
         self, session_id: str, transcript_path: str | None
@@ -297,8 +248,7 @@ class TranscriptProcessingMixin:
             transcript_path: Path to transcript JSONL file
         """
         if not transcript_path or not os.path.exists(transcript_path):
-            # Expected for purged or CLI-rotated transcripts; the caller
-            # regenerates summaries from the stored digest in that case.
+            # The canonical summary reader can still use an archive or delivered handoff.
             logger.info("Transcript not found for session %s: %s", session_id, transcript_path)
             return
 

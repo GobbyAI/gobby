@@ -56,6 +56,10 @@ class Session:
     summary_source_context_hash: str | None = None
     summary_generation_mode: str | None = None
     summary_generated_at: datetime | None = None
+    transcript_processing_failure_count: int = 0
+    transcript_processing_last_error_code: str | None = None
+    transcript_processing_last_error: str | None = None
+    transcript_processing_last_failed_at: datetime | None = None
     title_source: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
@@ -146,6 +150,19 @@ class Session:
             summary_source_context_hash=cls._get_optional(row, "summary_source_context_hash"),
             summary_generation_mode=cls._get_optional(row, "summary_generation_mode"),
             summary_generated_at=cls._get_optional(row, "summary_generated_at"),
+            transcript_processing_failure_count=cls._get_optional(
+                row, "transcript_processing_failure_count"
+            )
+            or 0,
+            transcript_processing_last_error_code=cls._get_optional(
+                row, "transcript_processing_last_error_code"
+            ),
+            transcript_processing_last_error=cls._get_optional(
+                row, "transcript_processing_last_error"
+            ),
+            transcript_processing_last_failed_at=cls._get_optional(
+                row, "transcript_processing_last_failed_at"
+            ),
             agent_depth=row["agent_depth"] or 0,
             spawned_by_agent_id=row["spawned_by_agent_id"],
             workflow_name=row["workflow_name"],

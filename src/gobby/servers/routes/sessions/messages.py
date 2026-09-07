@@ -227,6 +227,7 @@ def register_message_routes(
                     status_code=404,
                     detail="No transcript archive found or original still exists",
                 )
+            await server.run_db(session_manager.reset_transcript_processed, session_id)
             size = await asyncio.to_thread(os.path.getsize, transcript_path)
             return {
                 "status": "restored",

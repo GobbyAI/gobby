@@ -275,6 +275,10 @@ async def handle_continue_in_chat(
                     source_session.external_id,
                     transcript_path,
                 )
+                if restored:
+                    await run_db(
+                        mixin, session_manager.reset_transcript_processed, source_session_id
+                    )
                 if not restored:
                     logger.warning(
                         "Transcript restore failed for %s; falling back to hidden context injection",

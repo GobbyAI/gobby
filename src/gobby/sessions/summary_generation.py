@@ -76,26 +76,29 @@ async def _persist_summary_markdown(
     summary_markdown: str,
     generation_mode: str,
     source_hash: str,
-) -> None:
+    expected_session: Any,
+) -> bool:
     persist_summary_state = getattr(session_manager, "persist_summary_state", None)
     has_concrete_persist = callable(getattr(type(session_manager), "persist_summary_state", None))
     run_db = _facade_attr("_run_db")
     if callable(persist_summary_state) and has_concrete_persist:
-        await run_db(
+        updated = await run_db(
             db_runner,
             persist_summary_state,
             session_id,
             summary_markdown=summary_markdown,
             generation_mode=generation_mode,
             source_context_hash=source_hash,
+            expected_session=expected_session,
         )
-        return
+        return updated is not None
     await run_db(
         db_runner,
         session_manager.update_summary,
         session_id,
         summary_markdown=summary_markdown,
     )
+    return True
 
 
 async def _generate_full_summary(

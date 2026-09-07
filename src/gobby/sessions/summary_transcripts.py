@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import logging
+import zlib
+from collections import deque
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -72,6 +75,8 @@ async def _read_transcript_window(
 def _read_transcript_window_once(
     path: Path, max_records: int | None
 ) -> tuple[TranscriptWindow, bool]:
+    if path.suffix == ".gz":
+        return _read_archive_window_once(path, max_records)
     with path.open("rb") as transcript:
         transcript.seek(0, 2)
         file_size = transcript.tell()
@@ -93,6 +98,38 @@ def _read_transcript_window_once(
             byte_offset=byte_offset,
             line_number=None,
             is_final=byte_offset + len(raw_record) == file_size,
+        )
+        if record is None:
+            return TranscriptWindow(records, truncated), True
+        records.append(record)
+    return TranscriptWindow(records, truncated), False
+
+
+def _read_archive_window_once(path: Path, max_records: int | None) -> tuple[TranscriptWindow, bool]:
+    """Stream gzip once, retaining only the bounded tail with logical byte offsets."""
+    positioned: deque[tuple[bytes, int]] = deque(
+        maxlen=None if max_records is None else max(0, max_records)
+    )
+    count = 0
+    offset = 0
+    try:
+        with gzip.open(path, "rb") as transcript:
+            for raw in transcript:
+                if raw.strip():
+                    positioned.append((raw, offset))
+                    count += 1
+                offset += len(raw)
+    except (gzip.BadGzipFile, EOFError, zlib.error) as exc:
+        raise TranscriptReadError(path, offset, line_number=None) from exc
+    records: list[dict[str, Any]] = []
+    truncated = max_records is not None and count > max_records
+    for raw, byte_offset in positioned:
+        record = decode_transcript_record(
+            raw,
+            path=path,
+            byte_offset=byte_offset,
+            line_number=None,
+            is_final=byte_offset + len(raw) == offset,
         )
         if record is None:
             return TranscriptWindow(records, truncated), True
@@ -176,7 +213,8 @@ def _scan_first_user_goal(path: Path, source: str, max_records: int) -> str | No
 
 
 def _raw_lines_from_file(path: Path, max_records: int) -> Iterator[RawLine]:
-    with path.open("rb") as transcript:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rb") as transcript:
         for raw_line_no in range(max_records):
             byte_offset = transcript.tell()
             raw_record = transcript.readline()
