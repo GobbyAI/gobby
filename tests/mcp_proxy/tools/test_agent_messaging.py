@@ -91,7 +91,9 @@ class FakeWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
         self.calls.append(session_id)
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
@@ -764,7 +766,7 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_explicit_urgent_send_message_dispatches_to_tmux(
+    async def test_explicit_send_message_wakes_parked_tmux_session(
         self,
         temp_db: HubDatabase,
         sample_project: dict[str, Any],
@@ -789,6 +791,7 @@ class TestSendMessage:
                 "tmux_socket_path": "/tmp/tmux-gobby",
             },
         )
+        session_manager.update_status(recipient.id, "paused")
         message_manager = InterSessionMessageManager(temp_db)
         tmux_pane_sender = AsyncMock()
         wake_dispatcher = WakeDispatcher(
@@ -825,7 +828,7 @@ class TestSendMessage:
                 "session_id": recipient.id,
                 "delivered": True,
                 "method": "tmux_pane",
-                "session_status": "active",
+                "session_status": "paused",
             }
         ]
         tmux_pane_sender.assert_awaited_once_with(
@@ -1044,6 +1047,7 @@ class TestSendMessage:
                 id="s-to",
                 project_id="11111111-1111-4111-8111-111111110001",
                 terminal_context={"parent_pid": 12345},
+                status="paused",
             ),
         }.get(sid)
 

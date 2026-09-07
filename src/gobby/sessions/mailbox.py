@@ -43,13 +43,14 @@ DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
 MESSAGE_TARGETS = ("global", "project", "session", "agent", "build")
 AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
 AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
-MAILBOX_WAKE_TIMEOUT_SECONDS = 2.0
 
 logger = logging.getLogger(__name__)
 
 
 class WakeDispatcherProtocol(Protocol):
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -211,12 +212,11 @@ class MailboxService:
 
         wake_results: list[dict[str, Any]] = []
         if wake:
-            # Persistence is complete. Live wake is optional and all recipients
-            # share one budget, including time waiting for their dispatch locks.
-            deadline = asyncio.get_running_loop().time() + MAILBOX_WAKE_TIMEOUT_SECONDS
+            # Persistence is complete. The dispatcher owns live-wake policy and
+            # channel-specific bounds; an outer timeout can interrupt tmux submission.
             async with asyncio.TaskGroup() as group:
                 wakes = [
-                    group.create_task(self.wake(rid, deadline=deadline)) for rid in recipient_ids
+                    group.create_task(self.wake(rid, priority=priority)) for rid in recipient_ids
                 ]
             wake_results = [wake.result() for wake in wakes]
 
@@ -793,7 +793,7 @@ class MailboxService:
             }
         return json.dumps(payload, default=str, sort_keys=True)
 
-    async def _wake(self, session_id: str) -> dict[str, Any]:
+    async def _wake(self, session_id: str, *, priority: str) -> dict[str, Any]:
         if self._wake_dispatcher is None:
             return {
                 "session_id": session_id,
@@ -804,7 +804,7 @@ class MailboxService:
                 "error_message": "Wake dispatcher is unavailable",
             }
         try:
-            result = await self._wake_dispatcher.dispatch_live_wake(session_id)
+            result = await self._wake_dispatcher.dispatch_live_wake(session_id, priority=priority)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -826,24 +826,7 @@ class MailboxService:
             return result
         return {"session_id": session_id, "delivered": False, "method": None}
 
-    async def wake(self, session_id: str, *, deadline: float | None = None) -> dict[str, Any]:
-        """Bound a live wake by an absolute loop deadline and normalize failures."""
-        if deadline is None:
-            deadline = asyncio.get_running_loop().time() + MAILBOX_WAKE_TIMEOUT_SECONDS
-        try:
-            async with asyncio.timeout_at(deadline):
-                result = await self._wake(session_id)
-        except TimeoutError:
-            return self._normalize_wake_result(
-                session_id,
-                {
-                    "session_id": session_id,
-                    "delivered": False,
-                    "method": None,
-                    "indeterminate": True,
-                    "error": "wake_timeout",
-                    "error_code": "wake_timeout",
-                    "error_message": "Live wake timed out before delivery could be confirmed.",
-                },
-            )
+    async def wake(self, session_id: str, *, priority: str = "normal") -> dict[str, Any]:
+        """Wake after durable storage using the dispatcher's policy and bounds."""
+        result = await self._wake(session_id, priority=priority)
         return self._normalize_wake_result(session_id, result)

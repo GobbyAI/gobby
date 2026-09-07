@@ -178,26 +178,14 @@ class WakeDispatcher:
             return {**failure, "ism_persisted": False}
 
         priority = str(result.get("priority") or "normal")
-        # Context-capable hooks inject the durable message on the next model call.
-        # Submitting terminal input while a provider is active would steer that turn
-        # and cancel its in-flight tool batch.
-        if getattr(session, "status", None) == "active" and priority != "urgent":
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": "next_call_context",
-                "skipped": "session_active",
-                "ism_persisted": True,
-            }
-
-        live_result = await self.dispatch_live_wake(session_id, session=session)
+        live_result = await self.dispatch_live_wake(session_id, priority=priority)
         return {**live_result, "ism_persisted": True}
 
     async def dispatch_live_wake(
         self,
         session_id: str,
         *,
-        session: Any | None = None,
+        priority: str = "normal",
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
         lock = self._live_wake_locks.get(session_id)
@@ -214,13 +202,14 @@ class WakeDispatcher:
                         session_id,
                         exc_info=True,
                     )
-            return await self._dispatch_live_wake_unlocked(session_id, session=None)
+            return await self._dispatch_live_wake_unlocked(session_id, priority=priority)
 
     async def _dispatch_live_wake_unlocked(
         self,
         session_id: str,
         *,
         session: Any | None = None,
+        priority: str = "normal",
     ) -> dict[str, Any]:
         """Send a live wake signal while holding the per-session wake lock."""
         if session is None:
@@ -239,6 +228,19 @@ class WakeDispatcher:
                 "error": "session_not_found",
                 "error_code": "session_not_found",
                 "error_message": f"Session {session_id} not found",
+            }
+
+        # Context-capable hooks inject the durable message on the next model call.
+        # Submitting terminal input while a provider is active would steer that turn
+        # and cancel its in-flight tool batch. Check after acquiring the lock and
+        # refreshing lifecycle state for both mailbox and completion wakes.
+        if getattr(session, "status", None) == "active" and priority != "urgent":
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "next_call_context",
+                "skipped": "session_active",
+                "ism_persisted": True,
             }
 
         agent_depth = getattr(session, "agent_depth", 0) or 0
