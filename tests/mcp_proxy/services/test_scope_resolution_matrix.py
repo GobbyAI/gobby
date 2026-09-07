@@ -92,9 +92,13 @@ class RecordingManager:
         config = self._configs[server_id]
         return {config.name: [{"name": "ping", "description": f"from {server_id}"}]}
 
-    async def get_tool_input_schema(self, server_id: str, tool_name: str) -> dict[str, Any]:
-        self.calls.append(("get_tool_input_schema", server_id, tool_name))
-        return {"type": "object", "properties": {}}
+    async def get_tool_info(self, server_id: str, tool_name: str) -> dict[str, Any]:
+        self.calls.append(("get_tool_info", server_id, tool_name))
+        return {
+            "name": tool_name,
+            "description": f"from {server_id}",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
 
     async def read_resource(self, server_id: str, uri: str) -> dict[str, Any]:
         self.calls.append(("read_resource", server_id, uri))
@@ -195,7 +199,7 @@ async def test_scope_resolution_matrix() -> None:
         )
         result = await _drive(make_proxy(manager), "github", operation)
         assert result.get("success") is True
-        dispatched = manager.method_ids(operation) or manager.method_ids("get_tool_input_schema")
+        dispatched = manager.method_ids(operation) or manager.method_ids("get_tool_info")
         assert PROJECT_SERVER_ID in dispatched
         assert GLOBAL_SERVER_ID not in dispatched
         assert FOREIGN_SERVER_ID not in dispatched
@@ -206,7 +210,7 @@ async def test_scope_resolution_matrix() -> None:
         )
         result = await _drive(make_proxy(fallback), "github", operation)
         assert result.get("success") is True
-        dispatched = fallback.method_ids(operation) or fallback.method_ids("get_tool_input_schema")
+        dispatched = fallback.method_ids(operation) or fallback.method_ids("get_tool_info")
         assert GLOBAL_SERVER_ID in dispatched
         assert FOREIGN_SERVER_ID not in dispatched
 
@@ -215,7 +219,7 @@ async def test_scope_resolution_matrix() -> None:
             project_id=PROJECT_ID,
         )
         await _drive(make_proxy(disabled), "github", operation)
-        dispatched = disabled.method_ids(operation) or disabled.method_ids("get_tool_input_schema")
+        dispatched = disabled.method_ids(operation) or disabled.method_ids("get_tool_info")
         assert GLOBAL_SERVER_ID not in dispatched
         assert "global-secret" not in repr(disabled.calls)
 
@@ -225,7 +229,7 @@ async def test_scope_resolution_matrix() -> None:
         )
         result = await _drive(make_proxy(foreign), FOREIGN_SERVER_ID, operation)
         assert result.get("success") is False
-        dispatched = foreign.method_ids(operation) or foreign.method_ids("get_tool_input_schema")
+        dispatched = foreign.method_ids(operation) or foreign.method_ids("get_tool_info")
         assert FOREIGN_SERVER_ID not in dispatched
         assert PROJECT_SERVER_ID not in dispatched
         assert GLOBAL_SERVER_ID not in dispatched
@@ -236,7 +240,7 @@ async def test_scope_resolution_matrix() -> None:
         )
         result = await _drive(make_proxy(revealed), "github", operation)
         assert result.get("success") is True
-        dispatched = revealed.method_ids(operation) or revealed.method_ids("get_tool_input_schema")
+        dispatched = revealed.method_ids(operation) or revealed.method_ids("get_tool_info")
         assert GLOBAL_SERVER_ID in dispatched
 
 

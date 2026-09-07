@@ -1084,6 +1084,77 @@ class TestGetToolSchema:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_get_tool_schema_external_preserves_full_description(
+        self, mock_mcp_manager, mock_internal_manager
+    ) -> None:
+        """Schema retrieval preserves metadata that list_tools deliberately abbreviates."""
+        mock_internal_manager.is_internal.return_value = False
+        _attach_named_server(mock_mcp_manager, "ext-server")
+        description = "Create a consignment with every supported field.\n" + ("x" * 120)
+        input_schema = {
+            "type": "object",
+            "properties": {"reference": {"type": "string"}},
+        }
+        mock_mcp_manager.list_tools = AsyncMock(
+            return_value={
+                "ext-server": [
+                    {
+                        "name": "CreateConsignment",
+                        "description": description,
+                        "inputSchema": input_schema,
+                    }
+                ]
+            }
+        )
+        mock_mcp_manager.get_tool_info = AsyncMock(
+            return_value={
+                "name": "CreateConsignment",
+                "description": description,
+                "inputSchema": input_schema,
+            }
+        )
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+        )
+
+        listed = await proxy.list_tools("ext-server")
+        schema = await proxy.get_tool_schema("ext-server", "CreateConsignment")
+
+        assert listed["tools"] == [{"name": "CreateConsignment", "brief": description[:97] + "..."}]
+        assert len(listed["tools"][0]["brief"]) == 100
+        assert schema == {
+            "success": True,
+            "tool": {
+                "name": "CreateConsignment",
+                "description": description,
+                "inputSchema": input_schema,
+            },
+        }
+        mock_mcp_manager.get_tool_info.assert_awaited_once_with("ext-server", "CreateConsignment")
+
+    @pytest.mark.asyncio
+    async def test_get_tool_schema_external_omits_missing_description(
+        self, mock_mcp_manager, mock_internal_manager
+    ) -> None:
+        """Description remains absent when the external tool does not provide one."""
+        mock_internal_manager.is_internal.return_value = False
+        _attach_named_server(mock_mcp_manager, "ext-server")
+        mock_mcp_manager.get_tool_info = AsyncMock(
+            return_value={"name": "plain_tool", "inputSchema": {"type": "object"}}
+        )
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+        )
+
+        result = await proxy.get_tool_schema("ext-server", "plain_tool")
+
+        assert result["success"] is True
+        assert "description" not in result["tool"]
+        assert result["tool"]["inputSchema"] == {"type": "object"}
+
+    @pytest.mark.asyncio
     async def test_get_tool_schema_external_exception(
         self, mock_mcp_manager, mock_internal_manager
     ):
@@ -1091,9 +1162,7 @@ class TestGetToolSchema:
         mock_internal_manager.is_internal.return_value = False
         _attach_named_server(mock_mcp_manager, "ext-server")
         mock_mcp_manager.has_server.return_value = True
-        mock_mcp_manager.get_tool_input_schema = AsyncMock(
-            side_effect=Exception("Connection timeout")
-        )
+        mock_mcp_manager.get_tool_info = AsyncMock(side_effect=Exception("Connection timeout"))
 
         proxy = ToolProxyService(
             mcp_manager=mock_mcp_manager,
@@ -1447,7 +1516,7 @@ class TestServerSuggestions:
     """Tests for _SERVER_SUGGESTIONS and _get_server_suggestion."""
 
     @pytest.fixture
-    def proxy_service(self):
+    def proxy_service(self) -> ToolProxyService:
         manager = MagicMock()
         manager.project_id = "test-project"
         return ToolProxyService(mcp_manager=manager)
@@ -1492,7 +1561,7 @@ class TestServerSuggestions:
 class TestResolvePlatformSessionId:
     """Tests for _resolve_platform_session_id silent-catch narrowing (Change 3)."""
 
-    def _make_proxy(self, session_manager) -> ToolProxyService:
+    def _make_proxy(self, session_manager: SessionManager) -> ToolProxyService:
         hook_manager = MagicMock()
         hook_manager._session_manager = session_manager
         return ToolProxyService(
@@ -1556,7 +1625,7 @@ async def test_call_tool_resolves_project_instance_before_global() -> None:
 
     schema = await proxy.get_tool_schema("github", "ping")
     assert schema["success"] is True
-    assert PROJECT_SERVER_ID in manager.method_ids("get_tool_input_schema")
+    assert PROJECT_SERVER_ID in manager.method_ids("get_tool_info")
 
     resource = await proxy.read_resource("github", "res://issue/1")
     assert resource["id"] == PROJECT_SERVER_ID

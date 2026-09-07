@@ -66,7 +66,7 @@ def proxy_parts(temp_db: HubDatabase) -> ProxyParts:
     mcp_manager = MagicMock()
     mcp_manager.project_id = "test-project"
     mcp_manager.call_tool = AsyncMock(return_value={"success": True})
-    mcp_manager.get_tool_input_schema = AsyncMock()
+    mcp_manager.get_tool_info = AsyncMock()
     _attach_named_servers(mcp_manager, "test-server", "gobby-tasks", "gobby-sessions")
 
     internal_manager = MagicMock()
@@ -85,9 +85,9 @@ def proxy_parts(temp_db: HubDatabase) -> ProxyParts:
     return proxy, mcp_manager, temp_db, session.id
 
 
-def _manager_schema(input_schema: dict[str, Any]) -> dict[str, Any]:
-    """Match MCPClientManager.get_tool_input_schema's bare-schema contract."""
-    return input_schema
+def _manager_tool_info(input_schema: dict[str, Any]) -> dict[str, Any]:
+    """Match MCPClientManager.get_tool_info's full metadata contract."""
+    return {"name": "test_tool", "inputSchema": input_schema}
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_first_invalid_call_includes_schema_and_records_latch(
         "properties": {"name": {"type": "string"}},
         "required": ["name"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
+    mcp_manager.get_tool_info.return_value = _manager_tool_info(input_schema)
 
     result = await proxy.call_tool(
         "test-server", "test_tool", {"wrong": "value"}, session_id=session_id, enforce_workflow=True
@@ -127,7 +127,7 @@ async def test_repeated_invalid_call_includes_schema_and_retains_lease(
         "properties": {"name": {"type": "string"}},
         "required": ["name"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
+    mcp_manager.get_tool_info.return_value = _manager_tool_info(input_schema)
 
     await proxy.call_tool(
         "test-server", "test_tool", {"wrong": "value"}, session_id=session_id, enforce_workflow=True
@@ -152,7 +152,7 @@ async def test_leaked_routing_fields_are_invalid_target_arguments(
         "properties": {"title": {"type": "string"}},
         "required": [],
     }
-    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
+    mcp_manager.get_tool_info.return_value = _manager_tool_info(input_schema)
 
     result = await proxy.call_tool(
         "gobby-tasks",
@@ -181,7 +181,7 @@ async def test_required_session_id_injected_from_wrapper_context(
         "properties": {"session_id": {"type": "string"}},
         "required": ["session_id"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
+    mcp_manager.get_tool_info.return_value = _manager_tool_info(input_schema)
 
     result = await proxy.call_tool(
         "gobby-sessions",
@@ -209,7 +209,7 @@ async def test_malformed_string_arguments_return_schema_guidance(
         "properties": {"name": {"type": "string"}},
         "required": ["name"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
+    mcp_manager.get_tool_info.return_value = _manager_tool_info(input_schema)
 
     result = await proxy.call_tool(
         "test-server",

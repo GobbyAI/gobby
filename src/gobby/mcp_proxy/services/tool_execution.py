@@ -921,14 +921,8 @@ async def get_tool_schema(
         return {"success": False, "error": error_msg}
 
     try:
-        result = await service._mcp_manager.get_tool_input_schema(config.id, tool_name)
-        return {
-            "success": True,
-            "tool": {
-                "name": tool_name,
-                "inputSchema": cast("dict[str, Any]", result),
-            },
-        }
+        tool_info = await service._mcp_manager.get_tool_info(config.id, tool_name)
+        return {"success": True, "tool": cast("dict[str, Any]", tool_info)}
     except Exception as e:
         raise MCPError(f"Failed to get schema for {tool_name} on {server_name}: {e}") from e
 

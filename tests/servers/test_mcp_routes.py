@@ -318,10 +318,6 @@ class FakeMCPManager:
             raise ValueError(f"Server not found: {server_name}")
         return {"result": "success", "tool": tool_name, "args": arguments}
 
-    async def get_tool_input_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
-        """Get tool input schema."""
-        return {"type": "object", "properties": {}}
-
     async def get_tool_info(self, server_id: str, tool_name: str) -> dict[str, Any]:
         """Return a registered tool description, or fail like the real manager."""
         try:
@@ -1236,8 +1232,10 @@ class TestGetToolSchema:
         )
         mcp_manager = FakeMCPManager()
         mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
+        description = "Get one item with its complete external documentation.\n" + ("x" * 120)
         mcp_manager.tool_infos[("external-server", "get_item")] = {
             "name": "get_item",
+            "description": description,
             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
         }
         server.mcp_manager = mcp_manager
@@ -1251,6 +1249,7 @@ class TestGetToolSchema:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "get_item"
+        assert data["description"] == description
         assert data["inputSchema"]["type"] == "object"
 
     def test_get_schema_external_server_failure(self, session_storage: SessionManager) -> None:
@@ -1373,6 +1372,7 @@ class TestGetToolSchema:
         assert data["success"] is True
         assert data["name"] == "get_item"
         assert data["inputSchema"] == {"type": "object"}
+        assert "description" not in data
         record.assert_called_once_with(
             server.tool_proxy,
             session.id,

@@ -251,14 +251,24 @@ async def test_list_tools(daemon_tools, mock_mcp_manager):
 @pytest.mark.asyncio
 async def test_get_tool_schema(daemon_tools, mock_mcp_manager):
     # For internal tools, the internal_manager.get_registry().get_schema() is called
-    # For external tools, mcp_manager.get_tool_input_schema() is called
+    # For external tools, mcp_manager.get_tool_info() is called
 
     # Test with external tool - mock the mcp_manager method
-    mock_mcp_manager.get_tool_input_schema = AsyncMock(return_value={"type": "object"})
+    mock_mcp_manager.get_tool_info = AsyncMock(
+        return_value={
+            "name": "dt1",
+            "description": "downstream tool",
+            "inputSchema": {"type": "object"},
+        }
+    )
 
     result = await daemon_tools.get_tool_schema("downstream", "dt1")
     assert result["success"] is True
-    assert result["tool"]["name"] == "dt1"
+    assert result["tool"] == {
+        "name": "dt1",
+        "description": "downstream tool",
+        "inputSchema": {"type": "object"},
+    }
 
 
 @pytest.mark.asyncio
