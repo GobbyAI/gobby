@@ -8,25 +8,28 @@ use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::raw_input::RawInputEvent;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use crate::copy_mode::{copy_finalized_selection, route_mouse_selection, PASTE_MAX_BYTES};
-use crate::daemon::{
-    Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
-    SpawnOutcome, SpawnRequest,
-};
+use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
 use crate::input::key_to_bytes_with_protocol;
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
-use super::attention::{open_response_dialog, route_response_input};
+use super::attention::route_response_input;
 use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
-use super::{ControlState, PaneId, Workspace};
+use super::{PaneId, Workspace};
+
+mod actions;
+mod control;
+
+use actions::{handle_live_action, sync_live_chrome};
+use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -476,43 +479,6 @@ async fn handle_reconnect_outcome(
     }
 }
 
-fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
-    for tab in &mut chrome.tabs {
-        let stale: Vec<_> = tab
-            .slots
-            .iter()
-            .filter_map(|(slot, pane_id)| (!workspace.panes.contains_key(pane_id)).then_some(*slot))
-            .collect();
-        if stale.len() == tab.slots.len() {
-            tab.slots.clear();
-            continue;
-        }
-        for slot in stale {
-            tab.layout.focus_pane(slot);
-            let _ = tab.layout.close_focused();
-            tab.slots.remove(&slot);
-        }
-    }
-    chrome.tabs.retain(|tab| !tab.slots.is_empty());
-    if chrome.active_tab >= chrome.tabs.len() {
-        chrome.active_tab = chrome.tabs.len().saturating_sub(1);
-    }
-
-    let shown: Vec<_> = chrome
-        .tabs
-        .iter()
-        .flat_map(|tab| tab.slots.values().copied())
-        .collect();
-    for terminal_id in workspace.roster_terminal_ids() {
-        let Some(pane_id) = workspace.pane_for_terminal(&terminal_id) else {
-            continue;
-        };
-        if !shown.contains(&pane_id) {
-            chrome.open_pane(pane_id, workspace.pane(pane_id).display_name());
-        }
-    }
-}
-
 async fn route_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -583,343 +549,6 @@ async fn route_live_input(
         }
     }
     Ok(false)
-}
-
-async fn handle_live_action(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    action: Action,
-) -> Result<(), FrameError> {
-    match action {
-        Action::NewTerminal => spawn_live_terminal(workspace, chrome).await?,
-        Action::CloseTerminal | Action::ClosePane => {
-            if let Some(pane_id) = chrome.focused_pane() {
-                terminate_live_terminal(workspace, pane_id).await?;
-                sync_live_chrome(workspace, chrome);
-            }
-        }
-        Action::TakeControl | Action::TakeBack => {
-            if let Some(pane_id) = chrome.focused_pane() {
-                take_live_control(workspace, pane_id).await?;
-            }
-        }
-        Action::Respond => open_response_dialog(workspace, chrome).await?,
-        Action::CopyMode => chrome.mode = Mode::Copy,
-        // Both are bound in the default keymap and both render (chrome_render
-        // draws the help table and the settings pane), but neither was ever
-        // dispatched here, so the advertised keys did nothing in the real
-        // client. The wildcard arm below swallows any action added later:
-        // triage a new Action here rather than letting it go quietly inert.
-        Action::Help => chrome.mode = Mode::KeybindHelp,
-        Action::Settings => chrome.mode = Mode::Settings,
-        Action::ReleaseControl | Action::Detach => {
-            if let Some(pane_id) = chrome.focused_pane() {
-                release_live_control(workspace, pane_id).await?;
-            }
-        }
-        Action::PreviousTerminal | Action::CyclePanePrevious => {
-            focus_relative_live_pane(workspace, chrome, -1).await?;
-        }
-        Action::NextTerminal | Action::CyclePaneNext => {
-            focus_relative_live_pane(workspace, chrome, 1).await?;
-        }
-        Action::SwitchTerminal(index) if index > 0 => {
-            let pane_id = workspace
-                .roster_terminal_ids()
-                .get(usize::from(index - 1))
-                .and_then(|terminal_id| workspace.pane_for_terminal(terminal_id));
-            if let Some(pane_id) = pane_id {
-                chrome.focus_pane(pane_id);
-                focus_live_pane(workspace, pane_id).await?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-async fn focus_relative_live_pane(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    delta: isize,
-) -> Result<(), FrameError> {
-    let pane_ids: Vec<_> = workspace
-        .roster_terminal_ids()
-        .iter()
-        .filter_map(|terminal_id| workspace.pane_for_terminal(terminal_id))
-        .collect();
-    if pane_ids.is_empty() {
-        return Ok(());
-    }
-    let current = chrome
-        .focused_pane()
-        .and_then(|pane_id| pane_ids.iter().position(|candidate| *candidate == pane_id))
-        .unwrap_or(0);
-    let next = (current as isize + delta).rem_euclid(pane_ids.len() as isize) as usize;
-    chrome.focus_pane(pane_ids[next]);
-    focus_live_pane(workspace, pane_ids[next]).await
-}
-
-async fn focus_live_pane(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let previous = workspace.focus.replace(pane_id);
-    if let Some(previous) = previous.filter(|previous| *previous != pane_id) {
-        release_live_control(workspace, previous).await?;
-    }
-    if !workspace.pane(pane_id).is_held() {
-        take_live_control(workspace, pane_id).await?;
-    }
-    Ok(())
-}
-
-async fn take_live_control(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let pane = workspace.pane(pane_id);
-    if !pane.is_live() {
-        return Ok(());
-    }
-    let attachment_id = pane.attachment_id().to_string();
-    let terminal_id = pane.terminal_id.clone();
-    let reply = match workspace
-        .daemon()
-        .send(json!({
-            "type": "terminal_take_control",
-            "terminal_id": terminal_id,
-            "attachment_id": attachment_id,
-            "takeover": false,
-        }))
-        .await
-    {
-        Ok(reply) => reply,
-        Err(error) => {
-            retire_live_control(workspace, pane_id).await;
-            return Err(FrameError::from(error));
-        }
-    };
-    let generation = reply
-        .get("lease_generation")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let granted = reply
-        .get("granted")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let refusal_reason = reply
-        .get("reason")
-        .and_then(Value::as_str)
-        .unwrap_or("control request denied")
-        .to_string();
-    let pending = {
-        let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-        if generation < pane.lease_generation() {
-            return Ok(());
-        }
-        pane.set_lease_generation(generation);
-        pane.control = if granted {
-            ControlState::Held
-        } else {
-            ControlState::Observe
-        };
-        pane.take_back = !granted;
-        if granted {
-            pane.pending_input.take()
-        } else {
-            pane.pending_input = None;
-            None
-        }
-    };
-    if let Some(data) = pending {
-        send_live_write(workspace, pane_id, &data, false).await?;
-    }
-    if !granted {
-        return Err(FrameError::from(DaemonError::Protocol {
-            detail: refusal_reason,
-        }));
-    }
-    Ok(())
-}
-
-async fn retire_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
-    let Some((terminal_id, attachment_id, _)) =
-        workspace.retire_indeterminate_control(pane_id, Instant::now())
-    else {
-        return;
-    };
-    let _ = workspace
-        .daemon()
-        .notify(json!({
-            "type": "terminal_detach",
-            "request_id": uuid::Uuid::new_v4().to_string(),
-            "terminal_id": terminal_id,
-            "attachment_id": attachment_id,
-        }))
-        .await;
-}
-
-async fn release_live_control(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let pane = workspace.pane(pane_id);
-    if !pane.is_live() || !pane.is_held() {
-        return Ok(());
-    }
-    let message = json!({
-        "type": "terminal_release_control",
-        "terminal_id": pane.terminal_id,
-        "attachment_id": pane.attachment_id(),
-    });
-    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    pane.control = ControlState::Observe;
-    pane.take_back = false;
-    workspace
-        .daemon()
-        .notify(message)
-        .await
-        .map_err(FrameError::from)
-}
-
-async fn send_live_input(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-    data: &[u8],
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    if workspace.pane(pane_id).writable() {
-        return send_live_write(workspace, pane_id, data, false).await;
-    }
-    let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    if !pane.is_live() || pane.pending_input.is_some() {
-        return Ok(());
-    }
-    pane.pending_input = Some(data.to_vec());
-    take_live_control(workspace, pane_id).await
-}
-
-async fn send_live_write(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-    data: &[u8],
-    paste: bool,
-) -> Result<(), FrameError> {
-    let message = {
-        let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-        if !pane.writable() {
-            return Ok(());
-        }
-        pane.client_write_seq += 1;
-        pane.in_flight_write = Some(pane.client_write_seq);
-        let mut message = json!({
-            "type": if paste { "terminal_paste" } else { "terminal_input" },
-            "terminal_id": pane.terminal_id,
-            "attachment_id": pane.attachment_id(),
-            "client_write_seq": pane.client_write_seq,
-        });
-        message[if paste { "text" } else { "data" }] = json!(String::from_utf8_lossy(data));
-        message
-    };
-    match workspace.daemon().send(message).await {
-        Ok(reply) => {
-            apply_live_write_outcome(workspace, &reply);
-            Ok(())
-        }
-        Err(error) => {
-            let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-            pane.in_flight_write = None;
-            pane.control = ControlState::UncertainReadOnly;
-            Err(FrameError::from(error))
-        }
-    }
-}
-
-fn apply_live_write_outcome(workspace: &mut Workspace<LiveDaemon>, message: &Value) {
-    let Some(attachment_id) = message.get("attachment_id").and_then(Value::as_str) else {
-        return;
-    };
-    let outcome = message.get("outcome").and_then(Value::as_str).unwrap_or("");
-    let reason = message.get("reason").and_then(Value::as_str).unwrap_or("");
-    if let Some(pane) = workspace.pane_for_attachment_mut(attachment_id) {
-        pane.in_flight_write = None;
-        match outcome {
-            "delivered" if pane.control != ControlState::LeaseLost => {
-                pane.control = ControlState::Held;
-            }
-            "indeterminate" => pane.control = ControlState::UncertainReadOnly,
-            "refused"
-                if !matches!(
-                    reason,
-                    "write_seq_conflict" | "write_seq_expired" | "write_seq_capacity"
-                ) =>
-            {
-                pane.control = ControlState::Observe;
-            }
-            _ => {}
-        }
-    }
-}
-
-async fn spawn_live_terminal(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let request = SpawnRequest {
-        project_id: workspace.project_id().map(str::to_owned),
-        ..SpawnRequest::default()
-    };
-    match workspace.daemon().spawn(request).await? {
-        SpawnOutcome::Created { terminal_id, .. } => {
-            workspace.pending_spawns.insert(terminal_id);
-            workspace.fetch_roster().await?;
-            workspace.attach_ready_panes().await?;
-            sync_live_chrome(workspace, chrome);
-        }
-        SpawnOutcome::Refused { reason } => chrome.status_message = Some(reason),
-    }
-    Ok(())
-}
-
-async fn terminate_live_terminal(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let terminal_id = workspace.pane(pane_id).terminal_id.clone();
-    workspace
-        .panes
-        .get_mut(&pane_id)
-        .expect("pane exists")
-        .terminating = true;
-    match workspace.daemon().terminate(&terminal_id).await? {
-        KillOutcome::Killed { .. } => workspace.fetch_roster().await?,
-        KillOutcome::Refused { .. } => {
-            workspace
-                .panes
-                .get_mut(&pane_id)
-                .expect("pane exists")
-                .terminating = false;
-        }
-    }
-    Ok(())
 }
 
 async fn recv_workspace_frame(
