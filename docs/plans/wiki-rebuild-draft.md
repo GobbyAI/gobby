@@ -2,13 +2,17 @@
 
 Saved 2026-09-06 from Gobby session #12034; documentation task #21910.
 Updated after the follow-on discussion under documentation task #21916.
+Updated 2026-09-07 under documentation task #21920: locked model strategy,
+refreshed general comparator cohort, local LM Studio protocol probes, and the
+next planning priority (test matrix plus Graphify/gcode special-case analysis).
 
 Status: unfinished discussion record, not an approved or implementation-ready
 plan. This preserves decisions, research progress, and remaining design work so
 planning can resume without repeating the conversation. It is not a registered
 implementation plan, task manifest, parity certification, or authorization to
 activate production writers. Full planning depth was selected. No replacement
-wiki implementation or benchmark was performed during this discussion.
+wiki implementation or comparator benchmark was performed during this discussion.
+The bounded local protocol smoke checks below are not application bakeoff runs.
 
 ## Confirmed decisions
 
@@ -24,8 +28,9 @@ wiki implementation or benchmark was performed during this discussion.
   articles require review; optimistic concurrency protects intervening edits.
 - Code-wiki parity+ uses two bakeoff lanes: `gcode` versus Graphify for evidence;
   the DeepWiki family, Understand Anything, and Archify for wiki explanations,
-  guided exploration, and diagrams. General-knowledge parity+ targets:
-  `sdsrss/llm_wiki` (now confirmed), WeKnora, and RAGFlow. Record explicit
+  guided exploration, and diagrams. The refreshed general-knowledge cohort is
+  `nashsu/llm_wiki`, `nvk/llm-wiki`, WeKnora, and RAGFlow. This supersedes the
+  earlier `sdsrss/llm_wiki` selection. Record explicit
   capability and quality acceptance cases, with evidence for every adoption,
   adaptation, or exclusion; do not silently narrow a parity claim.
 - Credit and reuse current `gcode` and Gobby services: AI routing, normal agents,
@@ -55,7 +60,9 @@ Game Goblins, before returning to the complete wiki implementation plan.
 Keep this checkpoint. Replace the old wiki bakeoff with two independent
 bakeoffs: code, and general knowledge using a fixed cohort of files and links.
 No new bakeoff has been created or run, and no old bakeoff files have been
-removed. The present task only updates this discussion record and its handoff.
+removed. The present task saves the discussion and bounded local compatibility
+probes, then creates a handoff. Plan a fresh bakeoff epic after this checkpoint;
+its first task must design the test matrix and analyze Graphify against gcode.
 
 ### Locked code-bakeoff decisions
 
@@ -81,9 +88,140 @@ removed. The present task only updates this discussion record and its handoff.
   diagrams, evidence references, and supporting metadata; a few showcase pages
   or empty templates do not satisfy this design checkpoint.
 
-The general cohort stays separate: `sdsrss/llm_wiki`, WeKnora, and RAGFlow against
-fixed supplied files and captured links. The actual source cohort is not yet
-selected. The immediate planning focus is the code cohort.
+The general cohort stays separate: `nashsu/llm_wiki`, `nvk/llm-wiki`, WeKnora,
+and RAGFlow against fixed supplied files and captured links. The actual source
+cohort is not yet selected. The immediate planning focus is the code cohort.
+
+### Locked models and bounded spending
+
+- **Codex-driven code runs:** `gpt-5.6-terra`, reasoning `medium`, as the primary
+  baseline where the comparator genuinely supports the Codex subscription/CLI.
+- **Calibration only:** `gpt-5.6-luna`, reasoning `medium`, on a small shared
+  subset to measure whether it is sufficient. Do not multiply every comparator
+  and every test by both models or silently make Luna an automatic fallback.
+- **Local/general lane:** the existing LM Studio `qwen/qwen3.8-27b`, including
+  DeepWiki-Open/OpenDeepWiki local-provider evaluation. The inspected local
+  variant is 8-bit MLX, with a loaded 262,144-token context. Record and control
+  its effective reasoning mode per run; support for `medium` was smoke-tested,
+  but protocol checks do not select an optimal synthesis reasoning budget.
+- **Embeddings:** the loaded LM Studio
+  `text-embedding-nomic-embed-text-v1.5@f16`, 2,048-token context, returned
+  768-dimensional vectors. Freeze chunk limits and document/query prefixes in
+  the matrix; do not silently switch embedding models between comparable runs.
+- On 2026-09-07 the user reported approximately 40% of this week's Pro allowance
+  used and a second account with a couple of resets available. This is capacity
+  context, not authorization to exhaust either account, switch accounts, or
+  handle additional credentials. No blanket Astra runs are selected.
+- Establish bounded per-run input/output, reasoning, concurrency, retry, and
+  wall-time limits before execution. Record model calls, tokens where reliable,
+  pages rewritten, failures, and actual subscription usage where observable.
+  API prices are not a conversion formula for Codex subscription allowance.
+  No Codex generation was performed during this checkpoint save.
+
+The model roles follow the current [OpenAI model guidance](https://learn.chatgpt.com/docs/models):
+Terra is the stronger everyday baseline; Luna is a candidate for bounded,
+repeatable extraction and transformation. The [Qwen model card](https://huggingface.co/Qwen/Qwen3.8-27B)
+describes the upstream model, not measured quality of this local quantization.
+Treat Qwen/Luna/Terra quality as a bakeoff question, not model equivalence.
+
+`ask` and `wiki_ask` parity can use normal daemon agent spawns or pipelines with
+agent spawns. They do not require a new wiki answer runtime or necessarily a
+separate API-key provider. Existing `sessions.summary_markdown` and
+`session_handoffs` already cover session capture. Do not copy comparator session
+capture hooks or restore automatic session-to-wiki ingestion. Any later explicit
+curation of session material must use those canonical records and normal source
+attribution, not another capture or summary mirror.
+
+### Refreshed general cohort
+
+Research below was checked on 2026-09-07. Commit pins identify inspected upstream
+inputs, not installed versions or completed runs. Maintenance is judged by
+substantive changes, not README model examples, stars, or bot-only commits.
+
+| Status | Comparator and research pin | Why it belongs / limits to preserve |
+| --- | --- | --- |
+| Active replacement | [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki), `main` · `e8082119649e6a8e1cf85eaf289adcabfdf39d4e` ([v0.6.11](https://github.com/nashsu/llm_wiki/releases/tag/v0.6.11), Aug 25) | Karpathy-style cross-source articles, review/contradictions, source hashes, persisted ingestion/retry, multimodal inputs, graph navigation, and independent chat/ingest providers. Local OpenAI-compatible configuration needs an actual app smoke test; MCP access alone does not establish Codex-subscription generation. |
+| Active addition | [nvk/llm-wiki](https://github.com/nvk/llm-wiki), `master` · `7c94c9bf2968f17deb496b285db0afdb610a01d9` (v0.24.4, Aug 27) | Codex-capable agent workflow, topic-isolated wikis, source guides, deterministic lint, retraction/privacy, and compact query profiles. Exclude session-capture hooks and open-ended multi-agent research from the fixed-source test. Local Pi support is not proof of LM Studio/Qwen compatibility. |
+| Retained | [WeKnora](https://github.com/Tencent/WeKnora) | Wiki synthesis, multimodal ingestion, revisions/curation, and retrieval. Prior research pin below; freeze a fresh run version and verify the actual local adapter. |
+| Retained | [RAGFlow](https://github.com/infiniflow/ragflow) | Parsing/OCR/tables, inspectable evidence, curation, retrieval/graph evaluation, and citation grounding. Evaluate these strengths without pretending its native output is necessarily a complete article wiki. |
+| Reference only | [Astro-Han/karpathy-llm-wiki](https://github.com/Astro-Han/karpathy-llm-wiki), `eafcc77001e496cc43499e4923b663aec722c813` (Jul 23) | Portable Codex skill, templates, example artifacts, and evidence/lint fixtures. Useful minimalism reference, but deliberately omitted freshness/retraction mechanisms limit its fit as a full comparator. |
+| Reference only | [SamurAIGPT/llm-wiki-agent](https://github.com/SamurAIGPT/llm-wiki-agent), substantive change `66f81f8c6bcc6cf16bd000bf9d5ff08970cdd0d8` (Jul 30) | Graph evidence classes and hash caching remain useful references. Aug 31 head `4ea2c7f916a8f7de6c787d1be014cd392250c161` was bot-only activity, not evidence of newer implementation. |
+| Superseded | [sdsrss/llm_wiki](https://github.com/sdsrss/llm_wiki) | The earlier selected project's latest observed work was July 12. Replace it in the active cohort with Nashsu and add NVK; retain only historical attribution, not a required duplicate run. |
+
+The [Karpathy source note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+motivates raw evidence, synthesized linked knowledge, and ingest/query/lint
+workflows. It does not require copying any comparator's runtime. Maintenance
+screening is not a measured quality verdict; adoption still needs corpus evidence.
+
+### Local LM Studio protocol checks — 2026-09-07
+
+Read-only preflight found an already-running server at `http://127.0.0.1:1234`.
+`lms ps`, `lms server status`, and `GET /api/v1/models` confirmed the loaded
+models above. Qwen metadata advertises reasoning options `off`, `low`, `medium`,
+`xhigh`, and `on`, defaulting to `xhigh`; that metadata vocabulary is not the
+OpenAI-compatible request vocabulary.
+
+Probes used only tiny synthetic strings, no repository or personal documents,
+no cloud models, and no installations, model loading/unloading, or server changes.
+All POSTs had 45-second client timeouts. Chat requests used temperature 0 and
+output caps of 128 tokens, except the medium-reasoning check capped at 256.
+The Responses request capped output at 128 and set `store: false`.
+
+| Probe / request detail | Observed result |
+| --- | --- |
+| Chat: `POST /v1/chat/completions`, `reasoning_effort: "medium"`, ask for `WIKI_OK` | HTTP 200, stop, expected text after whitespace trimming; 51 completion tokens including 44 reported reasoning tokens. |
+| Disable thinking using `reasoning_effort: "off"` | HTTP 400 with explicit supported values `none, minimal, low, medium, high, xhigh`. This is a caller dialect mismatch, not an inference failure. |
+| Strict JSON schema, corrected to `reasoning_effort: "none"` | HTTP 200, zero reported reasoning tokens; parsed and checked exactly `{"topic":"wiki","sources":2}` against the requested fields/values. |
+| Streaming chat with `stream: true`, reasoning `none` | HTTP 200; SSE content assembled to `WIKI_STREAM_OK`, stop finish reason, `[DONE]` present. |
+| Automatic tool selection with one synthetic `lookup_source(source_id)` tool | HTTP 200, `tool_calls` finish; exactly one call with `source_id: "S1"`. No external tool executed. |
+| Feed the fixed synthetic tool result back using `tool_call_id` | HTTP 200, stop; answer correctly stated that the synthetic wiki has two sources. |
+| `POST /v1/responses`, `reasoning: {"effort":"none"}` | HTTP 200, completed, exact `WIKI_RESPONSES_OK`, zero reported reasoning tokens. |
+| `POST /v1/embeddings`, batch of two synthetic strings with `search_document:` / `search_query:` prefixes | HTTP 200; two finite 768-dimensional vectors. Reported usage was zero, so that counter is not usable as measured embedding workload. |
+
+Six generation requests and one embedding request succeeded; the rejected `off`
+request was corrected once. These checks establish basic local protocol behavior,
+not extraction quality, vision/audio support, long-context performance, streaming
+tool-call handling, multi-tool concurrency, or per-application compatibility.
+The matrix must exercise each comparator's actual SDK/adapter, endpoint paths,
+model IDs, reasoning translation, structured output, tool protocol, embedding
+dimensions/prefixes/context limits, container-to-host reachability, and failure
+reporting before full runs. Never infer Codex subscription authentication from
+an app's generic OpenAI-compatible API support.
+
+Primary protocol references: [LM Studio OpenAI compatibility](https://lmstudio.ai/docs/developer/openai-compat),
+[structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output),
+[tool use](https://lmstudio.ai/docs/developer/openai-compat/tools), and
+[model metadata](https://lmstudio.ai/docs/developer/rest/list).
+
+### First bakeoff task: test matrix and Graphify/gcode analysis
+
+The user explicitly selected this as the first task of the forthcoming bakeoff
+epic. It is analysis and test design, not an assumption that gcode needs rewriting.
+
+1. Define the shared pinned Game Goblins evidence inventory, controlled variants,
+   human-answerable questions and verified evidence, required native output
+   inventories, scoring rubric, resource budgets, and output-by-output review.
+   Separate compatibility smoke checks, evidence-index comparison, wiki quality,
+   and maintenance/reliability cases so failures have an identifiable cause.
+2. Analyze Graphify separately from the article generators: deterministic AST
+   facts versus model-derived semantics; code, comments, docs and rationale;
+   typed relationships and explicit/inferred provenance; communities, paths,
+   queries and evidence export; caching and invalidation for unchanged, changed,
+   removed, and renamed evidence. Pin its actual execution path: host Codex
+   skill and headless API/local modes have different costs and contracts.
+3. Exercise current gcode capabilities against the same questions and evidence.
+   Credit existing graph/index/provenance functionality. Attribute each miss to
+   absent/ambiguous source material, indexing, retrieval, or writer use; do not
+   score Graphify's graph report as though it were a finished human-first wiki.
+4. Produce an evidence-backed gap table with concrete acceptance cases and
+   ownership (`gcode`, `gwiki`, or both). If a missing gcode capability blocks
+   grounded wiki output, explore and sequence the minimal gcode update before
+   gwiki work. Do not make speculative improvements or rebuild delivered
+   indexing/graph features merely to resemble another implementation.
+5. Use those findings to settle the bakeoff epic's dependencies, run matrix,
+   selected DeepWiki-family entrants, budgets, and evaluation artifacts. The
+   general cohort remains a separate fixed-source bakeoff, not an unrestricted
+   research or session-ingestion exercise.
 
 ### Read-only reconnaissance for the next planning discussion
 
@@ -103,8 +241,8 @@ selected. The immediate planning focus is the code cohort.
 - Source-only analysis does not require running operational jobs or connecting
   to Lightspeed, Slack, or the application's live PostgreSQL. Review the input
   inventory for secrets, live data, generated wikis, and untracked work before
-  exposing any cohort to a model. Model/provider authorization and budgets remain
-  to be settled for the bakeoff.
+  exposing any cohort to a model. Model roles are now locked above; exact run
+  budgets, input approval, and comparator adapter setup remain to be settled.
 - Upstream setup inspection found Graphify needs Python 3.10+; AST code parsing
   is local, while semantic document analysis uses an assistant/model backend.
   Archify needs Node.js 18+ and an agent to author typed JSON, with browser
@@ -112,7 +250,7 @@ selected. The immediate planning focus is the code cohort.
   analysis preflight asks for Node.js 22+, pnpm 10+, a built plugin, and an agent
   capable of its analysis workflow. See the linked primary repositories below;
   recheck requirements against the exact selected commits before installation.
-- Local checks found Node `v26.8.1`, uv `0.12.10`, Graphify `0.9.34`, and Claude
+- The September 6 local checks found Node `v26.8.1`, uv `0.12.10`, Graphify `0.9.34`, and Claude
   and Codex executables. `pnpm` was absent from PATH. No installations, upgrades,
   model calls, comparator execution, or application operations were performed.
 
@@ -120,8 +258,10 @@ Proposed run coverage, still to refine: cold generation, an unchanged rerun,
 and controlled code/document changes. Retain full output inventories, commands,
 prompts, tool/source versions, model settings, costs, warnings, and rendered
 evidence. Preserve native outputs so the evaluation can distinguish observed
-competitor behavior from a later Gobby design example. Models, budgets, prompts,
-quality thresholds, and the output-by-output approval process are not settled.
+competitor behavior from a later Gobby design example. Model roles are locked;
+exact run budgets, prompts, quality thresholds, and the output-by-output approval
+process still need test-matrix decisions. The September 7 protocol checks above
+do not constitute these proposed comparator runs.
 
 The old bakeoff spans tracked evidence at
 `docs/evidence/wiki-bakeoff-2026-06/` and the dedicated local workspace
@@ -274,13 +414,14 @@ or an exhaustive acceptance matrix.
 | [DeepWiki-Open](https://github.com/AsyncFuncAI/deepwiki-open) | `main` · `d92819a9c9f3b99416e3580ff235fc9d3adf8b89` | Hierarchical repository documentation, explanation, diagrams and grounded questions. |
 | [OpenDeepWiki](https://github.com/AIDotNet/OpenDeepWiki) | `main` · `75840e5e86213ca40ace9d5036b1f52603f8d038` | Repository-to-wiki generation, structured navigation and evidence-backed exploration. |
 | [CodeWiki](https://github.com/FSoft-AI4Code/CodeWiki) | `main` · `2584854d7538dc3e3e8e6839cf8590b0cd12a431` | Additional repository-documentation comparator from the historical DeepWiki-family bakeoff; exact acceptance mapping still needed. |
-| [llm_wiki](https://github.com/sdsrss/llm_wiki) | `main` · `428c0bb7a3952fd93844b79f389178b601c4bb4c` | Immutable raw sources; coherent linked source/entity/concept/comparison articles; citations, incremental invalidation, lint, graph navigation, whole-page retrieval, Markdown/Obsidian and CLI/MCP. |
+| [sdsrss/llm_wiki — superseded](https://github.com/sdsrss/llm_wiki) | `main` · `428c0bb7a3952fd93844b79f389178b601c4bb4c` | Historical research only: source/entity/concept/comparison articles, citations, lint and graph navigation. Replaced in the active cohort on September 7 as recorded above. |
 | [WeKnora](https://github.com/Tencent/WeKnora) | `main` · `3d3bb7f6d1acca8caa84bb73b189fe46c30967a9` | Wiki synthesis, interconnected Markdown, edit/revision/rollback, multimodal ingestion, metadata, hybrid and hierarchical retrieval/reranking, graph and reprocessing. |
 | [RAGFlow](https://github.com/infiniflow/ragflow) | `main` · `0c28d59ea1d362d9b6aa7481eed48c7fd9a95f0b` | Structured document parsing/tables/OCR, chunk inspection and curation, hybrid/reranked/graph retrieval, citation grounding, retrieval evaluation and workflow integration. |
 
-The user confirmed `sdsrss/llm_wiki`. Historical local evidence used
-`Pratiyush/llm-wiki`, a different, session-oriented project; do not substitute
-it. CodeWiki remains a candidate within the DeepWiki-family research rather
+The earlier `sdsrss/llm_wiki` selection is superseded by the refreshed cohort
+above. Historical local evidence used `Pratiyush/llm-wiki`, a different,
+session-oriented project; it is not an active entrant either.
+CodeWiki remains a candidate within the DeepWiki-family research rather
 than a separately confirmed new-bakeoff entrant. The table's commits are prior
 research pins; fresh bakeoff run pins must be selected and recorded separately.
 
@@ -446,19 +587,25 @@ corpus; Gobby's own required project wiki remains in product scope.
   locators, collision-safe names, managed updates, and preserved user content.
 
 Use fresh isolated fixtures and replacement state, never the live daemon DB or
-real vault. Run targeted tests, not the full pytest suite. No tests or comparator
-benchmarks were run during the design discussion; draft-save validation is
-documentation-only and does not validate the future implementation.
+real vault. Run targeted tests, not the full pytest suite. Only the bounded
+local protocol smoke checks above were run; no comparator benchmarks or wiki
+implementation tests were performed. Draft-save validation is documentation-only
+and does not validate the future implementation.
 
 ## Remaining work and resume instructions
 
-1. Resume planning the code bakeoff using the locked two-lane decisions above.
+1. Plan a fresh bakeoff epic using the locked two-lane decisions above. Its first
+   task is test-matrix design and the Graphify/gcode special-case analysis, with
+   evidence-backed gcode prerequisites allowed before gwiki work if warranted.
    Resolve the exact Game Goblins snapshot/input inventory, DeepWiki-family
-   entrants, comparator pins, isolated execution setup, models/budgets, prompts,
+   entrants, comparator pins, isolated execution setup, bounded run budgets, prompts,
    evidence questions, scoring, and full generated-file inventory/review method.
    Plan scoped retirement of the old bakeoff separately from this checkpoint
    update; no old assets have been deleted. Keep the general cohort separate
-   and select its fixed files/links later. Do not ask again which `llm_wiki` repo.
+   and select its fixed files/links later. Use Nashsu, NVK, WeKnora, and RAGFlow;
+   do not reopen settled model roles or ask again which `llm_wiki` repo. Complete
+   per-app LM Studio/Codex adapter checks; basic protocol smoke tests are not
+   end-to-end compatibility certification.
 2. Use the fresh bakeoffs to produce evidence-backed feature decisions and
    complete example outputs before settling the whole redesign. Attribute code
    gaps to `gcode`, wiki generation, or both. Record exclusions honestly rather
@@ -476,7 +623,8 @@ documentation-only and does not validate the future implementation.
    discussion. Detail human/agent revision history, live-vault manifest/recovery,
    local-edit conflicts, rename behavior, and optional snapshot export. Keep
    database authority and the accepted mixed-export window clear.
-7. Define synthesis/model budgets and repeatable evaluation settings/thresholds.
+7. Refine bounded synthesis budgets and repeatable evaluation settings/thresholds
+   around the locked model strategy, using measured calibration evidence.
    Confirm the completed Decision Record, then author and review the Full typed
    implementation plan under `docs/contracts/plan-coverage.md`. This discussion
    draft is not a substitute for that decision-complete plan.
