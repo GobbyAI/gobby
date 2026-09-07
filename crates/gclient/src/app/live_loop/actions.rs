@@ -7,8 +7,14 @@ use std::process::{Command, Stdio};
 use crate::copy_mode::copy_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
+use crate::prefs::{load_prefs, prefs_path};
+use crate::ui::chrome::attention_pane;
+use crate::ui::dialogs::{CloseTarget, Dialog, RenameKind};
+use crate::ui::navigator::NavigatorState;
 use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
+use gobby_terminal::layout::{self, find_in_direction, NavDirection};
+use ratatui::layout::Rect;
 
 use super::super::attention::open_response_dialog;
 use super::super::{PaneId, Workspace};
@@ -145,14 +151,35 @@ pub(super) async fn handle_live_action(
     action: Action,
 ) -> Result<(), FrameError> {
     match action {
-        Action::NewTerminal => {
+        Action::NewTerminal | Action::SplitVertical => {
             spawn_live_terminal(workspace, chrome, Placement::SplitRight).await?;
+        }
+        Action::SplitHorizontal => {
+            spawn_live_terminal(workspace, chrome, Placement::SplitDown).await?;
         }
         Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
         Action::CloseTerminal | Action::ClosePane => {
             if let Some(pane_id) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane_id).await?;
                 sync_live_chrome(workspace, chrome);
+            }
+        }
+        Action::CloseTab => {
+            let Some((title, panes)) = chrome
+                .active_tab()
+                .map(|tab| (tab.title.clone(), tab.slots.len()))
+            else {
+                return Ok(());
+            };
+            if chrome.prefs.confirm_close {
+                chrome.dialog = Some(Dialog::ConfirmClose {
+                    target: CloseTarget::Tab,
+                    title,
+                    panes,
+                });
+                chrome.mode = Mode::ConfirmClose;
+            } else {
+                close_live_tab(workspace, chrome).await?;
             }
         }
         Action::TakeControl | Action::TakeBack => {
@@ -162,13 +189,16 @@ pub(super) async fn handle_live_action(
         }
         Action::Respond => open_response_dialog(workspace, chrome, None).await?,
         Action::CopyMode => chrome.mode = Mode::Copy,
-        // Both are bound in the default keymap and both render (chrome_render
-        // draws the help table and the settings pane), but neither was ever
-        // dispatched here, so the advertised keys did nothing in the real
-        // client. The wildcard arm below swallows any action added later:
-        // triage a new Action here rather than letting it go quietly inert.
         Action::Help => chrome.mode = Mode::KeybindHelp,
         Action::Settings => chrome.mode = Mode::Settings,
+        Action::ResizeMode => chrome.mode = Mode::Resize,
+        Action::TerminalPicker | Action::Goto => {
+            chrome.navigator = NavigatorState {
+                search_focused: action == Action::Goto,
+                ..NavigatorState::default()
+            };
+            chrome.mode = Mode::Navigator;
+        }
         Action::ReleaseControl | Action::Detach => {
             if let Some(pane_id) = chrome.focused_pane() {
                 release_live_control(workspace, pane_id).await?;
@@ -180,19 +210,295 @@ pub(super) async fn handle_live_action(
         Action::NextTerminal | Action::CyclePaneNext => {
             focus_relative_live_pane(workspace, chrome, 1).await?;
         }
-        Action::SwitchTerminal(index) if index > 0 => {
-            let pane_id = workspace
-                .roster_terminal_ids()
-                .get(usize::from(index - 1))
-                .and_then(|terminal_id| workspace.pane_for_terminal(terminal_id));
+        Action::SwitchTerminal(index) => {
+            let pane_id = usize::from(index).checked_sub(1).and_then(|index| {
+                let terminal_id = workspace.roster_terminal_ids().into_iter().nth(index)?;
+                workspace.pane_for_terminal(&terminal_id)
+            });
             if let Some(pane_id) = pane_id {
                 chrome.focus_pane(pane_id);
                 focus_live_pane(workspace, pane_id).await?;
             }
         }
-        _ => {}
+        Action::Zoom => {
+            if let Some(tab) = chrome.active_tab_mut() {
+                tab.zoomed = !tab.zoomed;
+            }
+        }
+        Action::ToggleSidebar => chrome.sidebar.collapsed = !chrome.sidebar.collapsed,
+        Action::RenameTab => {
+            if let Some(title) = chrome.active_tab().map(|tab| tab.title.clone()) {
+                open_live_rename(chrome, RenameKind::Tab, title);
+            }
+        }
+        Action::RenamePane | Action::RenameTerminal => {
+            if let Some(pane_id) = chrome.focused_pane() {
+                let kind = if action == Action::RenamePane {
+                    RenameKind::Pane
+                } else {
+                    RenameKind::Terminal
+                };
+                let title = workspace.pane(pane_id).display_name().to_owned();
+                open_live_rename(chrome, kind, title);
+            }
+        }
+        Action::FocusPaneLeft => {
+            focus_live_neighbour(workspace, chrome, NavDirection::Left).await?
+        }
+        Action::FocusPaneDown => {
+            focus_live_neighbour(workspace, chrome, NavDirection::Down).await?
+        }
+        Action::FocusPaneUp => focus_live_neighbour(workspace, chrome, NavDirection::Up).await?,
+        Action::FocusPaneRight => {
+            focus_live_neighbour(workspace, chrome, NavDirection::Right).await?;
+        }
+        Action::NavigatePaneLeft => {
+            navigate_live_neighbour(workspace, chrome, NavDirection::Left).await?;
+        }
+        Action::NavigatePaneDown => {
+            navigate_live_neighbour(workspace, chrome, NavDirection::Down).await?;
+        }
+        Action::NavigatePaneUp => {
+            navigate_live_neighbour(workspace, chrome, NavDirection::Up).await?
+        }
+        Action::NavigatePaneRight => {
+            navigate_live_neighbour(workspace, chrome, NavDirection::Right).await?;
+        }
+        Action::SwapPaneLeft => swap_live_neighbour(chrome, NavDirection::Left),
+        Action::SwapPaneDown => swap_live_neighbour(chrome, NavDirection::Down),
+        Action::SwapPaneUp => swap_live_neighbour(chrome, NavDirection::Up),
+        Action::SwapPaneRight => swap_live_neighbour(chrome, NavDirection::Right),
+        Action::LastPane => {
+            if let Some(pane_id) = chrome.last_focused {
+                focus_live_shown_pane(workspace, chrome, pane_id).await?;
+            }
+        }
+        Action::PreviousTab => activate_relative_live_tab(workspace, chrome, -1).await?,
+        Action::NextTab => activate_relative_live_tab(workspace, chrome, 1).await?,
+        Action::SwitchTab(index) => {
+            if let Some(index) = usize::from(index).checked_sub(1) {
+                activate_live_tab(workspace, chrome, index).await?;
+            }
+        }
+        Action::NavigateUp | Action::NavigateDown => {
+            let roster_len = workspace.roster_terminal_ids().len();
+            if roster_len > 0 {
+                let selected = chrome.sidebar.selected.min(roster_len - 1);
+                chrome.sidebar.selected = if action == Action::NavigateUp {
+                    selected.saturating_sub(1)
+                } else {
+                    (selected + 1).min(roster_len - 1)
+                };
+            }
+            chrome.mode = Mode::Navigate;
+        }
+        Action::PreviousAttention | Action::NextAttention | Action::FocusAttention(_) => {
+            if let Some(entry_id) = pick_attention_entry(workspace, chrome, action) {
+                jump_live_attention(workspace, chrome, &entry_id).await?;
+            }
+        }
+        Action::OpenNotificationTarget => {
+            let pane_id = chrome
+                .toast
+                .take()
+                .and_then(|toast| toast.target)
+                .and_then(|terminal_id| workspace.pane_for_terminal(&terminal_id));
+            if let Some(pane_id) = pane_id {
+                focus_live_shown_pane(workspace, chrome, pane_id).await?;
+            }
+        }
+        Action::ReloadConfig => reload_live_prefs(workspace, chrome),
+        // The router answers `Quit` before dispatch; `CustomCommand` is held
+        // in the keymap table for the plugin-menu decision (#20201) and never
+        // bound.
+        Action::Quit | Action::CustomCommand => {}
     }
     Ok(())
+}
+
+/// Focus `pane_id` where the chrome shows it, tab switch included, and move
+/// the lease with it.
+async fn focus_live_shown_pane(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane_id: PaneId,
+) -> Result<(), FrameError> {
+    if chrome.focus_pane(pane_id) {
+        focus_live_pane(workspace, pane_id).await?;
+    }
+    Ok(())
+}
+
+/// Area the directional actions navigate: the last frame's terminal area,
+/// or a nominal one before the first frame (the layout is ratios).
+fn live_layout_area(chrome: &Chrome) -> Rect {
+    let area = chrome.view.terminal_area;
+    if area.width > 0 && area.height > 0 {
+        area
+    } else {
+        Rect::new(0, 0, 120, 40)
+    }
+}
+
+/// The active tab's focused slot and its neighbour in `direction`.
+fn live_neighbour_slots(
+    chrome: &Chrome,
+    direction: NavDirection,
+) -> Option<(layout::PaneId, layout::PaneId)> {
+    let panes = chrome.active_tab()?.layout.panes(live_layout_area(chrome));
+    let focused = panes.iter().find(|pane| pane.is_focused)?;
+    let neighbour = find_in_direction(focused, direction, &panes)?;
+    Some((focused.id, neighbour))
+}
+
+async fn focus_live_neighbour(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    direction: NavDirection,
+) -> Result<(), FrameError> {
+    let pane_id =
+        live_neighbour_slots(chrome, direction).and_then(|(_, slot)| chrome.pane_for_slot(slot));
+    if let Some(pane_id) = pane_id {
+        focus_live_shown_pane(workspace, chrome, pane_id).await?;
+    }
+    Ok(())
+}
+
+/// herdr keeps navigate mode across a directional focus made from it.
+async fn navigate_live_neighbour(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    direction: NavDirection,
+) -> Result<(), FrameError> {
+    focus_live_neighbour(workspace, chrome, direction).await?;
+    chrome.mode = Mode::Navigate;
+    Ok(())
+}
+
+/// Exchange the focused slot with its neighbour; focus stays on the same
+/// pane at its new position (herdr `swap_exact`).
+fn swap_live_neighbour(chrome: &mut Chrome, direction: NavDirection) {
+    if let Some((focused, neighbour)) = live_neighbour_slots(chrome, direction) {
+        if let Some(tab) = chrome.active_tab_mut() {
+            tab.layout.swap_panes(focused, neighbour);
+        }
+    }
+}
+
+async fn activate_relative_live_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    delta: isize,
+) -> Result<(), FrameError> {
+    let len = chrome.tabs.len();
+    if len == 0 {
+        return Ok(());
+    }
+    let next = (chrome.active_tab as isize + delta).rem_euclid(len as isize) as usize;
+    activate_live_tab(workspace, chrome, next).await
+}
+
+/// Make tab `index` active through its focused pane so the lease follows;
+/// out of range is ignored.
+async fn activate_live_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    index: usize,
+) -> Result<(), FrameError> {
+    if let Some(pane_id) = chrome.tabs.get(index).and_then(|tab| tab.focused_pane()) {
+        focus_live_shown_pane(workspace, chrome, pane_id).await?;
+    }
+    Ok(())
+}
+
+fn open_live_rename(chrome: &mut Chrome, kind: RenameKind, value: String) {
+    chrome.dialog = Some(Dialog::Rename {
+        kind,
+        cursor: value.chars().count(),
+        value,
+    });
+    chrome.mode = Mode::Rename;
+}
+
+/// Terminate every pane of the active tab; `sync_live_chrome` then drops
+/// the emptied tab.
+async fn close_live_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+) -> Result<(), FrameError> {
+    let panes: Vec<PaneId> = chrome
+        .active_tab()
+        .map(|tab| tab.slots.values().copied().collect())
+        .unwrap_or_default();
+    for pane_id in panes {
+        terminate_live_terminal(workspace, pane_id).await?;
+    }
+    sync_live_chrome(workspace, chrome);
+    Ok(())
+}
+
+/// The attention entry an action names: the nth, or the one after or before
+/// the entry whose pane is focused (none focused: the first or the last).
+fn pick_attention_entry(
+    workspace: &Workspace<LiveDaemon>,
+    chrome: &Chrome,
+    action: Action,
+) -> Option<String> {
+    let entries = workspace.attention_entry_ids();
+    let len = entries.len();
+    if len == 0 {
+        return None;
+    }
+    let current = chrome.focused_pane().and_then(|focused| {
+        entries
+            .iter()
+            .position(|entry| attention_pane(workspace, entry) == Some(focused))
+    });
+    let index = match action {
+        Action::FocusAttention(index) => usize::from(index).checked_sub(1)?,
+        Action::NextAttention => current.map_or(0, |current| (current + 1) % len),
+        Action::PreviousAttention => current.map_or(len - 1, |current| (current + len - 1) % len),
+        _ => return None,
+    };
+    entries.get(index).cloned()
+}
+
+/// The 2.3 jump from the keyboard: focus the entry's pane (lease follows)
+/// and open the response dialog when the entry is a prompt.
+async fn jump_live_attention(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    entry_id: &str,
+) -> Result<(), FrameError> {
+    if let Some(pane_id) = attention_pane(&*workspace, entry_id) {
+        focus_live_shown_pane(workspace, chrome, pane_id).await?;
+    }
+    open_response_dialog(workspace, chrome, Some(entry_id)).await?;
+    Ok(())
+}
+
+/// Re-read the prefs file (1.1); a bad file keeps the current values and
+/// names itself. The keymap reloads in 4.3.
+fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
+    let home = workspace
+        .gobby_home()
+        .map(|home| home.to_path_buf())
+        .unwrap_or_default();
+    let path = prefs_path(&home);
+    match load_prefs(&home) {
+        Ok(prefs) => {
+            chrome.apply_prefs(prefs);
+            chrome.status_message = Some(format!("Reloaded {}", path.display()));
+        }
+        Err(error) => {
+            chrome.toast = Some(Toast {
+                kind: ToastKind::Warning,
+                title: format!("Could not reload {}", path.display()),
+                body: Some(error.to_string()),
+                target: None,
+            });
+        }
+    }
 }
 
 pub(super) async fn focus_relative_live_pane(

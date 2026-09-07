@@ -51,7 +51,6 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         (ch('9'), Action::SwitchTab(9)),
         (shift('X'), Action::CloseTab),
         (shift('P'), Action::RenamePane),
-        (ch('e'), Action::EditScrollback),
         (ch('['), Action::CopyMode),
         (ch('h'), Action::FocusPaneLeft),
         (ch('j'), Action::FocusPaneDown),
@@ -274,4 +273,36 @@ fn colliding_override_is_rejected_and_defaults_survive() {
         assert_eq!(unique.len(), chords.len(), "duplicate active chord");
         assert!(chords.iter().all(|(_, action)| !action.is_reserved()));
     }
+}
+
+/// 4.1.1: every default binding names an action the live loop dispatches,
+/// `edit_scrollback` is gone, and `custom_command` is the only reserved one.
+#[test]
+fn default_bindings_cover_every_action_except_reserved() {
+    let defaults = Keymap::defaults();
+    for spec in BINDINGS {
+        let action = Action::from_name(spec.name, spec.indexed.then_some(1))
+            .unwrap_or_else(|| panic!("{} names no Action", spec.name));
+        assert_eq!(action.name(), spec.name);
+        assert_eq!(
+            action.is_reserved(),
+            spec.name == "custom_command",
+            "{}",
+            spec.name
+        );
+        assert_eq!(
+            defaults.binding(spec.name).unwrap().reserved,
+            action.is_reserved(),
+            "{}",
+            spec.name
+        );
+    }
+    assert_eq!(Action::from_name("edit_scrollback", None), None);
+    assert!(defaults.binding("edit_scrollback").is_none());
+    assert_eq!(defaults.lookup_prefix(&ch('e')), None, "prefix+e is free");
+    let err = Keymap::from_toml("[bindings]\nedit_scrollback = \"prefix+e\"\n").unwrap_err();
+    assert_eq!(
+        err,
+        KeymapError::UnknownAction("edit_scrollback".to_string())
+    );
 }

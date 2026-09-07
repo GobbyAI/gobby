@@ -465,7 +465,7 @@ parity_tests! {
         fn hide_tab_bar_when_single_tab_toggles_geometry_with_tab_count() {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
-            chrome.hide_tab_bar_when_single_tab = true;
+            chrome.prefs.hide_tab_bar_when_single_tab = true;
             chrome.mode = Mode::Terminal;
             let area = Rect::new(0, 0, 80, 20);
 
@@ -506,7 +506,7 @@ parity_tests! {
         fn bottom_tab_bar_still_hides_when_single_tab() {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
-            chrome.hide_tab_bar_when_single_tab = true;
+            chrome.prefs.hide_tab_bar_when_single_tab = true;
             // herdr also set `tab_bar_position = Bottom`; gclient has no
             // position and hides the single-tab bar regardless.
             chrome.mode = Mode::Prefix;
@@ -535,11 +535,11 @@ parity_tests! {
                     // computes, so each herdr workspace is one chrome here.
                     let one_ws = scripted(&["one"]);
                     let mut one_tab_workspace = chrome_for(&one_ws, "one");
-                    one_tab_workspace.hide_tab_bar_when_single_tab = true;
+                    one_tab_workspace.prefs.hide_tab_bar_when_single_tab = true;
 
                     let two_ws = scripted(&["two"]);
                     let mut two_tab_workspace = chrome_for(&two_ws, "two");
-                    two_tab_workspace.hide_tab_bar_when_single_tab = true;
+                    two_tab_workspace.prefs.hide_tab_bar_when_single_tab = true;
                     let background_tab = add_tab(&mut two_tab_workspace, "logs");
                     two_tab_workspace.active_tab = 0;
                     two_tab_workspace.mode = Mode::Terminal;

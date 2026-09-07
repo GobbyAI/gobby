@@ -61,7 +61,6 @@ pub enum Action {
     SwitchTerminal(u8),
     CloseTab,
     RenamePane,
-    EditScrollback,
     CopyMode,
     FocusPaneLeft,
     FocusPaneDown,
@@ -183,11 +182,6 @@ pub const BINDINGS: &[BindingSpec] = &[
         "Rename the focused pane",
         &["prefix+shift+p"],
     ),
-    spec(
-        "edit_scrollback",
-        "Open scrollback in the editor",
-        &["prefix+e"],
-    ),
     spec("copy_mode", "Enter copy mode", &["prefix+["]),
     spec(
         "focus_pane_left",
@@ -304,7 +298,7 @@ action_names! {
     "next_terminal" => NextTerminal, "previous_attention" => PreviousAttention,
     "next_attention" => NextAttention, "new_tab" => NewTab, "rename_tab" => RenameTab,
     "previous_tab" => PreviousTab, "next_tab" => NextTab, "close_tab" => CloseTab,
-    "rename_pane" => RenamePane, "edit_scrollback" => EditScrollback, "copy_mode" => CopyMode,
+    "rename_pane" => RenamePane, "copy_mode" => CopyMode,
     "focus_pane_left" => FocusPaneLeft, "focus_pane_down" => FocusPaneDown,
     "focus_pane_up" => FocusPaneUp, "focus_pane_right" => FocusPaneRight,
     "swap_pane_left" => SwapPaneLeft, "swap_pane_down" => SwapPaneDown,

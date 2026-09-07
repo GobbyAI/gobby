@@ -4,7 +4,7 @@ use super::Workspace;
 use crate::daemon::Daemon;
 use crate::frame_source::FrameError;
 use crate::persist::{load_snapshot, save_snapshot, LayoutNode, SplitAxis, WorkspaceSnapshot};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl Workspace {
     pub fn restore_project(&mut self, project_id: &str) -> Result<(), FrameError> {
@@ -40,6 +40,10 @@ impl Workspace {
 impl<D: Daemon> Workspace<D> {
     pub fn set_gobby_home(&mut self, home: PathBuf) {
         self.gobby_home = Some(home);
+    }
+
+    pub fn gobby_home(&self) -> Option<&Path> {
+        self.gobby_home.as_deref()
     }
 
     pub fn tab_order(&self) -> Vec<String> {

@@ -23,12 +23,13 @@ use gobby_client::frame_source::{
 };
 use gobby_client::startup::Ready;
 use gobby_client::teardown::TerminalGuard;
+use gobby_client::ui::keymap::Keymap;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
 use gobby_client::ui::settings::PassthroughModifier;
-use gobby_client::ui::status::ToastKind;
+use gobby_client::ui::status::{Toast, ToastKind};
 use gobby_client::ui::{Chrome, WorkspaceView};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -112,6 +113,12 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
         .send(RawInputEvent::Key(TerminalKey::new(code, modifiers)))
         .await
         .expect("live loop input");
+}
+
+/// The prefix (ctrl+b) followed by one chord key.
+async fn send_chord(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers: KeyModifiers) {
+    send_key(input, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+    send_key(input, code, modifiers).await;
 }
 
 async fn send_mouse(
@@ -3796,4 +3803,220 @@ async fn open_link_failure_surfaces_a_toast() {
         toast.title.contains(opener),
         "the toast names the opener: {toast:?}"
     );
+}
+
+/// 4.1.2: the keymap actions that were inert drive the live workspace. Focus
+/// moves are read off the daemon's `terminal_take_control` requests, the
+/// split off the spawn, and the swap off the first tab's layout.
+#[tokio::test]
+async fn wired_actions_split_focus_swap_and_switch_tabs() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let roster_page = |ids: &[&str]| {
+        let items: Vec<Value> = ids
+            .iter()
+            .map(|id| json!({"terminal_id": id, "backend": "native", "state": "live"}))
+            .collect();
+        json!({
+            "items": items,
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        })
+    };
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_page(&["terminal-a", "terminal-b", "terminal-c"]),
+        );
+    }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        roster_page(&["terminal-a", "terminal-b", "terminal-c", SPAWNED]),
+    );
+    let attention = json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:terminal-b",
+            "attention": {
+                "attention_id": "att-b",
+                "state": "blocked",
+                "kind": "actionable",
+                "fingerprint": "fp-b",
+                "payload": {"prompt": "Continue?", "options": [{"option": 1, "label": "Yes"}]}
+            }
+        }]
+    });
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/attention/roster", 200, attention.clone());
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let pane_of = |workspace: &Workspace<LiveDaemon>, id: &str| {
+        workspace.pane_for_terminal(id).expect("roster pane")
+    };
+    let (pane_a, pane_b, pane_c) = (
+        pane_of(&workspace, "terminal-a"),
+        pane_of(&workspace, "terminal-b"),
+        pane_of(&workspace, "terminal-c"),
+    );
+    for pane in [pane_a, pane_b, pane_c] {
+        workspace
+            .replace_frame_source(
+                pane,
+                PaneFrameSource::Scripted(ScriptedFrameSource::new(Transport::Direct)),
+            )
+            .expect("install scripted direct source");
+    }
+
+    // Tab 0: a beside b (a focused); tab 1: c. The toast points at c.
+    let mut chrome = Chrome::dark();
+    chrome.keymap =
+        Keymap::from_toml("[bindings]\nlast_pane = \"prefix+i\"\nnext_attention = \"prefix+f\"\n")
+            .expect("test keymap");
+    chrome.open_pane(pane_a, "a");
+    chrome.open_pane(pane_b, "b");
+    chrome.open_tab(pane_c, "c");
+    chrome.active_tab = 0;
+    chrome.focus_pane(pane_a);
+    chrome.toast = Some(Toast {
+        kind: ToastKind::Info,
+        title: "terminal-c".to_string(),
+        body: None,
+        target: Some("terminal-c".to_string()),
+    });
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let chord =
+            |c: char, modifiers: KeyModifiers| send_chord(&input_tx, KeyCode::Char(c), modifiers);
+        // FocusPaneRight: the lease follows focus to the neighbour.
+        chord('l', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        // SwapPaneLeft: b takes a's place, focus stays on b.
+        chord('H', KeyModifiers::SHIFT).await;
+        settle_live_event().await;
+        // LastPane (custom chord): back to a.
+        chord('i', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        chord('z', KeyModifiers::NONE).await;
+        settle_live_event().await;
+        // NextTab, PreviousTab, SwitchTab(2), SwitchTab(1).
+        chord('n', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 4).await;
+        chord('p', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 5).await;
+        chord('2', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 6).await;
+        chord('1', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 7).await;
+        // SplitHorizontal spawns under the focused pane.
+        chord('-', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let attached = websocket_requests(&mock, "terminal_set_viewport")
+                    .iter()
+                    .any(|request| request.get("terminal_id") == Some(&json!(SPAWNED)));
+                if attached {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the spawned terminal attaches");
+        settle_live_event().await;
+        let before_jumps = websocket_requests(&mock, "terminal_take_control").len();
+        // OpenNotificationTarget: c, in the other tab.
+        chord('o', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 1).await;
+        // NextAttention (custom chord): b's prompt, back in the first tab.
+        chord('f', KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 2).await;
+        settle_live_event().await;
+        drop(input_tx);
+        before_jumps
+    };
+
+    let (result, before_jumps) = tokio::join!(
+        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let targets: Vec<String> = websocket_requests(&mock, "terminal_take_control")
+        .iter()
+        .map(|request| {
+            request
+                .get("terminal_id")
+                .and_then(Value::as_str)
+                .expect("take_control target")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        &targets[..7],
+        [
+            "terminal-a",
+            "terminal-b",
+            "terminal-a",
+            "terminal-c",
+            "terminal-a",
+            "terminal-c",
+            "terminal-a"
+        ],
+        "focus-direction, last-pane and tab switching move the lease"
+    );
+    assert_eq!(
+        &targets[before_jumps..],
+        ["terminal-c", "terminal-b"],
+        "the toast target and the attention jump cross tabs"
+    );
+    let tab = &chrome.tabs[0];
+    assert!(tab.zoomed, "zoom toggles the active tab");
+    let area = Rect::new(0, 0, 120, 40);
+    let rect_of = |pane| {
+        let slot = tab.slot_for(pane).expect("pane shown in the first tab");
+        tab.layout
+            .panes(area)
+            .into_iter()
+            .find(|info| info.id == slot)
+            .expect("slot geometry")
+            .rect
+    };
+    let (a, b) = (rect_of(pane_a), rect_of(pane_b));
+    assert!(
+        b.x < a.x && b.y == a.y,
+        "swap exchanges the two slots: b {b:?} a {a:?}"
+    );
+    let spawned = rect_of(workspace.pane_for_terminal(SPAWNED).expect("spawned pane"));
+    assert!(
+        spawned.x == a.x && spawned.y > a.y,
+        "split stacked lands under the focused pane: {spawned:?} vs {a:?}"
+    );
+    assert!(
+        chrome.toast.is_none(),
+        "the notification target clears the toast"
+    );
+    assert_eq!(chrome.active_tab, 0);
+    assert_eq!(
+        chrome.mode,
+        gobby_client::ui::chrome::Mode::Respond,
+        "the attention jump opens the prompt"
+    );
+    mock.shutdown().await;
 }

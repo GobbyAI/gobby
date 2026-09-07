@@ -49,7 +49,7 @@ pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
             })?;
             workspace.set_frame_delivery(ready.frame_delivery);
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
-            chrome.prefs = ready.prefs;
+            chrome.apply_prefs(ready.prefs);
             chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();

@@ -349,7 +349,6 @@ pub struct Chrome {
     pub active_tab: usize,
     pub tab_scroll: usize,
     pub tab_scroll_follow_active: bool,
-    pub hide_tab_bar_when_single_tab: bool,
     pub navigator: NavigatorState,
     pub keybind_help: KeybindHelpState,
     pub settings: SettingsState,
@@ -373,6 +372,8 @@ pub struct Chrome {
     /// Command a ctrl+click hands a link to: `DEFAULT_LINK_OPENER` unless a
     /// test points it elsewhere.
     pub link_opener: String,
+    /// Pane focus last left, for `LastPane` (herdr `previous_pane_focus`).
+    pub last_focused: Option<PaneId>,
 }
 
 impl Chrome {
@@ -388,7 +389,6 @@ impl Chrome {
             active_tab: 0,
             tab_scroll: 0,
             tab_scroll_follow_active: true,
-            hide_tab_bar_when_single_tab: false,
             navigator: NavigatorState::default(),
             keybind_help: KeybindHelpState::default(),
             settings: SettingsState::default(),
@@ -403,6 +403,7 @@ impl Chrome {
             last_click: None,
             last_copy: None,
             link_opener: DEFAULT_LINK_OPENER.to_owned(),
+            last_focused: None,
         }
     }
 
@@ -413,6 +414,14 @@ impl Chrome {
     pub fn set_theme(&mut self, kind: ThemeKind) {
         self.theme = Theme::new(kind);
         self.palette = self.theme.palette();
+    }
+
+    /// Adopt loaded prefs: the theme and the sidebar width take effect at
+    /// once; the rest is read from `prefs` wherever it applies.
+    pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
+        self.set_theme(prefs.theme_kind());
+        self.sidebar.width = prefs.sidebar_width;
+        self.prefs = prefs;
     }
 
     pub fn active_tab(&self) -> Option<&Tab> {
@@ -480,35 +489,37 @@ impl Chrome {
         pane
     }
 
+    /// Focus `pane` in whichever tab shows it, switching to that tab, and
+    /// remember the pane focus left for `LastPane`. `false` when no tab
+    /// shows it.
     pub fn focus_pane(&mut self, pane: PaneId) -> bool {
-        let Some(tab) = self.tabs.get_mut(self.active_tab) else {
+        let Some((index, slot)) = self
+            .tabs
+            .iter()
+            .enumerate()
+            .find_map(|(index, tab)| tab.slot_for(pane).map(|slot| (index, slot)))
+        else {
             return false;
         };
-        let Some(slot) = tab.slot_for(pane) else {
-            return false;
-        };
-        tab.layout.focus_pane(slot);
+        let previous = self.focused_pane();
+        if index != self.active_tab {
+            self.active_tab = index;
+            self.tab_scroll_follow_active = true;
+        }
+        self.tabs[index].layout.focus_pane(slot);
+        if previous != Some(pane) {
+            self.last_focused = previous;
+        }
         true
     }
 
-    /// Bring `pane` on screen the way a roster click does: focus it in the
-    /// active tab, switch to the tab already showing it, or split it into
-    /// the active tab when no tab shows it. A pane is never shown twice.
+    /// Bring `pane` on screen the way a roster click does: focus it where a
+    /// tab shows it, or split it into the active tab. A pane is never shown
+    /// twice.
     pub fn reveal_pane(&mut self, pane: PaneId, title: &str) {
-        if self.focus_pane(pane) {
-            return;
+        if !self.focus_pane(pane) {
+            self.open_pane(pane, title);
         }
-        if let Some(index) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.slot_for(pane).is_some())
-        {
-            self.active_tab = index;
-            self.tab_scroll_follow_active = true;
-            self.focus_pane(pane);
-            return;
-        }
-        self.open_pane(pane, title);
     }
 
     /// Sidebar width for the current frame (herdr `compute_view` clamp).
@@ -525,7 +536,7 @@ impl Chrome {
     }
 
     pub fn show_tab_bar(&self) -> bool {
-        !(self.tabs.len() <= 1 && self.hide_tab_bar_when_single_tab)
+        !(self.tabs.len() <= 1 && self.prefs.hide_tab_bar_when_single_tab)
     }
 
     /// Recompute `view` for `area` (herdr `compute_view`): sidebar column,
