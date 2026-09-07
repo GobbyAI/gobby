@@ -1,4 +1,4 @@
-"""Plan E1: isolated-daemon end-to-end terminal client stack."""
+"""Isolated terminal stack through Python protocol clients and real gclient PTYs."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ import os
 import shutil
 import signal
 import sys
+import tempfile
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeIs, cast
 
@@ -19,6 +21,9 @@ import httpx
 import pytest
 import websockets
 from websockets.asyncio.client import ClientConnection
+from websockets.asyncio.server import ServerConnection, serve
+from websockets.datastructures import Headers
+from websockets.http11 import Request, Response
 
 from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
@@ -38,6 +43,7 @@ from tests.e2e.conftest import (
     DaemonInstance,
     daemon_token,
 )
+from tests.e2e.gclient_driver import GclientDriver, Screen
 from tests.e2e.test_external_terminal_attach import (
     APPROVAL_PROMPT,
     E2E_PROJECT_ID,
@@ -124,15 +130,31 @@ _FRAME_TYPES = {
 
 
 @pytest.fixture
+def terminal_backend(request: pytest.FixtureRequest) -> str:
+    return str(getattr(request, "param", "native"))
+
+
+@pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
+    e2e_config: tuple[Path, int, int],
     monkeypatch: pytest.MonkeyPatch,
+    terminal_backend: str,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
-    socket_dir = Path(f"/tmp/gobby-host-{os.getpid()}-{uuid.uuid4().hex[:8]}")
-    socket_dir.mkdir(parents=True, exist_ok=True)
-    stub_dir = Path(f"/tmp/gobby-stack-bin-{os.getpid()}-{uuid.uuid4().hex[:8]}")
-    stub_dir.mkdir(parents=True, exist_ok=True)
+    socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
+    stub_dir = Path(tempfile.mkdtemp(prefix="gs-"))
+    # A relocated host reads its frame credential from the socket directory.
+    # Seed the same isolated credential for the daemon and the host before startup.
+    token = uuid.uuid4().hex
+    daemon_home = e2e_config[0].parent
+    # FrameClient resolves HOME/.gobby; the isolated daemon fixture sets HOME to
+    # daemon_home while Rust resolves GOBBY_HOME directly.
+    for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
+        directory.mkdir(exist_ok=True)
+        token_path = directory / "local_cli_token"
+        token_path.write_text(token)
+        token_path.chmod(0o600)
     claude = stub_dir / "claude"
     claude.write_text(_STUB)
     claude.chmod(0o755)
@@ -146,7 +168,7 @@ def e2e_pre_daemon_setup(
             values={
                 # Native is explicit opt-in under the tmux default; this stack test
                 # exercises the native web-create path, so the daemon opts in here.
-                "terminals.default_backend": "native",
+                "terminals.default_backend": terminal_backend,
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,
@@ -325,7 +347,7 @@ def _list_items(client: httpx.Client) -> list[dict[str, Any]]:
 def _item_by_backend(client: httpx.Client, backend: str) -> dict[str, Any]:
     for item in _list_items(client):
         if item.get("backend") == backend and item.get("ownership") == "gobby":
-            if item.get("state") in {"live", "pending"}:
+            if item.get("state") == "live":
                 return item
     raise AssertionError(f"no {backend} gobby terminal in {_list_items(client)}")
 
@@ -987,3 +1009,432 @@ async def test_terminal_client_stack_end_to_end(
                 "interrupted",
             }
     client.close()
+
+
+def _gclient(
+    daemon: DaemonInstance, *, remote_url: str | None = None, local_url: str | None = None
+) -> GclientDriver:
+    env = dict(daemon.env)
+    # A managed worker's credential belongs to its parent daemon, not this fixture.
+    env.pop("GOBBY_AGENT_API_TOKEN", None)
+    env["GOBBY_DAEMON_URL"] = local_url or daemon.http_url
+    args = ["--project", str(daemon.project_dir)]
+    if remote_url is not None:
+        args += ["--daemon-url", remote_url]
+    args += ["--token-file", str(daemon.gobby_home / "local_cli_token")]
+    return GclientDriver(args, env=env, cwd=daemon.project_dir)
+
+
+@asynccontextmanager
+async def _running_gclient(
+    daemon: DaemonInstance, *, remote_url: str | None = None, local_url: str | None = None
+) -> AsyncIterator[GclientDriver]:
+    client = _gclient(daemon, remote_url=remote_url, local_url=local_url)
+    try:
+        yield client
+    finally:
+        await asyncio.to_thread(client.close)
+
+
+def test_gclient_screen_tracks_fragmented_redraws_and_resize() -> None:
+    screen = Screen(12, 4)
+    screen.feed(b"stale pane\x1b[2")
+    screen.feed(b"J\x1b[2;3Hnew\x1b[4;1Hstatus")
+    assert "stale" not in screen.text
+    assert screen.lines[1] == "  new       "
+    assert screen.lines[3] == "status      "
+    screen.feed(b"\x1b[2;3H\x1b[K")
+    assert screen.lines[1] == " " * 12
+    screen.resize(8, 3)
+    screen.feed(b"\x1b[3;1Hresized")
+    assert screen.lines == [" " * 8, " " * 8, "resized "]
+
+
+def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        _wait_for_host(http, daemon_instance)
+    with _gclient(daemon_instance) as client:
+        client.expect("terminals")
+        client.wait_for(
+            lambda screen: "no pane" in screen.lines[-1], description="bottom status bar"
+        )
+        assert client.poll() is None
+        client.chord("\x1b")
+        client.wait_for(
+            lambda screen: "prefix" not in screen.lines[-1], description="prefix mode dismissed"
+        )
+        assert client.poll() is None
+
+
+class ClientWire:
+    """Forward real daemon traffic, observing messages and injecting boundary faults."""
+
+    def __init__(self, daemon: DaemonInstance) -> None:
+        self.daemon = daemon
+        self.sent: list[dict[str, Any]] = []
+        self.received: list[dict[str, Any]] = []
+        self.paths: list[str] = []
+        self.responses: dict[str, str] = {}
+        self.host_version: int | None = None
+        self.frame_socket: str | None = None
+        self.url = ""
+
+    async def http(self, _connection: ServerConnection, request: Request) -> Response | None:
+        self.paths.append(request.path)
+        if request.path == "/ws":
+            return None
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                self.daemon.http_url + request.path,
+                headers={"Authorization": request.headers.get("Authorization", "")},
+            )
+        body = response.content
+        self.responses[request.path] = response.text[:3000]
+        if request.path == "/api/health" and self.host_version is not None:
+            payload = response.json()
+            assert payload["gterm_host"]["running"] is True
+            payload["gterm_host"]["protocol_version"] = self.host_version
+            body = json.dumps(payload).encode()
+        return Response(
+            response.status_code,
+            response.reason_phrase,
+            Headers({"Content-Type": "application/json", "Content-Length": str(len(body))}),
+            body,
+        )
+
+    async def websocket(self, downstream: ServerConnection) -> None:
+        assert downstream.request is not None
+        async with websockets.connect(
+            self.daemon.ws_url,
+            additional_headers={
+                "Authorization": downstream.request.headers.get("Authorization", "")
+            },
+        ) as upstream:
+
+            async def forward_client() -> None:
+                async for raw in downstream:
+                    self.sent.append(json.loads(raw))
+                    await upstream.send(raw)
+
+            async def forward_daemon() -> None:
+                async for raw in upstream:
+                    message = json.loads(raw)
+                    self.received.append(message)
+                    if self.frame_socket and isinstance(message.get("direct"), dict):
+                        message = dict(message, direct=dict(message["direct"]))
+                        message["direct"]["frame_socket_path"] = self.frame_socket
+                        raw = json.dumps(message)
+                    await downstream.send(raw)
+
+            tasks = [asyncio.create_task(forward_client()), asyncio.create_task(forward_daemon())]
+            try:
+                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    task.result()
+            except websockets.ConnectionClosed:
+                pass
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    @asynccontextmanager
+    async def running(self) -> AsyncIterator[ClientWire]:
+        async with serve(self.websocket, "127.0.0.1", 0, process_request=self.http) as server:
+            self.url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+            try:
+                yield self
+            except Exception as exc:
+                exc.add_note(f"Daemon HTTP responses: {self.responses}")
+                exc.add_note(f"Client messages: {self.sent[-8:]}")
+                typed = "".join(m.get("data", "") for m in self.sent)
+                exc.add_note(f"Typed terminal input: {typed!r}")
+                control = [
+                    m
+                    for m in self.received
+                    if m.get("type") not in {"terminal_frame", "terminal_write_outcome"}
+                    or (m.get("type") == "terminal_write_outcome" and m.get("reason"))
+                ]
+                exc.add_note(f"Daemon control messages: {control[-20:]}")
+                raise
+
+
+async def _screen(client: GclientDriver, text: str, *, timeout: float = 15.0) -> None:
+    await asyncio.to_thread(client.expect, text, timeout=timeout)
+
+
+async def _shell(daemon: DaemonInstance, *, marker: str = "GCLIENT-SHELL-READY") -> str:
+    result = await _ws_create(
+        daemon,
+        ["/bin/sh", "-c", f"printf '{marker}\\n'; exec /bin/sh -i"],
+    )
+    assert result.get("success") is True, result
+    return str(result["terminal_id"])
+
+
+async def _take_and_echo(client: GclientDriver, marker: str) -> None:
+    await asyncio.to_thread(client.chord, "t")
+    await _screen(client, "held")
+    # Splitting the marker means terminal echo alone cannot satisfy the assertion.
+    left, right = marker.rsplit("-", 1)
+    client.send(f"echo {left}-'{right}'\r")
+    await _screen(client, marker)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_backend", ["tmux"], indirect=True)
+async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+        terminal_id = await _shell(daemon_instance, marker="GCLIENT-ROW-OK")
+        row = http.get(f"/api/terminals/{terminal_id}").json()
+        assert row["backend"] == "tmux"
+    async with ClientWire(daemon_instance).running() as wire:
+        async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+            await _screen(client, terminal_id)
+            await asyncio.to_thread(client.chord, "\t")
+            await _screen(client, "GCLIENT-ROW-OK")
+            await _screen(client, "direct")
+            assert client.poll() is None
+
+
+@pytest.mark.asyncio
+async def test_gclient_renders_native_row_direct_and_types(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    terminal_id = await _shell(daemon_instance)
+    async with ClientWire(daemon_instance).running() as wire:
+        async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+            await _screen(client, terminal_id)
+            await _screen(client, "GCLIENT-SHELL-READY")
+            await _screen(client, "direct")
+            await _take_and_echo(client, "GCLIENT-NATIVE-OK")
+            client.send(
+                "printf 'GCLIENT-SLEEP-%s\\n' RUNNING; sleep 30 && echo SLEEP-'COMPLETED'\r"
+            )
+            await _screen(client, "GCLIENT-SLEEP-RUNNING")
+            client.send(b"\x03")
+            await _take_and_echo(client, "GCLIENT-INTERRUPTED-OK")
+            assert "SLEEP-COMPLETED" not in client.screen.text
+            inputs = [item for item in wire.sent if item.get("type") == "terminal_input"]
+            assert any("\x03" in item.get("data", "") for item in inputs)
+            assert not any(item.get("type") == "terminal_paste" for item in wire.sent)
+
+
+@pytest.mark.asyncio
+async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    terminal_id = await _shell(daemon_instance)
+    wire = ClientWire(daemon_instance)
+    # Model a remote filesystem: the daemon's Unix socket is not reachable by this client.
+    wire.frame_socket = str(daemon_instance.gobby_home / "remote-host.sock")
+    async with wire.running():
+        async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
+            await _screen(client, terminal_id)
+            await _screen(client, "GCLIENT-SHELL-READY")
+            await _screen(client, "proxy")
+            await _take_and_echo(client, "GCLIENT-PROXY-OK")
+            attaches = [item for item in wire.sent if item.get("frame_delivery") == "proxy"]
+            assert attaches
+            assert all(item.get("encoding") == "semantic_frame" for item in attaches)
+            assert any(item.get("type") == "terminal_frame" for item in wire.received)
+
+
+@pytest.mark.asyncio
+async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    terminal_id = await _shell(daemon_instance)
+    socket_dir = Path(os.environ["GOBBY_E2E_HOST_SOCKET_DIR"])
+    tap_path = socket_dir / "tap.sock"
+    writers: list[asyncio.StreamWriter] = []
+    relays: set[asyncio.Task[None]] = set()
+
+    async def relay(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        relays.add(task)
+        writers.append(writer)
+        upstream_reader, upstream_writer = await asyncio.open_unix_connection(
+            str(frames_socket_path(socket_dir))
+        )
+
+        async def copy(source: asyncio.StreamReader, destination: asyncio.StreamWriter) -> None:
+            while data := await source.read(65536):
+                destination.write(data)
+                await destination.drain()
+
+        tasks = [
+            asyncio.create_task(copy(reader, upstream_writer)),
+            asyncio.create_task(copy(upstream_reader, writer)),
+        ]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for pump in tasks:
+                pump.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            upstream_writer.close()
+            writer.close()
+            await asyncio.gather(upstream_writer.wait_closed(), writer.wait_closed())
+            relays.discard(task)
+
+    wire = ClientWire(daemon_instance)
+    wire.frame_socket = str(tap_path)
+    server = await asyncio.start_unix_server(relay, path=str(tap_path))
+    try:
+        async with server, wire.running():
+            async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+                await _screen(client, "GCLIENT-SHELL-READY")
+                await _screen(client, "direct")
+                old = next(
+                    item["attachment_id"]
+                    for item in wire.received
+                    if item.get("type") == "terminal_attach_result"
+                    and item.get("terminal_id") == terminal_id
+                    and item.get("frame_delivery") == "direct"
+                )
+                assert len(writers) == 1
+                writers[0].close()  # Only this client's direct stream; the host keeps running.
+                await writers[0].wait_closed()
+                await _screen(client, "proxy")
+                await _take_and_echo(client, "GCLIENT-FALLBACK-OK")
+                assert "terminals" in client.screen.text
+                assert terminal_id in client.screen.text
+                finalized = [
+                    item
+                    for item in wire.received
+                    if item.get("type") == "terminal_attachment_finalized"
+                    and item.get("attachment_id") == old
+                ]
+                assert len(finalized) == 1
+                assert finalized[0]["reason"] == "detach"
+                replacements = [
+                    item
+                    for item in wire.received
+                    if item.get("type") == "terminal_attach_result"
+                    and item.get("frame_delivery") == "proxy"
+                    and item.get("success") is True
+                ]
+                assert len(replacements) == 1
+                assert replacements[0]["attachment_id"] != old
+    finally:
+        server.close()
+        await server.wait_closed()
+        pending = list(relays)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        tap_path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_gclient_remote_refuses_absent_host(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+        socket_dir = Path(os.environ["GOBBY_E2E_HOST_SOCKET_DIR"])
+        host_pid = int(pidfile_path(socket_dir).read_text())
+        os.kill(host_pid, signal.SIGKILL)
+
+        def stopped() -> dict[str, Any] | None:
+            host = http.get("/api/health").json()["gterm_host"]
+            return host if host.get("running") is False else None
+
+        state = await asyncio.to_thread(
+            wait_for_condition, stopped, timeout=15.0, description="isolated host reported stopped"
+        )
+        assert isinstance(state, dict)
+    async with ClientWire(daemon_instance).running() as wire:
+        async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
+            assert await asyncio.to_thread(client.wait_exit) == 1
+            output = bytes(client.output).decode(errors="replace")
+            assert "gterm host is unusable: running=false" in output
+            assert "Check `gobby status`" in output
+            assert "/ws" not in wire.paths
+            assert b"\x1b[?1049h" not in client.output
+
+
+@pytest.mark.asyncio
+async def test_gclient_remote_refuses_protocol_mismatch(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        state = await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    expected = int(state["protocol_version"])
+    wire = ClientWire(daemon_instance)
+    wire.host_version = expected + 1
+    async with wire.running():
+        async with _running_gclient(daemon_instance, remote_url=wire.url) as client:
+            assert await asyncio.to_thread(client.wait_exit) == 1
+            output = bytes(client.output).decode(errors="replace")
+            assert "gterm host is unusable: running=true" in output
+            assert f"protocol_version={expected + 1}" in output
+            assert f"expected_protocol_version={expected}" in output
+            assert "Check `gobby status`" in output
+            assert "/ws" not in wire.paths
+            assert b"\x1b[?1049h" not in client.output
+
+
+@pytest.mark.asyncio
+async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+        survivor_id = await _shell(daemon_instance, marker="GCLIENT-SURVIVOR-READY")
+        async with _running_gclient(daemon_instance) as client:
+            await _screen(client, "GCLIENT-SURVIVOR-READY")
+            await asyncio.to_thread(client.chord, "N")
+
+            def spawned() -> dict[str, Any] | None:
+                return next((row for row in _list_items(http) if row["id"] != survivor_id), None)
+
+            row = await asyncio.to_thread(
+                wait_for_condition,
+                spawned,
+                timeout=15.0,
+                description="gclient spawned terminal row",
+            )
+            assert isinstance(row, dict)
+            spawned_id = row["id"]
+            await _screen(client, spawned_id)
+            if spawned_id not in client.screen.lines[-1]:
+                await asyncio.to_thread(client.chord, "\t")
+            await asyncio.to_thread(
+                client.wait_for,
+                lambda screen: spawned_id in screen.lines[-1],
+                description="spawned terminal selected",
+            )
+            await _take_and_echo(client, "GCLIENT-SPAWNED-OK")
+            await asyncio.to_thread(client.chord, "D")
+            await asyncio.to_thread(
+                wait_for_condition,
+                lambda: all(row["id"] != spawned_id for row in _list_items(http)),
+                timeout=15.0,
+                description="terminated row removed from daemon listing",
+            )
+            await asyncio.to_thread(
+                client.wait_for,
+                lambda screen: spawned_id not in screen.text and survivor_id in screen.text,
+                description="terminated pane removed and survivor retained",
+            )
+            await _take_and_echo(client, "GCLIENT-SURVIVOR-STILL-LIVE")
+
+
+@pytest.mark.asyncio
+async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance) -> None:
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    terminal_id = await _shell(daemon_instance, marker="GCLIENT-BEFORE-RESIZE")
+    async with _running_gclient(daemon_instance) as client:
+        await _screen(client, "GCLIENT-BEFORE-RESIZE")
+        assert client.screen.cols == 120
+        assert client.screen.rows == 40
+        assert terminal_id in client.screen.lines[-1]
+        client.resize(100, 32)
+        await _screen(client, "GCLIENT-BEFORE-RESIZE")
+        await asyncio.to_thread(
+            client.wait_for,
+            lambda screen: terminal_id in screen.lines[31],
+            description="status bar moved to the resized bottom row",
+        )
+        assert len(client.screen.lines) == 32
+        assert all(len(line) == 100 for line in client.screen.lines)
+        await _take_and_echo(client, "GCLIENT-AFTER-RESIZE")
