@@ -5,6 +5,9 @@ Updated after the follow-on discussion under documentation task #21916.
 Updated 2026-09-07 under documentation task #21920: locked model strategy,
 refreshed general comparator cohort, local LM Studio protocol probes, and the
 next planning priority (test matrix plus Graphify/gcode special-case analysis).
+Refined 2026-09-07 under research task #21921: Terra/Luna preference across both
+cohorts, bounded parallel scheduling, thinking-enabled local Codex probes, and
+hook-versus-generation timeout diagnosis.
 
 Status: unfinished discussion record, not an approved or implementation-ready
 plan. This preserves decisions, research progress, and remaining design work so
@@ -94,16 +97,27 @@ cohort is not yet selected. The immediate planning focus is the code cohort.
 
 ### Locked models and bounded spending
 
-- **Codex-driven code runs:** `gpt-5.6-terra`, reasoning `medium`, as the primary
-  baseline where the comparator genuinely supports the Codex subscription/CLI.
-- **Calibration only:** `gpt-5.6-luna`, reasoning `medium`, on a small shared
-  subset to measure whether it is sufficient. Do not multiply every comparator
-  and every test by both models or silently make Luna an automatic fallback.
-- **Local/general lane:** the existing LM Studio `qwen/qwen3.8-27b`, including
-  DeepWiki-Open/OpenDeepWiki local-provider evaluation. The inspected local
-  variant is 8-bit MLX, with a loaded 262,144-token context. Record and control
-  its effective reasoning mode per run; support for `medium` was smoke-tested,
-  but protocol checks do not select an optimal synthesis reasoning budget.
+- **Preferred across both cohorts:** Codex-hosted `gpt-5.6-terra` and
+  `gpt-5.6-luna`, reasoning `medium`, wherever the comparator genuinely supports
+  that subscription/CLI path. Terra is the primary baseline; calibrate Luna on
+  a small shared subset before assigning suitable repeatable cases to it.
+  Prefer these models over local generation for speed and bounded parallel
+  execution. This supersedes the earlier local-by-default general-wiki lane.
+  Do not multiply every test by every model or silently fall back between them.
+- **Local compatibility and selected comparison lane:** existing LM Studio
+  `qwen/qwen3.8-27b`, with thinking enabled at `xhigh` for the Codex-session
+  compatibility test. The inspected variant is 8-bit MLX with a loaded
+  262,144-token context. Include DeepWiki-Open/OpenDeepWiki and other API-only
+  apps here where they cannot use the subscription directly; do not infer API
+  entitlement or invent an API bridge from Codex login. Local support remains
+  required even though it is not the preferred throughput path.
+- **Scheduling:** the user reports a MacBook Pro M5 Max with 128 GB of memory and
+  fairly fast Qwen generation. Start with one local cohort run at a time to
+  avoid contention; measure latency, tokens/second, memory pressure, and total
+  throughput before considering overlap. LM Studio reports four parallel slots,
+  so one-at-a-time is an initial scheduling choice, not a verified hardware
+  limit. Allow independent Terra/Luna runs in parallel within explicit
+  subscription, daemon, and per-run budgets; parallelism does not make them free.
 - **Embeddings:** the loaded LM Studio
   `text-embedding-nomic-embed-text-v1.5@f16`, 2,048-token context, returned
   768-dimensional vectors. Freeze chunk limits and document/query prefixes in
@@ -116,7 +130,8 @@ cohort is not yet selected. The immediate planning focus is the code cohort.
   wall-time limits before execution. Record model calls, tokens where reliable,
   pages rewritten, failures, and actual subscription usage where observable.
   API prices are not a conversion formula for Codex subscription allowance.
-  No Codex generation was performed during this checkpoint save.
+  The earlier #21920 save made no Codex calls. The subsequent #21921 probe uses
+  Codex as a harness for the local Qwen model, not hosted OpenAI generation.
 
 The model roles follow the current [OpenAI model guidance](https://learn.chatgpt.com/docs/models):
 Terra is the stronger everyday baseline; Luna is a candidate for bounded,
@@ -188,10 +203,83 @@ dimensions/prefixes/context limits, container-to-host reachability, and failure
 reporting before full runs. Never infer Codex subscription authentication from
 an app's generic OpenAI-compatible API support.
 
+Thinking was disabled only on selected tiny protocol requests to bound those
+checks; this was not required by any cohort app, a quality-test configuration,
+or a change to the loaded model's default. The user can already connect Codex to
+LM Studio with Qwen at `xhigh`. Test that actual session/tool path with thinking
+enabled instead of inferring compatibility from the non-thinking API checks.
+
 Primary protocol references: [LM Studio OpenAI compatibility](https://lmstudio.ai/docs/developer/openai-compat),
 [structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output),
 [tool use](https://lmstudio.ai/docs/developer/openai-compat/tools), and
 [model metadata](https://lmstudio.ai/docs/developer/rest/list).
+
+### Real Codex sessions and hook diagnosis — 2026-09-07
+
+Codex CLI `0.153.4` supports the documented
+[`--oss --local-provider lmstudio` launch path](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
+Gobby's installed `lm-studio` endpoint uses `http://localhost:1234/v1` but has a
+different configured default model. Both managed probes explicitly selected
+`endpoint:lm-studio/qwen/qwen3.8-27b`, provider `codex`, reasoning `xhigh`, and
+`reasoning_required=true`. Gobby reported effective reasoning `xhigh`; Codex's
+runtime logs independently recorded that model/effort and HTTP 200 streams from
+the local `/v1/responses` endpoint. No default-model change or model swap occurred.
+
+| Check | Result and limits |
+| --- | --- |
+| Managed Gobby spawn, run `0eaa43d5-ba33-4022-b594-69aac917ed34`, child #12086 | Timed out at the 180-second budget. Qwen selected two MCP resource-inventory tools while trying to discover Gobby skills; both completed, but the requested synthetic shell/evidence step and cooperative finish were not reached. No edited files. |
+| Standalone Codex control, thread `01a07a74-d60f-78d3-8474-e66dab761c67` | Passed in 23.276 seconds, exit 0. `codex exec --ignore-user-config --oss --local-provider lmstudio --model qwen/qwen3.8-27b -c 'model_reasoning_effort="xhigh"' --sandbox read-only --skip-git-repo-check --ephemeral --json -C <empty temporary directory>` executed `printf WIKI_CODEX_SHELL_OK` and returned `WIKI_CODEX_CONTROL_OK WIKI_CODEX_SHELL_OK`. Reported 140 output tokens, including 123 reasoning tokens. This isolates basic Codex/local inference, shell tools, and final completion; it does not validate Gobby's MCP bootstrap. The empty temporary directory was removed. |
+| Managed retry with explicit proxy/bootstrap instructions, run `c1ef6098-38d0-4cb9-a839-0edb0710e07d`, child #12087 | Also timed out at 180 seconds, while still generating its first response. No tool calls or edited files. Thinking remained `xhigh`; no provider fallback or longer unbounded retry was attempted. |
+
+The standalone control used a minimal child environment without inherited Gobby
+run/session identity and ignored user config for that invocation only. It did not
+edit config, disable global hooks, use remote inference, or claim full managed
+session parity. Codex still loaded the installed hooks file and emitted its
+Interrupt-timeout warning.
+
+The user asked why hooks appeared not to work. Correlated evidence shows:
+
+- Gobby `hooks.log` bound both managed SessionStart events to their pre-created
+  sessions. `rule-allow-audit.jsonl` recorded session-start and prompt-start
+  rules for both, including the required-skill bootstrap injection.
+- For #12086, the audit recorded 16 rule decisions across the two PreToolUse
+  events at 05:58:09–05:58:10 UTC. These were native Codex resource tools, not
+  Gobby proxy calls; their before-tool handling reached Gobby successfully.
+- Codex's local runtime log recorded the first HTTP 200 SSE response opening at
+  05:55:36 UTC and post-sampling usage at 05:58:10, about 154 seconds later.
+  It explicitly recorded `model_needs_follow_up=true` and opened the next local
+  model request at 05:58:10. Gobby's timeout cleanup followed at 05:58:33.
+  The retry opened its response at 06:03:03 and was timed out at 06:06:04 before
+  a first tool call. Neither transcript records a completed turn.
+- Therefore these deadlines cut off unfinished model turns. Missing Stop or
+  cooperative `end_agent_run` evidence is not proof that those hooks failed;
+  forced timeout cleanup is distinct from normal turn/session completion.
+  The three-minute budget was too short for the observed managed `xhigh` path.
+- Codex's global hooks feature is enabled and current Gobby hook entries are
+  trusted. A separate native `SubagentStop` entry is explicitly `enabled=false`
+  in `~/.codex/config.toml`. Its origin/intent was not established. It governs
+  Codex-native subagents, not these independently spawned CLI processes, and is
+  not an explanation for their generation timeouts. Do not rewrite this shared
+  live configuration without resolving intent and coordinating active clients.
+- Both paths warn about missing Qwen model metadata; the standalone control
+  additionally logged that model discovery expected a `models` field but got
+  the LM Studio OpenAI-style `data` envelope. Generation still succeeded in the
+  control, so the metadata warning is not by itself a demonstrated fatal error.
+  Installed Interrupt timeout 120 is clamped to 3 seconds by Codex; no evidence
+  ties that warning to the observed generation stalls.
+
+Primary local evidence: the two durable Gobby agent captures; their child
+transcripts under `~/.codex/sessions/2026/09/07/`; Gobby hook/rule audit logs;
+and read-only, thread-scoped queries of `~/.codex/logs_2.sqlite`. The standalone
+control's JSON events and definitive exit code are in parent session #12034.
+
+**Conclusion:** Codex with local Qwen `xhigh` can generate, use a shell tool, and
+finish. End-to-end Gobby bootstrap/MCP/cooperative completion remains unverified
+within the tested budget; neither managed run is a passing compatibility case.
+Future matrix work must budget startup, first-token/generation time, required
+bootstrap calls, and completion separately, retain thinking, and distinguish
+timeouts from transport/tool failures. Do not treat local parallel-slot count as
+measured throughput or restore a local-default cohort policy from these probes.
 
 ### First bakeoff task: test matrix and Graphify/gcode analysis
 
