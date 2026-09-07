@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::copy_mode::{copy_finalized_selection, route_mouse_selection, PASTE_MAX_BYTES};
+use crate::copy_mode::{copy_selection, route_mouse_selection, PASTE_MAX_BYTES};
 use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
 use crate::input::key_to_bytes_with_protocol;
@@ -524,7 +524,7 @@ async fn route_live_input(
     }
     if route_mouse_selection(workspace, chrome, event) {
         let mut output = std::io::stdout();
-        copy_finalized_selection(workspace, chrome, &mut output)?;
+        copy_selection(workspace, chrome, &mut output)?;
         output.flush()?;
         chrome.mode = Mode::Terminal;
         return Ok(false);

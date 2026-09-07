@@ -1,9 +1,10 @@
 //! 3.3.13 / 3.3.14 / 3.3.20 scrollback, copy, and paste.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{route_mouse, MouseGesture, MouseOutcome, PaneId};
 use gobby_client::copy_mode::{
-    copy_finalized_selection, extract_logical_line, route_mouse_selection, route_paste_event,
-    write_selection_osc52, PASTE_MAX_BYTES,
+    copy_finalized_selection, copy_selection, extract_logical_line, route_mouse_selection,
+    route_paste_event, write_selection_osc52, PASTE_MAX_BYTES,
 };
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::ui::chrome::{Chrome, Mode};
@@ -257,4 +258,226 @@ fn paste_is_lease_gated_and_bracketed() {
     ws.paste_to_pty(pane, "query").unwrap();
     assert_eq!(ws.pane(pane).search_buffer(), "query");
     assert_eq!(ws.daemon().pty_mutation_count(), after_indeterminate);
+}
+
+/// A frame showing `rows`, each padded with blanks to the widest row.
+fn frame_of(rows: &[&str], modes: PaneModes) -> FrameData {
+    let width = rows
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap_or(0);
+    let cells = rows
+        .iter()
+        .flat_map(|row| {
+            row.chars()
+                .chain(std::iter::repeat(' '))
+                .take(width)
+                .map(|symbol| CellData {
+                    symbol: symbol.to_string(),
+                    fg: 0,
+                    bg: 0,
+                    modifier: 0,
+                    skip: false,
+                    hyperlink: None,
+                })
+        })
+        .collect();
+    FrameData {
+        cells,
+        width: width as u16,
+        height: rows.len() as u16,
+        cursor: None,
+        hyperlinks: Vec::new(),
+        graphics: Vec::new(),
+        modes,
+    }
+}
+
+/// Open `terminal` in `ws` and deliver `frame` as its latest frame.
+async fn pane_showing(ws: &mut Workspace, terminal: &str, frame: FrameData) -> PaneId {
+    let pane = ws
+        .open_terminal(terminal, "native", "epoch-select")
+        .expect("open terminal");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(ServerMessage::Frame(frame));
+    ws.replace_frame_source(pane, PaneFrameSource::Scripted(source))
+        .expect("replace source");
+    ws.recv_pane_frame(pane).await.expect("receive frame");
+    pane
+}
+
+fn inner_rect(chrome: &Chrome, slot: LayoutPaneId) -> Rect {
+    chrome
+        .view
+        .pane_infos
+        .iter()
+        .find(|info| info.id == slot)
+        .expect("pane geometry")
+        .inner_rect
+}
+
+fn mouse(
+    kind: MouseEventKind,
+    inner: Rect,
+    col: u16,
+    row: u16,
+    modifiers: KeyModifiers,
+) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column: inner.x + col,
+        row: inner.y + row,
+        modifiers,
+    }
+}
+
+#[tokio::test]
+async fn terminal_mode_drag_selects_and_copies_on_release() {
+    let mut ws = Workspace::scripted();
+    let frame = frame_of(&["hello world", "second row"], PaneModes::default());
+    let pane = pane_showing(&mut ws, "term-drag", frame).await;
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "drag");
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    assert_eq!(chrome.focused_pane(), Some(pane));
+    assert_eq!(chrome.mode, Mode::Terminal);
+    let inner = inner_rect(&chrome, slot);
+    let left = |kind, col, row| mouse(kind, inner, col, row, KeyModifiers::NONE);
+
+    let down = left(MouseEventKind::Down(MouseButton::Left), 0, 0);
+    assert_eq!(route_mouse(&ws, &mut chrome, &down), MouseOutcome::Handled);
+    assert_eq!(chrome.gesture, Some(MouseGesture::Select { slot }));
+    assert!(chrome
+        .selection
+        .as_ref()
+        .is_some_and(|selection| !selection.is_visible()));
+    let drag = left(MouseEventKind::Drag(MouseButton::Left), 4, 0);
+    assert_eq!(route_mouse(&ws, &mut chrome, &drag), MouseOutcome::Handled);
+    assert!(chrome.selection.as_ref().is_some_and(Selection::is_visible));
+    let up = left(MouseEventKind::Up(MouseButton::Left), 4, 0);
+    assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Copy);
+    assert_eq!(chrome.gesture, None);
+    assert!(chrome
+        .selection
+        .as_ref()
+        .is_some_and(Selection::is_finalized));
+    let mut output = Vec::new();
+    assert!(copy_selection(&ws, &mut chrome, &mut output).expect("copy selection"));
+    assert_eq!(output, b"\x1b]52;c;aGVsbG8=\x07");
+    assert_eq!(chrome.last_copy.as_deref(), Some("hello"));
+
+    // A press that never moves clears the selection instead of copying.
+    let down = left(MouseEventKind::Down(MouseButton::Left), 2, 1);
+    assert_eq!(route_mouse(&ws, &mut chrome, &down), MouseOutcome::Handled);
+    assert!(chrome.selection.is_some());
+    let up = left(MouseEventKind::Up(MouseButton::Left), 2, 1);
+    assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Handled);
+    assert!(chrome.selection.is_none());
+    assert!(!copy_selection(&ws, &mut chrome, &mut Vec::new()).expect("nothing to copy"));
+    assert_eq!(chrome.last_copy.as_deref(), Some("hello"));
+}
+
+#[tokio::test]
+async fn double_and_triple_click_select_token_and_row() {
+    let mut ws = Workspace::scripted();
+    let frame = frame_of(&["cd ~/src/gobby now  ", "x"], PaneModes::default());
+    let pane = pane_showing(&mut ws, "term-token", frame).await;
+    let mut chrome = Chrome::dark();
+    let slot = chrome.open_pane(pane, "token");
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let inner = inner_rect(&chrome, slot);
+    let click = |chrome: &mut Chrome, col: u16| {
+        let down = mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            inner,
+            col,
+            0,
+            KeyModifiers::NONE,
+        );
+        let pressed = route_mouse(&ws, chrome, &down);
+        let up = mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            inner,
+            col,
+            0,
+            KeyModifiers::NONE,
+        );
+        route_mouse(&ws, chrome, &up);
+        pressed
+    };
+
+    // One click anchors and clears; the second takes the token; the third the
+    // row without its blank tail; the fourth starts over.
+    assert_eq!(click(&mut chrome, 6), MouseOutcome::Handled);
+    assert!(chrome.selection.is_none());
+    assert_eq!(click(&mut chrome, 6), MouseOutcome::Copy);
+    assert!(chrome
+        .selection
+        .as_ref()
+        .is_some_and(Selection::is_finalized));
+    assert!(copy_selection(&ws, &mut chrome, &mut Vec::new()).expect("copy token"));
+    assert_eq!(chrome.last_copy.as_deref(), Some("~/src/gobby"));
+    assert_eq!(click(&mut chrome, 6), MouseOutcome::Copy);
+    assert!(copy_selection(&ws, &mut chrome, &mut Vec::new()).expect("copy row"));
+    assert_eq!(chrome.last_copy.as_deref(), Some("cd ~/src/gobby now"));
+    assert_eq!(click(&mut chrome, 6), MouseOutcome::Handled);
+    assert!(chrome.selection.is_none());
+
+    // A double-click on a blank cell selects nothing.
+    assert_eq!(click(&mut chrome, 2), MouseOutcome::Handled);
+    assert_eq!(click(&mut chrome, 2), MouseOutcome::Handled);
+    assert!(chrome.selection.is_none());
+
+    // A pane that reports the mouse keeps a plain press for forwarding;
+    // shift selects there anyway.
+    let modes = PaneModes {
+        mouse_all: true,
+        ..PaneModes::default()
+    };
+    let reporting = pane_showing(&mut ws, "term-mouse", frame_of(&["vim buffer"], modes)).await;
+    let mouse_slot = chrome.open_pane(reporting, "mouse");
+    assert!(chrome.focus_pane(reporting));
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let inner = inner_rect(&chrome, mouse_slot);
+    let press = |modifiers| {
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            inner,
+            0,
+            0,
+            modifiers,
+        )
+    };
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &press(KeyModifiers::NONE)),
+        MouseOutcome::Ignore
+    );
+    assert_eq!(chrome.gesture, None);
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &press(KeyModifiers::SHIFT)),
+        MouseOutcome::Handled
+    );
+    assert_eq!(
+        chrome.gesture,
+        Some(MouseGesture::Select { slot: mouse_slot })
+    );
+    let drag = mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        inner,
+        2,
+        0,
+        KeyModifiers::SHIFT,
+    );
+    assert_eq!(route_mouse(&ws, &mut chrome, &drag), MouseOutcome::Handled);
+    let up = mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        inner,
+        2,
+        0,
+        KeyModifiers::SHIFT,
+    );
+    assert_eq!(route_mouse(&ws, &mut chrome, &up), MouseOutcome::Copy);
+    assert!(copy_selection(&ws, &mut chrome, &mut Vec::new()).expect("copy shifted drag"));
+    assert_eq!(chrome.last_copy.as_deref(), Some("vim"));
 }

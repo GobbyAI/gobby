@@ -12,7 +12,8 @@ pub mod run_loop;
 
 pub use attach::AttachState;
 pub use live_loop::mouse::{
-    route_mouse, MouseGesture, MouseOutcome, Placement, MOUSE_SCROLL_LINES, ROSTER_DRAG_THRESHOLD,
+    anchor_selection, extend_selection, finish_selection, route_mouse, ClickRun, MouseGesture,
+    MouseOutcome, Placement, DOUBLE_CLICK_MS, MOUSE_SCROLL_LINES, ROSTER_DRAG_THRESHOLD,
     TAB_DRAG_THRESHOLD,
 };
 pub use live_loop::run_live_loop;

@@ -1,6 +1,9 @@
 //! Chrome actions for the live loop: keymap actions, relative focus,
 //! terminal spawn/terminate, and chrome sync from the workspace.
 
+use std::io::Write;
+
+use crate::copy_mode::copy_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
 use crate::ui::{Action, Chrome, Mode};
@@ -89,6 +92,11 @@ pub(super) async fn apply_live_mouse_outcome(
                 focus_live_pane(workspace, pane).await?;
             }
             open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
+        }
+        MouseOutcome::Copy => {
+            let mut output = std::io::stdout();
+            copy_selection(workspace, chrome, &mut output)?;
+            output.flush()?;
         }
         MouseOutcome::Reorder { order } => workspace
             .set_tab_order(&order)

@@ -1,6 +1,6 @@
 //! Attachment-local copy-mode and lease-gated paste helpers.
 
-use crate::app::Workspace;
+use crate::app::{anchor_selection, extend_selection, finish_selection, Workspace};
 use crate::daemon::{Daemon, DaemonError};
 use crate::ui::chrome::{Chrome, Mode};
 use base64::Engine as _;
@@ -50,22 +50,18 @@ pub fn write_selection_osc52(
 }
 
 /// Copy the finalized selection retained by the client chrome from the pane's
-/// current semantic frame.
-pub fn copy_finalized_selection<D: Daemon>(
+/// Text of the finalized selection: the cells it covers in the pane's latest
+/// frame, or the attach history before the first frame. `None` when nothing
+/// is selected.
+pub fn finalized_selection_text<D: Daemon>(
     workspace: &Workspace<D>,
     chrome: &Chrome,
-    output: &mut impl Write,
-) -> io::Result<bool> {
-    let Some(selection) = chrome
+) -> Option<String> {
+    let selection = chrome
         .selection
         .as_ref()
-        .filter(|selection| selection.is_finalized())
-    else {
-        return Ok(false);
-    };
-    let Some(pane_id) = chrome.pane_for_slot(selection.pane_id) else {
-        return Ok(false);
-    };
+        .filter(|selection| selection.is_finalized())?;
+    let pane_id = chrome.pane_for_slot(selection.pane_id)?;
     let pane = workspace.pane(pane_id);
     let selected = if let Some(frame) = pane.latest_frame() {
         let metrics = ScrollMetrics {
@@ -90,15 +86,46 @@ pub fn copy_finalized_selection<D: Daemon>(
         }
         selected.pop();
         extract_logical_line(&selected, usize::from(frame.width))
-    } else if let Some(history) = pane.attach_history() {
-        extract_logical_line(history, usize::from(pane.viewport().1))
     } else {
+        extract_logical_line(pane.attach_history()?, usize::from(pane.viewport().1))
+    };
+    (!selected.is_empty()).then_some(selected)
+}
+
+/// Write the finalized selection to the clipboard as OSC 52. Returns whether
+/// anything was written.
+pub fn copy_finalized_selection<D: Daemon>(
+    workspace: &Workspace<D>,
+    chrome: &Chrome,
+    output: &mut impl Write,
+) -> io::Result<bool> {
+    match (
+        chrome.selection.as_ref(),
+        finalized_selection_text(workspace, chrome),
+    ) {
+        (Some(selection), Some(text)) => write_selection_osc52(output, selection, &text),
+        _ => Ok(false),
+    }
+}
+
+/// `copy_finalized_selection` that also keeps the text on `Chrome::last_copy`
+/// for middle-click paste.
+pub fn copy_selection<D: Daemon>(
+    workspace: &Workspace<D>,
+    chrome: &mut Chrome,
+    output: &mut impl Write,
+) -> io::Result<bool> {
+    let Some(text) = finalized_selection_text(workspace, chrome) else {
         return Ok(false);
     };
-    if selected.is_empty() {
+    let Some(selection) = chrome.selection.as_ref() else {
         return Ok(false);
+    };
+    let copied = write_selection_osc52(output, selection, &text)?;
+    if copied {
+        chrome.last_copy = Some(text);
     }
-    write_selection_osc52(output, selection, &selected)
+    Ok(copied)
 }
 
 /// Update the retained selection for a copy-mode mouse gesture. Returns true
@@ -131,18 +158,14 @@ pub fn route_mouse_selection<D: Daemon>(
             let Some(pane_id) = chrome.pane_for_slot(slot) else {
                 return false;
             };
-            let pane = workspace.pane(pane_id);
-            let metrics = ScrollMetrics {
-                offset_from_bottom: pane.scroll_offset() as usize,
-                max_offset_from_bottom: pane.max_scroll as usize,
-                viewport_rows: inner.height as usize,
-            };
-            chrome.selection = Some(Selection::anchor(
+            anchor_selection(
+                chrome,
+                workspace.pane(pane_id),
                 slot,
-                mouse.row - inner.y,
+                inner,
                 mouse.column - inner.x,
-                Some(metrics),
-            ));
+                mouse.row - inner.y,
+            );
             false
         }
         MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
@@ -161,15 +184,14 @@ pub fn route_mouse_selection<D: Daemon>(
             let Some(pane_id) = chrome.pane_for_slot(slot) else {
                 return false;
             };
-            let pane = workspace.pane(pane_id);
-            let metrics = ScrollMetrics {
-                offset_from_bottom: pane.scroll_offset() as usize,
-                max_offset_from_bottom: pane.max_scroll as usize,
-                viewport_rows: inner.height as usize,
-            };
-            let selection = chrome.selection.as_mut().expect("selection checked");
-            selection.drag(mouse.column, mouse.row, inner, Some(metrics));
-            matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) && selection.finish()
+            extend_selection(
+                chrome,
+                workspace.pane(pane_id),
+                inner,
+                mouse.column,
+                mouse.row,
+            );
+            matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) && finish_selection(chrome)
         }
         _ => false,
     }

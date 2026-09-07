@@ -15,7 +15,7 @@ use tokio::time::Instant;
 
 pub use crate::teardown::shutdown;
 
-use crate::copy_mode::route_paste_event;
+use crate::copy_mode::{copy_selection, route_paste_event};
 use crate::daemon::{Daemon, DaemonError, Generation};
 use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
@@ -187,6 +187,10 @@ fn apply_scripted_mouse_outcome(
         MouseOutcome::Reorder { order } => workspace
             .set_tab_order(&order)
             .map_err(|error| FrameError::Other(error.to_string()))?,
+        // The scripted loop has no terminal to reach: keep the text, skip OSC 52.
+        MouseOutcome::Copy => {
+            copy_selection(workspace, chrome, &mut std::io::sink())?;
+        }
     }
     Ok(false)
 }

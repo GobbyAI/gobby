@@ -17,7 +17,10 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 use super::super::PaneId;
 
 mod pointer;
+mod select;
 mod wheel;
+
+pub use select::{anchor_selection, extend_selection, finish_selection, ClickRun, DOUBLE_CLICK_MS};
 
 /// A press-and-drag in progress, keyed by what went down under the pointer.
 ///
@@ -94,6 +97,9 @@ pub enum MouseOutcome {
     },
     /// A roster row was dropped on another: the roster in its new order.
     Reorder { order: Vec<String> },
+    /// A selection inside a pane was finalized: the loop copies it through
+    /// OSC 52 and keeps the text for middle-click paste.
+    Copy,
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -254,9 +260,11 @@ mod tests {
         let (ws, mut chrome, (fcol, frow), other, (col, row)) = split_chrome();
         assert_eq!(
             route_mouse(&ws, &mut chrome, &down(fcol, frow, KeyModifiers::NONE)),
-            MouseOutcome::Ignore,
-            "a click on the focused pane is left for selection"
+            MouseOutcome::Handled,
+            "a click on the focused pane starts a selection"
         );
+        assert!(matches!(chrome.gesture, Some(MouseGesture::Select { .. })));
+        assert!(chrome.selection.is_some());
         assert_eq!(
             route_mouse(&ws, &mut chrome, &down(col, row, KeyModifiers::ALT)),
             MouseOutcome::Focus {

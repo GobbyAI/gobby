@@ -15,16 +15,16 @@ use crate::ui::sidebar::section_metrics;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::{
-    focus_active_tab, on_roster, MouseGesture, MouseOutcome, Placement, ROSTER_DRAG_THRESHOLD,
-    TAB_DRAG_THRESHOLD,
+    focus_active_tab, on_roster, select, MouseGesture, MouseOutcome, Placement,
+    ROSTER_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
 };
 
 /// A button went down on `hit`. Only the left button means anything.
 ///
 /// Inside a pane it focuses the pane (herdr `FocusPane`); alt makes that an
-/// observe-only focus. A click on the pane that already has focus is left
-/// alone so selection can start there, and a slot whose pane has left the
-/// roster is stale until the next chrome sync, so it is not focused either.
+/// observe-only focus. A press on the pane that already has focus starts a
+/// selection there (`select::down`), and a slot whose pane has left the
+/// roster is stale until the next chrome sync, so it is ignored.
 ///
 /// On the tab bar it activates the tab and focuses its pane (herdr
 /// `FocusTab`), starting the drag that `up` may finish as a reorder; a
@@ -62,12 +62,15 @@ pub(super) fn down<W: WorkspaceView>(
     let observe_only = mouse.modifiers.contains(KeyModifiers::ALT);
     let sidebar_area = chrome.view.sidebar_rect;
     match hit {
-        Hit::Pane { slot, .. } => {
+        Hit::Pane { slot, col, row } => {
             let Some(pane) = chrome.pane_for_slot(slot) else {
                 return MouseOutcome::Ignore;
             };
-            if chrome.focused_pane() == Some(pane) || !on_roster(ws, pane) {
+            if !on_roster(ws, pane) {
                 return MouseOutcome::Ignore;
+            }
+            if chrome.focused_pane() == Some(pane) {
+                return select::down(ws, chrome, pane, slot, col, row, mouse);
             }
             MouseOutcome::Focus { pane, observe_only }
         }
@@ -267,6 +270,10 @@ pub(super) fn drag<W: WorkspaceView>(
             let rows = scrollbar_offset_from_drag_row(metrics, track, mouse.row, grab_offset);
             scroll_to(pane, metrics, rows)
         }
+        Some(MouseGesture::Select { slot }) => {
+            let slot = *slot;
+            select::drag(ws, chrome, slot, mouse)
+        }
         _ => MouseOutcome::Ignore,
     }
 }
@@ -314,6 +321,7 @@ pub(super) fn up<W: WorkspaceView>(
             chrome.prefs.sidebar_width = chrome.sidebar.width;
             MouseOutcome::Handled
         }
+        Some(MouseGesture::Select { .. }) => select::up(chrome),
         Some(
             MouseGesture::TabDrag { .. }
             | MouseGesture::RosterDrag { .. }

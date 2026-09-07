@@ -2,7 +2,7 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
-use crate::app::{short_terminal_id, MouseGesture, Pane, PaneId, Workspace};
+use crate::app::{short_terminal_id, ClickRun, MouseGesture, Pane, PaneId, Workspace};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
@@ -358,6 +358,11 @@ pub struct Chrome {
     /// What the pointer was over when it last moved with no button down,
     /// for hover styling; `route_mouse` owns it.
     pub hover: Option<Hit>,
+    /// Presses on one screen cell in quick succession, for double- and
+    /// triple-click; `route_mouse` owns it.
+    pub last_click: Option<ClickRun>,
+    /// Text of the last mouse copy, for middle-click paste.
+    pub last_copy: Option<String>,
 }
 
 impl Chrome {
@@ -385,6 +390,8 @@ impl Chrome {
             selection: None,
             gesture: None,
             hover: None,
+            last_click: None,
+            last_copy: None,
         }
     }
 
