@@ -43,7 +43,7 @@ class FakeSession:
     id: str
     agent_depth: int = 0
     terminal_context: object | None = None
-    status: str = "active"
+    status: str = "paused"
     turn_count: int = 0
     session_type: str = "terminal"
 
@@ -141,7 +141,7 @@ async def test_final_preflight_suppresses_session_that_becomes_protected(
         FakeSession(
             id=WAKE_SESSION_ID,
             terminal_context=NATIVE_TERMINAL_CONTEXT,
-            status="active",
+            status="paused",
         ),
         FakeSession(
             id=WAKE_SESSION_ID,

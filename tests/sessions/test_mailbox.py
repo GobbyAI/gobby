@@ -7,11 +7,13 @@ import json
 import logging
 from dataclasses import replace
 from typing import Any, Protocol
+from unittest.mock import AsyncMock
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
 import gobby.sessions.mailbox as mailbox_module
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.sessions.clear_continuation import (
     resolve_clear_successor,
     stage_clear_attempt,
@@ -27,26 +29,33 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.storage.tasks import LocalTaskManager
+from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
 
 pytestmark = pytest.mark.unit
 
 
 class WakeDispatcherProtocol(Protocol):
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]: ...
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]: ...
 
 
 class FakeWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
         self.calls.append(session_id)
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
 
 class FailingWakeDispatcher:
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
         raise RuntimeError(f"wake failed for {session_id}")
 
 
@@ -60,7 +69,9 @@ class StalledWakeDispatcher:
         self.finished: set[str] = set()
         self.tasks: list[asyncio.Task[Any]] = []
 
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
         self.calls.append(session_id)
         task = asyncio.current_task()
         assert task is not None
@@ -229,11 +240,12 @@ async def _send_project_broadcast(
 class TestMailboxDirectSend:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fanout", [False, True])
-    async def test_stalled_wake_returns_persisted_ids_within_one_budget(
+    async def test_parked_tmux_wakes_finish_beyond_former_shared_deadline(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
         fanout: bool,
     ) -> None:
         sender = _register_session(session_manager, sample_project["id"], "sender")
@@ -241,8 +253,44 @@ class TestMailboxDirectSend:
             _register_session(session_manager, sample_project["id"], f"recipient-{index}").id
             for index in range(3 if fanout else 1)
         ]
-        fast_recipient = recipients[0] if fanout else None
-        dispatcher = StalledWakeDispatcher(recipients, fast_recipient=fast_recipient)
+        for index, recipient in enumerate(recipients):
+            session_manager.update(
+                recipient, status="paused", terminal_context={"tmux_pane": f"%{index}"}
+            )
+        started: set[str] = set()
+        submitted: set[str] = set()
+        all_started = asyncio.Event()
+        release = asyncio.Event()
+        first_submitted = asyncio.Event()
+
+        async def send_keys(
+            pane_id: str,
+            message: str,
+            tmux_socket_path: str | None,
+            *,
+            submit: bool = False,
+            clear_before_submit: bool = False,
+            cli_source: str | None = None,
+        ) -> None:
+            assert message == CONTINUE_WAKE_MESSAGE
+            assert submit is True
+            started.add(pane_id)
+            if len(started) == len(recipients):
+                all_started.set()
+            # Model a slow paste/Enter sequence followed by other recipients.
+            if pane_id == "%0":
+                await release.wait()
+            else:
+                await first_submitted.wait()
+            submitted.add(pane_id)
+            if pane_id == "%0":
+                first_submitted.set()
+
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=InterSessionMessageManager(temp_db),
+            tmux_pane_sender=send_keys,
+        )
         send_task = asyncio.create_task(
             _mailbox(temp_db, session_manager, dispatcher).send(
                 from_session_id=sender.id,
@@ -253,14 +301,21 @@ class TestMailboxDirectSend:
             )
         )
         try:
-            await asyncio.wait_for(dispatcher.started.wait(), timeout=3)
+            await asyncio.wait_for(all_started.wait(), timeout=3)
             rows = temp_db.fetchall(
                 "SELECT id, to_session, content FROM inter_session_messages WHERE from_session = %s",
                 (sender.id,),
             )
             assert {row["to_session"] for row in rows} == set(recipients)
             assert all(row["content"] == "Durable urgent notice" for row in rows)
-            result = await asyncio.wait_for(send_task, timeout=3)
+            loop = asyncio.get_running_loop()
+            original_time = loop.time
+            with monkeypatch.context() as clock_patch:
+                clock_patch.setattr(loop, "time", lambda: original_time() + 10)
+                await drain_asyncio_tasks(cycles=10)
+                assert not send_task.done(), "An outer timeout cancelled pending tmux submission"
+                release.set()
+                result = await asyncio.wait_for(send_task, timeout=3)
         finally:
             send_task.cancel()
             await asyncio.gather(send_task, return_exceptions=True)
@@ -269,25 +324,71 @@ class TestMailboxDirectSend:
         assert set(result.message_ids) == {row["id"] for row in rows}
         assert len(result.message_ids) == len(recipients)
         assert [item["session_id"] for item in result.wake_results] == result.recipient_session_ids
-        for wake in result.wake_results:
-            if wake["session_id"] == fast_recipient:
-                assert wake == {
-                    "session_id": fast_recipient,
-                    "delivered": True,
-                    "method": "fake",
+        assert submitted == {f"%{index}" for index in range(len(recipients))}
+        assert result.wake_results == [
+            {
+                "session_id": recipient,
+                "delivered": True,
+                "method": "tmux_pane",
+                "session_status": "paused",
+            }
+            for recipient in result.recipient_session_ids
+        ]
+        persisted = temp_db.fetchall("SELECT id FROM inter_session_messages")
+        assert {row["id"] for row in persisted} == set(result.message_ids)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("priority", ["normal", "urgent"])
+    async def test_active_mailbox_wake_uses_shared_priority_policy(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        priority: str,
+    ) -> None:
+        sender = _register_session(session_manager, sample_project["id"], "sender")
+        recipient = _register_session(session_manager, sample_project["id"], "recipient")
+        session_manager.update(recipient.id, terminal_context={"tmux_pane": "%7"})
+        pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=InterSessionMessageManager(temp_db),
+            tmux_pane_sender=pane_sender,
+        )
+
+        result = await _mailbox(temp_db, session_manager, dispatcher).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="Process this message",
+            wake=True,
+            priority=priority,
+        )
+
+        if priority == "normal":
+            assert result.wake_results == [
+                {
+                    "session_id": recipient.id,
+                    "delivered": False,
+                    "method": "next_call_context",
+                    "skipped": "session_active",
+                    "ism_persisted": True,
                     "session_status": "active",
                 }
-            else:
-                assert wake["delivered"] is False
-                assert wake["session_status"] == "active"
-                assert wake["error_code"] == "wake_timeout"
-                assert "timed out" in wake["error_message"]
-        assert dispatcher.finished == set(recipients)
-        assert all(task.done() for task in dispatcher.tasks)
-        persisted = temp_db.fetchall(
-            "SELECT id FROM inter_session_messages WHERE from_session = %s", (sender.id,)
-        )
-        assert {row["id"] for row in persisted} == set(result.message_ids)
+            ]
+            pane_sender.assert_not_awaited()
+        else:
+            assert result.wake_results == [
+                {
+                    "session_id": recipient.id,
+                    "delivered": True,
+                    "method": "tmux_pane",
+                    "session_status": "active",
+                }
+            ]
+            pane_sender.assert_awaited_once()
+        rows = temp_db.fetchall("SELECT id, priority FROM inter_session_messages")
+        assert rows == [{"id": result.message_ids[0], "priority": priority}]
 
     @pytest.mark.asyncio
     async def test_cancelled_urgent_send_preserves_messages_and_drains_wakes(

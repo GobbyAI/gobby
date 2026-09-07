@@ -40,7 +40,9 @@ class FakeWakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
         self.calls.append(session_id)
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
