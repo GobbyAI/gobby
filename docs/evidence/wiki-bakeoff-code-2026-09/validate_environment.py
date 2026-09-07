@@ -29,6 +29,7 @@ from provision_environment import (
     VOLUMES,
     build_manifest,
 )
+from service_safety import validate_rendered
 
 GRAPHIFY_COMMIT = "c9f99018774e2e0380e9f65b3959944559a0d5f6"
 GRAPHIFY_SDIST_SHA256 = "8135a5a22b6b78745aa3ab040cb3f5cecd7126eef5b4e89764404e6e75b58568"
@@ -141,11 +142,14 @@ def _validate_corpus_names(paths: set[str], comparator: str, case: str) -> None:
 def _scan_secrets(root: Path, paths: set[str]) -> None:
     for relative in sorted(paths):
         path = root / relative
-        if path.is_symlink() or path.stat().st_size > 2_000_000:
-            continue
-        payload = path.read_bytes()
-        for label, pattern in SECRET_PATTERNS.items():
-            assert pattern.search(payload) is None, f"{label} pattern in {relative}"
+        assert not path.is_symlink(), f"symlink in comparator input: {relative}"
+        with path.open("rb") as stream:
+            tail = b""
+            while chunk := stream.read(1024 * 1024):
+                payload = tail + chunk
+                for label, pattern in SECRET_PATTERNS.items():
+                    assert pattern.search(payload) is None, f"{label} pattern in {relative}"
+                tail = payload[-128:]
     for relative in ALLOWED_EXAMPLE_ENV:
         for line in (root / relative).read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
@@ -193,26 +197,9 @@ def validate_compose(root: Path) -> None:
     assert compose["networks"]["default"]["name"] == NETWORK
     assert {value["name"] for value in compose["volumes"].values()} == set(VOLUMES.values())
 
-    rendered_path = root / "receipts" / "compose.rendered.json"
-    rendered = rendered_path.read_text(encoding="utf-8")
-    for forbidden in (
-        '"gobby-postgres"',
-        "gobby_falkordb_data",
-        "gobby_qdrant_data",
-        "gobby_postgres_data",
-        "0.0.0.0",
-        ":60891",
-        ":60892",
-        ":6333",
-        ":6334",
-        ":16379",
-        ":13000",
-    ):
-        assert forbidden not in rendered, (
-            f"shared service reference in rendered compose: {forbidden}"
-        )
-    for owned in (*CONTAINERS.values(), *VOLUMES.values(), NETWORK):
-        assert owned in rendered
+    rendered = _load_json(root / "receipts" / "compose.rendered.json")
+    images = _load_json(root / "receipts" / "image-references.json")
+    validate_rendered(rendered, images, _load_env_file(root / "config/services.env"))
 
 
 def validate_installations(root: Path) -> None:

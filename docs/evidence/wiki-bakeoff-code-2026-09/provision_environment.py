@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from runtime_boundary import assert_owned_runtime, write_once
+
 DEFAULT_RUNTIME_ROOT = Path("/Users/josh/Projects/wiki-bakeoff-code-2026-09")
 DEFAULT_SOURCE_REPO = Path("/Users/josh/Projects/game-goblins")
 DEFAULT_GOBBY_REPO = Path("/Users/josh/Projects/gobby")
@@ -111,15 +113,11 @@ def _run(
 
 
 def _write_json(path: Path, value: Any, *, mode: int = 0o644) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    path.chmod(mode)
+    write_once(path, json.dumps(value, indent=2, sort_keys=True) + "\n", mode)
 
 
 def _write_text(path: Path, value: str, *, mode: int = 0o644) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value, encoding="utf-8")
-    path.chmod(mode)
+    write_once(path, value, mode)
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -464,14 +462,17 @@ def init_runtime(root: Path, source_repo: Path, gobby_repo: Path, owner_session:
 
 
 def refresh_manifest(root: Path, comparator: str, case: str) -> None:
+    if comparator not in COMPARATOR_CASES or case not in COMPARATOR_CASES[comparator]:
+        raise ValueError("unknown comparator case")
     corpus = root / "corpora" / comparator / case
     manifest_path = root / "manifests" / "corpora" / comparator / f"{case}.json"
     if not corpus.is_dir() or not manifest_path.is_file():
         raise FileNotFoundError(f"unknown corpus {comparator}/{case}")
     old = json.loads(manifest_path.read_text(encoding="utf-8"))
+    observed = build_manifest(corpus, old["source_commit"], old["source_exclusions"])
     _write_json(
-        manifest_path,
-        build_manifest(corpus, old["source_commit"], old["source_exclusions"]),
+        root / "observations" / comparator / case / f"{observed['input_tree_sha256']}.json",
+        observed,
     )
 
 
@@ -486,14 +487,14 @@ def write_compose(
         ("qdrant", qdrant_image),
         ("falkordb", falkordb_image),
     ):
-        if re.fullmatch(r"(?:[^\s@]+@)?sha256:[0-9a-f]{64}", image) is None:
+        if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image) is None:
             raise ValueError(f"{name} image must be a resolved immutable reference")
     compose = f"""name: {COMPOSE_PROJECT}
 services:
   postgres:
     image: {postgres_image}
     container_name: {CONTAINERS["postgres"]}
-    command: [postgres, -c, shared_preload_libraries=pg_search,pgaudit, -c, pgaudit.log=none]
+    command: [postgres, -c, "shared_preload_libraries=pg_search,pgaudit", -c, pgaudit.log=none]
     environment:
       POSTGRES_DB: ${{BAKEOFF_POSTGRES_DB}}
       POSTGRES_USER: ${{BAKEOFF_POSTGRES_USER}}
@@ -518,7 +519,7 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:
-      test: [CMD-SHELL, 'bash -c ''exec 3<>/dev/tcp/localhost/6333 && printf "GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && grep -q "healthz check passed" <&3''']
+      test: [CMD-SHELL, 'bash -c ''exec 3<>/dev/tcp/localhost/6333 && printf "GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n" >&3 && grep -q "healthz check passed" <&3''']
       interval: 2s
       timeout: 2s
       retries: 30
@@ -551,15 +552,13 @@ networks:
     name: {NETWORK}
 """
     _write_text(root / "config" / "compose.yaml", compose)
-    _write_json(
-        root / "receipts" / "image-references.json",
-        {
-            "recorded_at": _utc_now(),
-            "postgres": postgres_image,
-            "qdrant": qdrant_image,
-            "falkordb": falkordb_image,
-        },
-    )
+    image_path = root / "receipts" / "image-references.json"
+    references = {"postgres": postgres_image, "qdrant": qdrant_image, "falkordb": falkordb_image}
+    if image_path.exists():
+        recorded = json.loads(image_path.read_text())
+        assert all(recorded[name] == value for name, value in references.items())
+    else:
+        _write_json(image_path, references)
 
 
 def snapshot_after(root: Path, source_repo: Path) -> None:
@@ -578,13 +577,16 @@ def _parse_args() -> argparse.Namespace:
     init = subparsers.add_parser("init")
     init.add_argument("--owner-session", required=True)
     refresh = subparsers.add_parser("refresh-manifest")
+    refresh.add_argument("--owner-session", required=True)
     refresh.add_argument("--comparator", choices=sorted(COMPARATOR_CASES), required=True)
     refresh.add_argument("--case", required=True)
     compose = subparsers.add_parser("write-compose")
+    compose.add_argument("--owner-session", required=True)
     compose.add_argument("--postgres-image", required=True)
     compose.add_argument("--qdrant-image", required=True)
     compose.add_argument("--falkordb-image", required=True)
-    subparsers.add_parser("snapshot-after")
+    snapshot = subparsers.add_parser("snapshot-after")
+    snapshot.add_argument("--owner-session", required=True)
     return parser.parse_args()
 
 
@@ -593,6 +595,8 @@ def main() -> int:
     root = args.runtime_root.resolve()
     if root != DEFAULT_RUNTIME_ROOT:
         raise ValueError(f"runtime root must be {DEFAULT_RUNTIME_ROOT}")
+    if args.command != "init":
+        assert_owned_runtime(root, args.owner_session)
     if args.command == "init":
         init_runtime(
             root, args.source_repo.resolve(), args.gobby_repo.resolve(), args.owner_session

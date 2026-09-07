@@ -13,15 +13,117 @@ No daemon-level sandbox permission changes are needed for that host-owned setup 
 - Archived both Game Goblins commits and pinned Gobby source; created all 69 independent corpus
   copies, exclusion inventories, hashes, private service credentials, and before-state evidence.
   `validate_manifests` passed for every copy, including secret-pattern and input-exclusion checks.
-- No containers or isolated daemon have been started. No comparator installation is complete.
-  Service images have only been inspected; live checks and installation receipts remain pending.
+- The three owned service containers are running and healthy. Rendered configuration and live
+  image, label, network, named-volume, and loopback binding checks pass. Their actual IDs are in
+  runtime `receipts/ownership-live.json`; service identities are in `receipts/services.json`.
+- Pinned gcode and gdaemon release builds passed. Graphify and CodeWiki installed in separate
+  virtual environments and report the approved versions. Archify dependencies and Understand
+  Anything's locked workspace dependencies/core build passed. Project-local skill activation and
+  complete installation receipts remain pending. Grok Wiki's DMG hash and copied app signature
+  passed; it is installed only inside the runtime, not `/Applications`.
+- The private daemon bootstrap and schema/config seed passed. No isolated daemon has started;
+  the live signed-grant path is still unverified. No model generation has run.
 - Fixed the unexecuted provisioning scaffold's stale owner ID, private-root permissions, mutable
   image acceptance, mismatched Compose volume names, and implicit build step. Seven offline
   regression cases pass; Ruff, test-quality, test-types, and suppression checks passed.
 - Direct Git cloning was blocked by the repository's managed-clone rule. The supported
   `gobby-clones.create_clone` then rejected this runtime location with `clone_path_outside_root`.
-  No unmanaged clone was created. Evaluate source/release archives for third-party installation;
-  do not disable the rule or alter global clone/sandbox settings.
+  No unmanaged clone was created. Official commit source archives were acquired and checked with
+  `extract_sources.py` instead; no clone/sandbox settings changed.
+
+## Host installation and service evidence
+
+Official archives were downloaded from `https://codeload.github.com/<owner>/<repo>/tar.gz/<pin>`.
+`extract_sources.py` rejects unexpected prefixes, traversal, symlinks, special files, oversized
+archives, and existing destinations; it records per-file source manifests and archive hashes.
+All five archives extracted successfully:
+
+| Source | Files | Archive SHA-256 |
+| --- | ---: | --- |
+| Graphify | 869 | `fda859ebf8e3cfc08cf5d51de70d21cf9bce09bf5517a3f287935dd3ff870de4` |
+| Understand Anything | 514 | `cd479aeb19f4661e4999bf977f1cc757bed02ead743db5ed09cc9152cc3a71b9` |
+| Archify | 473 | `0993116cee2add78ff1cc00e50dd60715e5886fbf76a678a6ce4f99f9f034be8` |
+| CodeWiki | 163 | `9eee49cc531a563b32a2fd2894c9313b6f8d4449e0c27485520dada6e9a10565` |
+| OpenDeepWiki | 912 | `5c46ae750e884fbafe4eaabaa5e785d5b0de2428a5f5a04082e121065d29944c` |
+
+Source receipts/manifests are `receipts/<comparator>-source.json` and
+`manifests/<comparator>-source.json`. No claim is made that the Graphify PyPI sdist is byte-identical
+to its commit archive: this installation uses the official pinned source with its frozen `uv.lock`.
+
+Executed host operations (all paths below are within the approved runtime):
+
+- Built `sources/gobby/Cargo.toml` with `cargo build --release --locked -p gobby-code
+  -p gobby-daemon -j 6` and `CARGO_TARGET_DIR=<runtime>/build/gobby-target`; exit 0, 9m14s.
+  Installed copies into `tools/gcode/bin/gcode` and `gobby-home/bin/{gcode,gdaemon}`.
+  gcode SHA-256: `1f64d7400001a890ab6630ea7a823d8dbaf7e6b18513d3bb3bed6a07075f7652`;
+  gdaemon SHA-256: `d34e0bf08e70e2d4f38076f03950348e711a2567e6e56ff52437551d8b40e0b4`.
+- Graphify: `uv sync --frozen --no-dev --extra mcp --extra svg`, Python 3.13.15,
+  `UV_PROJECT_ENVIRONMENT=<runtime>/tools/graphify/venv`; `graphify --version` → `0.9.55`.
+- CodeWiki: resolved `pyproject.toml` with `uv pip compile` into
+  `build/codewiki-requirements.txt`, synchronized a private Python 3.12.14 environment, then
+  installed the pinned source with `uv pip install --no-deps --editable`; CLI reports `1.0.1`.
+  The dependency lock records the resolved Git-based coding-agent-wrapper dependency.
+- Archify: `npm ci --ignore-scripts --no-audit --no-fund` in `sources/archify/archify`; exit 0.
+- Understand Anything: private `pnpm@10.6.2`, frozen-lockfile install with scripts initially
+  disabled, then `pnpm --filter @understand-anything/core build`; exit 0. Upstream warns that
+  the nested `pnpm.onlyBuiltDependencies` field has no effect; root workspace policy remains
+  authoritative. Native grammar rebuild/skill activation still require verification.
+- Grok Wiki: downloaded release tag `0.0.38` (not `v0.0.38`), verified the approved DMG hash,
+  mounted read-only, copied the app using `ditto`, passed `codesign --verify --deep --strict`,
+  then detached the owned mount. No app launch or global installation.
+- OpenDeepWiki: source acquired, but not built or started. .NET SDK image acquired as
+  `mcr.microsoft.com/dotnet/sdk@sha256:4beef5b8919dcaa2dc924233bd069257e883cc7a061e09088a97d152d6a48510`.
+  The upstream Compose file is not safe to launch unchanged and has not been launched.
+
+`launch_services.py start --owner-session '#12034'` started only the three owned services after
+checking the rendered configuration, immutable local image references, collisions, and free ports.
+Docker startup succeeded; the initial observer incorrectly rejected Docker's named-volume entries
+in `HostConfig.Binds`. After correcting that representation check,
+`launch_services.py observe --owner-session '#12034'` passed. The original start log is retained
+at `logs/install/services-start.json`.
+
+Pre-launch render tests also caught and fixed PostgreSQL's comma-split preload argument and the
+folded Qdrant HTTP healthcheck. The generated Compose file now checks exact commands, environments,
+healthchecks, networks, volumes, ports, and repository digests. Rendered configuration contains
+credentials and is kept private at `receipts/compose.rendered.json`, mode `0600`; do not publish it.
+
+`prepare_daemon.py --owner-session '#12034'`, run through the pinned Gobby environment, initialized
+the database and configuration using normal Gobby schema/config mutation interfaces. The reused
+image creates `public._pgaudit_probe`, so the normal schema authority correctly rejected `public`
+as nonempty unknown lineage. The probe was preserved; Gobby now uses dedicated schema
+`bakeoff_21942` through the DSN search path. The initial bootstrap was preserved as
+`config/bootstrap.initial-public.yaml`; the active private bootstrap is `gobby-home/bootstrap.yaml`.
+`receipts/daemon-preparation.json` records success. Extensions observed in the owned database:
+`pg_search 0.23.4`, `pgaudit 18.0`.
+
+The child setup environment clears inherited managed identity, datastore overrides, provider keys,
+and telemetry. It explicitly sets `GOBBY_HOME` and **`GOBBY_NATIVE_BIN_DIR`**; the latter is required
+because native binary resolution otherwise defaults to the user's real managed bin directory.
+It does not reassign `HOME` or `CODEX_HOME`. Runtime configuration uses canonical
+`ai.embeddings.*` keys, not removed `embeddings.*` storage keys.
+
+## Remaining owned checks
+
+The read-only Sol/xhigh audit identified additional work still owned by #21942:
+
+- Complete installation receipts and validate actual executable/source/lock/log bytes for every
+  comparator, rejecting escaped/symlink paths. Remove the obsolete hard-coded Graphify
+  `commit_byte_identity == UNVERIFIED` acceptance condition.
+- Start the isolated daemon; verify process identity, bootstrap endpoints, current signed grant,
+  expiry/binding, and each backend through the actual gcode path. Self-authored receipt booleans
+  and a nonempty `project_id` are not sufficient proof.
+- Finish before/after isolation checks against captured existing containers, volumes, listeners,
+  and global files, accounting explicitly for concurrent unrelated activity.
+- Finish hardening all resumable command paths and ownership checks. New helpers reject changed
+  evidence overwrites; `refresh-manifest` now writes observations separately and preserves frozen
+  manifests. Corpus scanning now rejects symlinks and scans all sizes in bounded chunks.
+- Resolve the search-hook scoping/fail-open finding: broad searches naming unregistered external
+  archives are redirected to gcode even after it returns `checkout_required`. The diagnostic was
+  sent to active project sessions; no owner has accepted it yet. Keep this finding owned here.
+
+No provider-native tracker is exposed in this session; this ledger and the task handoff retain the
+implementation substeps. The audit helper made no edits, ended through its supported blocker
+handoff, and the coordinator reclaimed #21942. It must not be treated as environment completion.
 
 Executed initialization:
 
@@ -114,10 +216,9 @@ No retry, mirror, package substitution, version update, or sandbox bypass follow
 
 ## Remaining host setup
 
-Do not rerun `init`: the owned runtime now exists. Review the service/validation harness audit,
-finish pinned dependency installation, record immutable image identities, render and reject unsafe
-Compose configuration before launch, build pinned gcode into the runtime, start an isolated Gobby
-daemon, and produce passing live signed-grant evidence. The coordinator performs host operations;
+Do not rerun `init` or `launch_services.py start`: the owned runtime and services now exist. Finish
+the remaining checks above, pinned dependency activation, isolated daemon launch, and live
+signed-grant evidence. The coordinator performs host operations;
 sandboxed workers do not receive Docker or broad network permissions. Assess their remaining
 workspace access only after setup. Until installation and live isolation checks pass, acceptance
 items 1.2.1 through 1.2.3 remain incomplete and this task must not close.

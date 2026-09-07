@@ -49,6 +49,22 @@ def test_init_records_explicit_owner_in_private_root(
     assert json.loads((root / "ownership.json").read_text())["owner_session"] == "#12034"
 
 
+def test_compose_preserves_postgres_argument_and_http_healthcheck(tmp_path: Path) -> None:
+    provision.write_compose(tmp_path, IMAGE, IMAGE, IMAGE)
+    compose = yaml.safe_load((tmp_path / "config" / "compose.yaml").read_text())
+    postgres = compose["services"]["postgres"]["command"]
+    assert postgres == [
+        "postgres",
+        "-c",
+        "shared_preload_libraries=pg_search,pgaudit",
+        "-c",
+        "pgaudit.log=none",
+    ]
+    health = compose["services"]["qdrant"]["healthcheck"]["test"][1]
+    assert "GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n" in health
+    assert "\n" not in health
+
+
 def test_init_refuses_existing_root(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()
