@@ -21,7 +21,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
 use serde_json::json;
 
-use super::live_loop::mouse::{route_mouse, MouseOutcome};
+use super::{route_mouse, MouseOutcome};
 use super::{PaneId, Workspace};
 use crate::daemon::{DaemonEvent, ScriptedDaemon};
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
@@ -105,25 +105,9 @@ fn route_scripted_input(
     prefix_armed: &mut bool,
 ) -> Result<bool, FrameError> {
     if let RawInputEvent::Mouse(mouse) = event {
-        match route_mouse(chrome, mouse) {
-            MouseOutcome::Focus { pane, observe_only } => {
-                chrome.focus_pane(pane);
-                if observe_only {
-                    if let Some(previous) = workspace.focus.filter(|previous| *previous != pane) {
-                        workspace
-                            .release_control(previous)
-                            .map_err(|error| FrameError::Other(error.to_string()))?;
-                    }
-                    workspace.focus = Some(pane);
-                } else {
-                    workspace
-                        .focus_pane(pane)
-                        .map_err(|error| FrameError::Other(error.to_string()))?;
-                }
-                return Ok(false);
-            }
-            MouseOutcome::Handled => return Ok(false),
-            MouseOutcome::Ignore => {}
+        let outcome = route_mouse(&*workspace, chrome, mouse);
+        if outcome != MouseOutcome::Ignore {
+            return apply_scripted_mouse_outcome(workspace, chrome, outcome);
         }
     }
     if route_paste_event(workspace, chrome, event)
@@ -137,14 +121,11 @@ fn route_scripted_input(
                 *prefix_armed = true;
                 chrome.mode = Mode::Prefix;
             }
-            Resolution::Action(Action::Quit) => return Ok(true),
-            Resolution::Action(Action::CopyMode) => {
+            Resolution::Action(action) => {
                 *prefix_armed = false;
-                chrome.mode = Mode::Copy;
-            }
-            Resolution::Action(_) => {
-                *prefix_armed = false;
-                chrome.mode = Mode::Terminal;
+                if apply_scripted_action(chrome, action) {
+                    return Ok(true);
+                }
             }
             Resolution::Unbound => {
                 *prefix_armed = false;
@@ -164,6 +145,49 @@ fn route_scripted_input(
         }
     }
     Ok(false)
+}
+
+/// Apply what `route_mouse` decided to the scripted workspace: chrome, focus
+/// and pane input only, since the scripted daemon has no terminals to spawn.
+/// Returns whether the client should exit, like the key router.
+fn apply_scripted_mouse_outcome(
+    workspace: &mut Workspace,
+    chrome: &mut Chrome,
+    outcome: MouseOutcome,
+) -> Result<bool, FrameError> {
+    match outcome {
+        MouseOutcome::Handled | MouseOutcome::Ignore | MouseOutcome::Spawn { .. } => {}
+        MouseOutcome::Focus { pane, observe_only } => {
+            chrome.focus_pane(pane);
+            if observe_only {
+                if let Some(previous) = workspace.focus.filter(|previous| *previous != pane) {
+                    workspace
+                        .release_control(previous)
+                        .map_err(|error| FrameError::Other(error.to_string()))?;
+                }
+                workspace.focus = Some(pane);
+            } else {
+                workspace
+                    .focus_pane(pane)
+                    .map_err(|error| FrameError::Other(error.to_string()))?;
+            }
+        }
+        MouseOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
+        MouseOutcome::Write { pane, bytes } => workspace
+            .send_input(pane, &bytes)
+            .map_err(|error| FrameError::Other(error.to_string()))?,
+    }
+    Ok(false)
+}
+
+/// The scripted loop's action effects are chrome-only. Returns true on `Quit`.
+fn apply_scripted_action(chrome: &mut Chrome, action: Action) -> bool {
+    match action {
+        Action::Quit => return true,
+        Action::CopyMode => chrome.mode = Mode::Copy,
+        _ => chrome.mode = Mode::Terminal,
+    }
+    false
 }
 
 async fn recv_scripted_frame(

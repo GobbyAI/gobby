@@ -7,7 +7,10 @@ use crate::ui::{Action, Chrome, Mode};
 
 use super::super::attention::open_response_dialog;
 use super::super::{PaneId, Workspace};
-use super::control::{focus_live_pane, release_live_control, take_live_control};
+use super::control::{
+    focus_live_pane, observe_live_pane, release_live_control, send_live_write, take_live_control,
+};
+use super::mouse::MouseOutcome;
 
 pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     for tab in &mut chrome.tabs {
@@ -44,6 +47,38 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
             chrome.open_pane(pane_id, workspace.pane(pane_id).display_name());
         }
     }
+}
+
+/// Apply what `route_mouse` decided. Focus moves chrome first and then the
+/// lease (it follows focus), or only the workspace focus for an observe-only
+/// click; actions dispatch exactly as their chords would; a spawn goes through
+/// the same request as `NewTerminal`; forwarded bytes go to the pane. Returns
+/// whether the client should exit, like the key routers.
+pub(super) async fn apply_live_mouse_outcome(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    outcome: MouseOutcome,
+) -> Result<bool, FrameError> {
+    match outcome {
+        MouseOutcome::Handled | MouseOutcome::Ignore => {}
+        MouseOutcome::Focus { pane, observe_only } => {
+            chrome.focus_pane(pane);
+            if observe_only {
+                observe_live_pane(workspace, pane).await?;
+            } else {
+                focus_live_pane(workspace, pane).await?;
+            }
+        }
+        MouseOutcome::Action(Action::Quit) => return Ok(true),
+        MouseOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
+        // The placement reaches the spawn with the tab bar (2.2); until then the
+        // roster sync places the new terminal the way `NewTerminal` does.
+        MouseOutcome::Spawn { .. } => spawn_live_terminal(workspace, chrome).await?,
+        MouseOutcome::Write { pane, bytes } => {
+            send_live_write(workspace, pane, &bytes, false).await?;
+        }
+    }
+    Ok(false)
 }
 
 pub(super) async fn handle_live_action(

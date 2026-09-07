@@ -2,7 +2,7 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
-use crate::app::{short_terminal_id, Pane, PaneId, Workspace};
+use crate::app::{short_terminal_id, MouseGesture, Pane, PaneId, Workspace};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
@@ -316,6 +316,8 @@ pub struct Chrome {
     pub keymap: Keymap,
     /// Mouse selection in progress or retained, keyed by layout slot.
     pub selection: Option<Selection>,
+    /// The press-and-drag in progress, if any; `route_mouse` owns it.
+    pub gesture: Option<MouseGesture>,
 }
 
 impl Chrome {
@@ -341,6 +343,7 @@ impl Chrome {
             view: ViewState::default(),
             keymap: Keymap::defaults(),
             selection: None,
+            gesture: None,
         }
     }
 

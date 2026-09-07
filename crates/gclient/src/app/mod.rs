@@ -10,6 +10,7 @@ mod persistence;
 pub mod run_loop;
 
 pub use attach::AttachState;
+pub use live_loop::mouse::{route_mouse, MouseGesture, MouseOutcome, Placement};
 pub use live_loop::run_live_loop;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
 
