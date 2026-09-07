@@ -18,7 +18,7 @@ decision record. The live tracker is epic #21542.
 - **Rust bridgehead**: `crates/` ships `gcode`, `ghook`, `gdaemon`,
   `gobby-terminal` (`gterm`), and `gobby-client` (`gclient`) over the shared
   `gcore` library. gterminal and gclient are merged on `0.5.0` (`7ccd140a73`);
-  gclient is a skeleton owned by #21334.
+  the `gclient` workspace TUI has landed under #21334.
 - **Completed foundations**: daemon-native runtime boundary (#18902 — it deleted
   `GOBBY_RUNTIME_MODE`), reactive config store (#19645), account/machine
   ownership (#19650), hub-owned files home (#20330 / #20238), path-independent
@@ -27,8 +27,11 @@ decision record. The live tracker is epic #21542.
   scoping). The remaining gate is the physical two-machine smoke (#19600). The
   M0 operating model is **one active daemon per shared hub**; standbys hold the
   lease control surface only.
-- **Terminals**: `0.5.0` is still tmux-backed. The native PTY stack and the
-  `gclient` workspace are Stage 0 work under #21334.
+- **Terminals**: tmux remains the default; native PTY launches are opt-in.
+  `gclient` supports direct semantic frames from the local `gterm` host for
+  native PTY rows and tmux rows via the host's tmux observer; the cell-mode
+  daemon-WS proxy (`terminal_frame`, bincode-b64 semantic frames); and remote
+  `gclient --daemon-url` over a daemon bound to its tailnet address.
 
 ## Naming
 
@@ -178,12 +181,12 @@ its only open deliverable: the physical smoke per
 
 ### Stage 0 — terminal client and native PTY runtime (#21334)
 
-`.gobby/plans/herdr-client-completion.md` plus the herdr foundation, terminal
-client, and QA-fix plans. Fork herdr at v0.8.0 and own the code: the
-`gobby-terminal` core with the Ghostty VT engine gated host-only, the `gterm`
-host, the `gclient` workspace, a durable `terminals` resource, and a
-backend-neutral `TerminalRuntime` with tmux wrapped first and native launches
-behind an evidence-gated default flip.
+The client epic has landed (`.gobby/plans/herdr-client-completion.md`).
+Follow-on planning epics are #21357 (D1: native runtime completion — daemon/host
+hardening and the native-default flip) and #20202 (D2: hub-wide roster, attach
+routing, and capability tokens for remote attach). Both are tail work blocked
+on this epic's closing leaf 5.1 (#21355); #20202 additionally waits on the
+two-machine smoke #19600.
 
 ### Stage 1 — the gdaemon front door owns the network boundary (#21543)
 
