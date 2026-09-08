@@ -44,12 +44,6 @@ class _RecordingMemo:
         self.lookups.append((review_fingerprint, evidence_fingerprint))
         return self.entries.get((review_fingerprint, evidence_fingerprint))
 
-    def get_previous(self) -> CloseVerdict | None:
-        self.threads.add(threading.get_ident())
-        if not self.entries:
-            return None
-        return self.entries[next(reversed(self.entries))]
-
     def put(
         self,
         *,
@@ -125,6 +119,46 @@ async def test_changed_evidence_misses_the_memo_and_runs_a_fresh_review() -> Non
 
     assert call_json_feature.await_count == 2
     assert len(memo.entries) == 2
+    assert memo.lookups[0] != memo.lookups[1]
+
+
+@pytest.mark.asyncio
+async def test_exact_memo_miss_reviews_only_the_current_criteria_and_reason() -> None:
+    validator, call_json_feature = _validator()
+    call_json_feature.side_effect = [
+        {
+            "status": "invalid",
+            "criteria": [
+                {
+                    "index": 1,
+                    "satisfied": False,
+                    "gap": "The obsolete implementation requirement is missing.",
+                    "required_evidence": "Implement the superseded behavior.",
+                }
+            ],
+            "feedback": "The old contract is incomplete.",
+        },
+        {
+            "status": "valid",
+            "criteria": [{"index": 1, "satisfied": True, "gap": None}],
+            "feedback": "The current disposition is complete.",
+        },
+    ]
+    memo = _RecordingMemo()
+
+    await _validate(validator, memo)
+    await _validate(
+        validator,
+        memo,
+        validation_criteria="1. The superseded task is dispositioned with a specific reason.",
+        closure_reason="obsolete",
+    )
+
+    second_prompt = call_json_feature.await_args_list[1].args[1]
+    assert "The superseded task is dispositioned with a specific reason." in second_prompt
+    assert "\nobsolete\n" in second_prompt
+    assert "No requirements were stated by a prior rejected review." in second_prompt
+    assert "Implement the superseded behavior." not in second_prompt
     assert memo.lookups[0] != memo.lookups[1]
 
 

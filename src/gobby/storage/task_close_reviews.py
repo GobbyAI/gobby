@@ -186,36 +186,6 @@ class TaskCloseReviewStore:
         verdict = (payload or {}).get("verdict")
         return dict(verdict) if isinstance(verdict, Mapping) else None
 
-    def get_latest_memoized_verdict(self, *, task_id: str) -> dict[str, Any] | None:
-        """Return the task's latest verdict for continuity across evidence states."""
-        with self.db.transaction() as conn:
-            row = conn.execute(
-                """
-                SELECT result_payload
-                FROM task_close_reviews
-                WHERE task_id = %s
-                  AND (
-                      result_payload->>'kind' = %s
-                      OR (
-                          status = ANY(%s)
-                          AND result_payload ? 'verdict'
-                      )
-                  )
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-                """,
-                (
-                    task_id,
-                    INLINE_CRITERIA_VERDICT_KIND,
-                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
-                ),
-            ).fetchone()
-        if not isinstance(row, Mapping):
-            return None
-        payload = _json_object(row["result_payload"])
-        verdict = (payload or {}).get("verdict")
-        return dict(verdict) if isinstance(verdict, Mapping) else None
-
     def memoize_verdict(
         self,
         *,
@@ -235,9 +205,8 @@ class TaskCloseReviewStore:
         inline, and the partial active-status unique index does not cover
         terminal rows.
 
-        Prior memos remain available so later evidence states can quote the
-        requirements the reviewer already stated. Exact fingerprint lookup
-        still ensures an unchanged attempt never invokes the reviewer again.
+        Each memo remains available to its exact fingerprint pair, ensuring
+        an unchanged attempt never invokes the reviewer again.
         """
         now = datetime.now(UTC)
         with self.db.transaction() as conn:
