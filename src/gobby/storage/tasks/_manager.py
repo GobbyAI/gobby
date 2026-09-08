@@ -32,6 +32,9 @@ from gobby.storage.tasks._build_cascade import (
 from gobby.storage.tasks._creation import (
     create_task as _create_task,
 )
+from gobby.storage.tasks._creation import (
+    create_task_for_agent as _create_task_for_agent,
+)
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
@@ -231,6 +234,44 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             github_repo=github_repo,
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
+        )
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def create_task_for_agent(
+        self,
+        session_id: str,
+        project_id: str,
+        title: str,
+        description: str | None = None,
+        parent_task_id: str | None = None,
+        created_in_session_id: str | None = None,
+        priority: int = 2,
+        task_type: str = "task",
+        labels: list[str] | None = None,
+        category: str | None = None,
+        validation_criteria: str | None = None,
+        assigned_agent: str | None = None,
+        implementation_domain: str | None = None,
+        additional_skills: list[str] | None = None,
+    ) -> Task:
+        """Atomically create and claim one task for an agent session."""
+        task_id = _create_task_for_agent(
+            self.db,
+            session_id=session_id,
+            project_id=project_id,
+            title=title,
+            description=description,
+            parent_task_id=parent_task_id,
+            created_in_session_id=created_in_session_id,
+            priority=priority,
+            task_type=task_type,
+            labels=labels,
+            category=category,
+            validation_criteria=validation_criteria,
+            assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
+            additional_skills=additional_skills,
         )
         self._notify_listeners()
         return self.get_task(task_id)
