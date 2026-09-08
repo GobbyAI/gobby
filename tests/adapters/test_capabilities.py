@@ -68,6 +68,7 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     codex_pre_tool = get_provider_capabilities("codex").get_hook("PreToolUse")
     codex_subagent_start = get_provider_capabilities("codex").get_hook("SubagentStart")
     codex_subagent_stop = get_provider_capabilities("codex").get_hook("SubagentStop")
+    codex_interrupt = get_provider_capabilities("codex").get_hook("Interrupt")
     qwen_pre_tool = get_provider_capabilities("qwen").get_hook("PreToolUse")
     grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
     agy_pre_tool = get_provider_capabilities("agy").get_hook("PreToolUse")
@@ -88,6 +89,12 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert codex_subagent_stop is not None
     assert codex_subagent_stop.context_channel is ContextChannel.NONE
     assert codex_subagent_stop.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
+
+    assert codex_interrupt is not None
+    assert codex_interrupt.context_channel is ContextChannel.NONE
+    assert codex_interrupt.decision_style is ProviderDecisionStyle.NONE
+    assert codex_interrupt.supports_response_field("system_message")
+    assert not codex_interrupt.supports_response_field("context")
 
     assert qwen_pre_tool is not None
     assert qwen_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT

@@ -2845,6 +2845,48 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "suppressOutput" not in result
         assert "decision" not in result
 
+    @pytest.mark.parametrize(
+        "response",
+        [
+            HookResponse(),
+            HookResponse(
+                decision="block",
+                reason="ignored",
+                context="must not reach Codex",
+                display_content="also ignored",
+                retry=True,
+            ),
+        ],
+    )
+    def test_interrupt_response_emits_empty_object(self, response: HookResponse) -> None:
+        """Interrupt cannot receive generic decisions, context, or error-shaped fields."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        result = CodexHooksAdapter().translate_from_hook_response(
+            response,
+            hook_type="Interrupt",
+        )
+
+        assert result == {}
+
+    def test_interrupt_response_emits_only_optional_system_message(self) -> None:
+        """Interrupt may surface one native systemMessage and nothing else."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        response = HookResponse(
+            decision="block",
+            reason="ignored",
+            context="ignored",
+            system_message="Interruption recorded",
+        )
+
+        result = CodexHooksAdapter().translate_from_hook_response(
+            response,
+            hook_type="Interrupt",
+        )
+
+        assert result == {"systemMessage": "Interruption recorded"}
+
     def test_block_response(self) -> None:
         """Block response has no suppressOutput so block reason is visible."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter

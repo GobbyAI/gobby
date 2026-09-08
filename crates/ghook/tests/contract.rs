@@ -215,6 +215,59 @@ fn hooks_disabled_short_circuits_before_dispatch_side_effects() -> TestResult {
 }
 
 #[test]
+fn codex_interrupt_disabled_unmanaged_and_malformed_paths_emit_no_stdout() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+    let disabled = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("Interrupt"),
+        &daemon_url,
+        VALID_STDIN,
+        &[("GOBBY_HOOKS_DISABLED", "1")],
+    )?;
+    assert_eq!(disabled.status.code(), Some(0));
+    assert!(disabled.stdout.is_empty());
+    assert!(!gobby_home.path().join("hooks").exists());
+
+    let unmanaged = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("Interrupt"),
+        &daemon_url,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[],
+            args: &[],
+            cwd: Some(home.path()),
+        },
+    )?;
+    assert_eq!(unmanaged.status.code(), Some(0));
+    assert!(unmanaged.stdout.is_empty());
+    assert!(!gobby_home.path().join("hooks").exists());
+
+    let malformed_home = tempfile::tempdir()?;
+    let malformed_gobby_home = tempfile::tempdir()?;
+    let malformed = run_ghook_with_dirs(
+        malformed_home.path(),
+        malformed_gobby_home.path(),
+        Some("codex"),
+        Some("Interrupt"),
+        &daemon_url,
+        "not json",
+        &[],
+    )?;
+    assert_eq!(malformed.status.code(), Some(1));
+    assert!(malformed.stdout.is_empty());
+    assert_stderr_empty(&malformed, "codex Interrupt malformed input")?;
+
+    Ok(())
+}
+
+#[test]
 fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
     for (cli, hook_type) in [
         ("claude", "session-start"),
@@ -1065,6 +1118,46 @@ fn valid_daemon_success_removes_envelope_and_writes_no_failure() -> TestResult {
 }
 
 #[test]
+fn codex_interrupt_success_and_stale_daemon_json_filter_stdout() -> TestResult {
+    for (body, expected_stdout) in [
+        (
+            r#"{"continue":true,"decision":"block","context":"stale"}"#,
+            None,
+        ),
+        (
+            r#"{"systemMessage":"Interruption recorded","continue":false,"reason":"drop"}"#,
+            Some(serde_json::json!({"systemMessage": "Interruption recorded"})),
+        ),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+        let output = run_ghook_with_dirs(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("Interrupt"),
+            &daemon_url,
+            VALID_STDIN,
+            &[],
+        )?;
+        let request = join_daemon(daemon)?;
+
+        assert_eq!(output.status.code(), Some(0));
+        match expected_stdout {
+            Some(expected) => assert_json_stdout(&output, expected)?,
+            None => assert!(output.stdout.is_empty()),
+        }
+        assert_stderr_empty(&output, "codex Interrupt success")?;
+        assert!(request.contains("\"hook_type\":\"Interrupt\""));
+        assert!(inbox_envelopes(gobby_home.path())?.is_empty());
+        assert!(read_failure_artifacts(gobby_home.path())?.is_empty());
+    }
+
+    Ok(())
+}
+
+#[test]
 fn daemon_success_with_invalid_json_writes_failure_and_keeps_envelope() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
@@ -1074,7 +1167,7 @@ fn daemon_success_with_invalid_json_writes_failure_and_keeps_envelope() -> TestR
         home.path(),
         gobby_home.path(),
         Some("codex"),
-        Some("SessionStart"),
+        Some("Interrupt"),
         &daemon_url,
         VALID_STDIN,
         &[],
@@ -1098,9 +1191,9 @@ fn daemon_success_with_invalid_json_writes_failure_and_keeps_envelope() -> TestR
     assert_eq!(failure["status_code"], 200);
     assert_eq!(failure["response_body_preview"], "not json");
     assert_eq!(failure["response_body_truncated"], false);
-    assert_eq!(failure["hook_type"], "SessionStart");
+    assert_eq!(failure["hook_type"], "Interrupt");
     assert_eq!(failure["source"], "codex");
-    assert_eq!(failure["critical"], true);
+    assert_eq!(failure["critical"], false);
     assert!(
         failure["envelope_id"]
             .as_str()
@@ -1330,6 +1423,61 @@ fn daemon_adapter_timeout_agy_skip_stdout_is_protojson_legal() -> TestResult {
         assert_stderr_empty(&output, &format!("agy {hook_type} adapter timeout"))?;
         assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1, "{hook_type}");
     }
+
+    Ok(())
+}
+
+#[test]
+fn codex_interrupt_retry_timeout_and_delivery_failures_emit_no_stdout() -> TestResult {
+    for (body, expected_exit, expected_failures) in [
+        (r#"{"status":"retry"}"#, 0, 0),
+        (r#"{"status":"retry","retry_kind":"adapter_timeout"}"#, 0, 0),
+        (r#"{"error":"down"}"#, 1, 1),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let (daemon_url, daemon) =
+            start_daemon(http_json_status(503, "Service Unavailable", body))?;
+        let output = run_ghook_with_dirs(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("Interrupt"),
+            &daemon_url,
+            VALID_STDIN,
+            &[],
+        )?;
+        let _request = join_daemon(daemon)?;
+
+        assert_eq!(output.status.code(), Some(expected_exit), "{body}");
+        assert!(output.stdout.is_empty(), "{body}");
+        assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1, "{body}");
+        let failures = read_failure_artifacts(gobby_home.path())?;
+        assert_eq!(failures.len(), expected_failures, "{body}");
+        if let Some(failure) = failures.first() {
+            assert_eq!(failure["hook_type"], "Interrupt");
+            assert_eq!(failure["source"], "codex");
+        }
+    }
+
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("Interrupt"),
+        &closed_local_url()?,
+        VALID_STDIN,
+        &[],
+    )?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["failure_kind"], "connect");
+    assert_eq!(failures[0]["hook_type"], "Interrupt");
 
     Ok(())
 }
