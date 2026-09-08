@@ -35,6 +35,11 @@ VALIDATOR_RUN_ENDED_SUCCESS_ERROR = (
     "Task-close validator run ended with status success before finalization."
 )
 
+
+class TaskCloseReviewStaleTaskError(RuntimeError):
+    """Raised when review launch loses its task timestamp precondition."""
+
+
 _COLUMNS = """
     id, task_id, task_ref, caller_session_id, agent_run_id,
     close_arguments, review_fingerprint, evidence_fingerprint,
@@ -97,29 +102,36 @@ class TaskCloseReviewStore:
         task_ref: str,
         caller_session_id: str,
         close_arguments: Mapping[str, Any],
+        expected_task_updated_at: datetime,
         review_fingerprint: str,
         evidence_fingerprint: str,
         diff_sha: str,
         test_bodies_sha: str,
         stable_facts: Mapping[str, object],
     ) -> tuple[TaskCloseReview, bool]:
-        """Create one launching review or return the task's concurrent active review."""
+        """Create a launch, return the active review, or reject stale task state."""
         review_id = str(uuid4())
         now = datetime.now(UTC)
         active = list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)
         with self.db.transaction() as conn:
             row = conn.execute(
                 f"""
+                WITH launch_task AS (
+                    SELECT id
+                    FROM tasks
+                    WHERE id = %s AND updated_at = %s
+                    FOR UPDATE
+                )
                 INSERT INTO task_close_reviews (
                     id, task_id, task_ref, caller_session_id, close_arguments,
                     review_fingerprint, evidence_fingerprint,
                     diff_sha, test_bodies_sha, stable_facts, status,
                     created_at, updated_at
                 )
-                VALUES (
+                SELECT
                     %s, %s, %s, %s, %s::jsonb, %s, %s,
                     %s, %s, %s::jsonb, 'launching', %s, %s
-                )
+                FROM launch_task
                 ON CONFLICT (task_id)
                 WHERE status = ANY (
                     ARRAY['launching'::text, 'running'::text, 'finalizing'::text]
@@ -128,6 +140,8 @@ class TaskCloseReviewStore:
                 RETURNING {_COLUMNS}
                 """,  # nosec B608 - static column fragment
                 (
+                    task_id,
+                    expected_task_updated_at,
                     review_id,
                     task_id,
                     task_ref,
@@ -144,6 +158,15 @@ class TaskCloseReviewStore:
             ).fetchone()
             created = row is not None
             if row is None:
+                task_row = conn.execute(
+                    "SELECT updated_at FROM tasks WHERE id = %s FOR UPDATE",
+                    (task_id,),
+                ).fetchone()
+                if (
+                    not isinstance(task_row, Mapping)
+                    or task_row["updated_at"] != expected_task_updated_at
+                ):
+                    raise TaskCloseReviewStaleTaskError(task_id)
                 row = conn.execute(
                     f"""
                     SELECT {_COLUMNS}

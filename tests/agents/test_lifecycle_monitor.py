@@ -1005,11 +1005,17 @@ async def test_stuck_check_skips_session_awaiting_close_review(
         ),
     )
     monitor._stuck_detector = StuckDetector(temp_db, progress_tracker=tracker)
+    task = LocalTaskManager(temp_db).create_task(
+        sample_session["project_id"],
+        "Close review lifecycle task",
+        validation_criteria="The lifecycle behavior is covered.",
+    )
     TaskCloseReviewStore(temp_db).create_or_get_active(
-        task_id=str(uuid.uuid4()),
-        task_ref="#42",
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
         caller_session_id=sample_session["id"],
         close_arguments={"preview": True},
+        expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
         evidence_fingerprint="evidence",
         diff_sha="d" * 64,
