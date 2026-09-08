@@ -901,6 +901,66 @@ class TestProjectCheckoutHttp:
         )
         return TestClient(server.app)
 
+    def test_init_project_route(
+        self,
+        session_manager: SessionManager,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        websocket_server = MagicMock()
+        websocket_server.broadcast_project_event = AsyncMock()
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+            websocket_server=websocket_server,
+        )
+        client = TestClient(server.app)
+        fresh = tmp_path / "fresh-init"
+        fresh.mkdir()
+
+        initialized = client.post("/api/projects/init", json={"path": str(fresh)})
+
+        assert initialized.status_code == 200
+        payload = initialized.json()
+        assert payload == client.get(f"/api/projects/{payload['id']}").json()
+        assert payload["checkout"] == {
+            "machine_id": LOCAL_MACHINE_ID,
+            "root_path": str(fresh),
+        }
+        websocket_server.broadcast_project_event.assert_awaited_once_with(
+            "checkout_registered",
+            payload["id"],
+            checkout=payload["checkout"],
+        )
+
+        retry = client.post("/api/projects/init", json={"path": str(fresh)})
+        assert retry.status_code == 200
+        assert retry.json() == payload
+        assert websocket_server.broadcast_project_event.await_count == 1
+
+        relative = client.post("/api/projects/init", json={"path": "relative/path"})
+        missing = client.post(
+            "/api/projects/init",
+            json={"path": str(tmp_path / "missing")},
+        )
+        for response in (relative, missing):
+            assert response.status_code == 400
+            assert _http_error(response) == "InvalidCheckoutRootError"
+
+        bound = _install_local_checkout(
+            project_manager.db,
+            tmp_path / "bound-root",
+            name=_unique_name("bound-project"),
+        )
+        other = project_manager.create(name=_unique_name("other-project"))
+        write_project_marker(Path(bound.root_path), project_id=other.id, name=other.name)
+
+        conflict = client.post("/api/projects/init", json={"path": bound.root_path})
+
+        assert conflict.status_code == 409
+        assert _http_error(conflict) == "CheckoutRootTakenError"
+        assert websocket_server.broadcast_project_event.await_count == 1
+
     def test_project_json_has_calling_checkout_not_repo_path(
         self,
         client: TestClient,

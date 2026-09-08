@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
@@ -39,6 +40,7 @@ from gobby.storage.projects import (
     SYSTEM_PROJECT_NAMES,
     IsolatedAgentProjectPathError,
     LocalProjectManager,
+    NameAttachRejectedError,
     Project,
 )
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
@@ -57,6 +59,7 @@ from gobby.utils.checkout_root import (
     validate_checkout_root,
 )
 from gobby.utils.machine_id import get_machine_id
+from gobby.utils.project_init import initialize_project
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -96,6 +99,12 @@ class CheckoutRootBody(BaseModel):
     root_path: str
 
 
+class ProjectInitBody(BaseModel):
+    """Request body for project initialization."""
+
+    path: str
+
+
 _CHECKOUT_HTTP_CONFLICTS = (
     MissingMachineContextError,
     MachineOwnershipMismatchError,
@@ -107,6 +116,7 @@ _CHECKOUT_HTTP_CONFLICTS = (
     SoftDeletedProjectRejectedError,
     CheckoutNotFoundError,
     IsolatedAgentProjectPathError,
+    NameAttachRejectedError,
 )
 
 
@@ -294,6 +304,42 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             _projects_to_responses, server, visible_projects
         )
         return results
+
+    @router.post("/init")
+    async def init_project(body: ProjectInitBody) -> dict[str, Any]:
+        """Initialize a local directory and return its project payload."""
+        pm = _get_project_manager(server)
+
+        def apply_init() -> tuple[Project, bool]:
+            try:
+                machine_id = _require_checkout_machine(body.path, None)
+                existing_project_ids = {
+                    checkout.project_id
+                    for checkout in LocalProjectCheckoutManager(pm.db).list_for_machine(machine_id)
+                }
+                result = initialize_project(cwd=Path(body.path), db=pm.db)
+                project = pm.get(result.project_id)
+                if project is None:
+                    raise RuntimeError(f"Project {result.project_id} not found after init")
+                return project, result.project_id not in existing_project_ids
+            except (
+                *_CHECKOUT_HTTP_CONFLICTS,
+                InvalidCheckoutRootError,
+            ) as exc:
+                raise _checkout_http_error(exc) from exc
+
+        project, checkout_created = await server.run_db(apply_init)
+        payload = cast(
+            dict[str, Any],
+            await server.run_db(_project_to_response, server, project),
+        )
+        if checkout_created:
+            await _broadcast_project(
+                "checkout_registered",
+                project.id,
+                checkout=payload["checkout"],
+            )
+        return payload
 
     @router.get("/{project_id}")
     async def get_project(project_id: str) -> dict[str, Any]:
