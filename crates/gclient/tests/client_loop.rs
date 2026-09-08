@@ -5417,3 +5417,99 @@ async fn both_panes_render_and_report_size_owner() {
         "the right pane keeps its own sizing: {bodies:?}"
     );
 }
+
+/// A `width`x`height` frame with every cell painted `glyph`.
+fn filled_frame(width: u16, height: u16, glyph: char) -> ServerMessage {
+    let text: String = std::iter::repeat_n(glyph, usize::from(width)).collect();
+    let ServerMessage::Frame(mut frame) = semantic_frame(&text) else {
+        unreachable!("semantic_frame builds a frame");
+    };
+    let row = frame.cells.clone();
+    frame.cells = (0..height).flat_map(|_| row.clone()).collect();
+    frame.height = height;
+    ServerMessage::Frame(frame)
+}
+
+/// The inner rect the last draw gave `pane`.
+fn inner_rect_of(chrome: &Chrome, pane: gobby_client::app::PaneId) -> Rect {
+    let tab = chrome.active_tab().expect("active tab");
+    chrome
+        .view
+        .pane_infos
+        .iter()
+        .find(|info| tab.slots.get(&info.id) == Some(&pane))
+        .expect("shown pane")
+        .inner_rect
+}
+
+/// Every row of `body` carries `glyph` exactly `width` times on the first
+/// `height` rows and nothing at all on the rest.
+fn assert_body_is_exactly(body: &str, width: usize, height: usize, glyph: char) {
+    for (y, row) in body.lines().enumerate() {
+        let (glyphs, painted) = if y < height { (width, width) } else { (0, 0) };
+        assert_eq!(
+            row.matches(glyph).count(),
+            glyphs,
+            "row {y} of the {width}x{height} frame: {row:?}"
+        );
+        assert_eq!(
+            row.trim_end_matches(' ').chars().count(),
+            painted,
+            "row {y} carries cells outside the {width}x{height} frame: {row:?}"
+        );
+    }
+}
+
+/// Plan 6.1.1: a frame that shrinks leaves nothing of its predecessor in the
+/// pane, and a pane that moves leaves nothing where it was painted before.
+#[tokio::test]
+async fn stale_cells_are_cleared_on_shrink_and_move() {
+    let mut ws = Workspace::scripted();
+    let left = ws
+        .open_terminal("term-left", "native", "epoch-stale")
+        .expect("left pane");
+    let right = ws
+        .open_terminal("term-right", "native", "epoch-stale")
+        .expect("right pane");
+    let mut source = ScriptedFrameSource::new(Transport::Direct);
+    source.queue(filled_frame(40, 10, 'X'));
+    source.queue(filled_frame(20, 5, 'Y'));
+    ws.replace_frame_source(right, PaneFrameSource::Scripted(source))
+        .expect("right source");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(left, "left");
+    chrome.open_pane(right, "right");
+    let mut terminal = Terminal::new(TestBackend::new(150, 30)).expect("test terminal");
+    let panes = [right];
+
+    ws.recv_pane_frame(right).await.expect("40x10 frame");
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    assert_body_is_exactly(&bodies[0], 40, 10, 'X');
+    let before = inner_rect_of(&chrome, right);
+
+    ws.recv_pane_frame(right).await.expect("20x5 frame");
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    assert_body_is_exactly(&bodies[0], 20, 5, 'Y');
+
+    // Closing the left pane collapses the split and moves the right pane
+    // into its place.
+    assert!(chrome.focus_pane(left), "the left pane is shown");
+    assert_eq!(chrome.close_focused(), Some(left));
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    let after = inner_rect_of(&chrome, right);
+    assert!(
+        after.x < before.x && after.width > before.width,
+        "the collapse moves the pane: {before:?} -> {after:?}"
+    );
+    assert_body_is_exactly(&bodies[0], 20, 5, 'Y');
+    let buffer = terminal.backend().buffer();
+    for y in before.y..before.y + 5 {
+        for x in before.x..before.x + 20 {
+            assert_eq!(
+                buffer[(x, y)].symbol(),
+                " ",
+                "({x},{y}) keeps a glyph from before the move"
+            );
+        }
+    }
+}
