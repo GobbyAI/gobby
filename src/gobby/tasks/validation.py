@@ -186,20 +186,6 @@ class TaskValidator:
                     prepared.evidence_fingerprint[:12],
                 )
                 return memoized
-            previous_verdict = await asyncio.to_thread(verdict_memo.get_previous)
-            if previous_verdict is not None:
-                prepared = self.prepare_task_review(
-                    title=title,
-                    changes_summary=changes_summary,
-                    validation_criteria=validation_criteria,
-                    diff_text=diff_text,
-                    checklist_facts=checklist_facts,
-                    closure_reason=closure_reason,
-                    description=description,
-                    test_bodies=test_bodies,
-                    prior_verdict=previous_verdict,
-                )
-                _ensure_prompt_within_limit(prepared)
 
         logger.debug(
             "Running bounded close criteria review for task %s "

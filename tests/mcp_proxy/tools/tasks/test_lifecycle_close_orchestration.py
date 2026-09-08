@@ -215,7 +215,7 @@ async def test_pending_concise_response_keeps_commands_only_in_validator_prompt(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_launch_after_rejected_verdict_carries_required_evidence(
+async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_requirements(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -342,8 +342,8 @@ async def test_launch_after_rejected_verdict_carries_required_evidence(
     await launch_close_review(ctx, evaluation=evaluation, close_arguments=_arguments())
 
     launch_prompt = registry.call.await_args.args[1]["prompt"]
-    assert f"Required evidence: {_REQUIRED_EVIDENCE}" in launch_prompt
-    assert "prior_requirements=" in launch_prompt
+    assert _REQUIRED_EVIDENCE not in launch_prompt
+    assert "prior_requirements=" not in launch_prompt
     assert 'changes_summary="Implemented."' in launch_prompt
 
 

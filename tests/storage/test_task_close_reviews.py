@@ -201,7 +201,7 @@ def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> 
         == verdict
     )
     # A new commit or a fresh task-attributed edit moves the evidence
-    # fingerprint, which is what invalidates the memo.
+    # fingerprint, which is what makes the exact lookup miss.
     assert (
         store.get_memoized_verdict(
             task_id=_TASK_ID,
@@ -223,8 +223,7 @@ def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> 
         valid=False,
     )
 
-    # Prior evidence states remain available so a later close can carry the
-    # previous review's requirements forward.
+    # Prior evidence states remain available only through their exact keys.
     assert (
         store.get_memoized_verdict(
             task_id=_TASK_ID,
@@ -241,7 +240,6 @@ def test_memoized_verdict_is_served_per_evidence_state(temp_db: HubDatabase) -> 
         )
         == verdict
     )
-    assert store.get_latest_memoized_verdict(task_id=_TASK_ID) == later
 
 
 def test_memo_rows_stay_out_of_the_agentic_review_lifecycle(temp_db: HubDatabase) -> None:
