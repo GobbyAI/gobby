@@ -49,6 +49,9 @@ class HookType(str, Enum):
     STOP = "stop"
     """Triggered when the main agent stops"""
 
+    INTERRUPT = "interrupt"
+    """Triggered when the user interrupts an active main-agent turn"""
+
     STOP_FAILURE = "stop-failure"
     """Triggered when a turn ends due to an API failure"""
 

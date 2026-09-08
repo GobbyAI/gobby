@@ -142,6 +142,11 @@ class CodexHooksAdapter(BaseAdapter):
             capability=capability,
             event_logger=logger,
         )
+        if hook_event_name == "Interrupt":
+            if response.system_message:
+                return {"systemMessage": response.system_message}
+            return {}
+
         normalized_reason = (
             None
             if hook_event_name == "SubagentStart"
