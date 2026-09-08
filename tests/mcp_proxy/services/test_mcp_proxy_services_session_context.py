@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -73,3 +73,78 @@ def test_resolve_tool_event_context_tolerates_unsupported_source() -> None:
     assert metadata["external_id"] == "external-1"
     assert cwd == "/tmp/repo"
     assert project_id == "project-ctx"
+
+
+def test_resolve_tool_event_context_uses_registered_session_workspace() -> None:
+    session = SimpleNamespace(
+        source="codex",
+        project_id="project-1",
+        machine_id="machine-1",
+        workspace_path="/tmp/worktree",
+        external_id="external-1",
+    )
+    session_storage = MagicMock()
+    session_storage.get.return_value = session
+    hook_manager = SimpleNamespace(_session_manager=session_storage)
+
+    with (
+        patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"project_path": "/tmp/main", "id": "project-main"},
+        ),
+        patch(
+            "gobby.storage.project_checkouts.resolve_operation_root",
+            side_effect=["/tmp/main", "/tmp/worktree"],
+        ) as resolve_root,
+    ):
+        (
+            _hook_manager,
+            _session_storage,
+            _returned_session,
+            _source,
+            metadata,
+            cwd,
+            project_id,
+        ) = resolve_tool_event_context(_Service(hook_manager), "session-1")
+
+    assert resolve_root.call_args_list == [
+        call(session_storage.db, "project-1", "machine-1"),
+        call(
+            session_storage.db,
+            "project-1",
+            "machine-1",
+            overlay_path="/tmp/worktree",
+        ),
+    ]
+    assert cwd == "/tmp/worktree"
+    assert project_id == "project-main"
+    assert metadata["project_path"] == "/tmp/worktree"
+
+
+def test_resolve_tool_event_context_accepts_primary_session_workspace() -> None:
+    session = SimpleNamespace(
+        source="codex",
+        project_id="project-1",
+        machine_id="machine-1",
+        workspace_path="/tmp/main",
+        external_id="external-1",
+    )
+    session_storage = MagicMock()
+    session_storage.get.return_value = session
+    hook_manager = SimpleNamespace(_session_manager=session_storage)
+
+    with (
+        patch("gobby.utils.project_context.get_project_context", return_value=None),
+        patch(
+            "gobby.storage.project_checkouts.resolve_operation_root",
+            return_value="/tmp/main",
+        ) as resolve_root,
+    ):
+        *_unused, metadata, cwd, project_id = resolve_tool_event_context(
+            _Service(hook_manager), "session-1"
+        )
+
+    resolve_root.assert_called_once_with(session_storage.db, "project-1", "machine-1")
+    assert cwd == "/tmp/main"
+    assert project_id == "project-1"
+    assert metadata["project_path"] == "/tmp/main"

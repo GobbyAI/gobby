@@ -285,6 +285,28 @@ class TaskCloseReviewStore:
             (session_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
         )
 
+    def get_latest_agentic_for_task_caller(
+        self,
+        *,
+        task_id: str,
+        caller_session_id: str,
+    ) -> TaskCloseReview | None:
+        """Return the caller's latest delegated close review for a task."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {_COLUMNS}
+                FROM task_close_reviews
+                WHERE task_id = %s
+                  AND caller_session_id = %s
+                  AND agent_run_id IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,  # nosec B608 - static column fragment
+                (task_id, caller_session_id),
+            ).fetchone()
+        return _review_from_row(row) if row is not None else None
+
     def bind_run(self, review_id: str, run_id: str) -> TaskCloseReview | None:
         """Bind a successful launch and move the review to running."""
         now = datetime.now(UTC)
