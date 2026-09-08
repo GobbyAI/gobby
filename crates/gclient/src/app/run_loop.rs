@@ -336,7 +336,7 @@ fn render_workspace<B: Backend>(
                 crate::views::grid::render(frame, area, workspace.pane(pane));
             };
             let hits = crate::ui::render_workspace_with(frame, workspace, chrome, &mut content);
-            chrome.view.apply_hits(hits);
+            chrome.apply_hits(hits);
         })
         .map(|_| ())
         .map_err(|error| FrameError::Other(error.to_string()))

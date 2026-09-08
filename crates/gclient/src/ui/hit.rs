@@ -1,3 +1,4 @@
+// upstream: none (Gobby hit map over `ViewState`; herdr keeps this in its input loop)
 //! Pure hit test over the last drawn frame (herdr `handle_mouse` order).
 //!
 //! `ViewState` keeps the rects each renderer drew; `hit_test` maps a cell to
