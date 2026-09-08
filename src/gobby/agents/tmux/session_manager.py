@@ -359,13 +359,23 @@ class TmuxSessionManager:
         command: str | list[str] | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        rows: int | None = 50,
+        cols: int | None = 200,
     ) -> TmuxSessionInfo:
         """Create a new detached tmux session (see ``activate_session``).
 
         Raises:
             TmuxSessionError: If session creation fails.
         """
-        safe_name, pane_pid = await activate_session(self, name, command, cwd, env)
+        safe_name, pane_pid = await activate_session(
+            self,
+            name,
+            command,
+            cwd,
+            env,
+            rows=rows,
+            cols=cols,
+        )
         return TmuxSessionInfo(name=safe_name, pane_pid=pane_pid)
 
     async def list_sessions(self) -> list[TmuxSessionInfo]:

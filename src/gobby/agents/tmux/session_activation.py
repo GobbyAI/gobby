@@ -168,6 +168,8 @@ async def activate_session(
     command: str | list[str] | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
+    rows: int | None = 50,
+    cols: int | None = 200,
 ) -> tuple[str, int | None]:
     """Create a detached tmux session and return ``(safe_name, pane_pid)``.
 
@@ -198,9 +200,9 @@ async def activate_session(
         "-n",
         safe_name,
         "-x",
-        "200",
+        str(200 if cols is None else cols),
         "-y",
-        "50",
+        str(50 if rows is None else rows),
     ]
 
     if cwd:

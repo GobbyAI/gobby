@@ -1477,7 +1477,7 @@ class TestTmuxSpawner:
             )
 
     @pytest.mark.asyncio
-    async def test_uv_cache_dir_defaults_to_session_temp_path(self) -> None:
+    async def test_uv_cache_dir_defaults_to_session_temp_path(self, tmp_path: Path) -> None:
         """Spawned agents get a writable per-session uv cache by default."""
         spawner = TmuxSpawner(TmuxConfig())
         with (
@@ -1487,7 +1487,10 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "get_session", new_callable=AsyncMock
             ) as mock_get,
-            patch("gobby.agents.constants.tempfile.gettempdir", return_value="/tmp/test-tmp"),
+            patch(
+                "gobby.agents.constants.tempfile.gettempdir",
+                return_value=str(tmp_path / "test-tmp"),
+            ),
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
@@ -1563,7 +1566,7 @@ class TestTmuxSpawner:
             assert env_arg["UV_CACHE_DIR"] == "/custom/uv-cache"
 
     @pytest.mark.asyncio
-    async def test_uv_cache_dir_empty_value_gets_default(self) -> None:
+    async def test_uv_cache_dir_empty_value_gets_default(self, tmp_path: Path) -> None:
         """Empty UV_CACHE_DIR values are treated as missing."""
         spawner = TmuxSpawner(TmuxConfig())
         with (
@@ -1573,7 +1576,10 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "get_session", new_callable=AsyncMock
             ) as mock_get,
-            patch("gobby.agents.constants.tempfile.gettempdir", return_value="/tmp/test-tmp"),
+            patch(
+                "gobby.agents.constants.tempfile.gettempdir",
+                return_value=str(tmp_path / "test-tmp"),
+            ),
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)

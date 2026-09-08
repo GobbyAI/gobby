@@ -130,4 +130,6 @@ async def spawn_web_terminal(
         await kill_spawn_key(runtime, spawn_key, pending=current)
         manager.fail_pending(terminal_id)
         return WebSpawnResult(False, terminal_id, "lost_cas_conflict")
+    if prepared.rows is not None and prepared.cols is not None:
+        manager.set_dims(terminal_id, prepared.rows, prepared.cols)
     return WebSpawnResult(True, terminal_id)

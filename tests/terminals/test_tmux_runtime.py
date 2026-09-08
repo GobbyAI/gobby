@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import replace
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
+from gobby.agents.spawn_executor import _promote_prepared
+from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
+from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.text_injection import (
     AttentionInjectionError,
@@ -17,7 +21,7 @@ from gobby.agents.tmux.text_injection import (
     TmuxTextInjectionTimeout,
 )
 from gobby.config.tmux import TmuxConfig
-from gobby.storage.terminals import AttachLocator
+from gobby.storage.terminals import AttachLocator, TerminalManager
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
@@ -30,7 +34,8 @@ from gobby.terminals.tmux_runtime import (
     InputPayloadTooLargeError,
     TmuxTerminalRuntime,
 )
-from tests.terminals.fakes import make_memory_terminal
+from gobby.terminals.web_spawn import spawn_web_terminal
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -55,6 +60,91 @@ def _sessions() -> _StubSessions:
 
 
 @pytest.mark.asyncio
+async def test_spawn_geometry_matches_request_and_row() -> None:
+    sessions = _sessions()
+    runtime = TmuxTerminalRuntime(sessions)
+    manager = MemoryTerminalStore()
+    created: list[tuple[int, int]] = []
+
+    async def run(*args: str, **_kwargs: object) -> tuple[int, str, str]:
+        if args[0] == "has-session":
+            return (1, "", "can't find session")
+        if args[0] == "new-session":
+            cols = int(args[args.index("-x") + 1])
+            rows = int(args[args.index("-y") + 1])
+            created.append((cols, rows))
+            return (0, "", "")
+        if args[-1] == "#{pane_pid}":
+            return (0, "42", "")
+        if args[-1] == "#{socket_path}|#{pid}|#{start_time}|#{pane_id}":
+            return (0, "/tmp/tmux.sock|1658|1784592177|%9", "")
+        if args[-1] == "#{pane_height} #{pane_width}":
+            cols, rows = created[-1]
+            return (0, f"{rows} {cols}", "")
+        raise AssertionError(args)
+
+    sessions._run = AsyncMock(side_effect=run)
+    project_id = str(uuid4())
+
+    requested = await spawn_web_terminal(
+        manager=cast(TerminalManager, manager),
+        runtime=runtime,
+        project_id=project_id,
+        session_id=None,
+        rows=24,
+        cols=80,
+        cwd=None,
+        command=["echo", "requested"],
+    )
+    assert requested.success is True
+    requested_row = manager.get(requested.terminal_id)
+    assert requested_row is not None
+    assert created[-1] == (80, 24)
+    assert (requested_row.cols, requested_row.rows) == created[-1]
+
+    agent_terminal_uuid = uuid4()
+    agent_terminal_id = str(agent_terminal_uuid)
+    agent_spawn_key = f"gobby-{uuid4().hex}"
+    manager.create_pending(
+        agent_terminal_id,
+        project_id,
+        "tmux",
+        "gobby",
+        agent_spawn_key,
+    )
+    prepared = await runtime.prepare_spawn(
+        TerminalSpawnRequest(
+            terminal_id=agent_terminal_uuid,
+            spawn_key=agent_spawn_key,
+            command=["echo", "agent"],
+        )
+    )
+    agent_result = await _promote_prepared(
+        cast(SpawnRequest, SimpleNamespace(run_manager=None)),
+        cast(
+            ProviderSpawnPlan,
+            SimpleNamespace(
+                agent_run_id=str(uuid4()),
+                child_session_id=str(uuid4()),
+                title=None,
+                auth_cli="codex",
+            ),
+        ),
+        manager=cast(TerminalManager, manager),
+        runtime=runtime,
+        backend="tmux",
+        terminal_id=agent_terminal_id,
+        spawn_key=agent_spawn_key,
+        prepared=prepared,
+    )
+    assert agent_result.success is True
+    agent_row = manager.get(agent_terminal_id)
+    assert agent_row is not None
+    assert created[-1] == (200, 50)
+    assert (agent_row.cols, agent_row.rows) == created[-1]
+
+
+@pytest.mark.asyncio
 async def test_prepare_commit_requires_caller_ack() -> None:
     sessions = _sessions()
     runtime = TmuxTerminalRuntime(sessions)
@@ -65,13 +155,20 @@ async def test_prepare_commit_requires_caller_ack() -> None:
         command: str | list[str] | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        rows: int | None = 50,
+        cols: int | None = 200,
     ) -> TmuxSessionInfo:
-        del command, cwd, env
+        del command, cwd, env, rows, cols
         created.append(name)
         return TmuxSessionInfo(name=name, pane_pid=42, pane_id="%9")
 
     sessions.create_session = create_session
-    sessions._run = AsyncMock(return_value=(0, "/tmp/tmux.sock|1658|1784592177|%9", ""))
+    sessions._run = AsyncMock(
+        side_effect=[
+            (0, "24 80", ""),
+            (0, "/tmp/tmux.sock|1658|1784592177|%9", ""),
+        ]
+    )
     request = TerminalSpawnRequest(
         terminal_id=uuid4(),
         spawn_key="gobby-abc",
