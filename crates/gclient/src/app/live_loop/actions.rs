@@ -28,10 +28,10 @@ use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 use super::projects::{
-    close_project, close_project_confirmed, create_worktree, focus_project,
-    open_new_project_dialog, open_new_worktree_dialog, open_open_worktree_dialog,
-    open_remove_worktree_dialog, open_worktree, remove_worktree, rename_project,
-    save_client_session, submit_new_project,
+    close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
+    mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog, open_new_worktree_dialog,
+    open_open_worktree_dialog, open_remove_worktree_dialog, open_worktree, remove_worktree,
+    rename_project, reveal_agent, save_client_session, submit_new_project,
 };
 
 /// Reap the slots whose pane left the workspace and the tabs that emptied.
@@ -185,8 +185,9 @@ pub(super) async fn apply_live_modal_outcome(
 /// A context menu item. A keymap action runs as its chord would once the
 /// menu's pane or tab is the focused one (the pane is observed, so the lease
 /// stays the action's decision); `respond` focuses the entry's pane and opens
-/// its dialog; the chrome-only items go through `apply_local_menu_action`.
-/// Sidebar row items arrive with the projects sidebar (plan 5.3).
+/// its dialog; the project and worktree row items run the `projects` flows,
+/// the agent row items its agent helpers; the chrome-only items go through
+/// `apply_local_menu_action`.
 async fn apply_live_menu_action(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -230,6 +231,11 @@ async fn apply_live_menu_action(
             let current = project_label(workspace, chrome, &project_id).unwrap_or_default();
             rename_project(chrome, &project_id, &current);
         }
+        MenuAction::FocusAgent(entry_id) => focus_agent(workspace, chrome, &entry_id).await?,
+        MenuAction::OpenAgentInNewTab(entry_id) => {
+            open_agent_in_new_tab(workspace, chrome, &entry_id).await?;
+        }
+        MenuAction::MarkSeen(entry_id) => mark_agent_seen(workspace, &entry_id).await?,
         _ => {
             apply_local_menu_action(workspace, chrome, &action);
         }
@@ -237,19 +243,29 @@ async fn apply_live_menu_action(
     Ok(false)
 }
 
-/// Make the menu's pane or tab the one keymap actions act on.
+/// Make the menu's pane or tab the one keymap actions act on: a worktree
+/// row's is the tab opened from it, an agent row's the pane its entry maps
+/// to, revealed and observed so the lease stays the action's decision.
 async fn focus_menu_target(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     kind: &ContextMenuKind,
 ) -> Result<(), FrameError> {
-    match *kind {
-        ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(pane) => {
-            chrome.focus_pane(pane);
-            observe_live_pane(workspace, pane).await?;
+    match kind {
+        ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(*pane) => {
+            chrome.focus_pane(*pane);
+            observe_live_pane(workspace, *pane).await?;
         }
-        ContextMenuKind::Tab(index) if index != chrome.tabs().active_tab => {
-            activate_live_tab(workspace, chrome, index).await?;
+        ContextMenuKind::Tab(index) if *index != chrome.tabs().active_tab => {
+            activate_live_tab(workspace, chrome, *index).await?;
+        }
+        ContextMenuKind::Worktree(worktree_id) => {
+            open_worktree(workspace, chrome, worktree_id).await?;
+        }
+        ContextMenuKind::Agent(entry_id) => {
+            if let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? {
+                observe_live_pane(workspace, pane).await?;
+            }
         }
         _ => {}
     }

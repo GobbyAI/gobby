@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::daemon::{Daemon, DaemonError, LiveDaemon};
 use crate::frame_source::FrameError;
 use crate::persist::{save_session, save_snapshot, ClientSession, WorkspaceSnapshot};
-use crate::ui::chrome::Tab;
+use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind, WorktreeChoice};
 use crate::ui::sidebar_rows::project_label;
@@ -23,6 +23,8 @@ use super::actions::{
     activate_live_tab, open_live_rename, spawn_live_shell, spawn_live_terminal, sync_live_chrome,
     terminate_live_terminal,
 };
+use super::control::focus_live_pane;
+use super::menu::attention_id;
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
 
@@ -49,6 +51,86 @@ pub async fn focus_project(
     sync_live_chrome(workspace, chrome);
     save_client_session(workspace, chrome)?;
     restore_focused(workspace, chrome).await
+}
+
+/// Show the agent behind `entry_id` (its row's `focus` item): its project
+/// is focused first when it is another one, then its pane is revealed where
+/// a tab shows it or split into the active tab, and takes focus.
+pub async fn focus_agent(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    entry_id: &str,
+) -> Result<(), FrameError> {
+    let Some(pane) = reveal_agent(workspace, chrome, entry_id).await? else {
+        return Ok(());
+    };
+    focus_live_pane(workspace, pane).await
+}
+
+/// Open a fresh tab in the agent's project holding its pane, or focus the
+/// tab that already shows it: a pane is never shown twice.
+pub async fn open_agent_in_new_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    entry_id: &str,
+) -> Result<(), FrameError> {
+    let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
+        return Ok(());
+    };
+    if !chrome.focus_pane(pane) {
+        chrome.open_tab(pane, workspace.pane(pane).display_name());
+    }
+    focus_live_pane(workspace, pane).await
+}
+
+/// Reveal the agent's pane on the chrome the way its row's click does and
+/// hand it back, so the caller decides how it takes the lease.
+pub(super) async fn reveal_agent(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    entry_id: &str,
+) -> Result<Option<PaneId>, FrameError> {
+    let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
+        return Ok(None);
+    };
+    chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+    Ok(Some(pane))
+}
+
+/// Tell the daemon the entry's prompt was seen, with the attention id the
+/// roster carries; an entry without one has nothing to mark.
+pub async fn mark_agent_seen(
+    workspace: &mut Workspace<LiveDaemon>,
+    entry_id: &str,
+) -> Result<(), FrameError> {
+    let Some(attention_id) = attention_id(workspace, entry_id) else {
+        return Ok(());
+    };
+    workspace
+        .daemon()
+        .mark_seen(entry_id, &attention_id)
+        .await?;
+    Ok(())
+}
+
+/// The entry's pane once its project is the focused one: another project's
+/// agent focuses that project first, whose roster attaches the pane.
+async fn agent_pane(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    entry_id: &str,
+) -> Result<Option<PaneId>, FrameError> {
+    let project = workspace
+        .sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.entry_id == entry_id)
+        .map(|agent| agent.project_id.clone())
+        .filter(|project| workspace.project_id() != Some(project.as_str()));
+    if let Some(project) = project {
+        focus_project(workspace, chrome, &project).await?;
+    }
+    Ok(attention_pane(workspace, entry_id))
 }
 
 /// Open `worktree_id`: focus its project, then activate the tab that

@@ -1,8 +1,8 @@
 //! Context menu state and item lists.
 //!
-//! A right-click on a pane, a tab or empty chrome opens a menu; the sidebar
-//! rows (project, worktree, agent) reuse the same state once the projects
-//! sidebar lands (plan 5.3). This module is pure: [`build_menu`] reads the
+//! A right-click on a pane, a tab, a sidebar row (project card, worktree
+//! row, agent row) or empty chrome opens a menu; the projects footer's
+//! `menu` opens the global one. This module is pure: [`build_menu`] reads the
 //! workspace and chrome to decide which items apply, [`menu_hit`] maps a
 //! screen cell to an item, and the routers in `mouse` and `modal_input` own
 //! the open, select, activate and close transitions. The loops dispatch the
@@ -14,6 +14,7 @@ use ratatui::layout::{Margin, Position, Rect};
 use crate::app::{ControlState, PaneId};
 use crate::daemon::Daemon;
 use crate::ui::chrome::attention_pane;
+use crate::ui::sidebar::agent_blocked;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::Workspace;
@@ -88,10 +89,9 @@ pub fn build_menu<W: WorkspaceView>(
         ContextMenuKind::Pane(pane) => pane_items(ws, chrome, *pane),
         ContextMenuKind::Tab(_) => tab_items(),
         ContextMenuKind::Global => global_items(),
-        // Sidebar rows get their items with the projects sidebar (plan 5.3).
-        ContextMenuKind::Project(_) | ContextMenuKind::Worktree(_) | ContextMenuKind::Agent(_) => {
-            Vec::new()
-        }
+        ContextMenuKind::Project(project_id) => project_items(ws, chrome, project_id),
+        ContextMenuKind::Worktree(worktree_id) => worktree_items(chrome, worktree_id),
+        ContextMenuKind::Agent(entry_id) => agent_items(ws, entry_id),
     };
     let item_rects = item_rects(menu_rect(anchor, &items), items.len());
     ContextMenuState {
@@ -246,10 +246,107 @@ fn tab_items() -> Vec<MenuItem> {
     ]
 }
 
+/// herdr `ContextMenu::items` for a workspace card: rename and close for
+/// every project, the worktree items when the daemon reports its branch (a
+/// git checkout), and the fold item by its collapsed state when it has
+/// worktree rows.
+fn project_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, project_id: &str) -> Vec<MenuItem> {
+    let id = || project_id.to_owned();
+    let mut items = vec![
+        item("rename", MenuAction::RenameProject(id())),
+        item("close", MenuAction::CloseProject(id())),
+    ];
+    let Some(project) = ws
+        .sidebar()
+        .projects
+        .iter()
+        .find(|project| project.project_id == project_id)
+    else {
+        return items;
+    };
+    if project.branch.is_some() {
+        items.push(item("new worktree", MenuAction::NewWorktree(id())));
+        items.push(item("open worktree…", MenuAction::OpenWorktree(id())));
+    }
+    if !project.worktrees.is_empty() {
+        let folded = chrome.sidebar.collapsed_projects.contains(project_id);
+        items.push(item(
+            if folded { "expand" } else { "collapse" },
+            MenuAction::ToggleGroup(id()),
+        ));
+    }
+    items
+}
+
+/// A worktree row: rename and close are the tab items for the tab opened
+/// from it (`focus_menu_target` activates that tab first) and wait until
+/// one is open; delete asks the daemon to remove the checkout.
+fn worktree_items(chrome: &Chrome, worktree_id: &str) -> Vec<MenuItem> {
+    let shown = chrome
+        .project_tabs
+        .sets
+        .values()
+        .flat_map(|set| set.tabs.iter())
+        .any(|tab| tab.worktree_id.as_deref() == Some(worktree_id));
+    vec![
+        enabled_if(item("rename", MenuAction::Act(Action::RenameTab)), shown),
+        enabled_if(item("close", MenuAction::Act(Action::CloseTab)), shown),
+        item(
+            "delete worktree checkout…",
+            MenuAction::RemoveWorktree(worktree_id.to_owned()),
+        ),
+    ]
+}
+
+/// An agent row: reveal its pane in place or in a fresh tab, respond while
+/// the entry blocks, mark the prompt seen while the roster carries its
+/// attention id, then the pane's lease item and close, both idle until the
+/// entry's terminal is a pane of this workspace.
+fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuItem> {
+    let id = || entry_id.to_owned();
+    let pane = attention_pane(ws, entry_id);
+    let mut items = vec![
+        item("focus", MenuAction::FocusAgent(id())),
+        item("open in new tab", MenuAction::OpenAgentInNewTab(id())),
+    ];
+    if agent_blocked(ws, entry_id) {
+        items.push(item("respond", MenuAction::Respond(id())));
+    }
+    items.push(enabled_if(
+        item("mark seen", MenuAction::MarkSeen(id())),
+        attention_id(ws, entry_id).is_some(),
+    ));
+    let control = pane.map_or_else(
+        || item("take control", MenuAction::Act(Action::TakeControl)),
+        |pane| control_item(ws.pane(pane)),
+    );
+    items.extend([
+        enabled_if(control, pane.is_some()),
+        enabled_if(
+            item("close terminal", MenuAction::Act(Action::CloseTerminal)),
+            pane.is_some(),
+        ),
+    ]);
+    items
+}
+
+/// The attention id the roster carries for `entry_id`, while it blocks.
+pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> {
+    ws.sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.entry_id == entry_id)?
+        .attention
+        .as_ref()?
+        .attention_id
+        .clone()
+}
+
 fn global_items() -> Vec<MenuItem> {
     vec![
         item("new terminal", MenuAction::Act(Action::NewTerminal)),
         item("new tab", MenuAction::Act(Action::NewTab)),
+        item("new project", MenuAction::Act(Action::NewProject)),
         item("settings", MenuAction::Act(Action::Settings)),
         item("keybinding help", MenuAction::Act(Action::Help)),
         item("reload config", MenuAction::Act(Action::ReloadConfig)),
@@ -264,6 +361,10 @@ fn item(label: &'static str, action: MenuAction) -> MenuItem {
         action,
         enabled: true,
     }
+}
+
+fn enabled_if(item: MenuItem, enabled: bool) -> MenuItem {
+    MenuItem { enabled, ..item }
 }
 
 fn control_item(state: &crate::app::Pane) -> MenuItem {
@@ -378,6 +479,7 @@ mod tests {
             [
                 "new terminal",
                 "new tab",
+                "new project",
                 "settings",
                 "keybinding help",
                 "reload config",
@@ -385,26 +487,238 @@ mod tests {
                 "detach",
             ]
         );
-        assert_eq!(menu.items[4].action, MenuAction::Act(Action::ReloadConfig));
+        assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
+        assert_eq!(menu.items[5].action, MenuAction::Act(Action::ReloadConfig));
         assert!(menu.items.iter().all(|item| item.enabled));
 
         // Rows sit one cell inside the popup at the anchor: `keybinding help`
-        // makes it 19 wide, seven items make it 9 tall.
+        // makes it 19 wide, eight items make it 10 tall.
         assert_eq!(
             menu_rect(menu.anchor, &menu.items),
-            Rect::new(40, 12, 19, 9)
+            Rect::new(40, 12, 19, 10)
         );
-        assert_eq!(menu.item_rects.len(), 7);
+        assert_eq!(menu.item_rects.len(), 8);
         assert_eq!(menu.item_rects[0], Rect::new(41, 13, 17, 1));
         assert_eq!(menu_hit(&menu, 41, 13), Some(0));
         assert_eq!(menu_hit(&menu, 57, 15), Some(2));
         assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-        assert_eq!(menu_hit(&menu, 45, 20), None, "below the last row");
+        assert_eq!(menu_hit(&menu, 45, 21), None, "below the last row");
         let short = [item("zoom", MenuAction::Act(Action::Zoom))];
         assert_eq!(
             menu_rect((0, 0), &short).width,
             MENU_MIN_WIDTH,
             "short menus keep the floor width"
         );
+    }
+
+    /// 5.3.1: the sidebar rows' menus. A git project with worktree children
+    /// lists the worktree items and the fold item by its collapsed state, a
+    /// plain project only rename and close; a worktree row's rename and
+    /// close act on the tab tagged with it and are disabled until one is; an
+    /// agent row lists respond while blocked, enables mark seen only while
+    /// the roster carries an attention id, takes the lease item from its
+    /// pane's control state, and disables the pane items without a pane.
+    #[test]
+    fn row_menus_list_items_per_target_and_state() {
+        use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+        use serde_json::json;
+
+        let mut ws = Workspace::scripted();
+        let blocked = ws
+            .open_terminal("term-blocked", "native", "epoch")
+            .expect("open term-blocked");
+        let held = ws
+            .open_terminal("term-held", "native", "epoch")
+            .expect("open term-held");
+        let project = |id: &str, name: &str| ProjectRow {
+            id: id.to_string(),
+            name: name.to_string(),
+            display_name: name.to_string(),
+            checkout: Some(Checkout {
+                machine_id: "local".to_string(),
+                root_path: format!("/repos/{name}"),
+            }),
+            ..ProjectRow::default()
+        };
+        ws.daemon_mut().set_sidebar_rows(SidebarRows {
+            projects: vec![project("proj-git", "git"), project("proj-plain", "plain")],
+            statuses: [(
+                "proj-git".to_string(),
+                SourceStatus {
+                    current_branch: Some("main".to_string()),
+                    ..SourceStatus::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            worktrees: vec![WorktreeRow {
+                id: "wt-1".to_string(),
+                project_id: "proj-git".to_string(),
+                branch_name: "feature".to_string(),
+                worktree_path: "/repos/git/.worktrees/feature".to_string(),
+                status: "active".to_string(),
+                workspace_role: "client".to_string(),
+                ..WorktreeRow::default()
+            }],
+            ..SidebarRows::default()
+        });
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "attention-1",
+            "seq": 1,
+            "entries": [
+                {
+                    "entry_id": "run:term-blocked",
+                    "terminal": {"terminal_id": "term-blocked", "backend": "native"},
+                    "attention": {"attention_id": "att-1", "kind": "actionable"},
+                },
+                {
+                    "entry_id": "run:term-held",
+                    "terminal": {"terminal_id": "term-held", "backend": "native"},
+                },
+                {
+                    "entry_id": "run:term-away",
+                    "terminal": {"terminal_id": "term-away", "backend": "native"},
+                },
+            ],
+        }));
+        ws.select_project("proj-git");
+        ws.reconcile_subscribe_first().expect("scripted roster");
+        ws.pane_mut(held).control = ControlState::Held;
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(blocked, "blocked");
+        chrome.open_pane(held, "held");
+        let enabled = |menu: &ContextMenuState| -> Vec<bool> {
+            menu.items.iter().map(|item| item.enabled).collect()
+        };
+        let git = || ContextMenuKind::Project("proj-git".to_string());
+
+        // The git project with a child, expanded then collapsed; the plain one.
+        let menu = build_menu(&ws, &chrome, git(), (2, 3));
+        assert_eq!(
+            labels(&menu),
+            [
+                "rename",
+                "close",
+                "new worktree",
+                "open worktree…",
+                "collapse"
+            ]
+        );
+        assert_eq!(
+            menu.items[0].action,
+            MenuAction::RenameProject("proj-git".to_string())
+        );
+        assert_eq!(
+            menu.items[1].action,
+            MenuAction::CloseProject("proj-git".to_string())
+        );
+        assert_eq!(
+            menu.items[2].action,
+            MenuAction::NewWorktree("proj-git".to_string())
+        );
+        assert_eq!(
+            menu.items[3].action,
+            MenuAction::OpenWorktree("proj-git".to_string())
+        );
+        assert_eq!(
+            menu.items[4].action,
+            MenuAction::ToggleGroup("proj-git".to_string())
+        );
+        assert!(menu.items.iter().all(|item| item.enabled));
+        assert_eq!((menu.kind, menu.anchor), (git(), (2, 3)));
+        chrome.sidebar.toggle_group("proj-git");
+        let menu = build_menu(&ws, &chrome, git(), (2, 3));
+        assert_eq!(labels(&menu)[4], "expand");
+        let menu = build_menu(
+            &ws,
+            &chrome,
+            ContextMenuKind::Project("proj-plain".to_string()),
+            (2, 6),
+        );
+        assert_eq!(labels(&menu), ["rename", "close"]);
+        assert_eq!(
+            menu.items[1].action,
+            MenuAction::CloseProject("proj-plain".to_string())
+        );
+
+        // The worktree row: rename and close wait for a tab tagged with it.
+        let worktree = || ContextMenuKind::Worktree("wt-1".to_string());
+        let menu = build_menu(&ws, &chrome, worktree(), (4, 4));
+        assert_eq!(
+            labels(&menu),
+            ["rename", "close", "delete worktree checkout…"]
+        );
+        assert_eq!(enabled(&menu), [false, false, true]);
+        assert_eq!(menu.items[0].action, MenuAction::Act(Action::RenameTab));
+        assert_eq!(menu.items[1].action, MenuAction::Act(Action::CloseTab));
+        assert_eq!(
+            menu.items[2].action,
+            MenuAction::RemoveWorktree("wt-1".to_string())
+        );
+        chrome.active_tab_mut().expect("active tab").worktree_id = Some("wt-1".to_string());
+        let menu = build_menu(&ws, &chrome, worktree(), (4, 4));
+        assert!(menu.items.iter().all(|item| item.enabled));
+
+        // Agent rows: blocked and observed; plain and held; without a pane.
+        let agent = |entry: &str| ContextMenuKind::Agent(entry.to_string());
+        let menu = build_menu(&ws, &chrome, agent("run:term-blocked"), (3, 20));
+        assert_eq!(
+            labels(&menu),
+            [
+                "focus",
+                "open in new tab",
+                "respond",
+                "mark seen",
+                "take control",
+                "close terminal",
+            ]
+        );
+        assert_eq!(
+            menu.items[0].action,
+            MenuAction::FocusAgent("run:term-blocked".to_string())
+        );
+        assert_eq!(
+            menu.items[1].action,
+            MenuAction::OpenAgentInNewTab("run:term-blocked".to_string())
+        );
+        assert_eq!(
+            menu.items[2].action,
+            MenuAction::Respond("run:term-blocked".to_string())
+        );
+        assert_eq!(
+            menu.items[3].action,
+            MenuAction::MarkSeen("run:term-blocked".to_string())
+        );
+        assert_eq!(menu.items[4].action, MenuAction::Act(Action::TakeControl));
+        assert_eq!(menu.items[5].action, MenuAction::Act(Action::CloseTerminal));
+        assert!(menu.items.iter().all(|item| item.enabled));
+        let menu = build_menu(&ws, &chrome, agent("run:term-held"), (3, 22));
+        assert_eq!(
+            labels(&menu),
+            [
+                "focus",
+                "open in new tab",
+                "mark seen",
+                "release control",
+                "close terminal",
+            ]
+        );
+        assert_eq!(enabled(&menu), [true, true, false, true, true]);
+        assert_eq!(
+            menu.items[3].action,
+            MenuAction::Act(Action::ReleaseControl)
+        );
+        let menu = build_menu(&ws, &chrome, agent("run:term-away"), (3, 24));
+        assert_eq!(
+            labels(&menu),
+            [
+                "focus",
+                "open in new tab",
+                "mark seen",
+                "take control",
+                "close terminal",
+            ]
+        );
+        assert_eq!(enabled(&menu), [true, true, false, false, false]);
     }
 }

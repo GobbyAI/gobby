@@ -4673,10 +4673,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
-        // re-reads the prefs file.
+        // (its sixth row, after `new project`) re-reads the prefs file.
         press(MouseButton::Right, bare_cell).await;
-        hover(item_cell(bare_cell, 4)).await;
-        press(MouseButton::Left, item_cell(bare_cell, 4)).await;
+        hover(item_cell(bare_cell, 5)).await;
+        press(MouseButton::Left, item_cell(bare_cell, 5)).await;
         settle_live_event().await;
 
         // The tab's menu: `close tab` runs the confirm-close path.
@@ -6045,4 +6045,284 @@ fn project_dialog_keys_produce_daemon_requests() {
     );
     assert_eq!(press(&mut chrome, KeyCode::Esc), ModalOutcome::Close);
     assert!(chrome.dialog.is_none());
+}
+
+/// 5.3.2: the sidebar rows' menus reach the daemon. `new worktree` on the
+/// project card opens the dialog whose submit posts the worktree and opens a
+/// shell tab in it, `delete worktree checkout…` on the child row deletes the
+/// checkout, `open in new tab` on the agent row opens a tab holding its
+/// pane, `mark seen` posts the entry's attention id, and `close` on the card
+/// asks with the group text.
+#[tokio::test]
+async fn row_menus_dispatch_project_and_agent_actions() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let worktrees_path = "/api/source-control/worktrees?";
+    let worktree = |id: &str, branch: &str| {
+        json!({
+            "id": id, "project_id": "project-1", "branch_name": branch,
+            "worktree_path": format!("/repo-wt/{branch}"), "status": "active",
+            "workspace_role": "client",
+        })
+    };
+    let roster = json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:a",
+            "run_id": "run-a",
+            "terminal": {"terminal_id": "terminal-a", "backend": "native"},
+            "attention": {
+                "attention_id": "att-1",
+                "kind": "actionable",
+                "fingerprint": "fp-1",
+                "payload": {"prompt": "Ship it?", "options": [{"option": 1, "label": "Yes"}]},
+            },
+        }],
+    });
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+        mock.enqueue(
+            "GET",
+            "/api/source-control/status?",
+            200,
+            json!({"current_branch": "0.5.0", "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 1}),
+        );
+    }
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            worktrees_path,
+            200,
+            json!({"worktrees": [worktree("wt-1", "spare")]}),
+        );
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a"]),
+        );
+        mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
+    }
+    mock.enqueue(
+        "POST",
+        "/api/source-control/worktrees",
+        200,
+        worktree("wt-2", "feature"),
+    );
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [worktree("wt-1", "spare"), worktree("wt-2", "feature")]}),
+    );
+    mock.enqueue(
+        "DELETE",
+        "/api/source-control/worktrees/wt-1",
+        200,
+        json!({"ok": true}),
+    );
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [worktree("wt-2", "feature")]}),
+    );
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+
+    // Where the loop draws the card, its child row and the agent row.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    probe.compute_view(&workspace, area);
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let row_cell = |areas: &[(String, Rect)], id: &str| {
+        areas
+            .iter()
+            .find(|(row, _)| row == id)
+            .map(|(_, rect)| (rect.x + 1, rect.y))
+            .unwrap_or_else(|| panic!("row {id} drawn"))
+    };
+    let project_cell = row_cell(&probe.view.project_hit_areas, "project-1");
+    let worktree_cell = row_cell(&probe.view.worktree_hit_areas, "wt-1");
+    let agent_cell = row_cell(&probe.view.agent_hit_areas, "run:a");
+    // Menu rows start one cell inside the popup at the click.
+    let item_cell = |anchor: (u16, u16), index: u16| (anchor.0 + 2, anchor.1 + 1 + index);
+    let gets = |path: &str| {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target.starts_with(path))
+            .count()
+    };
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
+        settle_live_event().await;
+        let press = |button, (column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(button),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        let key = |code| send_key(&input_tx, code, KeyModifiers::NONE);
+
+        // The card's `new worktree` opens the dialog; the branch typed there
+        // posts the worktree and opens a shell tab in it.
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a", SPAWNED]),
+        );
+        let fetched = gets(worktrees_path);
+        press(MouseButton::Right, project_cell).await;
+        press(MouseButton::Left, item_cell(project_cell, 2)).await;
+        for ch in "feature".chars() {
+            key(KeyCode::Char(ch)).await;
+        }
+        key(KeyCode::Enter).await;
+        wait_for_http_requests(&mock, "POST", "/api/source-control/worktrees", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let attached = websocket_requests(&mock, "terminal_set_viewport")
+                    .iter()
+                    .any(|request| request.get("terminal_id") == Some(&json!(SPAWNED)));
+                if attached {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the worktree shell attaches");
+        settle_live_event().await;
+
+        // The child row's `delete worktree checkout…` asks; enter deletes.
+        let fetched = gets(worktrees_path);
+        press(MouseButton::Right, worktree_cell).await;
+        press(MouseButton::Left, item_cell(worktree_cell, 2)).await;
+        key(KeyCode::Enter).await;
+        wait_for_http_requests(&mock, "DELETE", "/api/source-control/worktrees/wt-1", 1).await;
+        wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
+        settle_live_event().await;
+
+        // The agent row's `open in new tab`, then its `mark seen`.
+        press(MouseButton::Right, agent_cell).await;
+        press(MouseButton::Left, item_cell(agent_cell, 1)).await;
+        settle_live_event().await;
+        press(MouseButton::Right, agent_cell).await;
+        press(MouseButton::Left, item_cell(agent_cell, 3)).await;
+        wait_for_http_requests(&mock, "POST", "/api/attention/run:a/seen", 1).await;
+        settle_live_event().await;
+
+        // The card's `close` asks with the group text.
+        press(MouseButton::Right, project_cell).await;
+        press(MouseButton::Left, item_cell(project_cell, 1)).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    let bodies = |method: &str, target: &str| -> Vec<Value> {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == method && request.target == target)
+            .filter_map(|request| request.body)
+            .collect()
+    };
+    assert_eq!(
+        bodies("POST", "/api/source-control/worktrees"),
+        [json!({
+            "project_id": "project-1", "branch_name": "feature",
+            "base_branch": "0.5.0", "workspace_role": "client",
+        })]
+    );
+    let creates = websocket_requests(&mock, "terminal_create");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0].get("cwd"), Some(&json!("/repo-wt/feature")));
+    let deletes: Vec<String> = mock
+        .requests()
+        .into_iter()
+        .filter(|request| request.method == "DELETE")
+        .map(|request| request.target)
+        .collect();
+    assert_eq!(deletes, ["/api/source-control/worktrees/wt-1"]);
+    assert_eq!(
+        bodies("POST", "/api/attention/run:a/seen"),
+        [json!({"attention_id": "att-1"})]
+    );
+    let children: Vec<String> = workspace.sidebar().projects[0]
+        .worktrees
+        .iter()
+        .map(|worktree| worktree.worktree_id.clone())
+        .collect();
+    assert_eq!(children, ["wt-2"]);
+    let agent = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("agent pane");
+    let tabs = &chrome.tabs().tabs;
+    assert_eq!(
+        tabs.len(),
+        2,
+        "the worktree shell tab and the agent's new tab: {:?}",
+        shown_terminals(&workspace, &chrome)
+    );
+    assert_eq!(tabs[0].worktree_id.as_deref(), Some("wt-2"));
+    assert_eq!(
+        tabs[1].focused_pane(),
+        Some(agent),
+        "open in new tab holds the agent's pane"
+    );
+    assert_eq!(chrome.tabs().active_tab, 1);
+    assert_eq!(
+        chrome.mode,
+        Mode::ConfirmClose,
+        "close on the card asks first"
+    );
+    assert!(
+        matches!(
+            &chrome.dialog,
+            Some(Dialog::ConfirmClose {
+                target: CloseTarget::WorktreeGroup(project),
+                ..
+            }) if project == "project-1"
+        ),
+        "{:?}",
+        chrome.dialog
+    );
+    mock.shutdown().await;
 }

@@ -22,9 +22,10 @@ use super::{
 };
 
 /// A button went down on `hit`. Outside a pane the right button opens the
-/// tab menu on a tab and the global menu on empty chrome (the bare tab bar,
-/// the sidebar's empty rows, the empty state); only the left button means
-/// anything else.
+/// tab menu on a tab, the row menus on a project card, a worktree row and an
+/// agent row, and the global menu on empty chrome (the bare tab bar, the
+/// sidebar's empty rows, the empty state) and the projects footer's `menu`;
+/// only the left button means anything else.
 ///
 /// Inside a pane the right button is `right_down`'s. A ctrl+left press first
 /// asks `links::resolve` for a URL under the pointer and opens that instead,
@@ -114,11 +115,40 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty if button == MouseButton::Right => {
+        Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty | Hit::ProjectsMenu
+            if button == MouseButton::Right =>
+        {
             open_menu(
                 ws,
                 chrome,
                 ContextMenuKind::Global,
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
+        }
+        Hit::Project(project_id) if button == MouseButton::Right => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::Project(project_id),
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
+        }
+        Hit::Worktree(worktree_id) if button == MouseButton::Right => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::Worktree(worktree_id),
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
+        }
+        Hit::Agent(entry_id) if button == MouseButton::Right => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::Agent(entry_id),
                 (mouse.column, mouse.row),
             );
             MouseOutcome::Handled
