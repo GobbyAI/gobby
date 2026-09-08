@@ -35,11 +35,8 @@ from gobby.servers.routes.source_control_git import (
 from gobby.servers.routes.source_control_git import (
     _set_cached as _set_cached,
 )
-from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
-from gobby.worktrees.deletion import (
-    DeletionSurface,
-    WorktreeDeletionRequest,
-    delete_worktree_transaction,
+from gobby.servers.routes.source_control_worktrees import (
+    create_source_control_worktrees_router,
 )
 
 if TYPE_CHECKING:
@@ -66,6 +63,9 @@ def _validate_git_ref(ref: str, param_name: str = "ref") -> None:
 def create_source_control_router(server: HTTPServer) -> APIRouter:
     """Create the source control API router."""
     router = APIRouter(prefix="/api/source-control", tags=["source-control"])
+    router.include_router(
+        create_source_control_worktrees_router(server, validate_git_ref=_validate_git_ref)
+    )
 
     @router.get("/status")
     async def get_status(project_id: str | None = None) -> dict[str, Any]:
@@ -674,188 +674,5 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             "github_available": True,
             "error": "Failed to list CI/CD runs",
         }
-
-    # --- Worktrees ---
-
-    @router.get("/worktrees")
-    async def list_worktrees(
-        project_id: str | None = None,
-        status: str | None = None,
-    ) -> dict[str, Any]:
-        """List worktrees."""
-        if not server.services.worktree_storage:
-            return {"worktrees": []}
-
-        wts = await server.run_db(
-            server.services.worktree_storage.list_worktrees,
-            project_id=project_id,
-            status=status,
-        )
-        return {"worktrees": [wt.to_dict() for wt in wts]}
-
-    @router.get("/worktrees/stats")
-    async def get_worktree_stats(
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Get worktree statistics."""
-        if not server.services.worktree_storage or not project_id:
-            return {"stats": {}}
-
-        stats = await server.run_db(server.services.worktree_storage.count_by_status, project_id)
-        return {"stats": stats}
-
-    @router.delete("/worktrees/{worktree_id}")
-    async def delete_worktree(worktree_id: str, merged_into: str | None = None) -> dict[str, Any]:
-        """Delete a worktree after verifying its stored base or explicit local landing branch."""
-        worktree_storage = server.services.worktree_storage
-        if worktree_storage is None:
-            raise HTTPException(503, "Worktree storage not available")
-
-        def resolve_git_manager(worktree: Any) -> Any:
-            fallback = server.services.git_manager
-            if fallback is None:
-                return None
-            from gobby.worktrees.git import WorktreeGitManager
-
-            try:
-                repo_path, _ = _resolve_project(server, worktree.project_id)
-                if repo_path:
-                    return WorktreeGitManager(repo_path)
-            except (ValueError, OSError):
-                pass
-            return fallback
-
-        request = WorktreeDeletionRequest(
-            worktree_id=worktree_id,
-            surface=DeletionSurface.HTTP,
-            merged_into=merged_into,
-        )
-        try:
-            result = await server.services.run_worktree_delete(
-                lambda boundary: delete_worktree_transaction(
-                    boundary,
-                    request=request,
-                    worktree_storage=worktree_storage,
-                    resolve_git_manager=resolve_git_manager,
-                    task_manager=server.services.task_manager,
-                )
-            )
-        except MachineOwnershipMismatchError as exc:
-            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
-        if not result.found:
-            raise HTTPException(404, "Worktree not found")
-
-        response: dict[str, Any] = {
-            "success": result.success,
-            "id": worktree_id,
-            "git_deleted": result.git_deleted,
-        }
-        if not result.git_deleted:
-            response["git_error"] = result.error
-            response["message"] = "Git worktree deletion failed; DB record was preserved"
-        if result.error_code:
-            response["error_code"] = result.error_code
-        return response
-
-    @router.post("/worktrees/cleanup")
-    async def cleanup_worktrees(
-        project_id: str | None = None,
-        hours: int = 24,
-        dry_run: bool = True,
-    ) -> dict[str, Any]:
-        """Cleanup stale worktrees."""
-        if not server.services.worktree_storage or not project_id:
-            return {"candidates": [], "cleaned": 0}
-
-        stale = await server.run_db(
-            server.services.worktree_storage.cleanup_stale,
-            project_id,
-            hours=hours,
-            dry_run=dry_run,
-        )
-        return {
-            "candidates": [wt.to_dict() for wt in stale],
-            "cleaned": 0 if dry_run else len(stale),
-            "dry_run": dry_run,
-        }
-
-    @router.post("/worktrees/{worktree_id}/sync")
-    async def sync_worktree(
-        worktree_id: str,
-        source_branch: str | None = None,
-    ) -> dict[str, Any]:
-        """Sync a worktree with its base branch."""
-        if not server.services.worktree_storage:
-            raise HTTPException(503, "Worktree storage not available")
-
-        try:
-            wt = await server.run_db(server.services.worktree_storage.get, worktree_id)
-        except MachineOwnershipMismatchError as exc:
-            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
-        if not wt:
-            raise HTTPException(404, "Worktree not found")
-
-        if server.services.git_manager:
-            result = await server.run_db(
-                server.services.git_manager.sync_from_main,
-                wt.worktree_path,
-                base_branch=wt.base_branch,
-                source_branch=source_branch,
-            )
-            return {
-                "success": result.success,
-                "message": result.message,
-                "id": worktree_id,
-                "source_branch": source_branch or wt.base_branch,
-            }
-
-        raise HTTPException(503, "Git manager not available")
-
-    # --- Clones ---
-
-    @router.get("/clones")
-    async def list_clones(
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        """List clones."""
-        if not server.services.clone_storage:
-            return {"clones": []}
-
-        clones = await server.run_db(
-            server.services.clone_storage.list_clones, project_id=project_id
-        )
-        return {"clones": [c.to_dict() for c in clones]}
-
-    @router.delete("/clones/{clone_id}")
-    async def delete_clone(clone_id: str) -> dict[str, Any]:
-        """Delete a clone."""
-        if not server.services.clone_storage:
-            raise HTTPException(503, "Clone storage not available")
-
-        try:
-            clone = await server.run_db(server.services.clone_storage.get, clone_id)
-        except MachineOwnershipMismatchError as exc:
-            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
-        if not clone:
-            raise HTTPException(404, "Clone not found")
-
-        deleted = await server.run_db(server.services.clone_storage.delete, clone_id)
-        return {"success": deleted, "id": clone_id}
-
-    @router.post("/clones/{clone_id}/sync")
-    async def sync_clone(clone_id: str) -> dict[str, Any]:
-        """Sync a clone."""
-        if not server.services.clone_storage:
-            raise HTTPException(503, "Clone storage not available")
-
-        try:
-            clone = await server.run_db(server.services.clone_storage.get, clone_id)
-        except MachineOwnershipMismatchError as exc:
-            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
-        if not clone:
-            raise HTTPException(404, "Clone not found")
-
-        await server.run_db(server.services.clone_storage.record_sync, clone_id)
-        return {"success": True, "id": clone_id}
 
     return router

@@ -16,6 +16,7 @@ use crate::ui::settings::SettingsRow;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
+use super::menu::{activate_menu, close_menu, menu_hit, ContextMenuKind, MenuAction};
 use super::modal_input::{activate_settings_row, close_modal};
 
 mod forward;
@@ -116,6 +117,11 @@ pub enum MouseOutcome {
     /// focus: focus it as `Focus` would (control follows) and forward `bytes`
     /// once the pane is writable.
     FocusWrite { pane: PaneId, bytes: Vec<u8> },
+    /// A context menu item was activated for the target it was opened on.
+    Menu {
+        kind: ContextMenuKind,
+        action: MenuAction,
+    },
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -160,6 +166,7 @@ pub fn route_mouse<W: WorkspaceView>(
         Mode::ConfirmClose | Mode::Rename | Mode::Respond | Mode::KeybindHelp | Mode::Navigator => {
             return MouseOutcome::Handled
         }
+        Mode::ContextMenu => return menu_mouse(chrome, mouse),
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Resize => {}
     }
     let hit = hit_test(&chrome.view, mouse.column, mouse.row);
@@ -188,6 +195,35 @@ pub fn route_mouse<W: WorkspaceView>(
             outcome
         }
     }
+}
+
+/// The pointer while a menu is open: motion over a row selects it, a left
+/// press on a row activates it, and a press anywhere else closes the menu
+/// and goes no further (herdr: the closing click never reaches what is
+/// under it). Releases and wheel notches are swallowed.
+fn menu_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
+    let hit = chrome
+        .menu
+        .as_ref()
+        .and_then(|menu| menu_hit(menu, mouse.column, mouse.row));
+    match (mouse.kind, hit) {
+        (MouseEventKind::Moved, Some(index)) => {
+            if let Some(menu) = chrome.menu.as_mut() {
+                menu.selected = index;
+            }
+        }
+        (MouseEventKind::Down(MouseButton::Left), Some(index)) => {
+            if let Some(menu) = chrome.menu.as_mut() {
+                menu.selected = index;
+            }
+            if let Some((kind, action)) = activate_menu(chrome) {
+                return MouseOutcome::Menu { kind, action };
+            }
+        }
+        (MouseEventKind::Down(_), None) => close_menu(chrome),
+        _ => {}
+    }
+    MouseOutcome::Handled
 }
 
 /// Settings overlay: a left press on a row selects and activates it, the
@@ -263,6 +299,16 @@ mod tests {
                 ..PaneModes::default()
             },
         });
+    }
+
+    /// The right-click opened the pane menu on `pane`; close it again.
+    fn menu_opened(chrome: &mut Chrome, pane: PaneId) {
+        assert_eq!(chrome.mode, Mode::ContextMenu);
+        assert_eq!(
+            chrome.menu.as_ref().map(|menu| menu.kind.clone()),
+            Some(ContextMenuKind::Pane(pane))
+        );
+        close_menu(chrome);
     }
 
     /// Two panes split in one tab, drawn once so the hit map is populated.
@@ -573,6 +619,7 @@ mod tests {
             "a plain right-click is the pane menu's"
         );
         assert_eq!(chrome.gesture, None);
+        menu_opened(&mut chrome, focused);
         ws.pane_mut(focused).right_click_passthrough = true;
         assert_eq!(
             route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::NONE)),
@@ -588,6 +635,7 @@ mod tests {
             MouseOutcome::Handled,
             "the flag wants no modifier held"
         );
+        menu_opened(&mut chrome, focused);
         ws.pane_mut(focused).right_click_passthrough = false;
         chrome.prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
         assert_eq!(
@@ -612,10 +660,12 @@ mod tests {
             MouseOutcome::Handled,
             "another modifier is not the configured one"
         );
+        menu_opened(&mut chrome, focused);
         assert_eq!(
             route_mouse(&ws, &mut chrome, &right(press, KeyModifiers::NONE)),
             MouseOutcome::Handled,
             "with a modifier configured a plain right-click stays the menu's"
         );
+        menu_opened(&mut chrome, focused);
     }
 }

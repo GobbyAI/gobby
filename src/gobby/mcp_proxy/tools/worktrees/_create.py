@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from pathlib import Path
 from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -15,10 +12,8 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
-from gobby.utils.project_context import IsolationProjectJsonError
+from gobby.worktrees.creation import create_worktree as create_worktree_record
 from gobby.worktrees.events import emit_worktree_event
-
-logger = logging.getLogger(__name__)
 
 
 def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -81,172 +76,40 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if resolved_git_mgr is None or resolved_project_id is None:
             raise RuntimeError("Git manager or project ID unexpectedly None")
 
-        # Check if branch already exists as a worktree
-        existing = ctx.worktree_storage.get_by_branch(resolved_project_id, branch_name)
-        if existing:
-            return {
-                "success": False,
-                "error": f"Worktree already exists for branch '{branch_name}'",
-                "existing_worktree_id": existing.id,
-                "existing_path": existing.worktree_path,
-            }
-
-        # Generate default worktree path if not provided
-        if worktree_path is None:
-            project_name = Path(resolved_git_mgr.repo_path).name
-            worktree_path = generate_worktree_path(branch_name, project_name)
-        else:
-            worktree_path = str(Path(worktree_path).expanduser())
-
-        # Auto-detect use_local when not explicitly set
-        resolved_use_local = use_local
-        if resolved_use_local is None and create_branch:
-            try:
-                has_unpushed, unpushed_count = await asyncio.to_thread(
-                    resolved_git_mgr.has_unpushed_commits, base_branch
-                )
-                if has_unpushed:
-                    resolved_use_local = True
-                    logger.info(
-                        "Auto-detected %s unpushed commit(s) on '%s', using local branch ref",
-                        unpushed_count,
-                        base_branch,
-                    )
-            except Exception as e:
-                logger.warning("Auto-detect unpushed commits failed: %s", e)
-        if resolved_use_local is None:
-            resolved_use_local = False
-
-        # Create git worktree
-        result = await asyncio.to_thread(
-            resolved_git_mgr.create_worktree,
-            worktree_path=worktree_path,
+        result = await create_worktree_record(
+            git_manager=resolved_git_mgr,
+            worktree_storage=ctx.worktree_storage,
+            project_id=resolved_project_id,
             branch_name=branch_name,
             base_branch=base_branch,
+            task_id=task_id,
+            worktree_path=worktree_path,
             create_branch=create_branch,
-            use_local=resolved_use_local,
+            use_local=use_local,
+            provider=provider,
+            resolve_task_id=ctx.resolve_task_id,
+            path_factory=generate_worktree_path,
+            sidecar_writer=copy_project_json_to_worktree,
+            hook_installer=install_provider_hooks,
+            event_emitter=emit_worktree_event,
         )
-
         if not result.success:
-            return {"success": False, "error": result.error or "Failed to create git worktree"}
+            response: dict[str, Any] = {"success": False, "error": result.error}
+            if result.error_code == "remote_base_branch_not_allowed":
+                response["error_code"] = result.error_code
+            if result.existing_worktree_id is not None:
+                response["existing_worktree_id"] = result.existing_worktree_id
+                response["existing_path"] = result.existing_path
+            return response
 
-        # Resolve task_id (#N -> UUID) before DB insert
-        resolved_task_id = None
-        if task_id:
-            try:
-                resolved_task_id = ctx.resolve_task_id(task_id)
-            except ValueError as e:
-                # Clean up the git worktree we just created. The branch was
-                # never returned to any agent, so forced deletion is safe and
-                # avoids preflight failures when the branch was cut from a
-                # remote-tracking base.
-                try:
-                    await asyncio.to_thread(
-                        resolved_git_mgr.delete_worktree,
-                        worktree_path,
-                        force=True,
-                        delete_branch=create_branch,
-                        force_delete_branch=create_branch,
-                        branch_name=branch_name,
-                    )
-                except Exception as cleanup_err:
-                    logger.warning(
-                        "Failed to clean up worktree after task resolution failure: %s", cleanup_err
-                    )
-                return {"success": False, "error": f"Invalid task reference: {e}"}
-
-        # Record in database -- clean up git worktree on failure
-        try:
-            worktree = ctx.worktree_storage.create(
-                project_id=resolved_project_id,
-                branch_name=branch_name,
-                worktree_path=worktree_path,
-                base_branch=base_branch,
-                task_id=resolved_task_id,
-            )
-        except Exception as db_err:
-            # Partial-create rollback: the branch was never returned to any
-            # agent, so forced deletion is safe.
-            try:
-                await asyncio.to_thread(
-                    resolved_git_mgr.delete_worktree,
-                    worktree_path,
-                    force=True,
-                    delete_branch=create_branch,
-                    force_delete_branch=create_branch,
-                    branch_name=branch_name,
-                )
-            except Exception as cleanup_err:
-                logger.warning(
-                    "Failed to clean up orphaned worktree %s: %s", worktree_path, cleanup_err
-                )
-            return {"success": False, "error": f"Failed to record worktree in database: {db_err}"}
-
-        hooks_installed = False
-        try:
-            copy_project_json_to_worktree(resolved_git_mgr.repo_path, worktree.worktree_path)
-        except (IsolationProjectJsonError, OSError) as post_err:
-            logger.warning(
-                "Isolation sidecar write failed for worktree %s: %s", worktree.id, post_err
-            )
-            try:
-                await asyncio.to_thread(
-                    resolved_git_mgr.delete_worktree,
-                    worktree.worktree_path,
-                    force=True,
-                    delete_branch=create_branch,
-                    force_delete_branch=create_branch,
-                    branch_name=branch_name,
-                )
-            except Exception as cleanup_err:
-                logger.warning(
-                    "Failed to clean up worktree after isolation sidecar failure: %s",
-                    cleanup_err,
-                )
-            try:
-                ctx.worktree_storage.delete(worktree.id)
-            except Exception as cleanup_err:
-                logger.warning(
-                    "Failed to delete worktree record after isolation sidecar failure: %s",
-                    cleanup_err,
-                )
-            return {
-                "success": False,
-                "error": f"Failed to write isolation marker: {post_err}",
-            }
-        try:
-            hooks_installed = install_provider_hooks(provider, worktree.worktree_path)
-        except Exception as post_err:
-            logger.warning(
-                "Post-creation hook install failed for worktree %s: %s", worktree.id, post_err
-            )
-
-        event = None
-        try:
-            event = emit_worktree_event(
-                "worktree_created",
-                worktree_id=worktree.id,
-                project_id=worktree.project_id,
-                branch_name=worktree.branch_name,
-                worktree_path=worktree.worktree_path,
-                base_branch=worktree.base_branch,
-                task_id=worktree.task_id,
-            )
-        except Exception as event_err:
-            logger.warning(
-                "Failed to emit worktree_created event for %s at %s: %s",
-                worktree.id,
-                worktree.worktree_path,
-                event_err,
-                exc_info=True,
-            )
-
+        if result.worktree is None:
+            raise RuntimeError("Successful worktree creation returned no worktree")
         return {
             "success": True,
-            "worktree_id": worktree.id,
-            "worktree_path": worktree.worktree_path,
-            "hooks_installed": hooks_installed,
-            "event": event,
+            "worktree_id": result.worktree.id,
+            "worktree_path": result.worktree.worktree_path,
+            "hooks_installed": result.hooks_installed,
+            "event": result.event,
         }
 
     return registry

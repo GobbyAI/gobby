@@ -79,6 +79,7 @@ def mock_server() -> Iterator[MagicMock]:
     server.services.clone_storage = None
     server.services.git_manager = None
     server.services.task_manager = None
+    server.services.terminal_manager = None
     executor = WorktreeDeleteExecutor(thread_name_prefix="test-http-worktree-delete")
     server.services.run_worktree_delete = executor.run_delete
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
@@ -1867,7 +1868,7 @@ class TestDeleteWorktree:
 
         with (
             patch(
-                "gobby.servers.routes.source_control._resolve_project",
+                "gobby.servers.routes.source_control_git._resolve_project",
                 return_value=("/tmp/repo", None),
             ),
             patch(
@@ -1924,7 +1925,7 @@ class TestDeleteWorktree:
 
         with (
             patch(
-                "gobby.servers.routes.source_control._resolve_project",
+                "gobby.servers.routes.source_control_git._resolve_project",
                 return_value=("/tmp/repo", None),
             ),
             patch(
@@ -1955,7 +1956,7 @@ class TestDeleteWorktree:
 
         with (
             patch(
-                "gobby.servers.routes.source_control._resolve_project",
+                "gobby.servers.routes.source_control_git._resolve_project",
                 return_value=("/tmp/repo", None),
             ),
             patch(
@@ -2403,3 +2404,163 @@ def test_source_control_missing_checkout_is_409(  # tdd-red window
 
     assert response.status_code == 409
     assert response.json()["detail"]["error"] == "CheckoutNotFoundError"
+
+
+def test_create_client_worktree(
+    client: TestClient,
+    mock_server: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Create client worktrees and translate the documented request errors."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    storage = MagicMock()
+    git_manager = MagicMock()
+    git_manager.repo_path = "/repo"
+    git_manager.has_unpushed_commits.return_value = (False, 0)
+    git_manager.create_worktree.return_value = SimpleNamespace(success=True, error=None)
+    worktree = MagicMock(
+        id="wt-client",
+        project_id="project-1",
+        branch_name="feature/client",
+        worktree_path=str(tmp_path / ".gobby/worktrees/repo/feature-client"),
+        base_branch="main",
+        task_id=None,
+    )
+    worktree.to_dict.return_value = {
+        "id": "wt-client",
+        "project_id": "project-1",
+        "branch_name": "feature/client",
+        "worktree_path": worktree.worktree_path,
+        "base_branch": "main",
+        "task_id": None,
+        "workspace_role": "client",
+    }
+    storage.get_by_branch.return_value = None
+    storage.create.return_value = worktree
+    mock_server.services.worktree_storage = storage
+
+    def resolve_project(_server: MagicMock, project_id: str) -> tuple[str | None, None]:
+        return (None, None) if project_id == "missing" else ("/repo", None)
+
+    with (
+        patch(
+            "gobby.servers.routes.source_control_git._resolve_project",
+            side_effect=resolve_project,
+        ),
+        patch("gobby.worktrees.git.WorktreeGitManager", return_value=git_manager),
+        patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
+        patch(
+            "gobby.worktrees.events.emit_worktree_event",
+            return_value={"event_type": "worktree_created", "worktree_id": "wt-client"},
+        ) as emit_event,
+    ):
+        response = client.post(
+            "/api/source-control/worktrees",
+            json={
+                "project_id": "project-1",
+                "branch_name": "feature/client",
+                "workspace_role": "client",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == worktree.to_dict.return_value
+
+        existing = MagicMock(id="wt-existing", worktree_path="/tmp/existing")
+        storage.get_by_branch.return_value = existing
+        conflict = client.post(
+            "/api/source-control/worktrees",
+            json={
+                "project_id": "project-1",
+                "branch_name": "feature/conflict",
+                "workspace_role": "client",
+            },
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["error_code"] == "branch_conflict"
+
+        missing = client.post(
+            "/api/source-control/worktrees",
+            json={
+                "project_id": "missing",
+                "branch_name": "feature/missing",
+                "workspace_role": "client",
+            },
+        )
+        assert missing.status_code == 404
+
+        invalid = client.post(
+            "/api/source-control/worktrees",
+            json={
+                "project_id": "project-1",
+                "branch_name": "bad;branch",
+                "workspace_role": "client",
+            },
+        )
+        assert invalid.status_code == 400
+
+    create_kwargs = storage.create.call_args.kwargs
+    assert create_kwargs["workspace_role"] == "client"
+    assert create_kwargs["task_id"] is None
+    assert create_kwargs["worktree_path"] == worktree.worktree_path
+    git_manager.create_worktree.assert_called_once_with(
+        worktree_path=worktree.worktree_path,
+        branch_name="feature/client",
+        base_branch="main",
+        create_branch=True,
+        use_local=False,
+    )
+    emit_event.assert_called_once_with(
+        "worktree_created",
+        worktree_id="wt-client",
+        project_id="project-1",
+        branch_name="feature/client",
+        worktree_path=worktree.worktree_path,
+        base_branch="main",
+        task_id=None,
+    )
+
+
+def test_delete_client_worktree_refuses_live_terminals(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    """A client worktree remains until every Gobby-owned terminal exits."""
+    worktree = SimpleNamespace(
+        id="wt-client",
+        project_id="project-1",
+        branch_name="feature/client",
+        worktree_path="/tmp/client-worktree",
+        base_branch="main",
+        task_id=None,
+        workspace_role="client",
+    )
+    terminal = SimpleNamespace(
+        id="terminal-1",
+        ownership="gobby",
+        state="live",
+        session_id="session-1",
+    )
+    storage = MagicMock()
+    storage.get.return_value = worktree
+    storage.delete.return_value = True
+    terminal_manager = MagicMock()
+    terminal_manager.list_by_project.return_value = [terminal]
+    mock_server.services.worktree_storage = storage
+    mock_server.services.terminal_manager = terminal_manager
+    mock_server.session_manager.get.return_value = SimpleNamespace(
+        workspace_path="/tmp/client-worktree/subdirectory"
+    )
+
+    refused = client.delete("/api/source-control/worktrees/wt-client")
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["error_code"] == "terminals_live"
+    storage.delete.assert_not_called()
+
+    terminal.state = "exited"
+    deleted = client.delete("/api/source-control/worktrees/wt-client")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["success"] is True
+    storage.delete.assert_called_once_with("wt-client")

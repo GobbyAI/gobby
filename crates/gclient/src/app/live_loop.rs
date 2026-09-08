@@ -29,6 +29,7 @@ use super::{PaneId, Workspace};
 
 mod actions;
 mod control;
+pub(super) mod menu;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 

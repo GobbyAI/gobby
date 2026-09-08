@@ -2,7 +2,8 @@
 //!
 //! `route_modal_key` runs before the keymap for every mode that owns the
 //! keyboard: the overlays (keybind help, navigator, settings), the dialogs
-//! (confirm-close, rename) and the transient resize and navigate modes. It
+//! (confirm-close, rename), the context menu and the transient resize and
+//! navigate modes. It
 //! edits chrome state in place and hands the loop a [`ModalOutcome`] for the
 //! parts that need the workspace: focus, actions, closes and renames. Both
 //! loops apply outcomes their own way, so nothing here reaches a daemon.
@@ -26,6 +27,7 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::{PaneId, Workspace};
 use super::actions::live_layout_area;
+use super::menu::{activate_menu, close_menu, ContextMenuKind, MenuAction};
 
 /// Lines one page key scrolls the keybind help by.
 const HELP_PAGE_LINES: usize = 10;
@@ -54,6 +56,11 @@ pub enum ModalOutcome {
     Confirm(CloseTarget),
     /// The rename dialog was accepted with this value.
     Commit(RenameKind, String),
+    /// A context menu item was activated for the target it was opened on.
+    Menu {
+        kind: ContextMenuKind,
+        action: MenuAction,
+    },
     /// The mode does not own the keyboard; resolve the key against the keymap.
     Passthrough,
 }
@@ -67,6 +74,7 @@ pub fn route_modal_key<W: WorkspaceView>(
     let key = &key.key;
     match chrome.mode {
         Mode::Terminal | Mode::Prefix | Mode::Copy | Mode::Respond => ModalOutcome::Passthrough,
+        Mode::ContextMenu => menu_key(chrome, key),
         Mode::KeybindHelp => keybind_help_key(chrome, key),
         Mode::Navigator => navigator_key(ws, chrome, key),
         Mode::Settings => settings_key(ws, chrome, key),
@@ -85,7 +93,8 @@ pub(super) fn close_modal(chrome: &mut Chrome) -> ModalOutcome {
 }
 
 /// Apply a committed rename: the active tab's title, or the focused pane's
-/// local title (the daemon has no rename call).
+/// label (the daemon has no rename call, and roster pages refresh the
+/// pane's own title); an empty value clears the label.
 pub(crate) fn apply_rename<D: Daemon>(
     workspace: &mut Workspace<D>,
     chrome: &mut Chrome,
@@ -100,7 +109,7 @@ pub(crate) fn apply_rename<D: Daemon>(
         }
         RenameKind::Pane | RenameKind::Terminal => {
             if let Some(pane) = chrome.focused_pane() {
-                workspace.pane_mut(pane).title = value;
+                workspace.pane_mut(pane).label = (!value.is_empty()).then_some(value);
             }
         }
     }
@@ -127,6 +136,31 @@ fn is_ctrl(key: &KeyEvent, ch: char) -> bool {
 /// `index` moved by `delta`, clamped to `0..=last`.
 fn step(index: usize, delta: isize, last: usize) -> usize {
     index.min(last).saturating_add_signed(delta).min(last)
+}
+
+/// Keys while a context menu is open: arrows or `j`/`k` move the selection,
+/// enter or space activate it, escape closes it; nothing reaches the keymap.
+fn menu_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
+    let delta = match key.code {
+        KeyCode::Esc => {
+            close_menu(chrome);
+            return ModalOutcome::Close;
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            return match activate_menu(chrome) {
+                Some((kind, action)) => ModalOutcome::Menu { kind, action },
+                None => ModalOutcome::Close,
+            };
+        }
+        KeyCode::Up | KeyCode::Char('k') => -1,
+        KeyCode::Down | KeyCode::Char('j') => 1,
+        _ => return ModalOutcome::Consumed,
+    };
+    if let Some(menu) = chrome.menu.as_mut() {
+        let last = menu.items.len().saturating_sub(1);
+        menu.selected = step(menu.selected, delta, last);
+    }
+    ModalOutcome::Consumed
 }
 
 fn keybind_help_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
