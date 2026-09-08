@@ -1,27 +1,27 @@
-"""A caller parked in ``wait_for_agent`` on its close review survives the watchdogs (#20713).
+"""A caller parked in ``wait_for_agent`` on its close review survives lifecycle sweeps.
 
 End-to-end over the real seams: ``launch_close_review`` persists the review and
 spawns the validator run; the caller parks through the real ``wait_for_agent``
 tool; the idle and stuck watchdogs leave the parked caller alone; the validator
 submits its verdict through ``submit_close_review``; terminal delivery resolves
-the durable review payload and wakes the caller; the watchdogs resume, and the
-caller can retry ``close_task`` after an invalid verdict.
+the durable review payload and wakes the caller; a valid verdict leaves time for
+cooperative ``end_agent_run`` while abandoned callers retain a bounded fallback.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.terminal_delivery import deliver_and_cleanup_terminal_run
+from gobby.autonomous.progress_tracker import ProgressType
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
@@ -32,11 +32,12 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     submit_close_review,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.sessions.handoff_records import get_agent_end_handoff
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.agentic_close_review import TASK_CLOSE_VALIDATOR_AGENT
 from gobby.utils.session_context import (
     reset_current_agent_run_id,
@@ -78,16 +79,34 @@ class _Harness:
     ) -> None:
         self.db = temp_db
         self.runs = runs
-        self.caller_session = str(session["id"])
+        self.parent_session = str(session["id"])
+        self.project_id = str(sample_project["id"])
+        self.caller_session = str(
+            session_manager.register(
+                external_id="task-close-caller-session",
+                machine_id=str(session["machine_id"]),
+                source="claude",
+                project_id=self.project_id,
+                parent_session_id=self.parent_session,
+                agent_depth=1,
+            ).id
+        )
         self.validator_session = str(
             session_manager.register(
                 external_id="task-close-validator-session",
                 machine_id=str(session["machine_id"]),
                 source="claude",
-                project_id=str(sample_project["id"]),
+                project_id=self.project_id,
+                parent_session_id=self.caller_session,
+                agent_depth=2,
             ).id
         )
-        self.project_id = str(sample_project["id"])
+        self.task_manager = LocalTaskManager(temp_db)
+        self.task = self.task_manager.create_task(
+            project_id=self.project_id,
+            title="Oversized close",
+            validation_criteria="Criterion.",
+        )
         self.wakes: list[tuple[str, str, dict[str, Any]]] = []
         self.completion_registry = CompletionEventRegistry(wake_callback=self._wake)
         self.stuck_detector = MagicMock()
@@ -100,6 +119,7 @@ class _Harness:
             db=temp_db,
             stuck_detector=self.stuck_detector,
             completion_registry=self.completion_registry,
+            task_manager=self.task_manager,
             tmux_config=TmuxConfig(
                 idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
             ),
@@ -111,31 +131,28 @@ class _Harness:
             run_id=_rid("run-close-review-caller"),
             terminal_id="gobby-close-review-caller",
             child_session_id=self.caller_session,
+            task_id=self.task.id,
         )
         self.spawned: list[str] = []
         self.ctx = cast(
             RegistryContext,
             SimpleNamespace(
-                task_manager=SimpleNamespace(db=temp_db),
+                task_manager=self.task_manager,
                 agent_registry=SimpleNamespace(call=self._spawn_validator),
                 validation_config=None,
             ),
         )
         runner = MagicMock()
+        runner.run_storage = runs
         runner.get_run.side_effect = runs.get
+        runner.complete_run.side_effect = runs.complete
+        runner.terminal_runtime_registry = self.monitor._terminal_services.registry
+        self.runner = runner
         self.agents = create_agents_registry(
-            runner, db=temp_db, completion_registry=self.completion_registry
-        )
-        self.task = Task(
-            id=str(uuid4()),
-            project_id=self.project_id,
-            title="Oversized close",
-            priority=2,
-            task_type="task",
-            created_at=datetime(2026, 8, 22, tzinfo=UTC),
-            updated_at=datetime(2026, 8, 22, tzinfo=UTC),
-            seq_num=4242,
-            validation_criteria="Criterion.",
+            runner,
+            db=temp_db,
+            completion_registry=self.completion_registry,
+            session_manager=session_manager,
         )
 
     async def _wake(self, session_id: str, message: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -217,14 +234,20 @@ class _Harness:
         evaluate: Callable[..., Awaitable[CloseEvaluation]] = AsyncMock(
             return_value=self._reviewed(status)
         )
-        commit = AsyncMock(
-            return_value={
+
+        async def commit_close(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            self.task_manager.close_task(
+                self.task.id,
+                reason="Done",
+                closed_commit_sha="abc",
+            )
+            return {
                 "success": True,
                 "closed": True,
                 "task_id": self.task.id,
                 "commit_shas": ["abc"],
             }
-        )
+
         token = set_current_agent_run_id(run_id)
         try:
             with session_context_for_test(self.validator_session):
@@ -237,7 +260,7 @@ class _Harness:
                         "feedback": status,
                     },
                     evaluate_close=evaluate,
-                    commit_close=commit,
+                    commit_close=commit_close,
                 )
         finally:
             reset_current_agent_run_id(token)
@@ -256,6 +279,38 @@ class _Harness:
             result=None,
             message="",
             run_db=run_db,
+        )
+
+    async def cooperative_end(self) -> dict[str, Any]:
+        """Persist the caller's structured report through the real lifecycle tool."""
+        token = set_current_agent_run_id(self.caller_run.id)
+        try:
+            with session_context_for_test(self.caller_session):
+                result = await self.agents._tools["end_agent_run"].func(
+                    current_state="The async close verdict was received and the task is closed.",
+                    next_steps=["Review and land the committed task branch."],
+                    what_was_accomplished=[
+                        "Validated the async close and preserved cooperative handoff delivery."
+                    ],
+                    references=[f"#{self.task.seq_num}"],
+                )
+        finally:
+            reset_current_agent_run_id(token)
+        return cast(dict[str, Any], result)
+
+    def age_close_review_delivery(self) -> None:
+        """Move the delivered verdict beyond the existing stagnation boundary."""
+        self.db.execute(
+            """
+            UPDATE loop_progress
+            SET recorded_at = %s
+            WHERE session_id = %s AND progress_type = %s
+            """,
+            (
+                (datetime.now(UTC) - timedelta(seconds=601)).isoformat(),
+                self.caller_session,
+                ProgressType.TASK_CLOSE_REVIEW_COMPLETED.value,
+            ),
         )
 
     def age_idle_state(self) -> None:
@@ -301,7 +356,7 @@ def harness(
     )
 
 
-async def test_caller_parked_on_its_close_review_survives_until_the_verdict_lands(
+async def test_closed_task_waits_for_verdict_and_cooperative_structured_handoff(
     harness: _Harness,
 ) -> None:
     launched = await harness.close_task()
@@ -326,6 +381,9 @@ async def test_caller_parked_on_its_close_review_survives_until_the_verdict_land
     assert submitted["success"] is True
     assert submitted["review_status"] == "closed"
     assert submitted["terminal_payload"]["event"] == "task_close_review_completed"
+    assert await harness.monitor.check_completed_task_agents() == 0
+    caller = harness.runs.get(harness.caller_run.id)
+    assert caller is not None and caller.status == "running"
 
     delivery = await harness.validator_run_ends(validator_run_id)
     assert delivery == {harness.caller_session: True}
@@ -335,15 +393,65 @@ async def test_caller_parked_on_its_close_review_survives_until_the_verdict_land
     assert (delivered["status"], delivered["closed"]) == ("closed", True)
     assert delivered["run_id"] == validator_run_id
     assert harness.completion_registry.is_awaiting(harness.caller_session) is False
+    assert await harness.monitor.check_completed_task_agents() == 0
+    caller = harness.runs.get(harness.caller_run.id)
+    assert caller is not None and caller.status == "running"
 
-    # The wait resolved: the next wait_for_agent returns the finished run outright,
-    # and ordinary watchdog handling resumes on the caller.
+    # The verdict was consumed and the caller gets a cooperative completion turn.
     resolved = await harness.wait_for_agent(validator_run_id)
     assert resolved["completed"] is True
     assert resolved["notification_registered"] is False
-    idle, stuck, keys, cleanups = await harness.watchdogs_tick()
-    assert (idle, keys[:1]) == (1, ["escape"])
-    assert (stuck, cleanups) == (1, 1)
+
+    ended = await harness.cooperative_end()
+    assert ended["success"] is True
+    assert ended["run_id"] == harness.caller_run.id
+    handoff = get_agent_end_handoff(harness.db, harness.caller_run.id)
+    assert handoff is not None
+    assert "async close verdict was received" in handoff.payload.rendered_markdown
+
+    with session_context_for_test(harness.parent_session):
+        result = await harness.agents._tools["get_agent_result"].func(harness.caller_run.id)
+        waited = await harness.agents._tools["wait_for_agent"].func(harness.caller_run.id)
+    assert result["result"] == handoff.payload.rendered_markdown
+    assert waited["completed"] is True
+    assert waited["result"] == handoff.payload.rendered_markdown
+
+
+async def test_abandoned_closed_task_uses_stagnation_fallback(harness: _Harness) -> None:
+    launched = await harness.close_task()
+    [validator_run_id] = harness.spawned
+    await harness.wait_for_agent(validator_run_id)
+    submitted = await harness.validator_submits(
+        validator_run_id,
+        launched["review_id"],
+        "valid",
+    )
+    assert submitted["review_status"] == "closed"
+    await harness.validator_run_ends(validator_run_id)
+    assert await harness.monitor.check_completed_task_agents() == 0
+
+    harness.age_close_review_delivery()
+    with (
+        patch.object(
+            harness.monitor._cleanup_handler,
+            "_run_capture_policy",
+            new=AsyncMock(return_value=(False, None)),
+        ),
+        patch.object(
+            harness.monitor._cleanup_handler,
+            "post_terminal_cleanup",
+            new=AsyncMock(),
+        ),
+    ):
+        handled = await harness.monitor.check_completed_task_agents()
+
+    completed = harness.runs.get(harness.caller_run.id)
+    assert handled == 1
+    assert completed is not None
+    assert completed.status == "success"
+    assert completed.terminal_reason == "task_completed"
+    assert "Task completion:" in (completed.result or "")
+    assert get_agent_end_handoff(harness.db, harness.caller_run.id) is None
 
 
 async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harness) -> None:
