@@ -176,9 +176,7 @@ class TestHandlePlanModeEntry:
 
         assert first.context is not None
         assert skill_fetch_directive("plan") in first.context
-        assert second.context is None or (
-            skill_fetch_directive("plan") not in second.context
-        )
+        assert second.context is None or (skill_fetch_directive("plan") not in second.context)
         assert variables["plan_skill_directive_delivered"] is True
 
     @pytest.mark.asyncio
@@ -278,9 +276,7 @@ class TestHandlePlanModeEntry:
             variables=variables,
         )
 
-        assert response.context is None or (
-            skill_fetch_directive("plan") not in response.context
-        )
+        assert response.context is None or (skill_fetch_directive("plan") not in response.context)
         assert "plan_skill_directive_delivered" not in variables
 
 

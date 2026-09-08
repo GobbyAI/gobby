@@ -624,6 +624,31 @@ class TestTddPathHelpers:
         assert first_tdd_code_path({}, tool_input) == "src/new_module.py"
 
 
+def test_tdd_paths_cover_every_source_language() -> None:
+    source_paths = [
+        "crates/gclient/src/ui/sidebar/agents.rs",
+        "web/src/app.ts",
+        "scripts/run.sh",
+    ]
+    for path in source_paths:
+        event_data = {"canonical_file_paths": [path]}
+        assert first_tdd_code_path(event_data, {}) == path
+        assert first_tdd_test_path(event_data, {}) == ""
+
+    test_paths = [
+        "crates/gclient/tests/parity/sidebar.rs",
+        "src/foo_test.go",
+        "web/src/app.spec.ts",
+    ]
+    for path in test_paths:
+        event_data = {"canonical_file_paths": [path]}
+        assert first_tdd_code_path(event_data, {}) == ""
+        assert first_tdd_test_path(event_data, {}) == path
+
+    for path in ["docs/x.md", "src/gobby/__init__.py", "src/gobby/conftest.py"]:
+        assert first_tdd_code_path({"canonical_file_paths": [path]}, {}) == ""
+
+
 class TestTouchesClaudeMemoryPath:
     def test_matches_canonical_path(self) -> None:
         event_data = {

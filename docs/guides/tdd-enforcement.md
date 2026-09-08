@@ -83,7 +83,7 @@ criteria.
 
 ## Runtime Nudges
 
-Workflow rules still provide test-first nudges for interactive developer
+Workflow rules provide an edit-time test-first gate for interactive developer
 sessions:
 
 | Rule | Event | Path |
@@ -91,9 +91,22 @@ sessions:
 | `enforce-tdd-block` | `before_tool` | `src/gobby/install/shared/workflows/rules/tdd-enforcement/enforce-tdd-block.yaml` |
 | `enforce-tdd-track-tests` | `after_tool` | `src/gobby/install/shared/workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml` |
 
-These rules inspect write/edit tool calls when `enforce_tdd` is true. They are
-supporting guardrails; the authoritative requirement for new expansion leaves
-is the task metadata and completion evidence.
+The gate activates when `enforce_tdd` is true or a claimed task requires TDD
+through its label, additional skill, validation criteria, or session policy.
+It covers every hand-maintained source extension used by the monolith guard:
+Python, TypeScript/JavaScript, CSS, Rust, and shell. Test-convention paths in any
+language are recognized by one shared classifier.
+
+Claim refresh derives `claimed_task_requires_tdd` and the ordered,
+deduplicated `claimed_task_acceptance_test_paths` from current task metadata.
+When acceptance criteria name tests, writing any named path records its
+canonical repository-relative path in `tdd_tests_written` and opens the source
+write gate. Without named acceptance tests, any test-convention file under the
+task's targets opens it. Retrying the same production write does not bypass the
+gate, and the rule never rewrites task validation criteria.
+
+These rules are supporting guardrails; task metadata and transcript-backed
+completion evidence remain authoritative at close.
 
 ## Verification Checklist
 
@@ -119,4 +132,4 @@ When auditing this guide, verify:
 - [Variables](./variables.md)
 - [Orchestration](./orchestration.md)
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-08_

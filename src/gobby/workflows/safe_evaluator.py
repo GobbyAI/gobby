@@ -512,6 +512,7 @@ def build_condition_helpers(
         task_state_in,
         task_tree_complete,
         task_type_in,
+        tdd_gate_open,
         touches_claude_memory_path,
         touches_docker_policy_path,
         touches_ui_design_path,
@@ -535,6 +536,7 @@ def build_condition_helpers(
         "normalize_path": lambda p: p.replace("\\", "/"),
         "first_tdd_code_path": first_tdd_code_path,
         "first_tdd_test_path": first_tdd_test_path,
+        "tdd_gate_open": tdd_gate_open,
         "is_gobby_build_command": is_gobby_build_command,
         "is_validation_command": is_validation_command,
         "paths_written_this_turn": lambda paths: paths_written_this_turn(

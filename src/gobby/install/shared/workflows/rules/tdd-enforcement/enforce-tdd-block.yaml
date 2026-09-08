@@ -2,28 +2,17 @@ tags: [tdd-enforcement, enforcement, gobby, default]
 
 rules:
   enforce-tdd-block:
-    description: "One-shot TDD nudge: block first Write to new code files until test is written"
+    description: "Block production source writes until a qualifying test is written"
     event: before_tool
     enabled: true
     priority: 32
     when: >-
-      variables.get('enforce_tdd')
+      (variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd'))
       and event.data.get('canonical_tool_kind') == 'write'
-      and first_tdd_code_path(event.data, tool_input) not in ([None, ''] + variables.get('tdd_nudged_files', []))
+      and first_tdd_code_path(event.data, tool_input)
+      and not tdd_gate_open(variables)
     effects:
-      - type: set_variable
-        variable: tdd_nudged_files
-        value: "variables.get('tdd_nudged_files', []) + [first_tdd_code_path(event.data, tool_input)]"
-      - type: mcp_call
-        when: "variables.get('task_claimed')"
-        server: gobby-tasks
-        tool: update_task
-        arguments:
-          task_id: "{{ variables.get('claimed_tasks', {}).values() | list | first | default('') }}"
-          validation_criteria: "TDD: Test files required for: {{ variables.get('tdd_nudged_files', []) | join(', ') }}"
       - type: block
         tools: [Write, Bash]
         reason: |
-          Use a test-first flow: create a test file (in tests/ or with a test_
-          prefix) covering the expected behavior, then retry creating
-          {{ first_tdd_code_path(event.data, tool_input).split('/')[-1] }}.
+          Use a test-first flow. Write {% if variables.get('claimed_task_acceptance_test_paths') %}one of the claimed task's acceptance tests: {{ variables.get('claimed_task_acceptance_test_paths') | join(', ') }}{% else %}any test-convention file under the task's targets{% endif %}, then retry writing {{ first_tdd_code_path(event.data, tool_input) }}.

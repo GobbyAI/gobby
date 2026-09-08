@@ -562,13 +562,13 @@ After each task completes, update `task_affected_files` with `annotation_source=
 
 ## Stage 6: Deterministic TDD Enforcement
 
-**Goal**: Replace prompt-based TDD expansion with deterministic rule enforcement. Agents are blocked from writing implementation code until tests exist, and validation criteria are injected automatically per-file to enforce the outcome. Independent of Stages 2-5.
+**Goal**: Replace prompt-based TDD expansion with deterministic rule enforcement. Agents are blocked from writing implementation code until tests exist. Independent of Stages 2-5.
 
 ### Design
 
 Two-layer enforcement:
-- **Process layer** (PreToolUse rule): One-shot nudge — blocks the first Write to a new code file, tells the agent to write a test first
-- **Outcome layer** (validation criteria): Per-file criteria injected via `mcp_call` to `update_task` — task can't close without tests for each file
+- **Process layer** (PreToolUse rule): blocks production writes until a qualifying test path has been written
+- **Outcome layer** (close validation): transcript evidence proves the required red/green sequence for named acceptance tests
 
 ### 6a. Add Jinja2 rendering to `mcp_call` arguments
 
@@ -605,9 +605,12 @@ Add alongside existing variables:
   enforce_tdd:
     value: false
     description: "Enable TDD enforcement — block implementation writes until tests exist"
-  tdd_nudged_files:
+  claimed_task_requires_tdd:
+    value: false
+    description: "Whether a currently claimed task requires TDD"
+  claimed_task_acceptance_test_paths:
     value: []
-    description: "Tracks files that have been TDD-nudged (internal, do not set manually)"
+    description: "Acceptance test paths derived from claimed task criteria"
   tdd_tests_written:
     value: []
     description: "Tracks test files written during TDD (internal, do not set manually)"
@@ -622,50 +625,30 @@ tags: [tdd, enforcement]
 
 rules:
   enforce-tdd-block:
-    description: "Block writes to new code files until a test is written first"
+    description: "Block production source writes until a qualifying test is written"
     event: before_tool
     enabled: false
     priority: 35
     when: >
-      variables.get('enforce_tdd')
-      and tool_input.get('file_path', '') not in variables.get('tdd_nudged_files', [])
-      and not tool_input.get('file_path', '').endswith(('.yaml', '.yml', '.json', '.toml', '.md', '.txt', '.cfg', '.ini', '.lock'))
-      and not tool_input.get('file_path', '').endswith('__init__.py')
-      and not tool_input.get('file_path', '').startswith('tests/')
-      and 'test_' not in tool_input.get('file_path', '').split('/')[-1]
-      and '_test.' not in tool_input.get('file_path', '')
-      and '.test.' not in tool_input.get('file_path', '')
-      and '_spec.' not in tool_input.get('file_path', '')
-      and '.spec.' not in tool_input.get('file_path', '')
+      (variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd'))
+      and event.data.get('canonical_tool_kind') == 'write'
+      and first_tdd_code_path(event.data, tool_input)
+      and not tdd_gate_open(variables)
     effects:
-      - type: set_variable
-        variable: tdd_nudged_files
-        value: "variables.get('tdd_nudged_files', []) + [tool_input.get('file_path', '')]"
-      - type: mcp_call
-        server: gobby-tasks
-        tool: update_task
-        arguments:
-          task_id: "{{ claimed_task_id }}"
-          validation_criteria: "{{ 'Tests required for:\\n' + (variables.get('tdd_nudged_files', []) | join('\\n')) }}"
       - type: block
-        tools: [Write]
+        tools: [Write, Bash]
         reason: >
-          TDD enforcement: write a test for `{{ tool_input.get('file_path', '') }}` before
-          writing the implementation. Create a failing test first, then implement to make it pass.
+          Write one of the claimed task's acceptance tests, or any test-convention
+          file when none is named, before writing production source.
 ```
 
 **How it works — step-by-step walkthrough:**
 1. Agent tries to Write `src/gobby/foo/bar.py`
-2. Rule checks: `enforce_tdd` is true, file is a code file, not a test, not yet nudged
-3. Effects fire in order (non-block effects first, block deferred):
-   - `set_variable`: adds `src/gobby/foo/bar.py` to `tdd_nudged_files` list (one-shot)
-   - `mcp_call`: calls `update_task` with `validation_criteria` rendered from the full `tdd_nudged_files` list (now includes current file). Jinja2 rendering enabled by 6a.
-   - `block`: prevents the Write, tells agent to write test first
-4. Agent writes `tests/foo/test_bar.py` — rule doesn't fire (test file, excluded by conditions)
-5. Agent retries `src/gobby/foo/bar.py` — rule doesn't fire (file already in `tdd_nudged_files`)
-6. At close time, `TaskValidator` checks `validation_criteria` which now lists every implementation file that needs tests
-
-**Note on set_variable + mcp_call ordering**: `set_variable` fires before `mcp_call` (both are non-block effects, processed in declaration order). So when the `mcp_call` renders `tdd_nudged_files`, it already includes the current file path.
+2. Rule checks the explicit session policy or derived claimed-task TDD requirement.
+3. The write remains blocked while no qualifying test path appears in `tdd_tests_written`.
+4. Agent writes a named acceptance test, or any test-convention path when none is named.
+5. The after-tool rule records the canonical repository-relative test path.
+6. Agent retries `src/gobby/foo/bar.py`; the open gate allows the production write.
 
 ### 6d. Rule: `enforce-tdd-track-tests` (after_tool)
 
@@ -681,18 +664,14 @@ rules:
     enabled: false
     priority: 35
     when: >
-      variables.get('enforce_tdd')
+      (variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd'))
+      and event.data.get('canonical_tool_kind') == 'write'
       and not event.data.get('error')
-      and (tool_input.get('file_path', '').startswith('tests/')
-           or 'test_' in tool_input.get('file_path', '').split('/')[-1]
-           or '_test.' in tool_input.get('file_path', '')
-           or '.test.' in tool_input.get('file_path', '')
-           or '_spec.' in tool_input.get('file_path', '')
-           or '.spec.' in tool_input.get('file_path', ''))
+      and first_tdd_test_path(event.data, tool_input)
     effect:
       type: set_variable
       variable: tdd_tests_written
-      value: "variables.get('tdd_tests_written', []) + [tool_input.get('file_path', '')]"
+      value: "variables.get('tdd_tests_written', []) + [first_tdd_test_path(event.data, tool_input)]"
 ```
 
 Tracks which test files were written. Useful for observability/metrics — e.g., "agent wrote 3 tests before 5 implementation files."
@@ -701,10 +680,10 @@ Tracks which test files were written. Useful for observability/metrics — e.g.,
 
 | Choice | Rationale |
 |--------|-----------|
-| Write only, not Edit | Write creates new files. Edit modifies existing. TDD targets new code, not modifications |
-| One-shot nudge via `tdd_nudged_files` | No complex state machine. Block once, let through after. Real enforcement at validation |
-| `mcp_call` with Jinja2 rendering | Deterministic per-file criteria on the task, not prompt-based. Requires 6a (small engine change) |
-| Per-file validation_criteria | Each blocked file is listed. Validator has exact file list to check against git diff |
+| Canonical writes | Native Write/Edit tools and shell writes share the same normalized write event |
+| Persistent edit-time gate | Repeated production writes remain blocked until a qualifying test is recorded |
+| Claimed-task acceptance paths | Named acceptance tests open the gate exactly; unnamed tasks accept any test-convention path |
+| Close-time transcript validation | Red/green ordering remains authoritative and does not mutate task criteria |
 | Config/init files excluded | `__init__.py`, `.yaml`, `.json`, `.md` etc. aren't TDD targets |
 | Test detection via filename patterns | `tests/`, `test_*`, `*_test.*`, `*.test.*`, `*_spec.*`, `*.spec.*` — covers Python, JS/TS, Go |
 | Default `false` | Opt-in. Not everyone wants TDD enforcement |
@@ -712,16 +691,13 @@ Tracks which test files were written. Useful for observability/metrics — e.g.,
 
 ### Verification
 
-- Enable `enforce_tdd = true` on a session
-- Attempt to Write a new `.py` file — confirm block fires with TDD message
-- Confirm `tdd_nudged_files` variable contains the file path
-- Confirm `update_task` was called with per-file validation_criteria
-- Write a test file — confirm no block, confirm `tdd_tests_written` updated
-- Retry the `.py` file — confirm it goes through (already nudged)
-- Close task — confirm validation checks the per-file test requirements
-- Confirm config/init/`.md` files are not blocked
-- Confirm Edit tool is not blocked (existing file modifications)
-- Test mcp_call Jinja2 rendering works for other use cases too
+- Claim a TDD-required task with a named acceptance test
+- Attempt a production write in each supported source language and confirm the block reason names the acceptance path
+- Repeat the same production write and confirm the block remains active
+- Write the named test and confirm its canonical path is recorded in `tdd_tests_written`
+- Retry the production write and confirm the open gate allows it
+- Enable `enforce_tdd = true` without a claimed task and confirm any test-convention write opens the gate
+- Confirm config, docs, test paths, and Python init files are not treated as production writes
 
 ---
 

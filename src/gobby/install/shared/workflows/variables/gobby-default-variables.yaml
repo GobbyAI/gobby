@@ -45,10 +45,13 @@ variables:
     description: Default require_commit_before_status to true
   enforce_tdd:
     value: false
-    description: "Enable TDD enforcement (block new code files until test is written first)"
-  tdd_nudged_files:
+    description: "Enable TDD enforcement without a claimed TDD-required task"
+  claimed_task_requires_tdd:
+    value: false
+    description: "Whether any task claimed by this session requires TDD"
+  claimed_task_acceptance_test_paths:
     value: []
-    description: "Files that have been TDD-nudged this session (internal)"
+    description: "Acceptance test paths derived from claimed task validation criteria"
   tdd_tests_written:
     value: []
     description: "Test files written during TDD this session (internal)"
