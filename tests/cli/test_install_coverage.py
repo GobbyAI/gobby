@@ -49,6 +49,7 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     runtime.require_database.return_value = MagicMock()
     runtime.require_config.return_value.hooks.provider_timeout = 120
     install_module = importlib.import_module("gobby.cli.install")
+    monkeypatch.setattr(install_module, "_stdin_is_interactive", lambda: True)
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
     monkeypatch.setattr(
         install_module,
@@ -1357,6 +1358,10 @@ class TestInstallFilesHomeLifecycle:
             patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
             patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+            ),
             patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
             patch("gobby.cli.install.publish_install_files_home", side_effect=publish),
             patch("gobby.cli.install.ensure_personal_project_identity", side_effect=identity),

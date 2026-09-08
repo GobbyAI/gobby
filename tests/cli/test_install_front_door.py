@@ -290,7 +290,7 @@ def test_full_install_exits_before_provisioning_without_docker(
     monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: "/usr/bin/tool")
     monkeypatch.setattr(install_module, "install_postgres", install_postgres)
 
-    result = CliRunner().invoke(install_module.install, [])
+    result = CliRunner().invoke(install_module.install, ["--no-interactive"])
 
     assert result.exit_code == 1
     assert "Docker daemon is required for full install" in result.output

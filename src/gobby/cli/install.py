@@ -97,6 +97,31 @@ from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
 
+_INSTALL_INPUT_ERROR = (
+    "`gobby install` requires interactive input, but stdin is not a TTY or reached EOF. "
+    "Run `gobby install --no-interactive` for automation. To limit work to selected "
+    "components, run `gobby install claude codex git-hooks`."
+)
+
+
+class _InstallCommand(click.Command):
+    """Translate prompt EOF into an actionable install diagnostic."""
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except click.Abort as exc:
+            raise click.ClickException(_INSTALL_INPUT_ERROR) from exc
+
+
+def _stdin_is_interactive() -> bool:
+    """Return whether install prompts can read from an interactive terminal."""
+    try:
+        return sys.stdin.isatty()
+    except OSError:
+        return False
+
+
 # Re-export for backwards compatibility (tests import from here)
 _ensure_daemon_config = ensure_daemon_config
 
@@ -227,7 +252,7 @@ def _install_components(
         sys.exit(1)
 
 
-@click.command("install")
+@click.command("install", cls=_InstallCommand)
 @click.argument("components", nargs=-1, type=click.Choice(COMPONENTS), metavar="[COMPONENT]...")
 @click.option(
     "--embedding-url",
@@ -311,6 +336,8 @@ def install(
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
+    if not components and not no_interactive_flag and not _stdin_is_interactive():
+        raise click.ClickException(_INSTALL_INPUT_ERROR)
 
     embedding = EmbeddingOverrides(
         url=embedding_url,
