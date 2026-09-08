@@ -52,6 +52,12 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Read exact, commit-bound evidence without agent or model orchestration
+    Evidence {
+        /// Evidence request using the versioned JSON request contract
+        #[arg(long, value_name = "JSON")]
+        request_json: String,
+    },
 
     // ── Project Setup ────────────────────────────────────────────────
     /// Index this machine's registered Gobby checkout and install gcode skills

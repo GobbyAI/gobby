@@ -11,7 +11,7 @@ use std::path::PathBuf;
 fn services_for(args: &[&str]) -> config::ServiceConfigSelection {
     let cli = Cli::try_parse_from(std::iter::once("gcode").chain(args.iter().copied()))
         .expect("command parses");
-    service_config_selection(&cli.command)
+    service_config_selection(&cli.command, None)
 }
 
 #[test]

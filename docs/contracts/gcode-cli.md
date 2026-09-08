@@ -5,7 +5,12 @@ The machine-readable contract lives at `crates/gcode/contract/gcode.contract.jso
 
 ## Version
 
-`contract_version`: 8
+`contract_version`: 9
+
+Version 9 adds `evidence --request-json`, a JSON-only, exact-commit read surface
+for deterministic source citations, commit metadata, indexed search, and graph
+facts. It returns the evidence schema v1 response unchanged from the Rust
+evidence library and exposes every library failure as a typed exit-2 error.
 
 Version 8 adds `schema-identity --json`, which prints the schema identity embedded
 in the binary (`baseline_version`, `latest_version`, `baseline_checksum`,
@@ -60,6 +65,84 @@ score`.
 - `repo-outline` — paged directory summaries with complete file groups
 
 Stored symbol records carry the AI `summary`, never the raw `docstring`.
+
+## Deterministic Evidence
+
+Invoke the machine surface as:
+
+```text
+gcode --project <ROOT> evidence --request-json '<EVIDENCE_REQUEST_JSON>'
+```
+
+`--request-json` is required and accepts exactly one evidence schema v1 object.
+Unknown fields, operation tags, selector tags, and enum values are rejected as
+`invalid_evidence_request`. Output is always compact JSON; explicit
+`--format text` returns `unsupported_evidence_format`. `--allow-stale` is
+explicitly forbidden and returns `stale_admission_bypass_forbidden`—evidence
+never weakens exact-snapshot admission.
+
+Every request contains `schema_version: 1`, a complete `binding`, one flattened
+operation, `max_bytes` (default 16384), and an optional opaque `continuation`.
+The binding contains `project_id`, exact `commit_oid`, `tree_oid`,
+`inventory_digest`, and commit provenance: parent OIDs, comparison parent/kind,
+changed-path digest, and complete changed-path records. The CLI resolves the
+managed checkout selected by global `--project` (or cwd), prepares that exact
+commit from local Git objects, and compares the whole supplied binding to the
+prepared snapshot. A mismatch never falls back to HEAD or another project.
+
+Operations and selector semantics are:
+
+- `{"operation":"read","read":...}`: `range` uses a safe tracked path and
+  one-based inclusive `start_line`/`end_line`; `symbol` requires one exact
+  `path` plus `qualified_name` indexed at the snapshot hash; `commit_metadata`
+  emits one record per changed path (or one empty-change record).
+- `{"operation":"search","search":...}`: lanes are `symbol` (exact name or
+  qualified name), `lexical_symbol`, `literal`, `regex`, `content`, and
+  `hybrid`. `paths` are safe snapshot-relative scopes; `kind` is valid only for
+  symbol lanes. Empty results carry
+  `search_absence_not_repository_negative`; they are not represented as proof
+  of a repository-wide negative.
+- `{"operation":"graph","graph":...}`: queries are `callers`, `callees`,
+  `usages`, `imports`, `directed_path`, and `scoped_view`, with typed source and
+  target selectors, bounded `depth`, relations, direction, and result limit.
+  Missing or unavailable graph state is an explicit `graph_unavailable` error.
+
+The response echoes the canonical request (with continuation removed), its
+fingerprint, the verified snapshot binding, contract identity, whole evidence
+items, completeness state, applied bounds, exclusions, warnings, and an
+optional continuation. Source citations include exact blob/content/excerpt
+hashes plus line and byte bounds. Commit metadata is derived from the bound Git
+commit. Graph evidence carries a hash-verified source citation, owner content
+hash, endpoints, direction/relation, and `extracted`, `inferred`, or
+`unresolved` provenance. Indexed facts only locate evidence: source bytes are
+read from the bound Git blob and symbol ranges/hashes are reverified before
+return.
+
+Pagination sorts and deduplicates semantic items, then admits the largest whole
+prefix whose sum of serialized item bytes fits `max_bytes`. It never slices an
+item. If any remaining item is itself too large, the request fails with
+`narrowing_required` and returns no partial success. A continuation is bound to
+the canonical request fingerprint; changing the binding, selector, limits, or
+byte budget returns `continuation_mismatch`. `complete`, `completeness`,
+`returned_items`, `total_items`, `serialized_item_bytes`, index truncation, and
+graph traversal truncation describe the actual page and upstream bounds.
+
+Evidence reads never invoke agent/model orchestration, update source files,
+write facts, autoindex, or retry against stale data. Hybrid selectors require a
+complete semantic identity. The CLI currently installs no audited semantic
+provider, so a valid hybrid request fails explicitly with `semantic_failure`
+rather than falling back to lexical results; missing or malformed identity is
+`semantic_identity_required`, and any future provider must match it exactly.
+
+All evidence contract errors exit `2`, write one JSON object to stderr, and
+leave stdout empty. Codes include `snapshot_binding_mismatch`,
+`missing_git_object`, `invalid_object_id`, `invalid_selector`, `unsafe_path`,
+`path_not_tracked`, `fact_snapshot_mismatch`, `index_incomplete`,
+`index_unavailable`, `graph_unavailable`, `semantic_failure`,
+`semantic_identity_mismatch`, `continuation_mismatch`, `narrowing_required`,
+and `unsupported_schema`. Recovery text tells callers whether to correct the
+request, restore a managed store, fetch the exact Git object, or repair index
+facts; the CLI performs none of those mutations automatically.
 
 ## Scope
 

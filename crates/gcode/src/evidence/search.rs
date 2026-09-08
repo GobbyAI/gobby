@@ -272,7 +272,11 @@ fn hybrid_search(
     let provider = library
         .hybrid
         .as_ref()
-        .ok_or(EvidenceError::SemanticIdentityRequired)?;
+        .ok_or_else(|| EvidenceError::SemanticFailure {
+            reason:
+                "hybrid evidence is unavailable because no audited semantic provider is configured"
+                    .to_string(),
+        })?;
     let effective = provider
         .effective_identity()
         .map_err(|reason| EvidenceError::SemanticFailure { reason })?;
