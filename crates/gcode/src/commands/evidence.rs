@@ -174,7 +174,7 @@ impl HybridSearch for NativeHybridSearch {
     ) -> std::result::Result<FactPage<String>, String> {
         let identity = self.effective_identity()?;
         let limit = selector.limit.saturating_add(1);
-        let mut hits = audited_semantic_search(
+        let (mut hits, backend_truncated) = audited_semantic_search(
             &self.ctx,
             &selector.query,
             limit,
@@ -183,7 +183,7 @@ impl HybridSearch for NativeHybridSearch {
             identity.dimension,
         )
         .map_err(|error| error.to_string())?;
-        let truncated = hits.len() > selector.limit;
+        let truncated = backend_truncated || hits.len() > selector.limit;
         hits.truncate(selector.limit);
         Ok(FactPage {
             items: hits.into_iter().map(|(symbol_id, _)| symbol_id).collect(),

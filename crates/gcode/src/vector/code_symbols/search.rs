@@ -48,7 +48,7 @@ pub(crate) fn audited_semantic_search(
     expected_endpoint: &str,
     expected_model: &str,
     expected_dimension: usize,
-) -> Result<Vec<(String, f64)>, SearchError> {
+) -> Result<(Vec<RankedHit>, bool), SearchError> {
     if ctx.runtime_config_capture_degraded() {
         return Err(SearchError::AuditedSemantic(
             "runtime configuration capture is degraded".to_string(),
@@ -71,7 +71,12 @@ pub(crate) fn audited_semantic_search(
     let fetch_limit = post_filter_fetch_limit(limit);
     let hits = vector_search_strict(qdrant, &collection, &embedding, fetch_limit)
         .map_err(|error| SearchError::VectorSearch(error.to_string()))?;
-    post_filter_ranked_hits(ctx, hits, limit)
+    // Filtering cannot establish that the backend exhausted its ranked candidates.
+    let backend_truncated = hits.len() >= fetch_limit;
+    Ok((
+        post_filter_ranked_hits(ctx, hits, limit)?,
+        backend_truncated,
+    ))
 }
 
 impl std::error::Error for SearchError {}
