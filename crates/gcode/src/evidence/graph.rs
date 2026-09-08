@@ -101,6 +101,11 @@ fn validate_selector(selector: &GraphSelector) -> Result<()> {
     if let Some(target) = &selector.target {
         validate_entity_selector(target)?;
     }
+    if selector.query != GraphQuery::DirectedPath && selector.target.is_some() {
+        return Err(EvidenceError::InvalidSelector {
+            detail: "target is valid only for directed_path".to_string(),
+        });
+    }
     let fixed_direction = match selector.query {
         GraphQuery::Callers | GraphQuery::Usages => Some(GraphDirection::Incoming),
         GraphQuery::Callees | GraphQuery::Imports | GraphQuery::DirectedPath => {
@@ -145,11 +150,6 @@ fn validate_selector(selector: &GraphSelector) -> Result<()> {
                     detail: "imports requires a path source".to_string(),
                 });
             }
-        }
-        _ if selector.target.is_some() => {
-            return Err(EvidenceError::InvalidSelector {
-                detail: "target is valid only for directed_path".to_string(),
-            });
         }
         _ if selector.source.is_none() => {
             return Err(EvidenceError::InvalidSelector {

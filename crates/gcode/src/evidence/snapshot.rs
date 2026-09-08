@@ -249,9 +249,9 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
             operation: "parse ls-tree".to_string(),
             message: "record lacks path delimiter".to_string(),
         })?;
-        let path = match std::str::from_utf8(raw_path) {
-            Ok(path) => path.to_string(),
-            Err(_) => escaped_path(raw_path),
+        let (path, unsafe_path) = match std::str::from_utf8(raw_path) {
+            Ok(path) if validate_repo_path(path).is_ok() => (path.to_string(), false),
+            _ => (escaped_path(raw_path), true),
         };
         let header = std::str::from_utf8(header).map_err(|error| EvidenceError::Git {
             operation: "parse ls-tree".to_string(),
@@ -287,7 +287,7 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
                 Some(ExclusionReason::UnsupportedObject),
             ),
         };
-        if std::str::from_utf8(raw_path).is_err() || validate_repo_path(&path).is_err() {
+        if unsafe_path {
             exclusion = Some(ExclusionReason::UnsafePath);
         }
         if size_bytes.is_some_and(|size| size > MAX_EVIDENCE_FILE_BYTES) {
@@ -366,6 +366,8 @@ fn load_changed_paths(
             "-z",
             "--no-abbrev",
             "--no-commit-id",
+            "--no-ext-diff",
+            "--no-textconv",
             "--find-renames",
             base_oid,
             commit_oid,
@@ -408,11 +410,11 @@ fn load_changed_paths(
                 });
             }
         };
-        let first_path = utf8_diff_path(fields[index])?;
+        let (first_path, first_exclusion) = canonical_diff_path(fields[index]);
         index += 1;
-        let (old_path, new_path) = match status {
-            ChangeStatus::Added => (None, Some(first_path)),
-            ChangeStatus::Deleted => (Some(first_path), None),
+        let (old_path, new_path, old_exclusion, new_exclusion) = match status {
+            ChangeStatus::Added => (None, Some(first_path), None, first_exclusion),
+            ChangeStatus::Deleted => (Some(first_path), None, first_exclusion, None),
             ChangeStatus::Renamed | ChangeStatus::Copied => {
                 if index >= fields.len() {
                     return Err(EvidenceError::Git {
@@ -420,19 +422,29 @@ fn load_changed_paths(
                         message: "rename/copy record lacks destination".to_string(),
                     });
                 }
-                let second_path = utf8_diff_path(fields[index])?;
+                let (second_path, second_exclusion) = canonical_diff_path(fields[index]);
                 index += 1;
-                (Some(first_path), Some(second_path))
+                (
+                    Some(first_path),
+                    Some(second_path),
+                    first_exclusion,
+                    second_exclusion,
+                )
             }
-            ChangeStatus::Modified | ChangeStatus::TypeChanged => {
-                (Some(first_path.clone()), Some(first_path))
-            }
+            ChangeStatus::Modified | ChangeStatus::TypeChanged => (
+                Some(first_path.clone()),
+                Some(first_path),
+                first_exclusion,
+                first_exclusion,
+            ),
         };
         records.push(ChangedPath {
             status,
             similarity: status_token.get(1..).and_then(|value| value.parse().ok()),
             old_path,
             new_path,
+            old_exclusion,
+            new_exclusion,
             old_mode: nonzero_mode(parts[0]),
             new_mode: nonzero_mode(parts[1]),
             old_blob_oid: blob_oid(parts[0], parts[2]),
@@ -450,12 +462,11 @@ fn blob_oid(mode: &str, oid: &str) -> Option<String> {
     (mode.starts_with("100") || mode == "120000").then(|| oid.to_string())
 }
 
-fn utf8_diff_path(path: &[u8]) -> Result<String> {
-    let path = std::str::from_utf8(path).map_err(|_| EvidenceError::UnsafePath {
-        path: escaped_path(path),
-    })?;
-    validate_repo_path(path)?;
-    Ok(path.to_string())
+fn canonical_diff_path(path: &[u8]) -> (String, Option<ExclusionReason>) {
+    match std::str::from_utf8(path) {
+        Ok(path) if validate_repo_path(path).is_ok() => (path.to_string(), None),
+        _ => (escaped_path(path), Some(ExclusionReason::UnsafePath)),
+    }
 }
 
 fn split_once(bytes: &[u8], delimiter: u8) -> Option<(&[u8], &[u8])> {
@@ -488,7 +499,34 @@ fn git_text(repo_root: &Path, args: &[&str]) -> Result<String> {
 
 fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut command = Command::new("git");
-    command.arg("-C").arg(repo_root).args(args);
+    let path = std::env::var_os("PATH");
+    let system_root = std::env::var_os("SYSTEMROOT");
+    command.env_clear();
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    if let Some(system_root) = system_root {
+        command.env("SYSTEMROOT", system_root);
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args([
+            "--no-replace-objects",
+            "--literal-pathspecs",
+            "-c",
+            "core.useReplaceRefs=false",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "diff.external=",
+        ])
+        .arg("-C")
+        .arg(repo_root)
+        .args(args);
     if input.is_some() || args.last() == Some(&"--stdin") {
         command.stdin(Stdio::piped());
     }
