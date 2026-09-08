@@ -15,9 +15,11 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import OverlayRegistrationRejectedError
 from gobby.storage.projects import Project
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import DirtyEditOwnershipInspectionError
 from gobby.workflows.state_manager import SessionVariableManager
@@ -298,6 +300,86 @@ async def test_release_succeeds_when_the_dirt_belongs_to_another_sessions_open_t
     assert harness.task.id not in owner_variables.get("task_edited_file_times", {})
     foreign_files = harness.variables.get_variables(foreign.id)["task_edited_files"]
     assert foreign_files[other.id] == [SHARED_PATH]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject_overlay", [False, True])
+async def test_release_uses_claimed_integration_checkout_without_main_fallback(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reject_overlay: bool,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    integration = tmp_path / "integration"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(integration), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(integration),
+        agent_session_id=harness.owner.id,
+    )
+    root = normalize_task_checkout_root(str(integration))
+    assert root is not None
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {"task_edited_file_checkouts": {harness.task.id: {root: [SHARED_PATH]}}},
+    )
+    _stamp_owner_edits(harness, {SHARED_PATH: _last_commit_epoch(integration, SHARED_PATH) - 100})
+    foreign, other = _foreign_claimant(harness)
+    harness.variables.merge_variables(
+        foreign.id,
+        {"task_edited_file_checkouts": {other.id: {root: [SHARED_PATH]}}},
+    )
+    main_body = "main_checkout_dirty = True\n"
+    worker_body = "worker_integration_dirty = True\n"
+    (harness.repo / SHARED_PATH).write_text(main_body, encoding="utf-8")
+    (integration / SHARED_PATH).write_text(worker_body, encoding="utf-8")
+    before = harness.variables.get_variables(harness.owner.id)
+    foreign_before = harness.variables.get_variables(foreign.id)
+    if reject_overlay:
+
+        def reject_registration(*args: object, **kwargs: object) -> str:
+            raise OverlayRegistrationRejectedError("integration registration rejected")
+
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_paths.resolve_operation_root",
+            reject_registration,
+        )
+
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths",
+            {"task_id": harness.task.id, "paths": [SHARED_PATH]},
+        )
+
+    if reject_overlay:
+        assert result == {
+            "success": False,
+            "error": "integration registration rejected",
+            "error_type": "checkout_unresolved",
+        }
+        assert harness.variables.get_variables(harness.owner.id) == before
+    else:
+        assert result == {
+            "success": True,
+            "task_id": harness.task.id,
+            "released_paths": [SHARED_PATH],
+            "remaining_paths": [],
+            "foreign_dirty_paths": {
+                SHARED_PATH: [{"task": f"#{other.seq_num}", "session": f"#{foreign.seq_num}"}]
+            },
+        }
+        assert harness.task.id not in harness.variables.get_variables(harness.owner.id).get(
+            "task_edited_files", {}
+        )
+    assert harness.variables.get_variables(foreign.id) == foreign_before
+    assert (harness.repo / SHARED_PATH).read_text(encoding="utf-8") == main_body
+    assert (integration / SHARED_PATH).read_text(encoding="utf-8") == worker_body
 
 
 @pytest.mark.asyncio

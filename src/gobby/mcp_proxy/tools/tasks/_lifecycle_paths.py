@@ -14,7 +14,7 @@ from gobby.mcp_proxy.tools.tasks._context import (
 )
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.project_checkouts import OverlayRegistrationRejectedError, resolve_operation_root
+from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.session_context import get_current_session_id
@@ -62,15 +62,12 @@ def _lifecycle_checkout_root(
         else ctx.checkout_machine_id(project_id)
     )
     if overlay_path:
-        try:
-            return resolve_operation_root(
-                ctx.task_manager.db,
-                project_id,
-                machine_id,
-                overlay_path=overlay_path,
-            )
-        except OverlayRegistrationRejectedError:
-            pass
+        return resolve_operation_root(
+            ctx.task_manager.db,
+            project_id,
+            machine_id,
+            overlay_path=overlay_path,
+        )
     return ctx.get_project_repo_path(project_id, machine_id)
 
 
