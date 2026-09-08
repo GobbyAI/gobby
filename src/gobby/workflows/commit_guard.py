@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ import psycopg
 from psycopg_pool import PoolTimeout
 
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
+from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -159,7 +161,7 @@ def _skip_git_global_options(tokens: list[str], index: int) -> int:
     return index
 
 
-def foreign_staged_commit_conflict(
+async def foreign_staged_commit_conflict(
     db: HubDatabase,
     event: HookEvent,
     *,
@@ -167,14 +169,15 @@ def foreign_staged_commit_conflict(
     project_id: str,
     project_path: str,
 ) -> str:
-    """Return an actionable block reason when a commit would capture foreign paths."""
+    """Inspect commit ownership without parking a workflow worker on Git."""
     invocations = parse_git_commit_invocations(_extract_shell_command(event))
     if not invocations:
         return ""
 
     try:
         try:
-            owners = _active_foreign_path_owners(
+            owners = await asyncio.to_thread(
+                _active_foreign_path_owners,
                 db,
                 session_id=session_id,
                 project_id=project_id,
@@ -189,7 +192,7 @@ def foreign_staged_commit_conflict(
         staged_paths: set[str] | None = None
         for invocation in invocations:
             if invocation.is_path_scoped:
-                candidate_paths = _git_paths(
+                candidate_paths = await _git_paths_async(
                     project_path,
                     "ls-files",
                     "-z",
@@ -201,7 +204,7 @@ def foreign_staged_commit_conflict(
                 )
             else:
                 if staged_paths is None:
-                    staged_paths = _git_paths(
+                    staged_paths = await _git_paths_async(
                         project_path,
                         "diff",
                         "--cached",
@@ -210,13 +213,10 @@ def foreign_staged_commit_conflict(
                         "--diff-filter=ACDMRTUXB",
                     )
                 candidate_paths = staged_paths
-
             for path in candidate_paths:
                 conflicts.update(owners.get(path, ()))
 
-        if not conflicts:
-            return ""
-        return _format_conflict_reason(conflicts)
+        return _format_conflict_reason(conflicts) if conflicts else ""
     except DirtyEditOwnershipInspectionError:
         logger.warning(
             "Cross-session commit ownership inspection failed",
@@ -429,6 +429,34 @@ def inspect_checkout_path_ownership(
     )
 
 
+async def inspect_checkout_path_ownership_async(
+    db: HubDatabase,
+    *,
+    project_id: str,
+    checkout_root: str,
+) -> tuple[CheckoutPathOwnership, ...]:
+    """Inspect dirty ownership without blocking a daemon worker on Git."""
+    try:
+        owners = await asyncio.to_thread(
+            _active_path_owners,
+            db,
+            project_id=project_id,
+            checkout_root=checkout_root,
+        )
+    except (psycopg.OperationalError, PoolTimeout) as exc:
+        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
+    states = await _git_status_path_states_async(checkout_root)
+    return tuple(
+        CheckoutPathOwnership(
+            path=path,
+            dirty=True,
+            staged=staged,
+            owners=owners.get(path, ()),
+        )
+        for path, staged in sorted(states.items())
+    )
+
+
 def _git_status_path_states(project_path: str) -> dict[str, bool]:
     """Map porcelain-status paths to whether each path has an index change."""
     try:
@@ -462,24 +490,36 @@ def _git_status_path_states(project_path: str) -> dict[str, bool]:
     return states
 
 
-def _git_paths(project_path: str, *args: str) -> set[str]:
-    try:
-        result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
-            ["git", *args],
-            cwd=Path(project_path),
-            check=False,
-            capture_output=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise DirtyEditOwnershipInspectionError("git ownership inspection failed") from exc
-    if result.returncode != 0:
-        stderr = os.fsdecode(result.stderr).strip()
-        raise DirtyEditOwnershipInspectionError(f"git {' '.join(args[:2])} failed: {stderr}")
+async def _git_status_path_states_async(project_path: str) -> dict[str, bool]:
+    """Map porcelain status paths to staged state through the daemon Git service."""
+    result = await daemon_git.status(project_path, timeout=10.0)
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.status
+        raise DirtyEditOwnershipInspectionError(f"git status failed: {detail}")
+
+    states: dict[str, bool] = {}
+    for entry in parse_porcelain_v1_z(result.stdout):
+        staged = entry.code[0] not in {" ", "?"}
+        for raw_path in (entry.path, entry.original_path):
+            path = normalize_task_edited_path(raw_path) if raw_path is not None else None
+            if path is not None:
+                states[path] = states.get(path, False) or staged
+    return states
+
+
+async def _git_paths_async(project_path: str, *args: str) -> set[str]:
+    result = await daemon_git.run(
+        ["--literal-pathspecs", *args],
+        cwd=project_path,
+        timeout=10.0,
+    )
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.status
+        raise DirtyEditOwnershipInspectionError(f"git {' '.join(args[:2])} failed: {detail}")
     return {
         path
-        for raw_path in result.stdout.split(b"\0")
-        if (path := normalize_task_edited_path(os.fsdecode(raw_path))) is not None
+        for raw_path in result.stdout.split("\0")
+        if (path := normalize_task_edited_path(raw_path)) is not None
     }
 
 

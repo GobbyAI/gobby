@@ -740,8 +740,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         foreign_staged_commit_conflict,
                     )
 
-                    eval_context["foreign_staged_commit_conflict"] = await asyncio.to_thread(
-                        foreign_staged_commit_conflict,
+                    eval_context[
+                        "foreign_staged_commit_conflict"
+                    ] = await foreign_staged_commit_conflict(
                         self.rule_engine.db,
                         event,
                         session_id=session_id,
