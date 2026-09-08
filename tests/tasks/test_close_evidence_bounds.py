@@ -75,7 +75,7 @@ def test_manual_review_bounds_unrelated_commands_and_keeps_required_outcomes(
         validation_criteria="Run `npm ci` successfully; Prettier must pass for web checks.",
     )
 
-    assert gate.status == "skipped"
+    assert gate.status == ("failed" if outcome == "failure" else "skipped")
     assert len(json.dumps(dict(gate.details))) < 65_536
     latest = {run["core_command"]: run for run in gate.details["latest_runs"]}
     assert latest["npx prettier --check web"]["outcome"] == "success"
@@ -146,9 +146,14 @@ def test_referenced_uncredited_commands_precede_large_diagnostic_sample() -> Non
     )
     assert gate.status == "skipped"
     assert len(json.dumps(dict(gate.details))) < 65_536
-    assert {"command": "npm ci", "reason": "stale after a later task edit"} in gate.details[
-        "uncredited_runs"
-    ]
+    stale = next(
+        run
+        for run in gate.details["uncredited_runs"]
+        if run["reason"] == "stale after a later task edit"
+    )
+    assert stale["core_command"] == "npm ci"
+    assert stale["order"] == 1
+    assert stale["invalidating_edit"]["path"] == "web/package.json"
     assert {"command": "npx prettier --check web", "reason": "unknown outcome"} in gate.details[
         "uncredited_runs"
     ]

@@ -456,9 +456,15 @@ def test_review_only_commands_keep_merge_freshness_and_wrapper_diagnostics(rerun
         task_category="manual", evidence=evidence, has_attributed_edits=True
     )
     assert gate.status == "skipped"
-    assert {"command": "npm ci", "reason": "stale after a later task edit"} in gate.details[
-        "uncredited_runs"
+    stale = [
+        run
+        for run in gate.details["uncredited_runs"]
+        if run["reason"] == "stale after a later task edit"
     ]
+    assert [run["core_command"] for run in stale] == ([] if rerun else ["npm ci"])
+    if stale:
+        assert stale[0]["order"] == 1
+        assert stale[0]["invalidating_edit"]["path"] == "src/example.py"
     assert {"command": "unrecognized-check", "reason": "unknown outcome"} in gate.details[
         "uncredited_runs"
     ]
@@ -468,6 +474,111 @@ def test_review_only_commands_keep_merge_freshness_and_wrapper_diagnostics(rerun
     assert any(item["reason"] == "wrapped" for item in gate.details["uncredited_runs"])
     credited = [run for run in gate.details["latest_runs"] if not run["wrapped"]]
     assert [run["core_command"] for run in credited] == (["npm ci"] if rerun else [])
+
+
+def test_fresh_equivalent_rerun_replaces_stale_prefixed_execution() -> None:
+    command = "uv run pytest tests/tasks/test_close_checklist.py -q"
+    evidence = TranscriptEvidence(
+        validation_runs=(
+            _run(1, command=f"GOBBY_TEST_PROTECT=1 {command}"),
+            _run(3, command=f"DATABASE_URL=postgresql://test {command}"),
+        ),
+        edits=(_edit(2),),
+    )
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=f"`CI=1 {command}` passes.",
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["criterion_commands"] == [
+        {
+            "command": f"CI=1 {command}",
+            "core_command": command,
+            "status": "satisfied",
+            "satisfied": True,
+            "execution": {
+                "session_id": "session-1",
+                "source": "codex",
+                "command": f"DATABASE_URL=postgresql://test {command}",
+                "core_command": command,
+                "completed_at": (BASE_TIME + timedelta(seconds=3)).isoformat(),
+                "order": 3,
+                "outcome": "success",
+                "exit_code": 0,
+            },
+        }
+    ]
+    assert not any(
+        run["reason"] == "stale after a later task edit" and run["core_command"] == command
+        for run in gate.details["uncredited_runs"]
+    )
+
+
+def test_criterion_command_gaps_are_aggregated_with_causal_diagnostics() -> None:
+    stale_command = "uv run pytest tests/tasks/test_close_checklist.py -q"
+    missing_command = "uv run ruff check src/gobby/tasks/close_checklist.py"
+    evidence = TranscriptEvidence(
+        validation_runs=(_run(1, command=f"GOBBY_TEST_PROTECT=1 {stale_command}"),),
+        edits=(_edit(2),),
+    )
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        validation_criteria=(
+            f"`DATABASE_URL=postgresql://test {stale_command}` passes. `{missing_command}` passes."
+        ),
+    )
+
+    assert gate.status == "failed"
+    assert gate.message.count("Run `") == 2
+    assert stale_command in gate.message
+    assert missing_command in gate.message
+    gaps = gate.details["criterion_command_gaps"]
+    assert [(gap["core_command"], gap["status"]) for gap in gaps] == [
+        (stale_command, "stale"),
+        (missing_command, "missing"),
+    ]
+    stale_execution = gaps[0]["execution"]
+    assert stale_execution["order"] == 1
+    assert stale_execution["completed_at"] == (BASE_TIME + timedelta(seconds=1)).isoformat()
+    assert stale_execution["invalidating_edit"] == {
+        "session_id": "session-1",
+        "source": "codex",
+        "path": "src/example.py",
+        "timestamp": (BASE_TIME + timedelta(seconds=2)).isoformat(),
+        "order": 2,
+        "tool_name": "apply_patch",
+    }
+
+
+@pytest.mark.parametrize(
+    ("command", "outcome", "status"),
+    [
+        ("uv run pytest tests/x.py -q | tail -1", "success", "wrapped"),
+        ("uv run pytest tests/x.py -q", "unknown", "unknown"),
+    ],
+)
+def test_criterion_commands_keep_wrappers_and_unknown_outcomes_uncredited(
+    command: str,
+    outcome: str,
+    status: str,
+) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command, outcome=outcome),)),
+        has_attributed_edits=True,
+        validation_criteria=f"`{command}` passes.",
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["criterion_command_gaps"][0]["status"] == status
+    assert gate.details["uncredited_runs"][0]["reason"] in {"wrapped", "unknown outcome"}
 
 
 def test_config_accepts_any_clean_validation_command() -> None:
@@ -600,6 +711,7 @@ def test_successful_top_level_and_segments_are_credited_individually() -> None:
         task_category="code",
         evidence=TranscriptEvidence(validation_runs=(compound,)),
         has_attributed_edits=True,
+        validation_criteria=f"`{test_command}` and `{lint_command}` pass.",
     )
 
     assert gate.status == "passed"
@@ -627,6 +739,10 @@ def test_successful_top_level_and_segments_are_credited_individually() -> None:
             "outcome": "success",
             "exit_code": 0,
         },
+    ]
+    assert [record["status"] for record in gate.details["criterion_commands"]] == [
+        "satisfied",
+        "satisfied",
     ]
 
 
@@ -704,15 +820,19 @@ def test_uncredited_runs_explain_unknown_wrapped_and_stale_runs() -> None:
     )
 
     assert gate.status == "passed"
-    assert gate.details["uncredited_runs"] == [
-        {"command": stale_command, "reason": "stale after a later task edit"},
-        {"command": unknown_command, "reason": "unknown outcome"},
-        {
-            "command": wrapped_command,
-            "reason": "wrapped",
-            "wrapper_reason": "trailing echo",
-        },
-    ]
+    stale, unknown, wrapped = gate.details["uncredited_runs"]
+    assert stale["command"] == stale_command
+    assert stale["reason"] == "stale after a later task edit"
+    assert stale["order"] == 1
+    assert stale["completed_at"] == (BASE_TIME + timedelta(seconds=1)).isoformat()
+    assert stale["invalidating_edit"]["path"] == "src/example.py"
+    assert stale["invalidating_edit"]["order"] == 2
+    assert unknown == {"command": unknown_command, "reason": "unknown outcome"}
+    assert wrapped == {
+        "command": wrapped_command,
+        "reason": "wrapped",
+        "wrapper_reason": "trailing echo",
+    }
 
 
 def test_unresolved_failure_blocks_even_when_required_category_passed() -> None:
