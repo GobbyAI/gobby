@@ -585,8 +585,8 @@
     "workflows/rules/task-enforcement/reset-subagent-flag.yaml": "2c7613b0aade91b9af6a0475de77b580e50ecc6dbadb88ee882d5ef850a8b5e6",
     "workflows/rules/task-enforcement/task-commit-project-path-allowlist-before-git.yaml": "d213a4792cd80922581b80f5bc0d5ddc6ae8992ef0bc15d0d11a8581b2907394",
     "workflows/rules/task-enforcement/track-task-claim.yaml": "2457e2e130f68b4bc2517a88f5166cf7c6b449e0734a4d54c1923eb9ae43cf6b",
-    "workflows/rules/tdd-enforcement/enforce-tdd-block.yaml": "04e963d642ef8fe7300b59c8c2120dddd93a6e794e86c65bb5869007f371e0d9",
-    "workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml": "1e3fde7027cbb14af717f29cc8a0dc809cc9fadf9f649279e686ee6d78cef4d7",
+    "workflows/rules/tdd-enforcement/enforce-tdd-block.yaml": "8abb8c42007911b61c015eea52130325ce471d94baa03371c71cad3533c54f3a",
+    "workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml": "ef7211b440b6b67e2105a2767d606a610f98db90600f93c3d4cf42ee8bb2a63e",
     "workflows/rules/tool-hygiene/block-claude-memory-read.yaml": "41944133669169aeee66d67aec171d3e0fa1060d5f6b7f4ba21d24c0eb1b1663",
     "workflows/rules/tool-hygiene/block-claude-memory-search.yaml": "cd0ae13eeace602dc7591877dc496b5c969b39710cf52618328171be60283079",
     "workflows/rules/tool-hygiene/block-claude-memory-tool.yaml": "b091d630d9135b09b2ec40f75d1155afcd3c3010a1c760c2a20dfa05b2981d98",
@@ -616,7 +616,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "e6238077bea978ff1e470a4c65f4b5a13610704cc3c1aa917e147cfe43f06a40",
     "workflows/rules/worker-safety/no-push.yaml": "b2a686d08f0b3bc466a0c4b94a6295ca2eca17ef151b8143ca722392de671648",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "ade659ca1c9b87bc95b86b9c7ffe575fe56b0543ae3a271dba0c0fc1f2579991",
-    "workflows/variables/gobby-default-variables.yaml": "5897bab0209e69018eeb0bc815f89154b2f6bf92f7aada5104fc7d967d0c9c2e"
+    "workflows/variables/gobby-default-variables.yaml": "4d0b3701aa97c661a1c7322c2d78f62d8e839204adfa53beb5f5bfc7cb1e98ca"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

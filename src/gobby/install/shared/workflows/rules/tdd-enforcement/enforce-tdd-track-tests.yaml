@@ -7,7 +7,7 @@ rules:
     enabled: true
     priority: 30
     when: >-
-      variables.get('enforce_tdd')
+      (variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd'))
       and event.data.get('canonical_tool_kind') == 'write'
       and not event.data.get('error')
       and first_tdd_test_path(event.data, tool_input)

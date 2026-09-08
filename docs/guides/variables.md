@@ -130,8 +130,8 @@ effect:
 # List append
 effect:
   type: set_variable
-  variable: tdd_nudged_files
-  value: "variables.get('tdd_nudged_files', []) + [tool_input.get('file_path', '')]"
+  variable: tdd_tests_written
+  value: "variables.get('tdd_tests_written', []) + [first_tdd_test_path(event.data, tool_input)]"
 ```
 
 ### Expression Detection
@@ -338,6 +338,9 @@ when: "not mcp_failed('gobby-tasks', 'get_task')"
 | `skill_loaded(name)` | Check whether a skill was loaded through `gobby-skills:get_skill` |
 | `assistant_response_matches_any(patterns, regex=False)` | Match assistant output for response-quality rules |
 | `normalize_path(path)` | Normalize path separators for portable comparisons |
+| `first_tdd_code_path(event_data, tool_input)` | Return the first canonical production source path covered by TDD |
+| `first_tdd_test_path(event_data, tool_input)` | Return the first canonical test-convention path in any language |
+| `tdd_gate_open(variables)` | Check whether a named acceptance test, or any test when none is named, was written |
 | `is_plan_file(path)` | Check whether a path is a plan artifact |
 | `is_current_plan_artifact(file_path, artifact_path)` | Check whether a file is the active plan artifact |
 | `get_touched_file_paths(tool_input)` | Extract files affected by a tool call |
@@ -368,8 +371,9 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `mode_level` | `2` | int | Autonomy level (0=plan, 1=accept_edits, 2=full auto) |
 | `chat_mode` | `"bypass"` | string | Chat mode setting |
 | `require_uv` | `true` | bool | Enforce `uv` for Python operations |
-| `enforce_tdd` | `false` | bool | Enable TDD enforcement |
-| `tdd_nudged_files` | `[]` | list | Files TDD-nudged this session (internal) |
+| `enforce_tdd` | `false` | bool | Enable TDD enforcement without a claimed TDD-required task |
+| `claimed_task_requires_tdd` | `false` | bool | Whether any currently claimed task requires TDD |
+| `claimed_task_acceptance_test_paths` | `[]` | list | Ordered, deduplicated test paths derived from claimed-task acceptance criteria |
 | `tdd_tests_written` | `[]` | list | Test files written during TDD (internal) |
 | `enforce_tool_schema_check` | `true` | bool | Require current-context schema leases for ordinary proxy calls |
 | `auto_inject_handoff` | `true` | bool | Populate session summary template vars |

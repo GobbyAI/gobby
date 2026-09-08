@@ -13,6 +13,7 @@ from gobby.workflows.claimed_task_extra_skills import (
     _load_task,
     build_claimed_task_extra_skill_state,
     missing_claimed_task_extra_skills,
+    refresh_claimed_task_extra_skills,
 )
 
 pytestmark = pytest.mark.unit
@@ -48,6 +49,67 @@ def test_explicit_extras_keep_order_and_precede_inferred_tdd() -> None:
         "context7",
         "test-driven-development",
     ]
+
+
+def test_claim_exposes_tdd_gate_state() -> None:
+    manager = MagicMock()
+    tasks = {
+        "task-1": _task(
+            labels=["tdd:required"],
+            validation_criteria=(
+                "test: tests/workflows/test_claimed_task_extra_skills.py::test_one.\n"
+                "test: tests/workflows/test_shared.py::test_shared."
+            ),
+        ),
+        "task-2": _task(
+            additional_skills=["test-driven-development"],
+            validation_criteria=(
+                "test: tests/workflows/test_shared.py::test_shared.\n"
+                "test: crates/gclient/tests/parity/sidebar.rs::test_sidebar."
+            ),
+        ),
+    }
+    manager.get_task.side_effect = tasks.__getitem__
+
+    state = build_claimed_task_extra_skill_state(
+        {"claimed_tasks": {"task-1": "#1", "task-2": "#2"}},
+        manager,
+    )
+
+    assert state == {
+        "claimed_task_extra_skills": ["test-driven-development"],
+        "unresolvable_claimed_task_extra_skills": [],
+        "claimed_task_requires_tdd": True,
+        "claimed_task_acceptance_test_paths": [
+            "tests/workflows/test_claimed_task_extra_skills.py",
+            "tests/workflows/test_shared.py",
+            "crates/gclient/tests/parity/sidebar.rs",
+        ],
+    }
+
+    skill_only_state = build_claimed_task_extra_skill_state(
+        {"claimed_tasks": {"task-2": "#2"}},
+        manager,
+    )
+    assert skill_only_state["claimed_task_requires_tdd"] is True
+    assert skill_only_state["claimed_task_acceptance_test_paths"] == [
+        "tests/workflows/test_shared.py",
+        "crates/gclient/tests/parity/sidebar.rs",
+    ]
+
+    stale_variables = {
+        "claimed_tasks": {},
+        "claimed_task_requires_tdd": True,
+        "claimed_task_acceptance_test_paths": ["tests/stale.py"],
+    }
+    assert refresh_claimed_task_extra_skills(stale_variables, manager) == {
+        "claimed_task_extra_skills": [],
+        "unresolvable_claimed_task_extra_skills": [],
+        "claimed_task_requires_tdd": False,
+        "claimed_task_acceptance_test_paths": [],
+    }
+    assert stale_variables["claimed_task_requires_tdd"] is False
+    assert stale_variables["claimed_task_acceptance_test_paths"] == []
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
@@ -121,6 +183,8 @@ def test_refresh_state_drops_unresolvable_names_after_last_claim() -> None:
     assert state == {
         "claimed_task_extra_skills": [],
         "unresolvable_claimed_task_extra_skills": [],
+        "claimed_task_requires_tdd": False,
+        "claimed_task_acceptance_test_paths": [],
     }
 
 

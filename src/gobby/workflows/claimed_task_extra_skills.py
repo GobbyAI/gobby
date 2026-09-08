@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.acceptance_artifacts import extract_artifact_references, parse_test_reference
 from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
 
 if TYPE_CHECKING:
@@ -17,15 +18,19 @@ logger = logging.getLogger(__name__)
 
 EXTRA_SKILLS_VARIABLE = "claimed_task_extra_skills"
 UNRESOLVABLE_EXTRA_SKILLS_VARIABLE = "unresolvable_claimed_task_extra_skills"
+CLAIMED_TASK_REQUIRES_TDD_VARIABLE = "claimed_task_requires_tdd"
+CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE = "claimed_task_acceptance_test_paths"
 
 
 def build_claimed_task_extra_skill_state(
     variables: dict[str, Any],
     task_manager: LocalTaskManager | None,
-) -> dict[str, list[str]]:
+) -> dict[str, Any]:
     """Build ordered task extras for every task currently claimed by the session."""
     claimed_tasks = variables.get("claimed_tasks") or {}
     extras: list[str] = []
+    requires_tdd = False
+    acceptance_test_paths: list[str] = []
 
     if isinstance(claimed_tasks, dict) and task_manager is not None:
         for task_id in claimed_tasks:
@@ -38,25 +43,35 @@ def build_claimed_task_extra_skill_state(
             validation_criteria = _string_field(task, "validation_criteria")
 
             _extend_unique(extras, additional_skills)
-            if task_requires_tdd(
+            task_needs_tdd = task_requires_tdd(
                 labels=labels,
                 additional_skills=additional_skills,
                 validation_criteria=validation_criteria,
                 enforce_tdd=bool(variables.get("enforce_tdd")),
-            ):
+            )
+            if task_needs_tdd:
+                requires_tdd = True
                 _append_unique(extras, TDD_SKILL)
+
+            if validation_criteria:
+                for reference in extract_artifact_references(validation_criteria, "test"):
+                    parsed = parse_test_reference(reference)
+                    if parsed is not None:
+                        _append_unique(acceptance_test_paths, parsed[0])
 
     unresolved = _string_list(variables.get(UNRESOLVABLE_EXTRA_SKILLS_VARIABLE))
     return {
         EXTRA_SKILLS_VARIABLE: extras,
         UNRESOLVABLE_EXTRA_SKILLS_VARIABLE: [skill for skill in unresolved if skill in extras],
+        CLAIMED_TASK_REQUIRES_TDD_VARIABLE: requires_tdd,
+        CLAIMED_TASK_ACCEPTANCE_TEST_PATHS_VARIABLE: acceptance_test_paths,
     }
 
 
 def refresh_claimed_task_extra_skills(
     variables: dict[str, Any],
     task_manager: LocalTaskManager | None,
-) -> dict[str, list[str]]:
+) -> dict[str, Any]:
     """Refresh claimed-task extras in-place and return the persisted merge."""
     merge = build_claimed_task_extra_skill_state(variables, task_manager)
     variables.update(merge)

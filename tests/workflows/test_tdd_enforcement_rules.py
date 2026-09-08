@@ -6,6 +6,7 @@ sync correctly, have valid structure, and evaluate conditions properly.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -17,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import sync_bundled_rules
+from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
 
@@ -57,6 +59,79 @@ TDD_ENFORCEMENT_RULES = {
     "enforce-tdd-block",
     "enforce-tdd-track-tests",
 }
+
+
+def test_block_holds_until_named_acceptance_test_is_written(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    _sync_bundled(db)
+    block_row = manager.get_by_name("enforce-tdd-block")
+    track_row = manager.get_by_name("enforce-tdd-track-tests")
+    assert block_row is not None
+    assert track_row is not None
+    block = RuleDefinitionBody.model_validate(block_row.definition_json)
+    track = RuleDefinitionBody.model_validate(track_row.definition_json)
+    acceptance_path = "crates/gclient/tests/parity/sidebar.rs"
+    source_path = "crates/gclient/src/ui/sidebar/agents.rs"
+
+    def evaluate(
+        body: RuleDefinitionBody,
+        variables: dict[str, object],
+        path: str,
+    ) -> tuple[bool, SafeExpressionEvaluator, dict[str, object]]:
+        event_data: dict[str, object] = {
+            "canonical_tool_kind": "write",
+            "canonical_file_path": path,
+            "canonical_file_paths": [path],
+        }
+        context: dict[str, object] = {
+            "variables": variables,
+            "event": type("E", (), {"data": event_data})(),
+            "tool_input": {"file_path": f"/repo/{path}"},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        assert body.when is not None
+        return evaluator.evaluate(body.when), evaluator, {**context, **allowed_funcs}
+
+    variables: dict[str, object] = {
+        "enforce_tdd": False,
+        "claimed_task_requires_tdd": True,
+        "claimed_task_acceptance_test_paths": [acceptance_path],
+        "tdd_tests_written": [],
+    }
+    blocked, _, render_context = evaluate(block, variables, source_path)
+    assert blocked is True
+    assert evaluate(block, variables, source_path)[0] is True
+    assert [effect.type for effect in block.resolved_effects] == ["block"]
+    block_reason = block.resolved_effects[0].reason
+    assert block_reason is not None
+    assert acceptance_path in TemplateEngine().render(block_reason, render_context)
+    legacy_variable = "tdd_" + "nudged_files"
+    assert legacy_variable not in json.dumps(block_row.definition_json)
+    assert all(effect.type != "mcp_call" for effect in block.resolved_effects)
+
+    tracked, track_evaluator, _ = evaluate(track, variables, acceptance_path)
+    assert tracked is True
+    track_effect = track.resolved_effects[0]
+    assert track_effect.value is not None
+    variables["tdd_tests_written"] = track_evaluator.evaluate_value(track_effect.value)
+    assert variables["tdd_tests_written"] == [acceptance_path]
+    assert evaluate(block, variables, source_path)[0] is False
+
+    fallback_variables: dict[str, object] = {
+        "enforce_tdd": True,
+        "claimed_task_requires_tdd": False,
+        "claimed_task_acceptance_test_paths": [],
+        "tdd_tests_written": [],
+    }
+    fallback_test_path = "web/src/app.spec.ts"
+    assert evaluate(block, fallback_variables, "web/src/app.ts")[0] is True
+    tracked, fallback_evaluator, _ = evaluate(track, fallback_variables, fallback_test_path)
+    assert tracked is True
+    fallback_variables["tdd_tests_written"] = fallback_evaluator.evaluate_value(track_effect.value)
+    assert evaluate(block, fallback_variables, "web/src/app.ts")[0] is False
 
 
 # --- Sync tests ---
@@ -115,55 +190,14 @@ class TestEnforceTddBlockStructure:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
 
-    def test_has_three_effects(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
-        """Should have set_variable + mcp_call + block effects."""
+    def test_has_only_block_effect(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effects = body.resolved_effects
-        assert len(effects) == 3
-        assert effects[0].type == "set_variable"
-        assert effects[1].type == "mcp_call"
-        assert effects[2].type == "block"
-
-    def test_set_variable_appends_to_tdd_nudged_files(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("enforce-tdd-block")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        sv_effect = body.resolved_effects[0]
-        assert sv_effect.variable == "tdd_nudged_files"
-        assert "tdd_nudged_files" in sv_effect.value
-        assert "first_tdd_code_path" in sv_effect.value
-
-    def test_mcp_call_updates_task(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("enforce-tdd-block")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        mcp_effect = body.resolved_effects[1]
-        assert mcp_effect.server == "gobby-tasks"
-        assert mcp_effect.tool == "update_task"
-        assert "task_id" in mcp_effect.arguments
-        assert "validation_criteria" in mcp_effect.arguments
-
-    def test_mcp_call_gated_by_task_claimed(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("enforce-tdd-block")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        mcp_effect = body.resolved_effects[1]
-        assert mcp_effect.when is not None
-        assert "task_claimed" in mcp_effect.when
+        assert [effect.type for effect in effects] == ["block"]
 
     def test_block_targets_write_and_bash(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -173,10 +207,12 @@ class TestEnforceTddBlockStructure:
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
-        block_effect = body.resolved_effects[2]
+        block_effect = body.resolved_effects[0]
         assert block_effect.tools == ["Write", "Bash"]
 
-    def test_when_checks_enforce_tdd(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
+    def test_when_checks_tdd_trigger_and_gate(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         assert row is not None
@@ -184,9 +220,10 @@ class TestEnforceTddBlockStructure:
 
         assert body.when is not None
         assert "enforce_tdd" in body.when
+        assert "claimed_task_requires_tdd" in body.when
         assert "canonical_tool_kind" in body.when
         assert "first_tdd_code_path" in body.when
-        assert "tdd_nudged_files" in body.when
+        assert "tdd_gate_open" in body.when
 
 
 # --- enforce-tdd-block condition evaluation ---
@@ -196,10 +233,10 @@ class TestEnforceTddBlockCondition:
     """Test the when condition evaluates correctly for various file paths."""
 
     CONDITION = (
-        "variables.get('enforce_tdd') "
+        "(variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd')) "
         "and event.data.get('canonical_tool_kind') == 'write' "
         "and first_tdd_code_path(event.data, tool_input) "
-        "not in ([None, ''] + variables.get('tdd_nudged_files', []))"
+        "and not tdd_gate_open(variables)"
     )
 
     def _eval(
@@ -207,8 +244,10 @@ class TestEnforceTddBlockCondition:
         file_path: str,
         *,
         enforce_tdd: bool = True,
+        claimed_task_requires_tdd: bool = False,
         canonical_tool_kind: str = "write",
-        nudged: list[str] | None = None,
+        tests_written: list[str] | None = None,
+        acceptance_paths: list[str] | None = None,
     ) -> bool:
         event_data = {
             "canonical_tool_kind": canonical_tool_kind,
@@ -218,7 +257,9 @@ class TestEnforceTddBlockCondition:
         context = {
             "variables": {
                 "enforce_tdd": enforce_tdd,
-                "tdd_nudged_files": nudged or [],
+                "claimed_task_requires_tdd": claimed_task_requires_tdd,
+                "claimed_task_acceptance_test_paths": acceptance_paths or [],
+                "tdd_tests_written": tests_written or [],
             },
             "event": type("E", (), {"data": event_data})(),
             "tool_input": {"file_path": file_path},
@@ -251,11 +292,12 @@ class TestEnforceTddBlockCondition:
     def test_skips_test_file_by_suffix(self) -> None:
         assert self._eval("/project/src/main_test.py") is False
 
-    def test_skips_already_nudged_file(self) -> None:
-        path = "/project/src/gobby/new_module.py"
-        assert self._eval(path, nudged=[path]) is False
+    def test_skips_after_test_write_opens_gate(self) -> None:
+        assert (
+            self._eval("/project/src/gobby/new_module.py", tests_written=["tests/test.py"]) is False
+        )
 
-    def test_skips_non_python_files(self) -> None:
+    def test_skips_non_source_files(self) -> None:
         assert self._eval("/project/config.yaml") is False
         assert self._eval("/project/README.md") is False
         assert self._eval("/project/data.json") is False
@@ -302,6 +344,7 @@ class TestEnforceTddTrackTestsStructure:
 
         assert body.when is not None
         assert "enforce_tdd" in body.when
+        assert "claimed_task_requires_tdd" in body.when
         assert "canonical_tool_kind" in body.when
         assert "first_tdd_test_path" in body.when
 
@@ -313,7 +356,7 @@ class TestEnforceTddTrackTestsCondition:
     """Test the tracking condition evaluates correctly."""
 
     CONDITION = (
-        "variables.get('enforce_tdd') "
+        "(variables.get('enforce_tdd') or variables.get('claimed_task_requires_tdd')) "
         "and event.data.get('canonical_tool_kind') == 'write' "
         "and not event.data.get('error') "
         "and first_tdd_test_path(event.data, tool_input)"
@@ -324,6 +367,7 @@ class TestEnforceTddTrackTestsCondition:
         file_path: str,
         *,
         enforce_tdd: bool = True,
+        claimed_task_requires_tdd: bool = False,
         canonical_tool_kind: str = "write",
         error: bool = False,
     ) -> bool:
@@ -334,7 +378,10 @@ class TestEnforceTddTrackTestsCondition:
             "error": error,
         }
         context = {
-            "variables": {"enforce_tdd": enforce_tdd},
+            "variables": {
+                "enforce_tdd": enforce_tdd,
+                "claimed_task_requires_tdd": claimed_task_requires_tdd,
+            },
             "event": type("E", (), {"data": event_data})(),
             "tool_input": {"file_path": file_path},
         }
@@ -390,8 +437,8 @@ class TestTddVariableDefinitions:
         assert "enforce_tdd" in variables
         assert variables["enforce_tdd"]["value"] is False
 
-        assert "tdd_nudged_files" in variables
-        assert variables["tdd_nudged_files"]["value"] == []
+        assert variables["claimed_task_requires_tdd"]["value"] is False
+        assert variables["claimed_task_acceptance_test_paths"]["value"] == []
 
         assert "tdd_tests_written" in variables
         assert variables["tdd_tests_written"]["value"] == []

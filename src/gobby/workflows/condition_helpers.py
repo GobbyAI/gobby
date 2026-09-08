@@ -19,6 +19,8 @@ from gobby.config.validation_detection import (
     is_validation_command as _config_is_validation_command,
 )
 from gobby.tasks.state_semantics import projected_task_state
+from gobby.tasks.tdd_evidence import is_test_convention_path
+from gobby.workflows.monolith_guard import MONOLITH_SOURCE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +137,7 @@ def first_tdd_code_path(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,
 ) -> str:
-    """Return the first touched Python source path that should trigger TDD blocking."""
+    """Return the first touched production source path that should trigger TDD blocking."""
     return _first_matching_path(event_data, tool_input, _is_tdd_code_path)
 
 
@@ -145,6 +147,21 @@ def first_tdd_test_path(
 ) -> str:
     """Return the first touched test path for TDD observability."""
     return _first_matching_path(event_data, tool_input, _is_tdd_test_path)
+
+
+def tdd_gate_open(variables: Mapping[str, Any]) -> bool:
+    """Return whether a qualifying test write has opened the production-write gate."""
+    written = {
+        path for path in variables.get("tdd_tests_written", []) if isinstance(path, str) and path
+    }
+    acceptance_paths = [
+        path
+        for path in variables.get("claimed_task_acceptance_test_paths", [])
+        if isinstance(path, str) and path
+    ]
+    if acceptance_paths:
+        return any(path in written for path in acceptance_paths)
+    return bool(written)
 
 
 def touches_claude_memory_path(
@@ -262,22 +279,14 @@ def _is_tdd_code_path(path: str) -> bool:
     normalized = _normalize_condition_path(path)
     name = normalized.rsplit("/", 1)[-1]
     return (
-        normalized.endswith(".py")
+        any(normalized.casefold().endswith(suffix) for suffix in MONOLITH_SOURCE_EXTENSIONS)
         and name not in {"__init__.py", "conftest.py"}
-        and not _path_has_segment(normalized, "tests")
-        and not name.startswith("test_")
-        and not normalized.endswith("_test.py")
+        and not is_test_convention_path(normalized)
     )
 
 
 def _is_tdd_test_path(path: str) -> bool:
-    normalized = _normalize_condition_path(path)
-    name = normalized.rsplit("/", 1)[-1]
-    return (
-        _path_has_segment(normalized, "tests")
-        or name.startswith("test_")
-        or normalized.endswith("_test.py")
-    )
+    return is_test_convention_path(_normalize_condition_path(path))
 
 
 def _is_docker_policy_path(path: str) -> bool:
