@@ -672,8 +672,14 @@ async def test_submit_close_review_claims_before_heavy_work(
         gobby_home = tmp_path / "gobby-home"
         _write_test_bootstrap(gobby_home, temp_db.conninfo, port)
         environment = os.environ.copy()
-        environment.pop("GOBBY_CONFIG_FILE", None)
-        environment.pop("GOBBY_DAEMON_URL", None)
+        for variable in (
+            "GOBBY_CONFIG_FILE",
+            "GOBBY_AGENT_API_TOKEN",
+            "GOBBY_DAEMON_URL",
+            "GOBBY_DAEMON_PORT",
+            "GOBBY_PORT",
+        ):
+            environment.pop(variable, None)
         environment.update(
             {
                 "GOBBY_HOME": str(gobby_home),
@@ -726,6 +732,8 @@ async def test_submit_close_review_claims_before_heavy_work(
             await asyncio.to_thread(_stop_stdio_process, process, master_fd)
 
     assert "result" in response
+    structured = response["result"]["structuredContent"]
+    assert structured["success"] is True
     assert elapsed < _SUBMIT_DEADLINE_SECONDS
     assert len(default_preflight_observations) == startup_health_count + 1
     assert default_preflight_observations[-1] == (

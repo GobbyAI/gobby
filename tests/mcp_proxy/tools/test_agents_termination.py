@@ -318,17 +318,24 @@ async def test_cooperative_completion_persists_final_closed_task_details(
 @pytest.mark.asyncio
 async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
     temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Report a blocker",
+        validation_criteria="The parent receives the structured blocker result.",
+    )
+    blocker_text = "The assigned task is blocked; parent action is required."
     run = MagicMock(
         id="11111111-1111-4111-8111-111111111111",
         child_session_id="22222222-2222-4222-8222-222222222222",
         terminal_id=None,
-        task_id="33333333-3333-4333-8333-333333333333",
+        task_id=task.id,
         worktree_id=None,
         clone_id=None,
         status="running",
         terminal_reason=None,
-        result=None,
+        result=blocker_text,
         error=None,
         provider="codex",
         model=None,
@@ -360,7 +367,8 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
     ) -> MagicMock:
         assert run_id == run.id
         run.status = "success"
-        run.result = result
+        if result is not None:
+            run.result = result
         run.tool_calls_count = tool_calls_count
         run.turns_used = turns_used
         run.terminal_reason = terminal_reason
@@ -387,6 +395,18 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
     variable_manager = MagicMock()
     variable_manager.get_variables.return_value = session_vars
     completion_call: dict[str, Any] = {}
+    notifications: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def wake_parent(
+        session_id: str,
+        message: str,
+        result: dict[str, Any],
+    ) -> dict[str, bool]:
+        notifications.append((session_id, message, result))
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake_parent)
+    registry.register(run.id, ["parent-session"])
 
     async def capture_completion(*args: Any, **kwargs: Any) -> bool:
         completion_call.update(kwargs)
@@ -427,7 +447,7 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
             runner=runner,
             run=run,
             kill_db=temp_db,
-            completion_registry=None,
+            completion_registry=registry,
             session_manager=None,
         )
         get_result = create_agents_registry(runner)._tools["get_agent_result"].func
@@ -457,5 +477,20 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
     assert 'dirty_paths=["src/dirty.py"]' in completion_call["message"]
     assert result["status"] == "blocked"
     assert result["terminal_reason"] == "task_blocker"
+    assert result["result"] == blocker_text
     assert result["dirty_paths"] == ["src/dirty.py"]
+    assert notifications == [
+        (
+            "parent-session",
+            f'Agent {run.id} completed; dirty_paths=["src/dirty.py"]',
+            {
+                "status": "blocked",
+                "run_id": run.id,
+                "dirty_paths": ["src/dirty.py"],
+                "terminal_reason": "task_blocker",
+                "completion_id": run.id,
+            },
+        )
+    ]
+    assert not registry.is_registered(run.id)
     dirty_paths.assert_called_with({"src/dirty.py"}, "/repo")

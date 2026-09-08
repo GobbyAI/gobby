@@ -193,6 +193,15 @@ async def recover_completed_turn(
         await host._fail_idle_agent(run, reason=reason)
         return 1
 
+    if await host._complete_if_work_finished(run):
+        await host._log_transcript_snapshot(
+            run,
+            reason="completing idle agent whose work already finished",
+            snapshot=snapshot,
+            level=logging.INFO,
+        )
+        return 1
+
     fingerprint = workflow_fingerprint(
         run.id,
         step_context,
@@ -219,18 +228,6 @@ async def recover_completed_turn(
             idle_timeout_seconds=idle_timeout_seconds,
         )
     if decision == "exhausted":
-        # A run parked on a satisfied exit condition, or whose task was closed
-        # or handed back, has no progress left to make, so failing it would
-        # report finished work as an error.
-        if await host._complete_if_work_finished(run):
-            await host._log_transcript_snapshot(
-                run,
-                reason="completing idle agent whose work already finished",
-                snapshot=snapshot,
-                level=logging.INFO,
-            )
-            return 1
-
         logger.error(
             "Agent %s completed another turn without workflow progress after %s recovery "
             "reprompts — failing",
@@ -300,14 +297,6 @@ async def _give_up_unanswered_reprompt(
     elapsed = (datetime.now(UTC) - state.last_reprompt_at).total_seconds()
     if elapsed < idle_timeout_seconds:
         return 0
-    if await host._complete_if_work_finished(run):
-        await host._log_transcript_snapshot(
-            run,
-            reason="completing idle agent whose work already finished",
-            snapshot=snapshot,
-            level=logging.INFO,
-        )
-        return 1
     logger.error(
         "Agent %s started no new turn in %.0fs after its completed-turn reprompt — failing",
         run.id,

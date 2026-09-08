@@ -8,8 +8,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use gobby_client::app::run_live_loop;
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, EventReceiver, Generation, KillOutcome, LiveDaemon, Page,
-    RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
-    WsMessage, WsReply,
+    ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow, SourceStatus, SpawnOutcome,
+    SpawnRequest, SubscribeSnapshot, TerminalRow, WorktreeRow, WsMessage, WsReply,
 };
 use gobby_client::teardown::{
     shutdown, ModeBackend, RecordingBackend, ShutdownWorkspace, TerminalGuard,
@@ -395,6 +395,26 @@ impl Daemon for TraceDaemon {
 
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {
         Daemon::roster(&self.inner).await
+    }
+
+    async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError> {
+        Daemon::projects(&self.inner).await
+    }
+
+    async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError> {
+        Daemon::source_status(&self.inner, project).await
+    }
+
+    async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError> {
+        Daemon::worktrees(&self.inner, project).await
+    }
+
+    async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
+        Daemon::sessions(&self.inner, project).await
+    }
+
+    async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError> {
+        Daemon::agent_runs(&self.inner, project).await
     }
 
     async fn respond(

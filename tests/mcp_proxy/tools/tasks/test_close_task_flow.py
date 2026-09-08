@@ -663,16 +663,42 @@ async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> 
 
 
 @pytest.mark.asyncio
-async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
-    task = _task()
+@pytest.mark.parametrize(
+    ("scope_justification", "justification_error", "continues"),
+    [
+        pytest.param(
+            None,
+            "A scope_justification is required for out-of-scope paths.",
+            False,
+            id="missing",
+        ),
+        pytest.param(
+            "too short",
+            "scope_justification must be at least 20 characters.",
+            False,
+            id="invalid",
+        ),
+        pytest.param(
+            "The shared implementation path is required by the scoped tests.",
+            None,
+            True,
+            id="valid",
+        ),
+    ],
+)
+async def test_scope_justification_controls_downstream_close_evidence(
+    scope_justification: str | None,
+    justification_error: str | None,
+    continues: bool,
+) -> None:
+    task = replace(_task(), labels=["tdd:required"])
     ctx = _ctx(task, validator=object())
     scope = TaskScopeEvaluation(
         declared_paths=("tests/",),
         actual_paths=("src/gobby/service.py",),
         out_of_scope_paths=("src/gobby/service.py",),
-        advisory_paths=("src/gobby/expected.py",),
-        advisory_scope_drift=("src/gobby/service.py",),
-        justification_error="A scope_justification is required for out-of-scope paths.",
+        scope_justification=scope_justification if continues else None,
+        justification_error=justification_error,
     )
     transcript = AsyncMock(
         return_value=_successful_transcript(
@@ -681,12 +707,26 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
         )
     )
     artifacts = AcceptanceArtifactResult(
-        passed=False,
+        passed=True,
         tests=(),
-        findings=("Named acceptance test cannot be resolved.",),
+        findings=(),
         evidence_files=(),
     )
-    review = AsyncMock()
+    scope_check = MagicMock(return_value=scope)
+    dirty_paths = MagicMock(return_value=set())
+    validation_paths = MagicMock(return_value=set())
+    diff = MagicMock(return_value="diff")
+    acceptance = MagicMock(return_value=artifacts)
+    tdd = MagicMock(return_value=TddEvidenceResult(passed=True, skipped=False, findings=()))
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Criteria satisfied.",
+            reset_reason="llm_valid",
+            extra={"verdict": {"status": "valid"}},
+        )
+    )
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
@@ -703,16 +743,14 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
             "validate_commit_requirements",
             return_value=ValidationResult(can_close=True),
         ),
-        patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
-        patch.object(
-            lifecycle,
-            "_task_dirty_paths",
-            return_value={"src/gobby/service.py"},
-        ),
+        patch.object(lifecycle, "evaluate_task_scope", scope_check),
+        patch.object(lifecycle, "_task_dirty_paths", dirty_paths),
+        patch.object(lifecycle, "collect_commit_paths", validation_paths),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
-        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
-        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
+        patch.object(lifecycle, "collect_commit_diff_text", diff),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", acceptance),
+        patch.object(lifecycle, "evaluate_tdd_evidence", tdd),
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
@@ -731,22 +769,34 @@ async def test_scope_dirty_and_acceptance_failures_report_together() -> None:
             commit_sha="abc123",
             project_path=None,
             response_detail="diagnostic",
+            scope_justification=scope_justification,
         )
 
-    response = evaluation.response(preview=True)
+    assert scope_check.call_args.kwargs["scope_justification"] == scope_justification
+    if continues:
+        assert evaluation.ready is True
+        assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
+        dirty_paths.assert_called_once()
+        validation_paths.assert_called_once()
+        transcript.assert_awaited_once()
+        diff.assert_called_once()
+        acceptance.assert_called_once()
+        tdd.assert_called_once()
+        review.assert_awaited_once()
+        return
 
+    response = evaluation.response(preview=True)
     assert evaluation.error == "task_scope_mismatch"
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
-    assert evaluation.extra["out_of_scope_paths"] == ["src/gobby/service.py"]
-    assert response["advisory_scope_drift"] == ["src/gobby/service.py"]
-    assert response["blocking_reasons"] == [
-        "A scope_justification is required for out-of-scope paths.",
-        "Task-attributed files still have uncommitted changes: src/gobby/service.py. "
-        "Commit them, or ask the owner to commit or release_task_paths, and retry.",
-        "Named acceptance test cannot be resolved.",
-    ]
-    assert len(response["required_actions"]) == 3
-    transcript.assert_awaited_once()
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 9))
+    assert response["out_of_scope_paths"] == ["src/gobby/service.py"]
+    assert response["blocking_reasons"] == [justification_error]
+    assert "scope_justification" in response["required_actions"][0]
+    dirty_paths.assert_not_called()
+    validation_paths.assert_not_called()
+    transcript.assert_not_awaited()
+    diff.assert_not_called()
+    acceptance.assert_not_called()
+    tdd.assert_not_called()
     review.assert_not_awaited()
 
 

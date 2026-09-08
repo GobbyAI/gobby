@@ -1,7 +1,7 @@
 use crate::action::{
     DeliveryReceiptAck, HookAction, action_from_failure, action_from_malformed_input,
     action_from_success_response, continue_action, emit_action, emit_empty_json,
-    extract_delivery_receipt,
+    extract_delivery_receipt, is_codex_interrupt,
 };
 use crate::args::Args;
 use crate::cli_config::CliConfig;
@@ -39,6 +39,9 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     if hooks_disabled_by_env() {
         if statusline::is_statusline_hook(cli, hook_type) {
             return ExitCode::SUCCESS;
+        }
+        if is_codex_interrupt(cfg.source, hook_type) {
+            return emit_exit(continue_action(cfg.source, hook_type));
         }
         emit_empty_json();
         return ExitCode::SUCCESS;

@@ -755,6 +755,10 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             "lease_generation": 1,
             "reason": null,
         })),
+        "subscribe" => Some(json!({
+            "type": "subscribe_success",
+            "events": request.get("events").cloned().unwrap_or_else(|| json!([])),
+        })),
         _ => None,
     }
 }
@@ -811,6 +815,22 @@ fn default_response(method: &str, target: &str) -> QueuedResponse {
         })
     } else if method == "GET" && target == "/api/attention/roster" {
         json!({"epoch": "attention-1", "seq": 0, "entries": []})
+    } else if method == "GET" && target == "/api/projects" {
+        json!([])
+    } else if method == "GET" && target.starts_with("/api/source-control/status?") {
+        json!({
+            "current_branch": null,
+            "ahead": null,
+            "behind": null,
+            "repo_path": null,
+            "worktree_count": 0,
+        })
+    } else if method == "GET" && target.starts_with("/api/source-control/worktrees?") {
+        json!({"worktrees": []})
+    } else if method == "GET" && target.starts_with("/api/sessions?") {
+        json!({"sessions": [], "count": 0, "next_cursor": null})
+    } else if method == "GET" && target.starts_with("/api/agents/runs?") {
+        json!({"status": "success", "runs": [], "count": 0})
     } else {
         json!({"ok": true})
     };

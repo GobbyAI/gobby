@@ -2,6 +2,7 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
+use crate::app::sidebar_model::{agent_row_state, pane_state, SidebarModel};
 use crate::app::{
     short_terminal_id, ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace,
 };
@@ -37,6 +38,9 @@ pub const DEFAULT_LINK_OPENER: &str = if cfg!(target_os = "macos") {
 /// accessors live.
 pub trait WorkspaceView {
     fn project_id(&self) -> Option<&str>;
+    /// The project the sidebar's terminal and agent rows belong to.
+    fn focused_project(&self) -> Option<&str>;
+    fn sidebar(&self) -> &SidebarModel;
     fn roster_terminal_ids(&self) -> Vec<String>;
     fn attention_entry_ids(&self) -> Vec<String>;
     fn pane_for_terminal(&self, terminal_id: &str) -> Option<PaneId>;
@@ -52,6 +56,14 @@ pub trait WorkspaceView {
 impl WorkspaceView for Workspace {
     fn project_id(&self) -> Option<&str> {
         self.project_id()
+    }
+
+    fn focused_project(&self) -> Option<&str> {
+        self.project_id()
+    }
+
+    fn sidebar(&self) -> &SidebarModel {
+        self.sidebar()
     }
 
     fn roster_terminal_ids(&self) -> Vec<String> {
@@ -81,7 +93,7 @@ impl WorkspaceView for Workspace {
 }
 
 /// herdr `AgentState`, mapped onto Gobby roster rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum RowState {
     /// An attention prompt is waiting on this terminal.
     Attention,
@@ -90,6 +102,7 @@ pub enum RowState {
     /// New output landed since the pane was last focused.
     Unseen,
     /// Attached and quiet.
+    #[default]
     Idle,
     /// No pane is attached to this roster row.
     Unknown,
@@ -157,21 +170,12 @@ pub fn row_state<W: WorkspaceView>(ws: &W, terminal_id: &str) -> RowState {
     let Some(pane_id) = ws.pane_for_terminal(terminal_id) else {
         return RowState::Unknown;
     };
-    if ws
-        .attention_entry_ids()
-        .iter()
-        .any(|entry| attention_pane(ws, entry) == Some(pane_id))
-    {
-        return RowState::Attention;
-    }
     let pane = ws.pane(pane_id);
-    if pane.new_output && pane.live {
-        RowState::Working
-    } else if pane.new_output {
-        RowState::Unseen
-    } else {
-        RowState::Idle
-    }
+    ws.sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.terminal_id == terminal_id)
+        .map_or_else(|| pane_state(pane), |agent| agent_row_state(agent, pane))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

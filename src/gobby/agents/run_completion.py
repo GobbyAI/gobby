@@ -33,14 +33,18 @@ if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.storage.agents import AgentRunTerminalReason
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.sessions import SessionManager
 
 
 logger = logging.getLogger(__name__)
 
 
-def _agent_run_checkout_root(runner: AgentRunner, run: Any) -> str | None:
+def _agent_run_checkout_root(
+    db: HubDatabase,
+    session_manager: SessionManager | None,
+    run: Any,
+) -> str | None:
     """Resolve the checkout containing one agent run's task edits."""
-    db = runner.run_storage.db
     worktree_id = getattr(run, "worktree_id", None)
     if isinstance(worktree_id, str) and worktree_id:
         try:
@@ -62,10 +66,10 @@ def _agent_run_checkout_root(runner: AgentRunner, run: Any) -> str | None:
         return None
 
     child_session_id = getattr(run, "child_session_id", None)
-    if not isinstance(child_session_id, str) or not child_session_id:
+    if not isinstance(child_session_id, str) or not child_session_id or session_manager is None:
         return None
     try:
-        session = runner._session_manager.get(child_session_id)
+        session = session_manager.get(child_session_id)
         root = resolve_session_checkout_root(db, session) if session is not None else None
         return str(root) if root else None
     except Exception:
@@ -78,7 +82,8 @@ def _agent_run_checkout_root(runner: AgentRunner, run: Any) -> str | None:
 
 
 def agent_run_task_dirty_paths(
-    runner: AgentRunner,
+    db: HubDatabase,
+    session_manager: SessionManager | None,
     run: Any,
     *,
     variables: dict[str, Any] | None = None,
@@ -93,9 +98,7 @@ def agent_run_task_dirty_paths(
         variables = {}
         if isinstance(child_session_id, str) and child_session_id:
             try:
-                variables = SessionVariableManager(runner.run_storage.db).get_variables(
-                    child_session_id
-                )
+                variables = SessionVariableManager(db).get_variables(child_session_id)
             except Exception:
                 logger.debug(
                     "Failed to read task edit attribution for agent session %s",
@@ -103,7 +106,7 @@ def agent_run_task_dirty_paths(
                     exc_info=True,
                 )
 
-    checkout_root = _agent_run_checkout_root(runner, run)
+    checkout_root = _agent_run_checkout_root(db, session_manager, run)
     if checkout_root is None:
         return []
     attributed = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
@@ -117,6 +120,32 @@ def agent_run_task_dirty_paths(
         attributed = {"."}
     dirty = task_dirty_paths(attributed, checkout_root)
     return None if dirty is None else sorted(dirty)
+
+
+def build_agent_exit_notification(
+    run_id: str,
+    *,
+    variables: dict[str, Any],
+    dirty_paths: list[str] | None,
+) -> tuple[AgentRunTerminalReason | None, dict[str, Any], str]:
+    """Build the structured result shared by cooperative and recovered exits."""
+    terminal_reason: AgentRunTerminalReason | None = (
+        "task_blocker" if variables.get("blocker_handed_off") is True else None
+    )
+    notify_result: dict[str, Any] = {
+        "status": "blocked" if terminal_reason == "task_blocker" else "success",
+        "run_id": run_id,
+        "dirty_paths": dirty_paths,
+    }
+    if terminal_reason is not None:
+        notify_result["terminal_reason"] = terminal_reason
+    verdict = variables.get("adversary_verdict")
+    if isinstance(verdict, str) and verdict:
+        notify_result["signoff_message"] = verdict
+    message = (
+        f"Agent {run_id} completed; dirty_paths={json.dumps(dirty_paths, separators=(',', ':'))}"
+    )
+    return terminal_reason, notify_result, message
 
 
 class TaskCompletionState(TypedDict):

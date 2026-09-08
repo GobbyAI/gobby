@@ -83,12 +83,14 @@ def build_agentic_review_prompt(
         prompt += (
             f"validation_commands={facts}. "
             "validation_commands is gate 10's authoritative transcript record of commands task "
-            "sessions ran: an unwrapped success run satisfies a criterion's "
-            "command when its core_command equals that command, without any committed log or "
-            "receipt. Its latest_runs entries retain the verbatim command and state core_command "
-            "and wrapped. Its uncredited_runs entries name commands seen but excluded because "
-            "their outcome was unknown, they were wrapped, or they were stale after a later edit; "
-            "cite that entry when a verdict names a seen-but-uncredited run. "
+            "sessions ran. Its criterion_commands entries apply the same normalization contract "
+            "to criterion commands and transcript core commands, including approved environment "
+            "and directory prefixes; a satisfied entry is authoritative without any committed "
+            "log or receipt. Its latest_runs entries retain the verbatim command and state "
+            "core_command and wrapped. Its uncredited_runs entries name commands seen but "
+            "excluded because their outcome was unknown, they were wrapped, or they were stale "
+            "after a later edit; cite that entry when a verdict names a seen-but-uncredited run. "
+            "Review every command requirement and report every command gap in one verdict. "
         )
     if coordinator_owned_pending and closure_reason not in NO_WORK_CLOSE_REASONS:
         prompt += (

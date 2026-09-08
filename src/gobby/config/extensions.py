@@ -33,6 +33,7 @@ class WebSocketBroadcastConfig(BaseModel):
         default=[
             "session-start",
             "session-end",
+            "interrupt",
             "pre-tool-use",
             "post-tool-use",
         ],

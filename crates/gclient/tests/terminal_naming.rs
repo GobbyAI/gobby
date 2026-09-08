@@ -174,7 +174,11 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
     row["session_id"] = json!(SESSION);
     let (roster, attention) = sidebar(
         vec![row],
-        vec![json!({"entry_id": format!("session:{SESSION}"), "kind": "blocked"})],
+        vec![json!({
+            "entry_id": format!("session:{SESSION}"),
+            "terminal": {"terminal_id": AGENT, "backend": "tmux"},
+            "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
+        })],
     )
     .await;
 

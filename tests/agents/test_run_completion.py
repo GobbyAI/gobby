@@ -239,7 +239,11 @@ def test_failed_isolated_run_reports_checkout_dirt_when_attribution_read_fails(
             return_value=worktree_manager,
         ),
     ):
-        dirty_paths = run_completion.agent_run_task_dirty_paths(runner, run)
+        dirty_paths = run_completion.agent_run_task_dirty_paths(
+            runner.run_storage.db,
+            runner._session_manager,
+            run,
+        )
 
     assert dirty_paths == ["tracked.py", "untracked.py"]
     assert variable_reads == ["session-id"]
@@ -275,6 +279,10 @@ def test_shared_checkout_without_attribution_does_not_claim_all_dirty_paths(
             return_value=checkout,
         ),
     ):
-        dirty_paths = run_completion.agent_run_task_dirty_paths(runner, run)
+        dirty_paths = run_completion.agent_run_task_dirty_paths(
+            runner.run_storage.db,
+            runner._session_manager,
+            run,
+        )
 
     assert dirty_paths == []

@@ -34,6 +34,7 @@ EVENT_TYPE_TO_HOOK_TYPE: dict[str, HookType] = {
     "user_prompt_expansion": HookType.USER_PROMPT_EXPANSION,
     "after_agent": HookType.STOP,
     "stop": HookType.STOP,
+    "interrupt": HookType.INTERRUPT,
     "stop_failure": HookType.STOP_FAILURE,
     "before_tool": HookType.PRE_TOOL_USE,
     "after_tool": HookType.POST_TOOL_USE,

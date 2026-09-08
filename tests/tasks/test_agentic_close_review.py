@@ -112,6 +112,14 @@ def test_launch_prompt_carries_gate10_validation_runs() -> None:
                 "wrapper_reason": "pipeline",
             }
         ],
+        "criterion_commands": [
+            {
+                "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q",
+                "core_command": "uv run pytest tests/tasks/test_validation.py -q",
+                "status": "satisfied",
+                "satisfied": True,
+            }
+        ],
     }
 
     prompt = build_agentic_review_prompt(
@@ -127,7 +135,9 @@ def test_launch_prompt_carries_gate10_validation_runs() -> None:
     facts = json.dumps(validation_commands, sort_keys=True, default=str)
     assert f"validation_commands={facts}. " in prompt
     assert "gate 10's authoritative transcript record" in prompt
-    assert "core_command equals that command" in prompt
+    assert "same normalization contract" in prompt
+    assert "criterion_commands" in prompt
+    assert "report every command gap in one verdict" in prompt
     assert "cite that entry when a verdict names a seen-but-uncredited run" in prompt
     assert prompt.index("validation_commands=") < prompt.index("Inspect the task")
 
@@ -188,7 +198,7 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
     assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
     assert "submit_close_review" in body["prompts"]["agent"]
-    assert body["version"] == "1.9"
+    assert body["version"] == "1.10"
     assert "First apply the stated closure_reason" in body["prompts"]["agent"]
     assert '"state": "satisfied|gap|pending_external"' in body["prompts"]["agent"]
     assert "criterion beginning `Live:` case-insensitively" in body["prompts"]["agent"]
@@ -199,11 +209,16 @@ def test_task_close_validator_definition_submits_then_terminates() -> None:
     # never demand a committed receipt or its own reproduction instead.
     guidance = body["prompts"]["agent"]
     assert "validation_commands facts are gate 10's transcript-derived" in guidance
-    assert "success\nrun whose core_command equals that command" in guidance
+    assert "same normalization contract" in guidance
+    assert "criterion_commands" in guidance
+    assert "Report every command gap in one verdict" in guidance
     assert "uncredited_runs names commands" in guidance
-    assert "transcript saw but could not credit" in guidance
-    assert "other file committed to the repository as proof of a command run" in guidance
-    assert "never reject a criterion because your own\nsandbox cannot reproduce it" in guidance
+    assert "transcript saw" in guidance
+    assert "could not credit" in guidance
+    assert "other file committed to the repository as proof of a command" in guidance
+    assert "run, never ask for a run to be repeated" in guidance
+    assert "never reject a criterion because" in guidance
+    assert "your own sandbox cannot reproduce it" in guidance
     assert "receipt or artifact that must result" not in guidance
 
 

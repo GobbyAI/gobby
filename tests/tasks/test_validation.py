@@ -317,9 +317,10 @@ def test_reviewer_prompt_marks_gate10_validation_runs_authoritative(
     assert run["command"] in prompt
     assert run["completed_at"] in prompt
     assert '"exit_code":0' in prompt
-    assert "Its `latest_runs` entries name the winning run per category with the" in prompt
-    assert "authoritative: a criterion naming a validation command is satisfied on the" in prompt
-    assert "log, receipt, or other file committed to the repository as proof of a command" in prompt
+    assert "criterion_commands` normalizes both the criterion and transcript commands" in prompt
+    assert "report every command gap in one verdict" in prompt
+    assert "a log, receipt, or other file committed to the repository as proof of a" in prompt
+    assert "command run" in prompt
     assert "receipt or artifact that must result" not in prompt
 
 

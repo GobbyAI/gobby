@@ -334,7 +334,10 @@ mod tests {
             pane.right_click_passthrough = true;
         }
         let entry_id = format!("run:{}", ws.pane(focused).terminal_id);
-        ws.attention.entries.push(entry_id.clone());
+        ws.attention.entries.push(crate::daemon::RosterEntry {
+            entry_id: entry_id.clone(),
+            ..Default::default()
+        });
         chrome.active_tab_mut().expect("active tab").zoomed = true;
         let menu = build_menu(&ws, &chrome, ContextMenuKind::Pane(focused), (10, 5));
         assert_eq!(
