@@ -35,6 +35,7 @@ class GitTimeout:
     timeout: float
     stdout: str = ""
     stderr: str = ""
+    returncode: None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,7 @@ class DaemonGitService:
         cwd: str | Path,
         timeout: float = 10.0,
         env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
     ) -> GitResult:
         """Run one argv-only Git command with a deadline that includes spawn."""
         argv = ("git", *args)
@@ -153,6 +155,7 @@ class DaemonGitService:
             cwd=resolved_cwd,
             timeout=timeout,
             env=effective_env,
+            input_text=input_text,
         )
 
     async def status(
@@ -194,6 +197,7 @@ class DaemonGitService:
                     cwd=resolved_cwd,
                     timeout=timeout,
                     env=effective_env,
+                    input_text=None,
                 )
             )
             flight = _InFlight(task=task)
@@ -221,6 +225,7 @@ class DaemonGitService:
         cwd: str,
         timeout: float,
         env: dict[str, str] | None,
+        input_text: str | None,
     ) -> GitResult:
         loop = asyncio.get_running_loop()
         completion: asyncio.Future[GitOk | GitFailed] = loop.create_future()
@@ -228,7 +233,7 @@ class DaemonGitService:
         worker = threading.Thread(
             target=_run_git_worker,
             args=(loop, completion, control, argv),
-            kwargs={"cwd": cwd, "env": env},
+            kwargs={"cwd": cwd, "env": env, "input_text": input_text},
             name="gobby-daemon-git",
             daemon=True,
         )
@@ -254,22 +259,24 @@ def _run_git_worker(
     *,
     cwd: str,
     env: dict[str, str] | None,
+    input_text: str | None,
 ) -> None:
     """Own one process from spawn through communication and leader reap."""
     try:
         process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
             argv,
             cwd=cwd,
+            stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
-            errors="replace",
+            errors="surrogateescape",
             env=env if env is not None else git_subprocess_env(),
             start_new_session=True,
         )
         control.attach(process)
-        stdout, stderr = process.communicate()
+        stdout, stderr = process.communicate(input_text)
         if process.returncode == 0:
             result: GitOk | GitFailed = GitOk("ok", argv, stdout, stderr)
         else:

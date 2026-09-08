@@ -169,8 +169,9 @@ async def test_disjoint_reads_overlap() -> None:
             cwd: str,
             timeout: float,
             env: dict[str, str] | None,
+            input_text: str | None,
         ) -> GitOk:
-            del cwd, timeout, env
+            del cwd, timeout, env, input_text
             started.add(argv)
             if len(started) == 2:
                 both_started.set()

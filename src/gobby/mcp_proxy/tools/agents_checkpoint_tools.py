@@ -12,12 +12,14 @@ from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
-    inspect_checkout_path_ownership,
+    inspect_checkout_path_ownership_async,
 )
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import task_edited_file_set_for_checkout
+from gobby.worktrees.git import WorktreeInfo
 
 _ACTIVE_RUN_STATUSES = {"pending", "running"}
 logger = logging.getLogger(__name__)
@@ -44,8 +46,7 @@ def register_agent_checkpoint_tools(
         except ValueError as exc:
             return _error(str(exc), "session_invalid")
         try:
-            return await asyncio.to_thread(
-                _checkpoint_agent_worktree,
+            return await _checkpoint_agent_worktree(
                 ctx,
                 run_id=run_id,
                 caller_session_id=caller_session_id,
@@ -55,7 +56,7 @@ def register_agent_checkpoint_tools(
             return _error(f"Checkpoint failed: {exc}", "checkpoint_failed")
 
 
-def _checkpoint_agent_worktree(
+async def _checkpoint_agent_worktree(
     ctx: AgentsRegistryContext,
     *,
     run_id: str,
@@ -135,7 +136,7 @@ def _checkpoint_agent_worktree(
             "No Git manager is available for the worktree project", "checkpoint_unavailable"
         )
     try:
-        inspected = git_manager.inspect_worktree(worktree.worktree_path)
+        inspected = await _inspect_linked_worktree(git_manager, worktree.worktree_path)
     except (OSError, RuntimeError, ValueError) as exc:
         return _error(f"Worktree inspection failed: {exc}", "isolated_worktree_required")
     if (
@@ -174,7 +175,7 @@ def _checkpoint_agent_worktree(
     try:
         db = ctx.db or ctx.task_manager.db
         checkout_root = str(Path(worktree.worktree_path).resolve())
-        ownership = inspect_checkout_path_ownership(
+        ownership = await inspect_checkout_path_ownership_async(
             db,
             project_id=worktree.project_id,
             checkout_root=checkout_root,
@@ -207,7 +208,7 @@ def _checkpoint_agent_worktree(
                     paths=unattributed_paths,
                 )
             else:
-                checkpoint = checkpoint_worktree(
+                checkpoint = await checkpoint_worktree(
                     worktree_path=checkout_root,
                     expected_paths=dirty_paths,
                     task_seq_num=task.seq_num,
@@ -268,6 +269,41 @@ def _authorized_task_paths(
         variables = variable_manager.get_variables(session_id)
         authorized.update(task_edited_file_set_for_checkout(variables, task_id, checkout_root))
     return authorized
+
+
+async def _inspect_linked_worktree(git_manager: Any, worktree_path: str) -> WorktreeInfo:
+    """Verify a registered path is a live linked checkout without blocking a worker."""
+    canonical_path = Path(worktree_path).expanduser().resolve(strict=True)
+    if not canonical_path.is_dir():
+        raise ValueError(f"Worktree path is not a directory: {canonical_path}")
+
+    async def output(*args: str) -> str:
+        result = await daemon_git.run(args, cwd=canonical_path, timeout=10)
+        if not isinstance(result, GitOk):
+            detail = result.stderr.strip() or result.stdout.strip() or result.status
+            raise ValueError(f"git {' '.join(args)} failed: {detail}")
+        return result.stdout.strip()
+
+    top_level, branch, git_dir, common_dir, is_bare = await asyncio.gather(
+        output("rev-parse", "--show-toplevel"),
+        output("branch", "--show-current"),
+        output("rev-parse", "--path-format=absolute", "--git-dir"),
+        output("rev-parse", "--path-format=absolute", "--git-common-dir"),
+        output("rev-parse", "--is-bare-repository"),
+    )
+    if Path(top_level).resolve() != canonical_path:
+        raise ValueError(f"Path is not a Git checkout root: {canonical_path}")
+    if Path(git_dir).resolve() == Path(common_dir).resolve():
+        raise ValueError(f"Primary checkout cannot be adopted: {canonical_path}")
+    return WorktreeInfo(
+        path=str(canonical_path),
+        branch=branch or None,
+        commit="",
+        is_bare=is_bare == "true",
+        is_detached=not branch,
+        locked=False,
+        prunable=False,
+    )
 
 
 def _resolve_git_manager(ctx: AgentsRegistryContext, project_id: str) -> Any | None:
