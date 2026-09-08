@@ -368,15 +368,22 @@ class TmuxTerminalRuntime:
 
     async def resize(self, terminal: Terminal, rows: int, cols: int) -> None:
         validate_dimensions(rows, cols)
-        await self._run(
+        sessions = self._sessions_for(terminal)
+        target = self._target(terminal)
+        await sessions._run("set-option", "-w", "-t", target, "window-size", "manual")
+        await sessions._run(
             "resize-window",
             "-t",
-            self._target(terminal),
+            target,
             "-x",
             str(cols),
             "-y",
             str(rows),
         )
+
+    async def release_size(self, terminal: Terminal) -> None:
+        sessions = self._sessions_for(terminal)
+        await sessions._run("set-option", "-wu", "-t", self._target(terminal), "window-size")
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         name = self._tmux_name(terminal)

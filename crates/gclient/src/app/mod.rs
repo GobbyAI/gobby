@@ -8,6 +8,7 @@ mod live_attach;
 mod live_loop;
 mod pane;
 mod persistence;
+pub mod project_tabs;
 pub mod run_loop;
 pub mod sidebar_model;
 
@@ -21,8 +22,10 @@ pub use live_loop::mouse::{
     MouseOutcome, Placement, DOUBLE_CLICK_MS, MOUSE_SCROLL_LINES, ROSTER_DRAG_THRESHOLD,
     TAB_DRAG_THRESHOLD,
 };
+pub use live_loop::projects::focus_project;
 pub use live_loop::run_live_loop;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
+pub use persistence::{apply_sidebar_snapshot, sidebar_snapshot};
 
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
@@ -33,6 +36,7 @@ use crate::frame_source::{
     AttachLocator, FrameDelivery, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource,
     Transport,
 };
+use crate::persist::WorkspaceSnapshot;
 use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use serde_json::{json, Value};
 use sidebar_model::{PendingSidebar, SidebarModel};
@@ -72,6 +76,8 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     roster_ids: Vec<String>,
     /// Tab order from the saved snapshot; the first roster page follows it.
     saved_tab_order: Vec<String>,
+    /// The snapshot `restore_project` read; the loop rebuilds the tabs from it.
+    saved_snapshot: Option<WorkspaceSnapshot>,
     attention: AttentionState,
     /// This machine's id, the default home for an agent without one.
     local_machine: String,
@@ -149,6 +155,7 @@ impl Workspace {
             next_pane: 1,
             roster_ids: Vec::new(),
             saved_tab_order: Vec::new(),
+            saved_snapshot: None,
             attention: AttentionState::empty(),
             local_machine: String::new(),
             sidebar_rows: SidebarRows::default(),
@@ -328,18 +335,6 @@ impl Workspace {
         backend: &str,
         epoch: &str,
     ) -> Result<PaneId, FrameError> {
-        let id = self.open_terminal_unpersisted(terminal_id, backend, epoch)?;
-        self.persist_workspace()
-            .map_err(|error| FrameError::Other(error.to_string()))?;
-        Ok(id)
-    }
-
-    fn open_terminal_unpersisted(
-        &mut self,
-        terminal_id: &str,
-        backend: &str,
-        epoch: &str,
-    ) -> Result<PaneId, FrameError> {
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
         let mut pane = Pane::new(id, terminal_id, backend, epoch);
@@ -409,10 +404,6 @@ impl Workspace {
             let pane = self.panes.get_mut(&id).expect("pane");
             pane.control = ControlState::Observe;
         }
-        self.persist_workspace()
-            .map_err(|error| DaemonError::Protocol {
-                detail: format!("persist workspace: {error}"),
-            })?;
         Ok(())
     }
 

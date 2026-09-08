@@ -130,7 +130,7 @@ fn render_content_column<W: WorkspaceView>(
     if terminal_area.is_empty() {
         return TabBarHits::default();
     }
-    if chrome.tabs.is_empty() {
+    if chrome.tabs().tabs.is_empty() {
         panes::render_empty(frame, terminal_area, chrome);
         return TabBarHits::default();
     }

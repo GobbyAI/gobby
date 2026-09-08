@@ -33,6 +33,7 @@ mod control;
 pub(super) mod menu;
 pub(super) mod modal_input;
 pub(super) mod mouse;
+pub(super) mod projects;
 
 use actions::{
     apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action, sync_live_chrome,
@@ -40,6 +41,7 @@ use actions::{
 use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
+use projects::{persist_if_changed, restore_focused, save_client_session};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -167,6 +169,11 @@ pub async fn run_live_loop<B: Backend>(
         loop_error = Some(FrameError::from(error));
     }
     sync_live_chrome(workspace, chrome);
+    if loop_error.is_none() {
+        if let Err(error) = restore_focused(workspace, chrome).await {
+            chrome.status_message = Some(error.to_string());
+        }
+    }
     if let Some(pane_id) = chrome.focused_pane() {
         if let Err(error) = focus_live_pane(workspace, pane_id).await {
             chrome.status_message = Some(error.to_string());
@@ -182,6 +189,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut prefix_armed = false;
     let mut supervisor = ReconnectSupervisor::new();
     let mut reconnect_job = None;
+    let mut last_snapshot = None;
 
     // Draw once before the first select: input outranks the render tick, so
     // the earliest event, a click included, would otherwise route against an
@@ -342,8 +350,16 @@ pub async fn run_live_loop<B: Backend>(
                 chrome.status_message = Some(error.to_string());
             }
         }
+        if let Err(error) = persist_if_changed(workspace, chrome, &mut last_snapshot) {
+            chrome.status_message = Some(error.to_string());
+        }
     }
 
+    if let Err(error) = persist_if_changed(workspace, chrome, &mut last_snapshot)
+        .and_then(|()| save_client_session(workspace, chrome))
+    {
+        tracing::warn!(%error, "could not save the gclient workspace state");
+    }
     drop(reconnect_job.take());
     supervisor.cancel(DaemonError::Protocol {
         detail: workspace

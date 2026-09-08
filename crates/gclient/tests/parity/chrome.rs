@@ -99,7 +99,7 @@ fn chrome_for(ws: &Workspace, terminal: &str) -> Chrome {
 fn add_tab(chrome: &mut Chrome, name: &str) -> usize {
     let pane = chrome.focused_pane().expect("focused pane");
     chrome.open_tab(pane, name);
-    chrome.tabs.len() - 1
+    chrome.tabs().tabs.len() - 1
 }
 
 /// herdr `buffer_row_text`: one row of `area`, trailing spaces trimmed.
@@ -184,7 +184,7 @@ fn tab_view(ws: &Workspace, chrome: &Chrome, area: Rect) -> TabView {
     render(area.width, area.height, |frame| {
         hits = render_tab_bar(frame, bar, ws, chrome);
     });
-    let mut tab_hit_areas = vec![Rect::default(); chrome.tabs.len()];
+    let mut tab_hit_areas = vec![Rect::default(); chrome.tabs().tabs.len()];
     for (idx, rect) in &hits.tabs {
         tab_hit_areas[*idx] = *rect;
     }
@@ -200,7 +200,7 @@ fn tab_view(ws: &Workspace, chrome: &Chrome, area: Rect) -> TabView {
 /// columns its pane would be given in this chrome's terminal area.
 fn runtime_size(chrome: &Chrome, tab_idx: usize) -> (u16, u16) {
     let (infos, _) = pane_layout::pane_geometry(
-        &chrome.tabs[tab_idx],
+        &chrome.tabs().tabs[tab_idx],
         chrome.view.terminal_area,
         &chrome.prefs,
     );
@@ -541,7 +541,7 @@ parity_tests! {
                     let mut two_tab_workspace = chrome_for(&two_ws, "two");
                     two_tab_workspace.prefs.hide_tab_bar_when_single_tab = true;
                     let background_tab = add_tab(&mut two_tab_workspace, "logs");
-                    two_tab_workspace.active_tab = 0;
+                    two_tab_workspace.tabs_mut().active_tab = 0;
                     two_tab_workspace.mode = Mode::Terminal;
                     one_tab_workspace.mode = Mode::Terminal;
 
@@ -751,7 +751,7 @@ parity_tests! {
             for name in ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"] {
                 add_tab(&mut chrome, name);
             }
-            chrome.active_tab = 0;
+            chrome.tabs_mut().active_tab = 0;
             chrome.mode = Mode::Terminal;
             chrome.tab_scroll_follow_active = false;
             chrome.tab_scroll = 2;
@@ -793,7 +793,7 @@ parity_tests! {
             ] {
                 add_tab(&mut chrome, name);
             }
-            chrome.active_tab = 0;
+            chrome.tabs_mut().active_tab = 0;
             chrome.mode = Mode::Terminal;
             chrome.tab_scroll_follow_active = false;
             chrome.tab_scroll = usize::MAX;
@@ -802,7 +802,7 @@ parity_tests! {
             chrome.compute_view(&ws, area);
             let tabs = tab_view(&ws, &chrome, area);
 
-            let last_idx = chrome.tabs.len() - 1;
+            let last_idx = chrome.tabs().tabs.len() - 1;
             assert!(tabs.tab_hit_areas[last_idx].width > 0);
             let clamped_scroll = chrome.tab_scroll;
 
@@ -1125,7 +1125,7 @@ switch_terminal = "ctrl+1..9"
                     let right = ws.pane_for_terminal("right").expect("right pane");
                     let mut chrome = chrome_for(&ws, "left");
                     add_tab(&mut chrome, "logs");
-                    chrome.active_tab = 0;
+                    chrome.tabs_mut().active_tab = 0;
                     chrome.open_pane(right, "");
                     chrome.mode = Mode::Terminal;
 
@@ -1236,16 +1236,16 @@ fn rendered_hits_match_drawn_cells() {
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
     }
-    chrome.active_tab = chrome.tabs.len() - 1;
+    chrome.tabs_mut().active_tab = chrome.tabs().tabs.len() - 1;
     let terminal = render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 18));
     let view = &chrome.view;
 
     assert!(
-        view.tab_hit_areas.len() < chrome.tabs.len(),
+        view.tab_hit_areas.len() < chrome.tabs().tabs.len(),
         "tabs overflow"
     );
     for (index, rect) in &view.tab_hit_areas {
-        let name = tab_display_name(&chrome.tabs, *index).expect("tab name");
+        let name = tab_display_name(&chrome.tabs().tabs, *index).expect("tab name");
         let text = hit_text(&terminal, *rect);
         assert!(text.contains(&name), "tab {index} at {rect:?}: {text:?}");
     }
@@ -1361,7 +1361,7 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
     let mut chrome = chrome_for(&ws, "alpha");
     let beside = chrome.open_pane(beta, "beta");
     let below = chrome.open_pane_below(gamma, "gamma");
-    assert_eq!(chrome.tabs.len(), 1);
+    assert_eq!(chrome.tabs().tabs.len(), 1);
     assert_eq!(
         chrome.focused_pane(),
         Some(gamma),
@@ -1388,6 +1388,6 @@ fn open_pane_below_stacks_the_new_slot_under_the_focused_one() {
 
     let mut empty = Chrome::new(theme());
     empty.open_pane_below(beta, "beta");
-    assert_eq!(empty.tabs.len(), 1);
+    assert_eq!(empty.tabs().tabs.len(), 1);
     assert_eq!(empty.focused_pane(), Some(beta));
 }

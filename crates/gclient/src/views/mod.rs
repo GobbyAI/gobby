@@ -2,9 +2,10 @@
 
 pub mod grid;
 
-use crate::app::run_live_loop;
+use crate::app::{apply_sidebar_snapshot, run_live_loop};
 use crate::daemon::LiveDaemon;
 use crate::frame_source::AttachLocator;
+use crate::persist::load_session;
 use crate::theme::Theme;
 use crate::ui::Chrome;
 use crate::Workspace;
@@ -46,7 +47,7 @@ pub fn run_ready(
             let daemon =
                 LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
             let mut workspace = Workspace::live(daemon);
-            workspace.set_gobby_home(ready.gobby_home);
+            workspace.set_gobby_home(ready.gobby_home.clone());
             // Without a machine id the sidebar still lists agents; they just
             // sit under an empty machine name until the daemon fills it in.
             workspace.set_local_machine(
@@ -58,6 +59,9 @@ pub fn run_ready(
             workspace.set_frame_delivery(ready.frame_delivery);
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
             chrome.apply_prefs(ready.prefs);
+            if let Some(session) = load_session(&ready.gobby_home)? {
+                apply_sidebar_snapshot(&mut chrome.sidebar, &session.sidebar);
+            }
             chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();

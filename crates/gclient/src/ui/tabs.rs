@@ -226,11 +226,11 @@ pub fn render_tab_bar<W: WorkspaceView>(
     if area.width == 0 || area.height == 0 {
         return TabBarHits::default();
     }
-    let tabs = &chrome.tabs;
+    let tabs = &chrome.tabs().tabs;
     let p = &chrome.palette;
     let view = compute_tab_bar_view(
         tabs,
-        chrome.active_tab,
+        chrome.tabs().active_tab,
         area,
         chrome.tab_scroll,
         chrome.tab_scroll_follow_active,
@@ -283,7 +283,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         if rect.width == 0 {
             continue;
         }
-        let active = idx == chrome.active_tab;
+        let active = idx == chrome.tabs().active_tab;
         let style = if active {
             let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
             if tab_is_auto_named(tab) {
@@ -368,7 +368,10 @@ mod tests {
     fn chrome_with_tabs(titles: &[&str]) -> Chrome {
         let mut chrome = Chrome::dark();
         for (idx, title) in titles.iter().enumerate() {
-            chrome.tabs.push(Tab::new(*title, PaneId(idx as u32 + 1)));
+            chrome
+                .tabs_mut()
+                .tabs
+                .push(Tab::new(*title, PaneId(idx as u32 + 1)));
         }
         chrome
     }
@@ -406,8 +409,8 @@ mod tests {
     #[test]
     fn overflowing_tabs_get_scroll_arrows_and_follow_the_active_tab() {
         let mut chrome = chrome_with_tabs(&["one", "two", "three", "four", "five", "six"]);
-        chrome.active_tab = 5;
-        chrome.tabs[5].zoomed = true;
+        chrome.tabs_mut().active_tab = 5;
+        chrome.tabs_mut().tabs[5].zoomed = true;
         let (hits, text) = draw(&chrome, 46);
         assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 3, 1)));
         assert!(hits.scroll_right.is_some() && hits.new_tab.is_some());

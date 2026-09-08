@@ -4,7 +4,6 @@ mod mock_daemon;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_live_loop;
-use gobby_client::app::run_loop::RENDER_TICK;
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::attention_label;
@@ -272,13 +271,18 @@ async fn attention_click_jumps_and_labels_the_terminal() {
     let mut terminal =
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
     let mut chrome = Chrome::dark();
+    for terminal_id in workspace.roster_terminal_ids() {
+        let pane = workspace
+            .pane_for_terminal(&terminal_id)
+            .expect("roster pane");
+        chrome.open_pane(pane, workspace.pane(pane).display_name());
+    }
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 1).await;
-        // The hit map exists once the loop has drawn; the first render tick
-        // fires as soon as the loop starts selecting.
-        tokio::time::sleep(RENDER_TICK * 4).await;
+        // The loop refetches the roster in its own reconcile and draws before
+        // it selects, so the click routes against a hit map holding the row.
+        wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
         let fetched = http_requests(&mock, "GET", "/api/attention/roster");
         send_mouse(
             &input_tx,

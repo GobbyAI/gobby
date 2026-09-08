@@ -15,7 +15,12 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
-from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry, paste_oversize
+from gobby.terminals.leases import (
+    LifecyclePublicationError,
+    SizingDecision,
+    TerminalLeaseRegistry,
+    paste_oversize,
+)
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.tmux_discovery import pane_owners, sweep_tmux_terminals
 from gobby.terminals.ws_protocol import (
@@ -99,6 +104,10 @@ class TerminalWsMixin:
             terminal: dict[str, Any] | None = None,
         ) -> None: ...
 
+        async def _apply_terminal_sizing(
+            self, terminal_id: str, sizing: SizingDecision | None
+        ) -> None: ...
+
     async def _send_json(self, websocket: Any, payload: dict[str, Any]) -> None:
         await websocket.send(json_dumps(payload))
 
@@ -144,7 +153,8 @@ class TerminalWsMixin:
             )
             return
         registry = self._leases()
-        record = registry.attach(terminal_id, str(delivery), websocket=websocket)
+        viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
+        record = registry.attach(terminal_id, str(delivery), websocket=websocket, viewer=viewer)
         locator: AttachLocator | None = None
         if str(delivery) == "direct":
             locator, failure = await self._resolve_attach_locator(row)
@@ -197,6 +207,7 @@ class TerminalWsMixin:
             else:
                 event = self._leases().finalize(attachment_id, "detach")
                 if event is not None:
+                    await self._apply_terminal_sizing(event.terminal_id, event.sizing)
                     payload = {
                         "type": "terminal_attachment_finalized",
                         "terminal_id": event.terminal_id,
@@ -455,77 +466,6 @@ class TerminalWsMixin:
                 "request_id": data.get("request_id"),
             },
         )
-
-    async def _handle_terminal_resize(self, websocket: Any, data: dict[str, Any]) -> None:
-        attachment_id = data.get("attachment_id")
-        if not isinstance(attachment_id, str):
-            return
-        try:
-            validate_dimensions(data.get("rows"), data.get("cols"))
-        except InvalidTerminalDimensionsError:
-            await self._send_json(
-                websocket, {"type": "terminal_error", "code": "invalid_dimensions"}
-            )
-            return
-        admitted = self._leases().resize_pty(attachment_id, data.get("rows"), data.get("cols"))
-        if not admitted.ok:
-            await self._send_json(
-                websocket,
-                {
-                    "type": "terminal_error",
-                    "code": admitted.reason,
-                    "attachment_id": attachment_id,
-                },
-            )
-            return
-        record = self._leases().get(attachment_id)
-        manager = getattr(self, "terminal_manager", None)
-        if record is None or manager is None:
-            return
-        row = manager.get(record.terminal_id)
-        if row is None:
-            return
-        if row.ownership == "external":
-            await self._send_json(
-                websocket,
-                {
-                    "type": "terminal_error",
-                    "code": "external",
-                    "attachment_id": attachment_id,
-                },
-            )
-            return
-        runtime = self._runtime_for(row.backend)
-        if runtime is None:
-            return
-        rows, cols = validate_dimensions(data.get("rows"), data.get("cols"))
-        if (row.rows, row.cols) == (rows, cols):
-            # A resize to the size the terminal already has is not a resize:
-            # the repaint it would trigger lands after the attach history and
-            # costs the seam whatever scrolled in between (#20805).
-            return
-        await runtime.resize(row, rows, cols)
-        # Recorded only after the runtime was actually told, so a failed
-        # resize leaves the next request free to try again.
-        manager.set_dims(row.id, rows, cols)
-
-    async def _handle_terminal_set_viewport(self, websocket: Any, data: dict[str, Any]) -> None:
-        attachment_id = data.get("attachment_id")
-        if not isinstance(attachment_id, str):
-            return
-        try:
-            rows, cols = self._leases().set_viewport(
-                attachment_id, data.get("rows"), data.get("cols")
-            )
-        except (KeyError, InvalidTerminalDimensionsError):
-            await self._send_json(
-                websocket, {"type": "terminal_error", "code": "invalid_dimensions"}
-            )
-            return
-        frame = self._proxy().frame_for(attachment_id)
-        setter = getattr(frame, "set_viewport", None)
-        if callable(setter):
-            await setter(rows, cols)
 
     async def _handle_terminal_set_scroll_offset(
         self, websocket: Any, data: dict[str, Any]

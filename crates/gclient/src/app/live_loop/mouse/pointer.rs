@@ -121,7 +121,7 @@ pub(super) fn down<W: WorkspaceView>(
         }
         _ if button != MouseButton::Left => MouseOutcome::Ignore,
         Hit::Tab(index) => {
-            chrome.active_tab = index;
+            chrome.tabs_mut().active_tab = index;
             chrome.tab_scroll_follow_active = true;
             chrome.gesture = Some(MouseGesture::TabDrag {
                 index,
@@ -381,10 +381,11 @@ pub(super) fn up<W: WorkspaceView>(
             index, moved: true, ..
         }) => {
             if let Hit::Tab(target) = hit {
-                let count = chrome.tabs.len();
+                let set = chrome.tabs_mut();
+                let count = set.tabs.len();
                 if target != index && index < count && target < count {
-                    move_tab(&mut chrome.tabs, index, target);
-                    chrome.active_tab = target;
+                    move_tab(&mut set.tabs, index, target);
+                    set.active_tab = target;
                 }
             }
             MouseOutcome::Handled

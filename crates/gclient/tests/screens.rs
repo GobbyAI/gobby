@@ -90,7 +90,7 @@ fn split_live() -> (Workspace, Chrome) {
     chrome.open_pane(alpha, "alpha");
     chrome.open_pane(beta, "alpha");
     chrome.open_tab(alpha, "second");
-    chrome.active_tab = 0;
+    chrome.tabs_mut().active_tab = 0;
     assert!(chrome.focus_pane(beta), "focus term-beta");
     (ws, chrome)
 }
@@ -297,7 +297,7 @@ fn a_chrome_change_outside_the_terminal_content_region_fails_the_capture() {
     let committed = deterministic_capture("split_live", split_live, &theme);
 
     let (ws, mut chrome) = split_live();
-    chrome.tabs[1].title = "secont".to_string();
+    chrome.tabs_mut().tabs[1].title = "secont".to_string();
     let moved = capture("split_live", &render(&ws, &mut chrome), &theme);
 
     assert!(
