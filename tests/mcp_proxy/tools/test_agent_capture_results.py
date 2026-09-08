@@ -34,9 +34,12 @@ def _run(
     status: str = "cancelled",
     result: str,
     capture_id: str | None = _CAPTURE_ID,
+    run_id: str = "run-123",
+    terminal_reason: str | None = None,
+    resume_metadata_json: dict[str, Any] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        id="run-123",
+        id=run_id,
         status=status,
         result=result,
         error=None,
@@ -47,10 +50,16 @@ def _run(
         started_at=datetime(2026, 7, 29, tzinfo=UTC),
         completed_at=datetime(2026, 7, 29, 0, 1, tzinfo=UTC),
         child_session_id="child-123",
-        terminal_reason="user_cancelled" if status == "cancelled" else None,
+        terminal_reason=(
+            terminal_reason
+            if terminal_reason is not None
+            else "user_cancelled"
+            if status == "cancelled"
+            else None
+        ),
         prompt="Do the work",
         capture_id=capture_id,
-        resume_metadata_json=None,
+        resume_metadata_json=resume_metadata_json,
     )
 
 
@@ -120,6 +129,92 @@ async def test_agent_end_handoff_is_authoritative_over_terminal_capture() -> Non
     }
 
 
+@pytest.mark.parametrize("capture_case", ["malformed", "missing", "footer_only"])
+@pytest.mark.parametrize(
+    ("terminal_case", "status", "terminal_reason"),
+    [
+        ("success", "success", None),
+        ("error", "error", None),
+        ("blocked", "success", "task_blocker"),
+        ("cancelled", "cancelled", "user_cancelled"),
+        ("recovered", "success", None),
+    ],
+)
+async def test_result_entrypoints_preserve_handoff_across_terminal_capture_cases(
+    capture_case: str,
+    terminal_case: str,
+    status: str,
+    terminal_reason: str | None,
+) -> None:
+    if capture_case == "malformed":
+        raw_capture = "terminal output without a capture start marker"
+        stored_result = raw_capture
+        capture_id = _CAPTURE_ID
+    elif capture_case == "footer_only":
+        raw_capture = "shell prompt and provider footer only"
+        stored_result = _slot(raw_capture)
+        capture_id = _CAPTURE_ID
+    else:
+        raw_capture = None
+        stored_result = ""
+        capture_id = None
+
+    terminal_run = _run(
+        run_id="run-terminal",
+        status=status,
+        result=stored_result,
+        capture_id=capture_id,
+        terminal_reason=terminal_reason,
+    )
+    requested_run = terminal_run
+    if terminal_case == "recovered":
+        requested_run = _run(
+            run_id="run-original",
+            status="cancelled",
+            result="",
+            capture_id=None,
+            terminal_reason="daemon_stop",
+            resume_metadata_json={
+                "daemon_stop_resume_consumed_by_run_id": terminal_run.id,
+            },
+        )
+
+    runs = {requested_run.id: requested_run, terminal_run.id: terminal_run}
+    runner = MagicMock()
+    runner.get_run.side_effect = runs.get
+    report = f"## Current State\n\nAuthoritative {terminal_case} report."
+    handoff = SimpleNamespace(payload=SimpleNamespace(rendered_markdown=report))
+    registry = create_agents_registry(runner, db=MagicMock())
+
+    with patch(
+        "gobby.mcp_proxy.tools.agents_query_tools.get_agent_end_handoff",
+        side_effect=lambda _db, run_id: handoff if run_id == terminal_run.id else None,
+    ):
+        get_result = await registry.call("get_agent_result", {"run_id": requested_run.id})
+        wait_result = await registry.call("wait_for_agent", {"run_id": requested_run.id})
+
+    for result in (get_result, wait_result):
+        assert result["success"] is True
+        assert result["result"] == report
+        assert result["run_id"] == terminal_run.id
+        assert result["status"] == ("blocked" if terminal_case == "blocked" else status)
+    assert wait_result["completed"] is True
+    assert wait_result["notification_registered"] is False
+
+    capture = await registry.call("get_agent_capture", {"run_id": terminal_run.id})
+    if raw_capture is None:
+        assert capture["success"] is False
+        assert capture["error_code"] == "capture_not_found"
+    else:
+        assert capture["content"] == raw_capture
+        assert capture["total_chars"] == len(raw_capture)
+        if capture_case == "malformed":
+            assert capture["success"] is False
+            assert capture["error_code"] == "capture_corrupt"
+        else:
+            assert capture["success"] is True
+
+
 def test_get_agent_capture_schema_exposes_page_default_and_maximum() -> None:
     registry = _registry(_run(result=_slot("capture")))
 
@@ -135,17 +230,34 @@ def test_get_agent_capture_schema_exposes_page_default_and_maximum() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["cancelled", "error", "timeout"])
 async def test_terminal_result_surfaces_bound_captured_output(status: str) -> None:
-    capture = "\n".join(f"terminal-{index}" for index in range(2_000))
+    capture = "\n".join(f"terminal-{index}" for index in range(1_000))
     run = _run(status=status, result=_slot(capture))
     registry = _registry(run)
 
     get_result = await registry.call("get_agent_result", {"run_id": run.id})
     wait_result = await registry.call("wait_for_agent", {"run_id": run.id})
+    first_capture_page = await registry.call(
+        "get_agent_capture",
+        {"run_id": run.id, "limit": _AGENT_CAPTURE_PAGE_MAX_CHARS},
+    )
+    second_capture_page = await registry.call(
+        "get_agent_capture",
+        {
+            "run_id": run.id,
+            "offset": first_capture_page["next_offset"],
+            "limit": _AGENT_CAPTURE_PAGE_MAX_CHARS,
+        },
+    )
 
     for result in (get_result, wait_result):
         assert len(result["result"]) <= _AGENT_RESULT_CAPTURE_CHARS
         assert result["capture"]["capture_id"] == _CAPTURE_ID
         assert result["capture"]["total_chars"] == len(capture)
+    assert get_result["result"] == wait_result["result"]
+    assert first_capture_page["success"] is True
+    assert second_capture_page["success"] is True
+    assert first_capture_page["content"] + second_capture_page["content"] == capture
+    assert second_capture_page["next_offset"] is None
 
 
 @pytest.mark.asyncio
