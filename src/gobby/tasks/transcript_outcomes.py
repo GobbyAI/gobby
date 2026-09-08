@@ -87,7 +87,11 @@ def _consume_cd_prefix(command: str, cursor: int) -> int | None:
     path_end = _shell_word_end(command, path_start)
     if path_end is None:
         return None
-    operator_start = _skip_whitespace(command, path_end)
+    operator_start = path_end
+    while operator_start < len(command) and command[operator_start] in " \t\r":
+        operator_start += 1
+    if operator_start < len(command) and command[operator_start] == "\n":
+        return operator_start + 1
     if not command.startswith("&&", operator_start):
         return None
     return operator_start + 2
