@@ -3,15 +3,23 @@
 //! Kept out of the production file so its inline test module does not push
 //! `index_lock.rs` over the 1,000-line ceiling (see `crates/AGENTS.md`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::*;
 
 fn context_for(database_url: String, project_id: &str) -> Context {
+    context_for_root(
+        database_url,
+        project_id,
+        PathBuf::from("/tmp/gcode-index-lock-test"),
+    )
+}
+
+fn context_for_root(database_url: String, project_id: &str, project_root: PathBuf) -> Context {
     Context {
         database_url,
-        project_root: PathBuf::from("/tmp/gcode-index-lock-test"),
+        project_root,
         project_id: project_id.to_string(),
         quiet: true,
         falkordb: None,
@@ -72,6 +80,40 @@ fn project_lock_key_matches_fixture() {
 #[test]
 fn project_lock_key_is_project_scoped() {
     assert_ne!(project_lock_key("proj-a"), project_lock_key("proj-b"));
+}
+
+#[test]
+fn file_lock_paths_normalize_aliases_before_hashing() -> anyhow::Result<()> {
+    let project = tempfile::tempdir()?;
+    std::fs::create_dir_all(project.path().join("src"))?;
+    std::fs::write(project.path().join("src/lib.rs"), "pub fn value() {}\n")?;
+
+    let canonical = normalize_file_lock_path(project.path(), Path::new("src/lib.rs"))?;
+    let lexical_alias = normalize_file_lock_path(project.path(), Path::new("./src/../src/lib.rs"))?;
+    let absolute_alias =
+        normalize_file_lock_path(project.path(), &project.path().join("src/lib.rs"))?;
+
+    assert_eq!(canonical, PathBuf::from("src/lib.rs"));
+    assert_eq!(lexical_alias, canonical);
+    assert_eq!(absolute_alias, canonical);
+    assert_eq!(
+        file_lock_key("proj-a", &lexical_alias),
+        file_lock_key("proj-a", &absolute_alias),
+    );
+    Ok(())
+}
+
+#[test]
+fn file_lock_paths_normalize_missing_files_and_reject_escape() -> anyhow::Result<()> {
+    let project = tempfile::tempdir()?;
+    std::fs::create_dir_all(project.path().join("generated"))?;
+
+    assert_eq!(
+        normalize_file_lock_path(project.path(), Path::new("src/../generated/new.rs"))?,
+        PathBuf::from("generated/new.rs"),
+    );
+    assert!(normalize_file_lock_path(project.path(), Path::new("../outside.rs")).is_err());
+    Ok(())
 }
 
 #[test]
@@ -144,6 +186,88 @@ fn unlock_lines(records: &[String]) -> Vec<&String> {
 
 mod serial_db {
     use super::*;
+
+    fn file_context(database_url: String, project_id: &str) -> (tempfile::TempDir, Context) {
+        let project = tempfile::tempdir().expect("create file-lock project");
+        std::fs::create_dir_all(project.path().join("src")).expect("create source directory");
+        for name in ["held.rs", "free.rs", "other.rs"] {
+            std::fs::write(project.path().join("src").join(name), "pub fn value() {}\n")
+                .expect("write source file");
+        }
+        let ctx = context_for_root(database_url, project_id, project.path().to_path_buf());
+        (project, ctx)
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn disjoint_file_locks_overlap_and_aliases_contend() {
+        let database_url = connect_postgres_test_db();
+        let (_project, ctx) = file_context(database_url, "gcode-file-lock-concurrency");
+        let held = lock_project_files(
+            &ctx,
+            &[PathBuf::from("src/held.rs")],
+            IndexLockPolicy::maintenance_try(),
+        )
+        .expect("hold first file");
+
+        let partial = lock_project_files(
+            &ctx,
+            &[
+                PathBuf::from("src/free.rs"),
+                ctx.project_root.join("src/../src/held.rs"),
+            ],
+            IndexLockPolicy::maintenance_try(),
+        )
+        .expect("lock disjoint file and aliased held file");
+
+        assert_eq!(held.acquired_files, vec![PathBuf::from("src/held.rs")]);
+        assert_eq!(partial.acquired_files, vec![PathBuf::from("src/free.rs")]);
+        assert_eq!(partial.busy_files, vec![PathBuf::from("src/held.rs")]);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn full_project_and_file_locks_exclude_each_other() {
+        let database_url = connect_postgres_test_db();
+        let project_id = "gcode-file-lock-project-gate";
+        let (_project, ctx) = file_context(database_url.clone(), project_id);
+        let held_files = lock_project_files(
+            &ctx,
+            &[PathBuf::from("src/held.rs")],
+            IndexLockPolicy::maintenance_try(),
+        )
+        .expect("hold shared project gate");
+
+        assert!(matches!(
+            lock_project_by_id(
+                &database_url,
+                project_id,
+                IndexLockPolicy::maintenance_try(),
+                LockDiagnostics::Silent,
+            )
+            .expect("try exclusive project lock"),
+            IndexLockResult::Busy(_)
+        ));
+        drop(held_files);
+
+        let _project_lock = hold_project_lock(&database_url, project_id);
+        let blocked = lock_project_files(
+            &ctx,
+            &[PathBuf::from("src/other.rs")],
+            IndexLockPolicy::maintenance_try(),
+        )
+        .expect("try shared project gate");
+        assert!(blocked.acquired_files.is_empty());
+        assert_eq!(blocked.busy_files, vec![PathBuf::from("src/other.rs")]);
+    }
 
     #[test]
     #[cfg_attr(
@@ -573,15 +697,11 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn the_reported_age_measures_the_hold_not_the_holder_connection() {
-        // A connection that idles before it locks -- the daemon's long-lived
-        // content GC connection is exactly this -- makes its own age a wild
-        // over-report of the contention an operator is deciding about.
+    fn the_reported_age_uses_the_lock_acquisition_stamp() {
         let database_url = connect_postgres_test_db();
         let project_id = "gcode-lock-hold-vs-connection";
         let key = project_lock_key(project_id);
         let mut holder = db::connect_readwrite(&database_url).expect("connect idle holder");
-        std::thread::sleep(Duration::from_millis(2500));
         let acquired = try_acquire_project_key(
             &mut holder,
             project_id,
@@ -591,6 +711,15 @@ mod serial_db {
         )
         .expect("hold project advisory lock");
         assert_eq!(acquired, IndexLockResult::Acquired(()));
+        holder
+            .execute(
+                "SELECT set_config(
+                    'application_name',
+                    'gobby-cli' || $1 || floor(extract(epoch FROM now()) - 120)::bigint,
+                    false)",
+                &[&LOCK_ACQUIRED_TAG],
+            )
+            .expect("backdate the test acquisition stamp");
 
         let mut observer = db::connect_readwrite(&database_url).expect("connect observer");
         let description =
@@ -611,16 +740,12 @@ mod serial_db {
             .get(0);
 
         assert!(
-            connection_age >= 2.0,
-            "the holder idled before locking, so its connection must be older: {connection_age}"
+            held_for >= 119,
+            "the synthetic acquisition stamp is two minutes old: {description}"
         );
-        // The stamp floors to whole seconds, so a sub-second hold may render as
-        // 1s; what must never happen is the idle time before the lock being
-        // counted into it.
         assert!(
-            (held_for as f64) + 1.0 < connection_age,
-            "the lock was taken moments ago, so {connection_age:.1}s of connection age must not \
-             be reported as the hold: {description}"
+            (held_for as f64) > connection_age + 100.0,
+            "the reported hold must come from the stamp, not the newer connection: {description}"
         );
     }
 

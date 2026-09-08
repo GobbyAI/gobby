@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -87,6 +89,16 @@ pub(crate) enum IndexLockResult<T> {
     Busy(Option<String>),
 }
 
+/// Canonical project-relative files protected by one shared project gate.
+///
+/// The private guard keeps every advisory lock alive until the caller finishes
+/// the corresponding file operations.
+pub(crate) struct ProjectFileLockSet {
+    pub(crate) acquired_files: Vec<PathBuf>,
+    pub(crate) busy_files: Vec<PathBuf>,
+    _guard: Option<ProjectFileLocks>,
+}
+
 /// Whether a contended acquisition should pay for holder diagnostics.
 ///
 /// Naming the holder costs one catalog query on the acquiring connection, so
@@ -124,6 +136,86 @@ pub(crate) fn with_project_lock<T>(
         IndexLockResult::Acquired(_guard) => f().map(IndexLockResult::Acquired),
         IndexLockResult::Busy(holder) => Ok(IndexLockResult::Busy(holder)),
     }
+}
+
+pub(crate) fn with_exclusive_project_lock<T>(
+    ctx: &Context,
+    f: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    match with_project_lock(ctx, IndexLockPolicy::wait(), f)? {
+        IndexLockResult::Acquired(value) => Ok(value),
+        IndexLockResult::Busy(holder) => {
+            let detail = holder.map(|value| format!("; {value}")).unwrap_or_default();
+            anyhow::bail!("gcode project write lock remained busy after waiting{detail}")
+        }
+    }
+}
+
+/// Acquire a shared project gate plus one exclusive lock per canonical file.
+///
+/// Full-project writers take the existing exclusive project lock and therefore
+/// exclude every file writer. Disjoint file writers share the project gate and
+/// can proceed concurrently. Brief policies report only contended files.
+pub(crate) fn lock_project_files(
+    ctx: &Context,
+    paths: &[PathBuf],
+    policy: IndexLockPolicy,
+) -> anyhow::Result<ProjectFileLockSet> {
+    let mut ordered_paths = paths
+        .iter()
+        .map(|path| normalize_file_lock_path(&ctx.project_root, path))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    ordered_paths.sort();
+    ordered_paths.dedup();
+    if ordered_paths.is_empty() {
+        return Ok(ProjectFileLockSet {
+            acquired_files: Vec::new(),
+            busy_files: Vec::new(),
+            _guard: None,
+        });
+    }
+
+    let project_key = project_lock_key(&ctx.project_id);
+    let mut conn = db::connect_readwrite(&ctx.database_url)
+        .with_context(|| "failed to connect PostgreSQL hub for gcode file locks")?;
+    let started = Instant::now();
+    if !acquire_advisory_key(&mut conn, project_key, policy, AdvisoryLockMode::Shared)? {
+        return Ok(ProjectFileLockSet {
+            acquired_files: Vec::new(),
+            busy_files: ordered_paths,
+            _guard: None,
+        });
+    }
+    stamp_lock_acquisition(&mut conn);
+
+    let mut acquired_files = Vec::with_capacity(ordered_paths.len());
+    let mut busy_files = Vec::new();
+    let mut file_keys = Vec::with_capacity(ordered_paths.len());
+    for path in ordered_paths {
+        let key = file_lock_key(&ctx.project_id, &path);
+        if acquire_advisory_key(
+            &mut conn,
+            key,
+            remaining_policy(policy, started.elapsed()),
+            AdvisoryLockMode::Exclusive,
+        )? {
+            acquired_files.push(path);
+            file_keys.push(key);
+        } else {
+            busy_files.push(path);
+        }
+    }
+
+    Ok(ProjectFileLockSet {
+        acquired_files,
+        busy_files,
+        _guard: Some(ProjectFileLocks {
+            conn,
+            project_key,
+            file_keys,
+            quiet: ctx.quiet,
+        }),
+    })
 }
 
 pub(crate) fn lock_project_by_id(
@@ -245,10 +337,70 @@ fn try_advisory_lock_until(
     poll: Duration,
     notify_every: Option<Duration>,
 ) -> anyhow::Result<bool> {
+    try_advisory_lock_until_mode(
+        conn,
+        key,
+        total_wait,
+        poll,
+        notify_every,
+        AdvisoryLockMode::Exclusive,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum AdvisoryLockMode {
+    Exclusive,
+    Shared,
+}
+
+fn acquire_advisory_key(
+    conn: &mut Client,
+    key: i64,
+    policy: IndexLockPolicy,
+    mode: AdvisoryLockMode,
+) -> anyhow::Result<bool> {
+    match policy {
+        IndexLockPolicy::Wait { max_wait } => {
+            if try_advisory_lock_until_mode(conn, key, max_wait, WAIT_LOCK_POLL, None, mode)? {
+                Ok(true)
+            } else {
+                anyhow::bail!(
+                    "gave up acquiring gcode write lock after {}s; {}",
+                    max_wait.as_secs(),
+                    holder_detail(conn, key),
+                )
+            }
+        }
+        IndexLockPolicy::BriefTry { total_wait, poll } => {
+            try_advisory_lock_until_mode(conn, key, total_wait, poll, None, mode)
+        }
+    }
+}
+
+fn remaining_policy(policy: IndexLockPolicy, elapsed: Duration) -> IndexLockPolicy {
+    match policy {
+        IndexLockPolicy::Wait { max_wait } => IndexLockPolicy::Wait {
+            max_wait: max_wait.saturating_sub(elapsed),
+        },
+        IndexLockPolicy::BriefTry { total_wait, poll } => IndexLockPolicy::BriefTry {
+            total_wait: total_wait.saturating_sub(elapsed),
+            poll,
+        },
+    }
+}
+
+fn try_advisory_lock_until_mode(
+    conn: &mut Client,
+    key: i64,
+    total_wait: Duration,
+    poll: Duration,
+    notify_every: Option<Duration>,
+    mode: AdvisoryLockMode,
+) -> anyhow::Result<bool> {
     let started = Instant::now();
     let mut next_notice = notify_every;
     loop {
-        if try_advisory_lock(conn, key)? {
+        if try_advisory_lock_mode(conn, key, mode)? {
             return Ok(true);
         }
 
@@ -288,9 +440,22 @@ fn try_advisory_lock_until(
     }
 }
 
+#[cfg(test)]
 fn try_advisory_lock(conn: &mut Client, key: i64) -> anyhow::Result<bool> {
+    try_advisory_lock_mode(conn, key, AdvisoryLockMode::Exclusive)
+}
+
+fn try_advisory_lock_mode(
+    conn: &mut Client,
+    key: i64,
+    mode: AdvisoryLockMode,
+) -> anyhow::Result<bool> {
+    let query = match mode {
+        AdvisoryLockMode::Exclusive => "SELECT pg_try_advisory_lock($1)",
+        AdvisoryLockMode::Shared => "SELECT pg_try_advisory_lock_shared($1)",
+    };
     let row = conn
-        .query_one("SELECT pg_try_advisory_lock($1)", &[&key])
+        .query_one(query, &[&key])
         .with_context(|| "failed to try gcode index lock")?;
     row.try_get(0).map_err(Into::into)
 }
@@ -425,6 +590,86 @@ pub(crate) fn project_lock_key(project_id: &str) -> i64 {
     )
 }
 
+fn file_lock_key(project_id: &str, path: &Path) -> i64 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"gcode:index-file:");
+    hasher.update(project_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(path.to_string_lossy().as_bytes());
+    let digest = hasher.finalize();
+    i64::from_be_bytes(
+        digest[0..8]
+            .try_into()
+            .expect("SHA-256 digest has at least 8 bytes"),
+    )
+}
+
+fn normalize_file_lock_path(project_root: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+    let canonical_root = project_root.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize project root {}",
+            project_root.display()
+        )
+    })?;
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    };
+    let candidate = normalize_absolute_path(&candidate);
+    let canonical = canonicalize_allow_missing(&candidate)?;
+    let relative = canonical.strip_prefix(&canonical_root).with_context(|| {
+        format!(
+            "file lock path {} is outside project root {}",
+            path.display(),
+            project_root.display()
+        )
+    })?;
+    if relative.as_os_str().is_empty() {
+        anyhow::bail!("file lock path must name a file inside the project root")
+    }
+    Ok(PathBuf::from(crate::index::normalize_storage_path(
+        relative,
+    )))
+}
+
+fn canonicalize_allow_missing(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut missing = Vec::<OsString>::new();
+    while !existing.exists() {
+        let name = existing.file_name().with_context(|| {
+            format!("file lock path {} has no existing ancestor", path.display())
+        })?;
+        missing.push(name.to_os_string());
+        if !existing.pop() {
+            anyhow::bail!("file lock path {} has no existing ancestor", path.display());
+        }
+    }
+    let mut canonical = existing
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize file lock path {}", path.display()))?;
+    for component in missing.into_iter().rev() {
+        canonical.push(component);
+    }
+    Ok(canonical)
+}
+
+fn normalize_absolute_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
 fn advisory_lock_delay_warning() -> Duration {
     std::env::var(ADVISORY_LOCK_DELAY_WARNING_MS_ENV)
         .ok()
@@ -436,6 +681,13 @@ fn advisory_lock_delay_warning() -> Duration {
 pub(crate) struct ProjectIndexLock {
     conn: Client,
     key: i64,
+    quiet: bool,
+}
+
+struct ProjectFileLocks {
+    conn: Client,
+    project_key: i64,
+    file_keys: Vec<i64>,
     quiet: bool,
 }
 
@@ -490,6 +742,28 @@ impl Drop for ProjectIndexLock {
                 if !self.quiet {
                     eprintln!("warning: failed to release gcode index lock: {error}");
                 }
+            }
+        }
+    }
+}
+
+impl Drop for ProjectFileLocks {
+    fn drop(&mut self) {
+        for key in self.file_keys.iter().rev() {
+            if let Err(error) = self.conn.query_one("SELECT pg_advisory_unlock($1)", &[key]) {
+                log::debug!("failed to release gcode file lock: {error}");
+                if !self.quiet {
+                    eprintln!("warning: failed to release gcode file lock: {error}");
+                }
+            }
+        }
+        if let Err(error) = self
+            .conn
+            .query_one("SELECT pg_advisory_unlock_shared($1)", &[&self.project_key])
+        {
+            log::debug!("failed to release shared gcode project gate: {error}");
+            if !self.quiet {
+                eprintln!("warning: failed to release shared gcode project gate: {error}");
             }
         }
     }

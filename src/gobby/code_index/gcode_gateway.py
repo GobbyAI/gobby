@@ -105,6 +105,20 @@ class GcodeDaemonConfigUnavailableError(GcodeCommandError):
     """Raised when gcode cannot fetch daemon-served effective configuration."""
 
 
+class GcodeBusyError(GcodeCommandError):
+    """Raised when every requested gcode file lock is contended."""
+
+    def __init__(
+        self,
+        command: Sequence[str],
+        returncode: int,
+        stdout: str,
+        busy_files: Sequence[str],
+    ) -> None:
+        self.busy_files = tuple(busy_files)
+        super().__init__(command, returncode, "gcode file locks busy", stdout=stdout)
+
+
 @dataclass(frozen=True)
 class GcodeCommandResult:
     """Captured gcode command outcome for maintenance logging."""
@@ -217,6 +231,20 @@ def _classify_gcode_command_error(
     stderr_text: str,
     stdout_text: str = "",
 ) -> GcodeCommandError:
+    if returncode == 3:
+        try:
+            payload = json.loads(stdout_text)
+        except ValueError:
+            payload = None
+        busy = payload.get("busy_files") if isinstance(payload, dict) else None
+        completed = payload.get("completed_files") if isinstance(payload, dict) else None
+        if (
+            isinstance(busy, list)
+            and busy
+            and all(isinstance(path, str) for path in busy)
+            and completed == []
+        ):
+            return GcodeBusyError(command, returncode, stdout_text, busy)
     if is_daemon_effective_config_transport_error(stderr_text):
         return GcodeDaemonConfigUnavailableError(
             command,
@@ -506,6 +534,8 @@ class GcodeGateway:
                 *files,
                 "--quiet",
                 "--skip-if-locked",
+                "--format",
+                "json",
             ],
             timeout=timeout,
             env=env,
@@ -779,6 +809,7 @@ class GcodeGateway:
 
 
 __all__ = [
+    "GcodeBusyError",
     "GcodeCommandError",
     "GcodeCommandResult",
     "GcodeEmbeddingTransportError",

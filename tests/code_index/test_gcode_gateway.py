@@ -11,6 +11,7 @@ import pytest
 
 from gobby.code_index.gcode_gateway import (
     MIN_GCODE_PRUNE_BUDGET_VERSION,
+    GcodeBusyError,
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
     GcodeFalkorTransportError,
@@ -262,7 +263,7 @@ async def test_gateway_builds_incremental_index_args(
 ) -> None:
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
-        FakeProcess(stdout=b"indexed"),
+        FakeProcess(stdout=b'{"completed_files": ["src/app.py"], "busy_files": []}'),
     ]
     calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
@@ -284,6 +285,8 @@ async def test_gateway_builds_incremental_index_args(
         "docs/readme.md",
         "--quiet",
         "--skip-if-locked",
+        "--format",
+        "json",
     )
     assert result.timeout_seconds == 11
 
@@ -702,6 +705,44 @@ async def test_gateway_raises_for_nonzero_command(
         await gateway.graph_clear("proj-1")
 
     assert capsys.readouterr().err == ""
+
+
+async def test_gateway_classifies_structured_file_lock_contention(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(
+            returncode=3,
+            stdout=b'{"completed_files": [], "busy_files": ["src/app.py"]}',
+        ),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeBusyError) as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert exc_info.value.busy_files == ("src/app.py",)
+
+
+async def test_gateway_does_not_misclassify_unstructured_exit_three(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=3, stdout=b"{}", stderr=b"real failure"),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeCommandError) as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert type(exc_info.value) is GcodeCommandError
+    assert exc_info.value.stderr == "real failure"
 
 
 async def test_gateway_classifies_daemon_config_transport_without_forwarding_stderr(

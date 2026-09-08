@@ -1,10 +1,13 @@
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
+use crate::index_lock::{self, IndexLockPolicy, ProjectFileLockSet};
 use crate::output::{self, Format};
 use crate::projection::{self, ProjectionReconcileFailure, sync::ProjectionSyncReport};
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::io::Write as _;
+use std::path::PathBuf;
 
 pub const GRAPH_SYNC_CONTRACT_EXIT_CODE: u8 = 2;
 
@@ -429,21 +432,25 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
 }
 
 pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    run_lifecycle_action_with_backend(
-        ctx,
-        GraphLifecycleAction::Clear,
-        format,
-        &CodeGraphLifecycleBackend,
-    )
+    index_lock::with_exclusive_project_lock(ctx, || {
+        run_lifecycle_action_with_backend(
+            ctx,
+            GraphLifecycleAction::Clear,
+            format,
+            &CodeGraphLifecycleBackend,
+        )
+    })
 }
 
 pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    run_lifecycle_action_with_backend(
-        ctx,
-        GraphLifecycleAction::Rebuild,
-        format,
-        &CodeGraphLifecycleBackend,
-    )
+    index_lock::with_exclusive_project_lock(ctx, || {
+        run_lifecycle_action_with_backend(
+            ctx,
+            GraphLifecycleAction::Rebuild,
+            format,
+            &CodeGraphLifecycleBackend,
+        )
+    })
 }
 
 /// Run project-wide orphan cleanup as a standalone maintenance command.
@@ -452,25 +459,27 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
 /// its own so the daemon can schedule it periodically instead of paying its
 /// O(project graph size) cost on every per-file `graph sync-file`.
 pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    code_graph::require_graph_reads(ctx)?;
-    let cleanup = cleanup_deleted_project_graph(ctx)?;
-    let payload = json!({
-        "status": "ok",
-        "action": "cleanup_orphans",
-        "project_id": ctx.project_id.clone(),
-        "stale_graph_files_deleted": cleanup.stale_files_deleted,
-        "graph_nodes_deleted": cleanup.graph_nodes_deleted,
-    });
-    match format {
-        Format::Json => output::print_json(&payload),
-        Format::Text => {
-            output::print_text(&format!(
-                "Removed {} stale code-graph file(s) and {} file-scoped graph node(s)",
-                cleanup.stale_files_deleted, cleanup.graph_nodes_deleted
-            ))?;
-            output::print_json(&payload)
+    index_lock::with_exclusive_project_lock(ctx, || {
+        code_graph::require_graph_reads(ctx)?;
+        let cleanup = cleanup_deleted_project_graph(ctx)?;
+        let payload = json!({
+            "status": "ok",
+            "action": "cleanup_orphans",
+            "project_id": ctx.project_id.clone(),
+            "stale_graph_files_deleted": cleanup.stale_files_deleted,
+            "graph_nodes_deleted": cleanup.graph_nodes_deleted,
+        });
+        match format {
+            Format::Json => output::print_json(&payload),
+            Format::Text => {
+                output::print_text(&format!(
+                    "Removed {} stale code-graph file(s) and {} file-scoped graph node(s)",
+                    cleanup.stale_files_deleted, cleanup.graph_nodes_deleted
+                ))?;
+                output::print_json(&payload)
+            }
         }
-    }
+    })
 }
 
 pub(crate) fn cleanup_deleted_project_graph(
@@ -490,14 +499,27 @@ pub fn sync_file(
     allow_missing_indexed_file: bool,
     format: Format,
 ) -> anyhow::Result<()> {
-    let sync = sync_file_graph(ctx, file_path, allow_missing_indexed_file)?;
+    let locks = index_lock::lock_project_files(
+        ctx,
+        &[PathBuf::from(file_path)],
+        IndexLockPolicy::brief_index_flush_try(),
+    )?;
+    if locks.acquired_files.is_empty() {
+        print_file_locks_busy(&locks, format)?;
+        std::io::stdout().flush()?;
+        std::process::exit(3);
+    }
+    let file_path = locks.acquired_files[0].to_string_lossy().into_owned();
+
+    let sync = sync_file_graph(ctx, &file_path, allow_missing_indexed_file)?;
     let (relationships_written, symbols_synced) = match sync {
         GraphFileSyncOutcome::Synced {
             relationships_written,
             symbols_synced,
         } => (relationships_written, symbols_synced),
         GraphFileSyncOutcome::SkippedNoGraphFacts => {
-            let payload = skipped_no_graph_facts_payload(ctx, file_path);
+            let payload =
+                file_lock_payload(skipped_no_graph_facts_payload(ctx, &file_path), &locks);
             return match format {
                 Format::Json => output::print_json(&payload),
                 Format::Text => {
@@ -510,7 +532,10 @@ pub fn sync_file(
             };
         }
         GraphFileSyncOutcome::SkippedMissingIndexedFile { reconcile_failures } => {
-            let payload = skipped_missing_indexed_file_payload(ctx, file_path, &reconcile_failures);
+            let payload = file_lock_payload(
+                skipped_missing_indexed_file_payload(ctx, &file_path, &reconcile_failures),
+                &locks,
+            );
             return match format {
                 Format::Json => output::print_json(&payload),
                 Format::Text => {
@@ -525,20 +550,23 @@ pub fn sync_file(
     };
     let report = ProjectionSyncReport::ok(1, symbols_synced);
     let summary = format!("synced {relationships_written} graph relationships for {file_path}");
-    let payload = json!({
-        "success": true,
-        "project_id": ctx.project_id,
-        "file_path": file_path,
-        "status": report.status,
-        "synced_files": report.synced_files,
-        "synced_symbols": report.synced_symbols,
-        "skipped_files": report.skipped_files,
-        "failed_files": report.failed_files,
-        "degraded": report.degraded,
-        "error": report.error,
-        "relationships_written": relationships_written,
-        "summary": summary,
-    });
+    let payload = file_lock_payload(
+        json!({
+            "success": true,
+            "project_id": ctx.project_id,
+            "file_path": file_path,
+            "status": report.status,
+            "synced_files": report.synced_files,
+            "synced_symbols": report.synced_symbols,
+            "skipped_files": report.skipped_files,
+            "failed_files": report.failed_files,
+            "degraded": report.degraded,
+            "error": report.error,
+            "relationships_written": relationships_written,
+            "summary": summary,
+        }),
+        &locks,
+    );
     match format {
         Format::Json => output::print_json(&payload),
         Format::Text => {
@@ -549,4 +577,49 @@ pub fn sync_file(
             output::print_json(&payload)
         }
     }
+}
+
+fn print_file_locks_busy(locks: &ProjectFileLockSet, format: Format) -> anyhow::Result<()> {
+    let payload = file_lock_payload(
+        json!({
+            "success": false,
+            "status": "busy",
+            "projection": "graph",
+        }),
+        locks,
+    );
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => output::print_text(&format!(
+            "Graph file lock busy\ncompleted_files: []\nbusy_files: {}",
+            serde_json::to_string(&payload["busy_files"])?
+        )),
+    }
+}
+
+fn file_lock_payload(mut payload: Value, locks: &ProjectFileLockSet) -> Value {
+    let Value::Object(fields) = &mut payload else {
+        return payload;
+    };
+    fields.insert(
+        "completed_files".to_string(),
+        json!(
+            locks
+                .acquired_files
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        ),
+    );
+    fields.insert(
+        "busy_files".to_string(),
+        json!(
+            locks
+                .busy_files
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        ),
+    );
+    payload
 }

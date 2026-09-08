@@ -11,6 +11,9 @@ use crate::projection::sync::{
 use crate::utils::short_id;
 use gobby_core::progress::ProgressBar;
 use serde::Serialize;
+use serde_json::Value;
+use std::io::Write as _;
+use std::path::PathBuf;
 
 pub(crate) enum RunIndexLockedOutput {
     IndexOnly(IndexOutcome),
@@ -62,47 +65,136 @@ pub fn run(
     } else {
         IndexLockPolicy::wait()
     };
-    let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
-        run_index_locked(&target_ctx, request)
-    })?;
-
-    let run_output = match run_output {
-        IndexLockResult::Acquired(run_output) => run_output,
-        IndexLockResult::Busy(holder) => {
-            let holder = holder
-                .map(|holder| format!("; {holder}"))
-                .unwrap_or_default();
-            if skip_if_locked {
-                // A concurrent indexer (typically a full reindex, which covers
-                // these files anyway) holds the lock. Yield without blocking;
-                // exit code 3 tells the daemon flush to requeue rather than
-                // treat this as success or a hard error (#17701).
-                if !target_ctx.quiet {
-                    eprintln!(
-                        "index lock busy for project {}; skipped (another indexer is running{})",
-                        target_ctx.project_id, holder
-                    );
-                }
-                std::process::exit(3);
-            }
-            anyhow::bail!(
-                "index lock is busy for project {}; wait policy did not acquire it{}",
-                target_ctx.project_id,
-                holder
-            )
+    let explicit_request = !request.explicit_files.is_empty();
+    let (run_output, completed_files, busy_files) = if explicit_request {
+        let locks =
+            index_lock::lock_project_files(&target_ctx, &request.explicit_files, lock_policy)?;
+        if locks.acquired_files.is_empty() {
+            print_all_files_busy(&locks.busy_files, format)?;
+            std::io::stdout().flush()?;
+            std::process::exit(3);
         }
+        let mut acquired_request = request;
+        acquired_request.explicit_files = locks.acquired_files.clone();
+        let run_output = run_index_locked(&target_ctx, acquired_request)?;
+        (
+            run_output,
+            locks.acquired_files.clone(),
+            locks.busy_files.clone(),
+        )
+    } else {
+        let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
+            run_index_locked(&target_ctx, request)
+        })?;
+        let run_output = match run_output {
+            IndexLockResult::Acquired(run_output) => run_output,
+            IndexLockResult::Busy(holder) => {
+                let holder = holder
+                    .map(|holder| format!("; {holder}"))
+                    .unwrap_or_default();
+                if skip_if_locked {
+                    if !target_ctx.quiet {
+                        eprintln!(
+                            "index lock busy for project {}; skipped (another indexer is running{})",
+                            target_ctx.project_id, holder
+                        );
+                    }
+                    std::process::exit(3);
+                }
+                anyhow::bail!(
+                    "index lock is busy for project {}; wait policy did not acquire it{}",
+                    target_ctx.project_id,
+                    holder
+                )
+            }
+        };
+        (run_output, Vec::new(), Vec::new())
     };
 
     match run_output {
-        RunIndexLockedOutput::Projections(payload) => match format {
-            Format::Json => output::print_json(&payload),
-            Format::Text => output::print_text(&sync_projections_text(&payload)?),
-        },
-        RunIndexLockedOutput::IndexOnly(outcome) => match format {
-            Format::Json => output::print_json(&outcome),
-            Format::Text => output::print_text(&index_text(&outcome)),
-        },
+        RunIndexLockedOutput::Projections(payload) => {
+            match format {
+                Format::Json if explicit_request => output::print_json(
+                    &explicit_index_json_payload(&payload, &completed_files, &busy_files)?,
+                ),
+                Format::Json => output::print_json(&payload),
+                Format::Text if explicit_request => output::print_text(&explicit_index_text(
+                    sync_projections_text(&payload)?,
+                    &completed_files,
+                    &busy_files,
+                )?),
+                Format::Text => output::print_text(&sync_projections_text(&payload)?),
+            }
+        }
+        RunIndexLockedOutput::IndexOnly(outcome) => {
+            match format {
+                Format::Json if explicit_request => output::print_json(
+                    &explicit_index_json_payload(&outcome, &completed_files, &busy_files)?,
+                ),
+                Format::Json => output::print_json(&outcome),
+                Format::Text if explicit_request => output::print_text(&explicit_index_text(
+                    index_text(&outcome),
+                    &completed_files,
+                    &busy_files,
+                )?),
+                Format::Text => output::print_text(&index_text(&outcome)),
+            }
+        }
     }
+}
+
+fn explicit_index_json_payload(
+    output: &impl Serialize,
+    completed_files: &[PathBuf],
+    busy_files: &[PathBuf],
+) -> anyhow::Result<Value> {
+    let mut payload = serde_json::to_value(output)?;
+    let Value::Object(fields) = &mut payload else {
+        anyhow::bail!("gcode index result did not serialize as an object");
+    };
+    fields.insert(
+        "completed_files".to_string(),
+        path_list_json(completed_files),
+    );
+    fields.insert("busy_files".to_string(), path_list_json(busy_files));
+    Ok(payload)
+}
+
+fn explicit_index_text(
+    output: String,
+    completed_files: &[PathBuf],
+    busy_files: &[PathBuf],
+) -> anyhow::Result<String> {
+    Ok(format!(
+        "{output}\ncompleted_files: {}\nbusy_files: {}",
+        serde_json::to_string(&path_list_json(completed_files))?,
+        serde_json::to_string(&path_list_json(busy_files))?,
+    ))
+}
+
+fn print_all_files_busy(paths: &[PathBuf], format: Format) -> anyhow::Result<()> {
+    let payload = serde_json::json!({
+        "status": "busy",
+        "completed_files": [],
+        "busy_files": path_list_json(paths),
+    });
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => output::print_text(&format!(
+            "All {} requested file(s) are busy\ncompleted_files: []\nbusy_files: {}",
+            paths.len(),
+            serde_json::to_string(&path_list_json(paths))?,
+        )),
+    }
+}
+
+fn path_list_json(paths: &[PathBuf]) -> Value {
+    Value::Array(
+        paths
+            .iter()
+            .map(|path| Value::String(path.to_string_lossy().into_owned()))
+            .collect(),
+    )
 }
 
 pub(crate) fn run_index_locked(
@@ -529,6 +621,26 @@ mod tests {
         }
 
         insta::assert_json_snapshot!("index_outcome", redacted);
+    }
+
+    #[test]
+    fn explicit_index_outputs_report_completed_and_busy_files() -> anyhow::Result<()> {
+        let completed = [std::path::PathBuf::from("src/completed.rs")];
+        let busy = [std::path::PathBuf::from("src/busy.rs")];
+        let outcome = sample_outcome();
+
+        let payload = explicit_index_json_payload(&outcome, &completed, &busy)?;
+        assert_eq!(
+            payload["completed_files"],
+            serde_json::json!(["src/completed.rs"])
+        );
+        assert_eq!(payload["busy_files"], serde_json::json!(["src/busy.rs"]));
+        assert_eq!(payload["indexed_files"], 12);
+
+        let text = explicit_index_text(index_text(&outcome), &completed, &busy)?;
+        assert!(text.contains("completed_files: [\"src/completed.rs\"]"));
+        assert!(text.contains("busy_files: [\"src/busy.rs\"]"));
+        Ok(())
     }
 
     #[test]

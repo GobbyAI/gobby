@@ -1,5 +1,6 @@
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::db;
+use crate::index_lock::{self, IndexLockPolicy, ProjectFileLockSet};
 use crate::output::{self, Format};
 use crate::projection::{
     self,
@@ -11,7 +12,10 @@ use crate::vector::code_symbols::{
     embedding_source_from_context,
 };
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashSet;
+use std::io::Write as _;
+use std::path::PathBuf;
 
 pub(crate) fn lifecycle_from_context(
     ctx: &Context,
@@ -42,10 +46,22 @@ pub fn sync_file(
     allow_missing_indexed_file: bool,
     format: Format,
 ) -> anyhow::Result<()> {
+    let locks = index_lock::lock_project_files(
+        ctx,
+        &[PathBuf::from(file_path)],
+        IndexLockPolicy::brief_index_flush_try(),
+    )?;
+    if locks.acquired_files.is_empty() {
+        print_file_locks_busy(&locks, format)?;
+        std::io::stdout().flush()?;
+        std::process::exit(3);
+    }
+    let file_path = locks.acquired_files[0].to_string_lossy().into_owned();
+
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    if !db::mark_vector_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
+    if !db::mark_vector_sync_attempted(&mut conn, &ctx.project_id, &file_path)? {
         if allow_missing_indexed_file {
-            return print_skipped_missing_indexed_file(ctx, file_path, format);
+            return print_skipped_missing_indexed_file(ctx, &file_path, format, &locks);
         }
         anyhow::bail!(
             "indexed file `{file_path}` was not found for project {}",
@@ -53,11 +69,11 @@ pub fn sync_file(
         );
     }
     let mut lifecycle = lifecycle_from_context(ctx)?;
-    let symbols = code_symbols::fetch_symbols_for_file(&mut conn, &ctx.project_id, file_path)?;
-    let output = lifecycle.sync_file_symbols(file_path, &symbols)?;
-    if !db::mark_vectors_synced(&mut conn, &ctx.project_id, file_path)? {
+    let symbols = code_symbols::fetch_symbols_for_file(&mut conn, &ctx.project_id, &file_path)?;
+    let output = lifecycle.sync_file_symbols(&file_path, &symbols)?;
+    if !db::mark_vectors_synced(&mut conn, &ctx.project_id, &file_path)? {
         if allow_missing_indexed_file {
-            return print_skipped_missing_indexed_file(ctx, file_path, format);
+            return print_skipped_missing_indexed_file(ctx, &file_path, format, &locks);
         }
         anyhow::bail!(
             "indexed file `{file_path}` was not found for project {}",
@@ -65,13 +81,14 @@ pub fn sync_file(
         );
     }
     let report = ProjectionSyncReport::ok(1, output.symbols);
-    print_lifecycle_output(&output, report, format)
+    print_file_lifecycle_output(&output, report, format, &locks)
 }
 
 fn print_skipped_missing_indexed_file(
     ctx: &Context,
     file_path: &str,
     format: Format,
+    locks: &ProjectFileLockSet,
 ) -> anyhow::Result<()> {
     let failures = projection::reconcile_deleted_file(ctx, file_path);
     let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
@@ -93,23 +110,26 @@ fn print_skipped_missing_indexed_file(
         })
     };
     let degraded = error.is_some();
-    let payload = serde_json::json!({
-        "success": true,
-        "project_id": ctx.project_id,
-        "projection": "vector",
-        "action": "sync_file",
-        "file_path": file_path,
-        "collection": collection,
-        "status": "skipped",
-        "reason": "indexed_file_not_found",
-        "synced_files": 0,
-        "synced_symbols": 0,
-        "skipped_files": 1,
-        "failed_files": 0,
-        "degraded": degraded,
-        "error": error,
-        "summary": format!("skipped vector sync for {file_path}: indexed file not found"),
-    });
+    let payload = file_lock_payload(
+        serde_json::json!({
+            "success": true,
+            "project_id": ctx.project_id,
+            "projection": "vector",
+            "action": "sync_file",
+            "file_path": file_path,
+            "collection": collection,
+            "status": "skipped",
+            "reason": "indexed_file_not_found",
+            "synced_files": 0,
+            "synced_symbols": 0,
+            "skipped_files": 1,
+            "failed_files": 0,
+            "degraded": degraded,
+            "error": error,
+            "summary": format!("skipped vector sync for {file_path}: indexed file not found"),
+        }),
+        locks,
+    );
     match format {
         Format::Json => output::print_json(&payload),
         Format::Text => {
@@ -123,44 +143,54 @@ fn print_skipped_missing_indexed_file(
 }
 
 pub fn clear(ctx: &Context, drop_collection: bool, format: Format) -> anyhow::Result<()> {
-    let mut lifecycle = lifecycle_from_context(ctx)?;
-    let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
-    let output = if drop_collection {
-        lifecycle.drop_project_collection()?
-    } else {
-        lifecycle.clear_project_vectors()?
-    };
-    let report = ProjectionSyncReport::ok(0, 0);
-    print_lifecycle_output(&output, report, format)
+    index_lock::with_exclusive_project_lock(ctx, || {
+        let mut lifecycle = lifecycle_from_context(ctx)?;
+        let mut conn = db::connect_readwrite(&ctx.database_url)?;
+        db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
+        let output = if drop_collection {
+            lifecycle.drop_project_collection()?
+        } else {
+            lifecycle.clear_project_vectors()?
+        };
+        let report = ProjectionSyncReport::ok(0, 0);
+        print_lifecycle_output(&output, report, format)
+    })
 }
 
 pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let mut lifecycle = lifecycle_from_context(ctx)?;
-    let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
-    db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
-    db::mark_project_vector_sync_attempted(&mut conn, &ctx.project_id)?;
-    let symbols = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?;
-    let output = lifecycle.rebuild_symbols(&symbols)?;
-    let files_synced = db::mark_project_vectors_synced(&mut conn, &ctx.project_id)? as usize;
-    let report = ProjectionSyncReport::ok(files_synced.min(file_paths.len()), output.symbols);
-    print_lifecycle_output(&output, report, format)
+    index_lock::with_exclusive_project_lock(ctx, || {
+        let mut lifecycle = lifecycle_from_context(ctx)?;
+        let mut conn = db::connect_readwrite(&ctx.database_url)?;
+        let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
+        db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
+        db::mark_project_vector_sync_attempted(&mut conn, &ctx.project_id)?;
+        let symbols = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?;
+        let output = lifecycle.rebuild_symbols(&symbols)?;
+        let files_synced = db::mark_project_vectors_synced(&mut conn, &ctx.project_id)? as usize;
+        let report = ProjectionSyncReport::ok(files_synced.min(file_paths.len()), output.symbols);
+        print_lifecycle_output(&output, report, format)
+    })
 }
 
 pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let qdrant = ctx
-        .qdrant
-        .as_ref()
-        .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
-    // The Qdrant collection is shared; keep every path any machine references.
-    let indexed_file_paths = db::list_all_machine_indexed_file_paths(&mut conn, &ctx.project_id)?
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let cleanup =
-        code_symbols::cleanup_orphan_file_vectors(qdrant, &ctx.project_id, &indexed_file_paths)?;
-    print_orphan_cleanup(&cleanup, format)
+    index_lock::with_exclusive_project_lock(ctx, || {
+        let qdrant = ctx
+            .qdrant
+            .as_ref()
+            .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
+        let mut conn = db::connect_readonly(&ctx.database_url)?;
+        // The Qdrant collection is shared; keep every path any machine references.
+        let indexed_file_paths =
+            db::list_all_machine_indexed_file_paths(&mut conn, &ctx.project_id)?
+                .into_iter()
+                .collect::<HashSet<_>>();
+        let cleanup = code_symbols::cleanup_orphan_file_vectors(
+            qdrant,
+            &ctx.project_id,
+            &indexed_file_paths,
+        )?;
+        print_orphan_cleanup(&cleanup, format)
+    })
 }
 
 fn print_lifecycle_output(
@@ -173,6 +203,67 @@ fn print_lifecycle_output(
         Format::Json => output::print_json(&payload),
         Format::Text => output::print_text(&serde_json::to_string(&payload)?),
     }
+}
+
+fn print_file_lifecycle_output(
+    output: &CodeSymbolVectorLifecycleOutput,
+    report: ProjectionSyncReport,
+    format: Format,
+    locks: &ProjectFileLockSet,
+) -> anyhow::Result<()> {
+    let payload = file_lock_payload(
+        serde_json::to_value(lifecycle_json_payload(output, report))?,
+        locks,
+    );
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => output::print_text(&serde_json::to_string(&payload)?),
+    }
+}
+
+fn print_file_locks_busy(locks: &ProjectFileLockSet, format: Format) -> anyhow::Result<()> {
+    let payload = file_lock_payload(
+        serde_json::json!({
+            "success": false,
+            "status": "busy",
+            "projection": "vector",
+        }),
+        locks,
+    );
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => output::print_text(&format!(
+            "Vector file lock busy\ncompleted_files: []\nbusy_files: {}",
+            serde_json::to_string(&payload["busy_files"])?
+        )),
+    }
+}
+
+fn file_lock_payload(mut payload: Value, locks: &ProjectFileLockSet) -> Value {
+    let Value::Object(fields) = &mut payload else {
+        return payload;
+    };
+    fields.insert(
+        "completed_files".to_string(),
+        serde_json::json!(
+            locks
+                .acquired_files
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        ),
+    );
+    fields.insert(
+        "busy_files".to_string(),
+        serde_json::json!(
+            locks
+                .busy_files
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        ),
+    );
+    payload
 }
 
 fn print_orphan_cleanup(cleanup: &VectorOrphanCleanup, format: Format) -> anyhow::Result<()> {

@@ -35,6 +35,11 @@ name = "projection_stale"
 path = "tests/projection_stale.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "file_lock_concurrency"
+path = "tests/file_lock_concurrency.rs"
+required-features = ["test-support"]
+
 [dependencies]
 # Internal
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "falkor", "qdrant", "search", "indexing", "graph-analytics"] }

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use crate::config::{Context, ProjectIndexScope};
@@ -59,56 +59,46 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
-    let lock_policy = match &scope {
-        FreshnessScope::Project => IndexLockPolicy::brief_freshness_try(),
-        FreshnessScope::Files(_) => IndexLockPolicy::wait(),
-    };
     let _guard = FreshnessGuard::enter();
-    let result = index_lock::with_project_lock(ctx, lock_policy, || {
-        let refresh = || -> anyhow::Result<()> {
-            match &scope {
-                FreshnessScope::Project => {
-                    api::index_files(
-                        api::IndexRequest {
-                            project_root: ctx.project_root.clone(),
-                            path_filter: None,
-                            explicit_files: Vec::new(),
-                            full: false,
-                            require_cpp_semantics: false,
-                            sync_projections: false,
-                        },
-                        ctx,
-                        api::IndexOptions::default(),
-                    )?;
-                }
-                FreshnessScope::Files(paths) => {
-                    let files: Vec<PathBuf> = paths
-                        .iter()
-                        .map(|path| normalize_file_path(&ctx.project_root, path))
-                        .map(PathBuf::from)
-                        .collect();
-                    if !files.is_empty() {
-                        api::index_files(
-                            api::IndexRequest {
-                                project_root: ctx.project_root.clone(),
-                                path_filter: None,
-                                explicit_files: files,
-                                full: false,
-                                require_cpp_semantics: false,
-                                sync_projections: false,
-                            },
-                            ctx,
-                            api::IndexOptions::default(),
-                        )?;
-                    }
-                }
+    match scope {
+        FreshnessScope::Project => {
+            let result =
+                index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
+                    Ok(refresh_files(ctx, Vec::new()).map_err(|error| error.to_string()))
+                })?;
+            Ok(freshness_from_lock(result))
+        }
+        FreshnessScope::Files(paths) => {
+            if paths.is_empty() {
+                return Ok(FreshnessStatus::Checked);
             }
-            Ok(())
-        };
-        Ok(refresh().map_err(|error| error.to_string()))
-    })?;
+            let locks = index_lock::lock_project_files(ctx, &paths, IndexLockPolicy::wait())?;
+            if locks.acquired_files.is_empty() {
+                return Ok(FreshnessStatus::SkippedBusy(None));
+            }
+            match refresh_files(ctx, locks.acquired_files.clone()) {
+                Ok(()) if locks.busy_files.is_empty() => Ok(FreshnessStatus::Checked),
+                Ok(()) => Ok(FreshnessStatus::SkippedBusy(None)),
+                Err(error) => Ok(FreshnessStatus::Degraded(error.to_string())),
+            }
+        }
+    }
+}
 
-    Ok(freshness_from_lock(result))
+fn refresh_files(ctx: &Context, explicit_files: Vec<PathBuf>) -> anyhow::Result<()> {
+    api::index_files(
+        api::IndexRequest {
+            project_root: ctx.project_root.clone(),
+            path_filter: None,
+            explicit_files,
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        ctx,
+        api::IndexOptions::default(),
+    )?;
+    Ok(())
 }
 
 fn freshness_from_lock(result: IndexLockResult<Result<(), String>>) -> FreshnessStatus {
@@ -229,28 +219,6 @@ fn symbol_slice_is_current(ctx: &Context, sym: &Symbol) -> bool {
         .unwrap_or(false)
 }
 
-fn normalize_file_path(root: &Path, path: &Path) -> String {
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-
-    abs.canonicalize()
-        .ok()
-        .and_then(|canonical| {
-            root.canonicalize().ok().and_then(|canonical_root| {
-                canonical
-                    .strip_prefix(canonical_root)
-                    .ok()
-                    .map(Path::to_path_buf)
-            })
-        })
-        .unwrap_or_else(|| path.to_path_buf())
-        .to_string_lossy()
-        .to_string()
-}
-
 struct FreshnessGuard;
 
 impl FreshnessGuard {
@@ -274,6 +242,7 @@ mod tests {
     use super::*;
     use crate::models::CODE_INDEX_UUID_NAMESPACE;
     use postgres::Client;
+    use std::path::Path;
 
     fn context_for(root: &Path) -> Context {
         Context {
