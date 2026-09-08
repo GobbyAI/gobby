@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.run_completion import (
+    agent_run_task_dirty_paths,
+    build_agent_exit_notification,
     build_workflow_completion_notification,
     complete_and_notify_agent_run,
 )
@@ -25,6 +27,8 @@ from gobby.workflows.step_instances import AgentStepInstanceManager
 __all__ = [
     "EnforcementMixin",
     "RESERVED_WORKFLOW_VARIABLES",
+    "agent_run_task_dirty_paths",
+    "build_agent_exit_notification",
     "build_workflow_completion_notification",
     "cleanup_agent_runtime_state",
     "complete_and_notify_agent_run",

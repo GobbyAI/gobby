@@ -11,6 +11,10 @@ import pydantic
 
 from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.run_completion import (
+    agent_run_task_dirty_paths,
+    build_agent_exit_notification,
+)
 from gobby.agents.watchdog.completed_turn_recovery import (
     format_reprompt_message,
     recover_completed_turn,
@@ -814,6 +818,43 @@ class WatchdogRecoveryCoordinator:
     async def _complete_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Complete an idle agent whose step workflow already finished."""
         payload = f"Agent completed by watchdog: {reason}"
+
+        variables: dict[str, Any] = {}
+        if run.child_session_id:
+            try:
+                variables = await self._run_db(
+                    SessionVariableManager(self.db).get_variables,
+                    run.child_session_id,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to read completion variables for idle agent %s",
+                    run.id,
+                    exc_info=True,
+                )
+        if variables.get("blocker_handed_off") is True:
+            dirty_paths = await self._run_db(
+                agent_run_task_dirty_paths,
+                self.db,
+                self._get_session_manager(),
+                run,
+                variables=variables,
+            )
+            terminal_reason, notify_result, message = build_agent_exit_notification(
+                run.id,
+                variables=variables,
+                dirty_paths=dirty_paths,
+            )
+            completed = await self._cleanup_handler.terminalize_successful_run(
+                run.id,
+                notify_result=notify_result,
+                message=message,
+                terminal_reason=terminal_reason,
+            )
+            if completed:
+                self._idle_detector.clear_state(run.id)
+                self.discard(run.id)
+            return
 
         async def terminalize(
             _action: TerminalAction,
