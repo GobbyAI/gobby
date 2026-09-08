@@ -326,6 +326,11 @@ struct FailingHybrid {
     identity: HybridIdentity,
 }
 
+struct StaticHybrid {
+    identity: HybridIdentity,
+    symbol_ids: Vec<String>,
+}
+
 impl HybridSearch for FailingHybrid {
     fn effective_identity(&self) -> std::result::Result<HybridIdentity, String> {
         Ok(self.identity.clone())
@@ -336,6 +341,22 @@ impl HybridSearch for FailingHybrid {
         _selector: &SearchSelector,
     ) -> std::result::Result<FactPage<String>, String> {
         Err("audited endpoint unavailable".to_string())
+    }
+}
+
+impl HybridSearch for StaticHybrid {
+    fn effective_identity(&self) -> std::result::Result<HybridIdentity, String> {
+        Ok(self.identity.clone())
+    }
+
+    fn search_symbol_ids(
+        &self,
+        _selector: &SearchSelector,
+    ) -> std::result::Result<FactPage<String>, String> {
+        Ok(FactPage {
+            items: self.symbol_ids.clone(),
+            truncated: false,
+        })
     }
 }
 
@@ -1016,5 +1037,219 @@ fn incomplete_index_is_not_reported_as_empty_repository() -> anyhow::Result<()> 
         ))
         .expect_err("incomplete index must fail");
     assert_eq!(error.code(), "index_incomplete");
+    Ok(())
+}
+
+#[test]
+fn snapshot_ignores_commit_and_blob_replacement_refs() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+
+    std::fs::write(repo.join("source.txt"), "original source\n")?;
+    git(repo, &["add", "source.txt"])?;
+    let original_commit = commit(repo, "original")?;
+    let original_tree = git(repo, &["rev-parse", &format!("{original_commit}^{{tree}}")])?;
+    let original_blob = git(repo, &["rev-parse", &format!("{original_commit}:source.txt")])?;
+
+    std::fs::write(repo.join("source.txt"), "replacement source\n")?;
+    git(repo, &["add", "source.txt"])?;
+    let replacement_commit = commit(repo, "replacement")?;
+    let replacement_blob = git(
+        repo,
+        &["rev-parse", &format!("{replacement_commit}:source.txt")],
+    )?;
+    git(repo, &["replace", &original_commit, &replacement_commit])?;
+    git(repo, &["replace", &original_blob, &replacement_blob])?;
+
+    let snapshot = Snapshot::prepare(repo, "project-replacements", &original_commit)?;
+    assert_eq!(snapshot.binding().commit_oid, original_commit);
+    assert_eq!(snapshot.binding().tree_oid, original_tree);
+    assert!(snapshot.binding().commit.parent_oids.is_empty());
+    assert_eq!(
+        snapshot.binding().commit.comparison_kind,
+        ComparisonKind::EmptyTree
+    );
+    assert_eq!(snapshot.binding().commit.changed_paths.len(), 1);
+    assert_eq!(
+        snapshot.binding().commit.changed_paths[0].new_blob_oid.as_deref(),
+        Some(original_blob.as_str())
+    );
+    assert_eq!(
+        snapshot.entry("source.txt")?.blob_oid.as_deref(),
+        Some(original_blob.as_str())
+    );
+    assert_eq!(snapshot.read_blob("source.txt")?, b"original source\n");
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial(evidence_git)]
+fn snapshot_ignores_ambient_git_repository_and_config_overrides() -> anyhow::Result<()> {
+    let source = tempfile::tempdir()?;
+    initialize_repo(source.path())?;
+    std::fs::write(source.path().join("source.txt"), "trusted source\n")?;
+    git(source.path(), &["add", "source.txt"])?;
+    let commit_oid = commit(source.path(), "trusted")?;
+
+    let contaminant = tempfile::tempdir()?;
+    initialize_repo(contaminant.path())?;
+    std::fs::write(contaminant.path().join("source.txt"), "ambient source\n")?;
+    git(contaminant.path(), &["add", "source.txt"])?;
+    commit(contaminant.path(), "ambient")?;
+    let git_dir = contaminant.path().join(".git");
+    let object_dir = git_dir.join("objects");
+    let index_file = git_dir.join("index");
+    let marker = contaminant.path().join("external-diff-ran");
+
+    let git_dir = git_dir.to_string_lossy().into_owned();
+    let work_tree = contaminant.path().to_string_lossy().into_owned();
+    let object_dir = object_dir.to_string_lossy().into_owned();
+    let index_file = index_file.to_string_lossy().into_owned();
+    let marker_command = format!("touch {}", marker.display());
+    let snapshot = temp_env::with_vars(
+        [
+            ("GIT_DIR", Some(git_dir.as_str())),
+            ("GIT_COMMON_DIR", Some(git_dir.as_str())),
+            ("GIT_WORK_TREE", Some(work_tree.as_str())),
+            ("GIT_INDEX_FILE", Some(index_file.as_str())),
+            ("GIT_OBJECT_DIRECTORY", Some(object_dir.as_str())),
+            ("GIT_ALTERNATE_OBJECT_DIRECTORIES", Some(object_dir.as_str())),
+            ("GIT_CONFIG_COUNT", Some("2")),
+            ("GIT_CONFIG_KEY_0", Some("diff.external")),
+            ("GIT_CONFIG_VALUE_0", Some(marker_command.as_str())),
+            ("GIT_CONFIG_KEY_1", Some("core.useReplaceRefs")),
+            ("GIT_CONFIG_VALUE_1", Some("true")),
+            ("GIT_EXTERNAL_DIFF", Some(marker_command.as_str())),
+            ("GIT_NO_LAZY_FETCH", Some("0")),
+            ("GIT_NO_REPLACE_OBJECTS", Some("0")),
+        ],
+        || Snapshot::prepare(source.path(), "project-ambient", &commit_oid),
+    )?;
+
+    assert_eq!(snapshot.read_blob("source.txt")?, b"trusted source\n");
+    assert!(!marker.exists(), "repository-configured diff command ran");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_preserves_unsafe_raw_changed_paths_as_exclusions() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::create_dir(repo.join("src"))?;
+    std::fs::write(repo.join("src/lib.rs"), "pub fn visible() {}\n")?;
+    git(repo, &["add", "src/lib.rs"])?;
+    let unsafe_blob = git_input(repo, &["hash-object", "-w", "--stdin"], b"excluded\n")?;
+    let mut index_record = format!("100644 {unsafe_blob}\t").into_bytes();
+    index_record.extend_from_slice(b"unsafe-\xff\\name");
+    index_record.push(0);
+    git_input(repo, &["update-index", "-z", "--index-info"], &index_record)?;
+    let commit_oid = commit(repo, "unsafe tracked path")?;
+
+    let snapshot = Snapshot::prepare(repo, "project-unsafe", &commit_oid)?;
+    let escaped_path = "unsafe-\\xff\\x5cname";
+    let excluded = snapshot
+        .inventory()
+        .entries
+        .iter()
+        .find(|entry| entry.path == escaped_path)
+        .expect("escaped unsafe path remains in inventory");
+    assert_eq!(excluded.exclusion, Some(ExclusionReason::UnsafePath));
+    assert!(snapshot.binding().commit.changed_paths.iter().any(|change| {
+        change.new_path.as_deref() == Some(escaped_path)
+            && change.new_blob_oid.as_deref() == Some(unsafe_blob.as_str())
+    }));
+    assert_eq!(snapshot.read_blob("src/lib.rs")?, b"pub fn visible() {}\n");
+    assert_eq!(
+        snapshot
+            .entry(escaped_path)
+            .expect_err("unsafe selectors stay rejected")
+            .code(),
+        "unsafe_path"
+    );
+    Ok(())
+}
+
+#[test]
+fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
+    let (_temporary, snapshot) = source_repo()?;
+    let mut facts = FakeFacts::from_snapshot(&snapshot);
+    let seed = facts.symbols[0].clone();
+    facts.symbols = [
+        ("lexical-one", "needle_one"),
+        ("lexical-two", "needle_two"),
+        ("semantic-one", "other_one"),
+        ("semantic-two", "other_two"),
+    ]
+    .into_iter()
+    .map(|(id, name)| SymbolFact {
+        id: id.to_string(),
+        name: name.to_string(),
+        qualified_name: format!("crate::{name}"),
+        ..seed.clone()
+    })
+    .collect();
+    let identity = HybridIdentity {
+        endpoint: "https://embedding.invalid/v1".to_string(),
+        model: "fixed-model".to_string(),
+        dimension: 768,
+        index_id: "index-union".to_string(),
+    };
+    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?.with_hybrid(Arc::new(
+        StaticHybrid {
+            identity: identity.clone(),
+            symbol_ids: vec!["semantic-one".to_string(), "semantic-two".to_string()],
+        },
+    ));
+    let mut selector = search_selector(SearchLane::Hybrid, "needle");
+    selector.limit = 3;
+    selector.hybrid_identity = Some(identity);
+
+    let response = library.query(request(
+        snapshot.binding(),
+        EvidenceOperation::Search { search: selector },
+    ))?;
+    assert_eq!(response.items.len(), 3);
+    assert_eq!(response.completeness, Completeness::TruncatedIndex);
+    assert!(!response.complete);
+    Ok(())
+}
+
+#[test]
+fn non_directed_graph_queries_reject_target_selectors() -> anyhow::Result<()> {
+    let (_temporary, snapshot) = source_repo()?;
+    let facts = FakeFacts::from_snapshot(&snapshot);
+    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?;
+
+    for query in [
+        GraphQuery::Callers,
+        GraphQuery::Callees,
+        GraphQuery::Usages,
+        GraphQuery::Imports,
+        GraphQuery::ScopedView,
+    ] {
+        let source = if query == GraphQuery::Imports {
+            EntitySelector::Path {
+                path: "src/lib.rs".to_string(),
+            }
+        } else {
+            EntitySelector::SymbolId {
+                id: "alpha".to_string(),
+            }
+        };
+        let mut selector = graph_selector(query, source);
+        selector.target = Some(EntitySelector::SymbolId {
+            id: "beta".to_string(),
+        });
+        let error = library
+            .query(request(
+                snapshot.binding(),
+                EvidenceOperation::Graph { graph: selector },
+            ))
+            .expect_err("target is valid only for directed_path");
+        assert_eq!(error.code(), "invalid_selector", "query {query:?}");
+    }
     Ok(())
 }
