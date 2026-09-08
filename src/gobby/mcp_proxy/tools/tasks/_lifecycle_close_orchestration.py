@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import timedelta
 from typing import Any, cast
 
 from gobby.config.tasks import TaskValidationConfig
@@ -25,6 +26,7 @@ from gobby.tasks.agentic_close_review import (
     build_terminal_review_payload,
     validator_spawn_overrides,
 )
+from gobby.utils.datetime import utc_now
 from gobby.utils.session_context import get_current_agent_run_id, get_current_session_id
 
 logger = logging.getLogger(__name__)
@@ -77,13 +79,18 @@ async def launch_close_review(
 
     task = evaluation.task
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id
+    validation_config = ctx.validation_config or TaskValidationConfig()
+    persisted_arguments = dict(close_arguments)
+    persisted_arguments["_review_deadline_at"] = (
+        utc_now() + timedelta(seconds=validation_config.close_review_total_timeout_seconds)
+    ).isoformat()
     store = TaskCloseReviewStore(ctx.task_manager.db)
     try:
         review, created = store.create_or_get_active(
             task_id=task.id,
             task_ref=task_ref,
             caller_session_id=evaluation.resolved_session_id,
-            close_arguments=close_arguments,
+            close_arguments=persisted_arguments,
             expected_task_updated_at=task.updated_at,
             review_fingerprint=review_fingerprint,
             evidence_fingerprint=evidence_fingerprint,
@@ -120,7 +127,7 @@ async def launch_close_review(
         ),
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
     )
-    prompt_limit = (ctx.validation_config or TaskValidationConfig()).close_review_prompt_max_chars
+    prompt_limit = validation_config.close_review_prompt_max_chars
     if len(prompt) > prompt_limit:
         message = (
             f"Task-close validator prompt is {len(prompt)} characters, exceeding the configured "

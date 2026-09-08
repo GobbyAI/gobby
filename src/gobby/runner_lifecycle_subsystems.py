@@ -12,6 +12,7 @@ from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.hooks.background_tasks import create_background_task
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
+    _reconcile_task_close_reviews,
     _recover_agent_completion_subscribers_on_startup,
     _retry_parked_non_task_resumes,
     _run_agent_hook_replay_barrier,
@@ -32,6 +33,12 @@ AgentLifecycleOperation = Callable[[Any], Awaitable[int]]
 
 _PROJECT_ENUMERATION_PAGE_SIZE = 100
 _PIPELINE_EXECUTION_PAGE_SIZE = 100
+
+
+async def _reconcile_agent_lifecycle_state(runner: GobbyRunner) -> int:
+    reclassified = await _reclassify_reconciliation_pending_runs(runner)
+    close_reviews = await _reconcile_task_close_reviews(runner)
+    return reclassified + close_reviews
 
 
 async def _run_db(
@@ -619,7 +626,7 @@ async def init_subsystems(
         if getattr(runner, "agent_runner", None) is not None:
             raise RuntimeError("Agent reconciliation owner is unavailable")
     else:
-        monitor.set_reconciliation_callback(lambda: _reclassify_reconciliation_pending_runs(runner))
+        monitor.set_reconciliation_callback(lambda: _reconcile_agent_lifecycle_state(runner))
         monitor.set_non_task_resume_callback(lambda: _retry_parked_non_task_resumes(runner))
     await _run_agent_hook_replay_barrier(runner)
     reconciled_runs = (

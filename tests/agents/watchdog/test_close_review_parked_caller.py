@@ -65,6 +65,13 @@ STAGNANT = StuckDetectionResult(
     layer="progress_stagnation",
     suggested_action="stop",
 )
+PASSIVE_WAIT = StuckDetectionResult(
+    is_stuck=True,
+    reason="Repeated passive wait",
+    layer="tool_loop",
+    details={"passive_wait": True},
+    suggested_action="change_approach",
+)
 LIVE = StuckDetectionResult(is_stuck=False, reason="", layer=None, suggested_action="continue")
 
 
@@ -508,3 +515,33 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
     waited = await harness.wait_for_agent(retry_run_id)
     assert waited["notification_registered"] is True
     assert await harness.watchdogs_tick() == (0, 0, [], 0)
+
+
+@pytest.mark.asyncio
+async def test_passive_wait_exemption_requires_live_owned_subscription(
+    harness: _Harness,
+) -> None:
+    launched = await harness.close_task()
+    run_id = cast(str, launched["validator_run_id"])
+    await harness.wait_for_agent(run_id)
+
+    assert await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
+
+    subscribers = CompletionSubscriberManager(harness.db)
+    subscribers.remove_completion_subscribers(run_id)
+    assert not await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
+
+    foreign = harness.runs.create(
+        parent_session_id=harness.parent_session,
+        provider="claude",
+        prompt="foreign wait",
+        agent_name="foreign-agent",
+        run_id=_rid("foreign-run"),
+    )
+    harness.runs.start(foreign.id)
+    subscribers.add_completion_subscriber(foreign.id, harness.caller_session)
+    assert not await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
+
+    subscribers.add_completion_subscriber(run_id, harness.caller_session)
+    harness.runs.complete(run_id, result="done")
+    assert not await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)

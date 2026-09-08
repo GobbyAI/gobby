@@ -56,6 +56,40 @@ def _minimal_init_runner() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
+async def test_periodic_agent_reconciliation_includes_task_close_reviews(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = SimpleNamespace()
+    calls: list[str] = []
+
+    async def agent_reconcile(received: SimpleNamespace) -> int:
+        assert received is runner
+        calls.append("runs")
+        return 2
+
+    async def review_reconcile(received: SimpleNamespace) -> int:
+        assert received is runner
+        calls.append("reviews")
+        return 3
+
+    monkeypatch.setattr(
+        lifecycle_subsystems,
+        "_reclassify_reconciliation_pending_runs",
+        agent_reconcile,
+    )
+    monkeypatch.setattr(
+        lifecycle_subsystems,
+        "_reconcile_task_close_reviews",
+        review_reconcile,
+    )
+
+    reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
+
+    assert reconciled == 5
+    assert calls == ["runs", "reviews"]
+
+
+@pytest.mark.asyncio
 async def test_ui_dev_server_start_does_not_block_event_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

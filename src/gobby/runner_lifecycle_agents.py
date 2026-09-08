@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.recovery_state import (
@@ -20,6 +21,7 @@ from gobby.storage.agents import (
 )
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -149,8 +151,12 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
     return delivered_count
 
 
-async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
-    """Reconcile durable close-review intents without launching replacement agents."""
+async def _reconcile_task_close_reviews(
+    runner: GobbyRunner,
+    *,
+    startup: bool = False,
+) -> int:
+    """Reconcile close reviews, including durable expiry and terminal delivery."""
     db = getattr(runner, "database", None)
     wake_dispatcher = getattr(runner, "wake_dispatcher", None)
     wake = getattr(wake_dispatcher, "wake", None)
@@ -173,7 +179,36 @@ async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
             if review.agent_run_id
             else None
         )
-        if review.status == "launching":
+        deadline = _close_review_deadline(review.close_arguments)
+        if review.active and deadline is not None and utc_now() >= deadline:
+            message = "Task-close validator exceeded its durable deadline."
+            get_cleanup = getattr(
+                getattr(runner, "agent_lifecycle_monitor", None),
+                "get_cleanup_agent",
+                None,
+            )
+            cleanup_agent = get_cleanup() if callable(get_cleanup) else None
+            if run is not None and run.status not in TERMINAL_AGENT_RUN_STATUSES:
+                if callable(cleanup_agent):
+                    await cleanup_agent(run, terminal_payload=message, is_timeout=True)
+                else:
+                    await _run_db(runner, run_manager.timeout, run.id, error=message)
+            current = await _run_db(runner, store.get, review.id) or review
+            if current.active:
+                payload = build_terminal_review_payload(current, status="error", message=message)
+                current = (
+                    await _run_db(
+                        runner,
+                        store.finish,
+                        current.id,
+                        status="error",
+                        result_payload=payload,
+                        error=message,
+                    )
+                    or current
+                )
+            reconciled += 1
+        elif review.status == "launching" and startup:
             message = "Daemon restarted before the task-close validator launch was bound."
             payload = build_terminal_review_payload(review, status="error", message=message)
             current = (
@@ -188,8 +223,8 @@ async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
                 or review
             )
             reconciled += 1
-        elif review.active and run is None:
-            message = "Persisted task-close validator run is missing after daemon restart."
+        elif review.active and run is None and review.status != "launching":
+            message = "Persisted task-close validator run is missing."
             payload = build_terminal_review_payload(review, status="error", message=message)
             current = (
                 await _run_db(
@@ -208,7 +243,7 @@ async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
             current = await _run_db(runner, store.get, review.id) or review
             reconciled += 1
 
-        if current.agent_run_id and run is not None:
+        if startup and current.active and current.agent_run_id and run is not None:
             await _run_db(
                 runner,
                 subscribers.add_completion_subscribers,
@@ -237,8 +272,31 @@ async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
                 continue
             if wake_result_is_delivered(outcome):
                 await _run_db(runner, store.mark_delivered, current.id)
+                if current.agent_run_id:
+                    await _run_db(
+                        runner,
+                        subscribers.remove_completion_subscribers,
+                        current.agent_run_id,
+                        session_ids=[current.caller_session_id],
+                    )
                 reconciled += 1
     return reconciled
+
+
+def _close_review_deadline(close_arguments: dict[str, Any]) -> datetime | None:
+    raw = close_arguments.get("_review_deadline_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
+    """Apply startup-only orphan handling in addition to normal reconciliation."""
+    return await _reconcile_task_close_reviews(runner, startup=True)
 
 
 async def _recover_agent_completion_subscribers_on_startup(runner: GobbyRunner) -> int:
