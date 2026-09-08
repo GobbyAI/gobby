@@ -103,6 +103,7 @@ pub struct FileFact {
     pub path: String,
     pub language: String,
     pub symbol_count: i64,
+    pub content_hash: String,
 }
 
 impl CodewikiFacts {
@@ -123,6 +124,7 @@ impl CodewikiFacts {
                     path,
                     language: file.language,
                     symbol_count: file.symbol_count,
+                    content_hash: file.content_hash,
                 })
             })
             .collect()

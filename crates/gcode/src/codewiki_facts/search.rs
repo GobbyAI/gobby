@@ -2,6 +2,14 @@ use crate::search::fts;
 
 use super::{CodewikiFacts, SymbolFact};
 
+/// Owned content-chunk search hit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentFact {
+    pub path: String,
+    pub line_start: usize,
+    pub line_end: usize,
+}
+
 /// Exact-first indexed symbol search request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchQuery {
@@ -49,6 +57,25 @@ impl CodewikiFacts {
         .into_iter()
         .map(|symbol| SearchHit {
             symbol: SymbolFact::from(symbol),
+        })
+        .collect())
+    }
+
+    pub fn search_content_with(&self, query: &SearchQuery) -> anyhow::Result<Vec<ContentFact>> {
+        let mut conn = self.read_connection()?;
+        Ok(fts::search_content_visible(
+            &mut conn,
+            &query.text,
+            self.context(),
+            query.language.as_deref(),
+            &query.paths,
+            query.limit,
+        )?
+        .into_iter()
+        .map(|hit| ContentFact {
+            path: hit.file_path,
+            line_start: hit.line_start,
+            line_end: hit.line_end,
         })
         .collect())
     }

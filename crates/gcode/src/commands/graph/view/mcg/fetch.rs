@@ -215,6 +215,7 @@ mod tests {
             target_file: target.into(),
             owner_path: "src/consumer.py".into(),
             owner_hash: "hash-a".into(),
+            provenance: "EXTRACTED".into(),
         }
     }
 
