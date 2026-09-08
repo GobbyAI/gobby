@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class SupportsRunGit(Protocol):
     """Structural runner contract for read-only default-branch detection."""
 
-    def _run_git(
+    async def _run_git(
         self,
         args: list[str],
         *,
@@ -22,7 +22,7 @@ class SupportsRunGit(Protocol):
     ) -> subprocess.CompletedProcess[str]: ...
 
 
-def get_default_branch(runner: SupportsRunGit) -> str:
+async def get_default_branch(runner: SupportsRunGit) -> str:
     """
     Get the default branch for the repository.
 
@@ -36,7 +36,7 @@ def get_default_branch(runner: SupportsRunGit) -> str:
     """
     # Method 1: Try to get the default branch from origin/HEAD
     try:
-        result = runner._run_git(
+        result = await runner._run_git(
             ["symbolic-ref", "refs/remotes/origin/HEAD"],
             timeout=5,
         )
@@ -54,7 +54,7 @@ def get_default_branch(runner: SupportsRunGit) -> str:
     for branch in ["main", "master", "develop"]:
         try:
             # Check if the branch exists locally or remotely
-            result = runner._run_git(
+            result = await runner._run_git(
                 ["rev-parse", "--verify", f"refs/heads/{branch}"],
                 timeout=5,
             )
@@ -63,7 +63,7 @@ def get_default_branch(runner: SupportsRunGit) -> str:
                 return branch
 
             # Check remote
-            result = runner._run_git(
+            result = await runner._run_git(
                 ["rev-parse", "--verify", f"refs/remotes/origin/{branch}"],
                 timeout=5,
             )
@@ -79,7 +79,7 @@ def get_default_branch(runner: SupportsRunGit) -> str:
     return "main"
 
 
-def get_current_branch(runner: GitRunner) -> str | None:
+async def get_current_branch(runner: GitRunner) -> str | None:
     """
     Get the current branch of the repository.
 
@@ -87,7 +87,7 @@ def get_current_branch(runner: GitRunner) -> str | None:
         Branch name, or None if in detached HEAD state
     """
     try:
-        result = runner._run_git(
+        result = await runner._run_git(
             ["branch", "--show-current"],
             timeout=5,
         )
@@ -99,7 +99,7 @@ def get_current_branch(runner: GitRunner) -> str | None:
         return None
 
 
-def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[bool, int]:
+async def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[bool, int]:
     """
     Check if the branch has commits not pushed to origin.
 
@@ -112,20 +112,20 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
         - count: Number of unpushed commits (0 if none or error)
     """
     if branch is None:
-        branch = get_current_branch(runner)
+        branch = await get_current_branch(runner)
     if not branch:
         return False, 0
 
     try:
         # Check if remote tracking branch exists
-        result = runner._run_git(
+        result = await runner._run_git(
             ["rev-parse", "--verify", f"origin/{branch}"],
             timeout=5,
         )
         if result.returncode != 0:
             # No remote tracking branch - count commits ahead of the default branch.
-            base_branch = get_default_branch(runner)
-            count_result = runner._run_git(
+            base_branch = await get_default_branch(runner)
+            count_result = await runner._run_git(
                 ["rev-list", "--count", f"{base_branch}..{branch}"],
                 timeout=5,
             )
@@ -135,7 +135,7 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
             return False, 0
 
         # Count commits ahead of origin
-        result = runner._run_git(
+        result = await runner._run_git(
             ["rev-list", "--count", f"origin/{branch}..{branch}"],
             timeout=5,
         )
@@ -148,7 +148,7 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
         return False, 0
 
 
-def get_local_commit(runner: GitRunner, branch: str) -> str | None:
+async def get_local_commit(runner: GitRunner, branch: str) -> str | None:
     """
     Get the commit SHA of a local branch.
 
@@ -159,7 +159,7 @@ def get_local_commit(runner: GitRunner, branch: str) -> str | None:
         Commit SHA, or None if branch doesn't exist
     """
     try:
-        result = runner._run_git(
+        result = await runner._run_git(
             ["rev-parse", branch],
             timeout=5,
         )

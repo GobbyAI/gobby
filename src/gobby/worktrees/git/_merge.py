@@ -11,7 +11,7 @@ from gobby.worktrees.git._runner import GitRunner
 logger = logging.getLogger(__name__)
 
 
-def merge_branch(
+async def merge_branch(
     runner: GitRunner,
     source_branch: str,
     target_branch: str = "main",
@@ -48,7 +48,7 @@ def merge_branch(
 
     # Save current branch for restoration
     original_branch: str | None = None
-    branch_result = runner._run_git(
+    branch_result = await runner._run_git(
         ["rev-parse", "--abbrev-ref", "HEAD"],
         timeout=5,
     )
@@ -59,7 +59,7 @@ def merge_branch(
 
     try:
         # Fetch latest
-        fetch_result = runner._run_git(
+        fetch_result = await runner._run_git(
             ["fetch", "origin"],
             timeout=60,
         )
@@ -71,7 +71,7 @@ def merge_branch(
             )
 
         # Checkout target branch
-        checkout_result = runner._run_git(
+        checkout_result = await runner._run_git(
             ["checkout", target_branch],
             timeout=30,
         )
@@ -84,7 +84,7 @@ def merge_branch(
         checked_out_target = True
 
         # Pull latest on target
-        pull_result = runner._run_git(
+        pull_result = await runner._run_git(
             ["pull", "origin", target_branch],
             timeout=60,
         )
@@ -96,7 +96,7 @@ def merge_branch(
             )
 
         # Attempt merge with --no-ff
-        merge_result = runner._run_git(
+        merge_result = await runner._run_git(
             ["merge", source_branch, "--no-ff", "--no-edit"],
             timeout=60,
         )
@@ -105,14 +105,14 @@ def merge_branch(
             # Check for conflicts
             if "CONFLICT" in merge_result.stdout or "CONFLICT" in merge_result.stderr:
                 # Get conflicted files
-                status_result = runner._run_git(
+                status_result = await runner._run_git(
                     ["diff", "--name-only", "--diff-filter=U"],
                     timeout=10,
                 )
                 conflicted_files = [f for f in status_result.stdout.strip().split("\n") if f]
 
                 # Abort merge
-                runner._run_git(["merge", "--abort"], timeout=10)
+                await runner._run_git(["merge", "--abort"], timeout=10)
 
                 return GitOperationResult(
                     success=False,
@@ -122,7 +122,7 @@ def merge_branch(
                 )
 
             # Non-conflict failure — abort
-            runner._run_git(["merge", "--abort"], timeout=10)
+            await runner._run_git(["merge", "--abort"], timeout=10)
 
             return GitOperationResult(
                 success=False,
@@ -137,14 +137,14 @@ def merge_branch(
         )
 
     except subprocess.TimeoutExpired:
-        runner._run_git(["merge", "--abort"], timeout=10)
+        await runner._run_git(["merge", "--abort"], timeout=10)
         return GitOperationResult(
             success=False,
             message="Merge operation timed out",
             error="timeout",
         )
     except Exception as e:
-        runner._run_git(["merge", "--abort"], timeout=10)
+        await runner._run_git(["merge", "--abort"], timeout=10)
         return GitOperationResult(
             success=False,
             message=f"Merge error: {e}",
@@ -154,7 +154,7 @@ def merge_branch(
         # Restore original branch if we checked out target
         if checked_out_target and original_branch and original_branch != target_branch:
             try:
-                runner._run_git(
+                await runner._run_git(
                     ["checkout", original_branch],
                     timeout=30,
                 )

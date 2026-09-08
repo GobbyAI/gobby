@@ -32,7 +32,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="get_worktree",
         description="Get details of a specific worktree.",
     )
-    def get_worktree(worktree_id: str) -> dict[str, Any]:
+    async def get_worktree(worktree_id: str) -> dict[str, Any]:
         """Get worktree details by ID.
 
         Args:
@@ -51,7 +51,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         git_status = None
         if ctx.git_manager and Path(worktree.worktree_path).exists():
-            status = ctx.git_manager.get_worktree_status(
+            status = await ctx.git_manager.get_worktree_status(
                 worktree.worktree_path,
                 worktree.base_branch,
             )
@@ -65,7 +65,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         return {
             "success": True,
-            "worktree": worktree_dict_with_git_merge_state(worktree, ctx.git_manager),
+            "worktree": await worktree_dict_with_git_merge_state(worktree, ctx.git_manager),
             "git_status": git_status,
         }
 
@@ -172,7 +172,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="get_worktree_by_task",
         description="Get worktree linked to a specific task.",
     )
-    def get_worktree_by_task(task_id: str) -> dict[str, Any]:
+    async def get_worktree_by_task(task_id: str) -> dict[str, Any]:
         """Get worktree linked to a task.
 
         Args:
@@ -191,7 +191,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         return {
             "success": True,
-            "worktree": worktree_dict_with_git_merge_state(worktree, ctx.git_manager),
+            "worktree": await worktree_dict_with_git_merge_state(worktree, ctx.git_manager),
         }
 
     return registry

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from gobby.threaded_executor import ManagedThreadPoolExecutor
 from gobby.utils.git import run_to_completion
@@ -56,21 +56,21 @@ class WorktreeDeleteExecutor(ManagedThreadPoolExecutor):
             executor_name="WorktreeDeleteExecutor",
         )
 
-    async def run_delete[T](self, operation: Callable[[DestructiveBoundary], T]) -> T:
-        """Run one delete, abandoning it only before its mutation boundary."""
+    async def run_delete[T](self, operation: Callable[[DestructiveBoundary], Awaitable[T]]) -> T:
+        """Run one async delete, abandoning it only before its mutation boundary."""
         boundary = DestructiveBoundary()
-        future = self.submit(operation, boundary)
+        task: asyncio.Future[T] = asyncio.ensure_future(operation(boundary))
 
         def on_cancel() -> None:
             if boundary.cancel_before_mutation():
-                future.cancel()
+                task.cancel()
 
-        return await run_to_completion(asyncio.wrap_future(future), on_cancel=on_cancel)
+        return await run_to_completion(task, on_cancel=on_cancel)
 
 
 async def run_worktree_delete[T](
     executor: WorktreeDeleteExecutor | None,
-    operation: Callable[[DestructiveBoundary], T],
+    operation: Callable[[DestructiveBoundary], Awaitable[T]],
 ) -> T:
     """Run deletion through the daemon executor or an isolated fallback thread."""
     if executor is not None:
@@ -81,7 +81,4 @@ async def run_worktree_delete[T](
     def on_cancel() -> None:
         boundary.cancel_before_mutation()
 
-    return await run_to_completion(
-        asyncio.to_thread(operation, boundary),
-        on_cancel=on_cancel,
-    )
+    return await run_to_completion(operation(boundary), on_cancel=on_cancel)
