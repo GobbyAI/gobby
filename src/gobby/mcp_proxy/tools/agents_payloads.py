@@ -117,11 +117,17 @@ def _agent_result_payload(
     *,
     include_prompt: bool = False,
     dirty_paths: list[str] | None | object = _DIRTY_PATHS_UNSET,
+    authoritative_result: str | None = None,
 ) -> dict[str, Any]:
+    preferred_result = (
+        authoritative_result.strip()
+        if isinstance(authoritative_result, str) and authoritative_result.strip()
+        else None
+    )
     payload: dict[str, Any] = {
         "run_id": run.id,
         "status": "blocked" if run.terminal_reason == "task_blocker" else run.status,
-        "result": run.result,
+        "result": preferred_result if preferred_result is not None else run.result,
         "error": run.error,
         "provider": run.provider,
         "model": run.model,
@@ -142,7 +148,8 @@ def _agent_result_payload(
         return payload
 
     if capture.malformed:
-        payload["result"] = capture.content[:_AGENT_RESULT_CAPTURE_CHARS]
+        if preferred_result is None:
+            payload["result"] = capture.content[:_AGENT_RESULT_CAPTURE_CHARS]
         payload["capture"] = {
             "capture_id": capture.capture_id,
             "total_chars": len(capture.content),
@@ -153,11 +160,15 @@ def _agent_result_payload(
         }
         return payload
 
-    result, excerpt_lines, prefix_truncated = _bounded_capture_result(
-        capture.prefix,
-        capture.content,
-    )
-    payload["result"] = result
+    stored_result = capture.prefix.rstrip()
+    report = preferred_result or stored_result or None
+    if report is None:
+        result, excerpt_lines, prefix_truncated = _bounded_capture_result("", capture.content)
+        payload["result"] = result
+    else:
+        payload["result"] = report[:_AGENT_RESULT_CAPTURE_CHARS]
+        excerpt_lines = 0
+        prefix_truncated = len(report) > _AGENT_RESULT_CAPTURE_CHARS
     payload["capture"] = {
         "capture_id": capture.capture_id,
         "total_chars": len(capture.content),

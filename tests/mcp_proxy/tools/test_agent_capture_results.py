@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -69,35 +69,55 @@ def test_genuine_result_and_marker_like_text_pass_through() -> None:
     assert "capture" not in payload
 
 
-def test_capture_payload_preserves_under_budget_prefix_and_last_twenty_lines() -> None:
+def test_capture_payload_prefers_stored_report_and_keeps_capture_separate() -> None:
     prefix = "Partial worker result.\n\n"
     capture = "\n".join(f"line-{index}" for index in range(25))
 
     payload = _agent_result_payload(_run(result=_slot(capture, prefix=prefix)))
 
-    assert str(payload["result"]).startswith(prefix)
-    assert "line-4" not in str(payload["result"])
-    assert "line-5" in str(payload["result"])
-    assert "line-24" in str(payload["result"])
-    assert len(str(payload["result"])) <= _AGENT_RESULT_CAPTURE_CHARS
+    assert payload["result"] == prefix.rstrip()
     assert payload["capture"] == {
         "capture_id": _CAPTURE_ID,
         "total_chars": len(capture),
-        "excerpt_lines": 20,
+        "excerpt_lines": 0,
         "prefix_truncated": False,
         "retrieval_tool": "get_agent_capture",
     }
 
 
 def test_capture_payload_truncates_over_budget_prefix() -> None:
-    prefix = "p" * _AGENT_RESULT_CAPTURE_CHARS
+    prefix = "p" * (_AGENT_RESULT_CAPTURE_CHARS + 1)
 
     payload = _agent_result_payload(_run(result=_slot("terminal-tail", prefix=prefix)))
 
     assert len(str(payload["result"])) <= _AGENT_RESULT_CAPTURE_CHARS
     assert str(payload["result"]).startswith("p")
-    assert str(payload["result"]).endswith("terminal-tail")
     assert payload["capture"]["prefix_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_end_handoff_is_authoritative_over_terminal_capture() -> None:
+    run = _run(status="success", result=_slot("terminal footer"))
+    runner = MagicMock()
+    runner.get_run.return_value = run
+    report = "## Current State\n\nCompleted the assigned task."
+    handoff = SimpleNamespace(payload=SimpleNamespace(rendered_markdown=report))
+    registry = create_agents_registry(runner, db=MagicMock())
+
+    with patch(
+        "gobby.mcp_proxy.tools.agents_query_tools.get_agent_end_handoff",
+        return_value=handoff,
+    ):
+        result = await registry.call("get_agent_result", {"run_id": run.id})
+
+    assert result["result"] == report
+    assert result["capture"] == {
+        "capture_id": _CAPTURE_ID,
+        "total_chars": len("terminal footer"),
+        "excerpt_lines": 0,
+        "prefix_truncated": False,
+        "retrieval_tool": "get_agent_capture",
+    }
 
 
 def test_get_agent_capture_schema_exposes_page_default_and_maximum() -> None:
