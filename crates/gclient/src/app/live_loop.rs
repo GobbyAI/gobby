@@ -25,6 +25,7 @@ use super::attention::route_response_input;
 use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
+use super::sidebar_model::SidebarModel;
 use super::{PaneId, Workspace};
 
 mod actions;
@@ -45,6 +46,14 @@ const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 impl WorkspaceView for Workspace<LiveDaemon> {
     fn project_id(&self) -> Option<&str> {
         Workspace::<LiveDaemon>::project_id(self)
+    }
+
+    fn focused_project(&self) -> Option<&str> {
+        Workspace::<LiveDaemon>::project_id(self)
+    }
+
+    fn sidebar(&self) -> &SidebarModel {
+        Workspace::<LiveDaemon>::sidebar(self)
     }
 
     fn roster_terminal_ids(&self) -> Vec<String> {
@@ -314,6 +323,12 @@ pub async fn run_live_loop<B: Backend>(
             }
             _ = render_tick.tick() => {
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
+                if !chrome.sidebar.collapsed {
+                    workspace.request_git_refresh_if_due();
+                }
+                if let Err(error) = workspace.flush_sidebar_refetches().await {
+                    chrome.status_message = Some(error.to_string());
+                }
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                     workspace.latch_exit(error.to_string());
                     loop_error = Some(error);
@@ -622,9 +637,11 @@ async fn recv_workspace_frame(
 
 fn render_live_workspace<B: Backend>(
     terminal: &mut Terminal<B>,
-    workspace: &Workspace<LiveDaemon>,
+    workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
+    workspace.rebuild_sidebar();
+    let workspace = &*workspace;
     terminal
         .draw(|frame| {
             chrome.compute_view(workspace, frame.area());

@@ -101,6 +101,7 @@ class EnforcementCompletionMixin:
         self,
         session_id: str,
         workflow_name: str,
+        variables: dict[str, Any],
     ) -> None:
         """Complete an agent-backed run when its workflow reaches a terminal step."""
 
@@ -157,7 +158,8 @@ class EnforcementCompletionMixin:
         run_row: Any | None = db_agent
         if run_row is None:
             run_row = await offload(self._runner.get_run, run_id)
-        terminal_reason: str | None = getattr(run_row, "terminal_reason", None)
+        raw_terminal_reason = getattr(run_row, "terminal_reason", None)
+        terminal_reason = raw_terminal_reason if isinstance(raw_terminal_reason, str) else None
 
         lifecycle_monitor = getattr(self._runner, "agent_lifecycle_monitor", None)
         terminalize_successful_run: Any = getattr(
@@ -191,27 +193,47 @@ class EnforcementCompletionMixin:
                 terminal_reason=terminal_reason,
             )
             return
-        task_id = getattr(run_row, "task_id", None)
-        if not isinstance(task_id, str):
-            task_id = None
-        build_workflow_completion_notification = _facade_attr(
-            "build_workflow_completion_notification"
-        )
-        notify_result, message = await offload(
-            build_workflow_completion_notification,
-            self.db,
-            run_id,
-            workflow_name,
-            task_id,
-        )
+        blocker_exit = variables.get("blocker_handed_off") is True and run_row is not None
+        if blocker_exit:
+            agent_run_task_dirty_paths = _facade_attr("agent_run_task_dirty_paths")
+            dirty_paths = await offload(
+                agent_run_task_dirty_paths,
+                self.db,
+                getattr(self._runner, "_session_manager", None),
+                run_row,
+                variables=variables,
+            )
+            build_agent_exit_notification = _facade_attr("build_agent_exit_notification")
+            terminal_reason, notify_result, message = await offload(
+                build_agent_exit_notification,
+                run_id,
+                variables=variables,
+                dirty_paths=dirty_paths,
+            )
+        else:
+            task_id = getattr(run_row, "task_id", None)
+            if not isinstance(task_id, str):
+                task_id = None
+            build_workflow_completion_notification = _facade_attr(
+                "build_workflow_completion_notification"
+            )
+            notify_result, message = await offload(
+                build_workflow_completion_notification,
+                self.db,
+                run_id,
+                workflow_name,
+                task_id,
+            )
         # Lifecycle monitor terminalizers are async by contract. A sync callable
         # is treated as unavailable so workflow completion uses the runner path.
         if inspect.iscoroutinefunction(terminalize_successful_run):
-            terminalized = await terminalize_successful_run(
-                run_id,
-                notify_result=notify_result,
-                message=message,
-            )
+            terminalize_kwargs: dict[str, Any] = {
+                "notify_result": notify_result,
+                "message": message,
+            }
+            if terminal_reason is not None:
+                terminalize_kwargs["terminal_reason"] = terminal_reason
+            terminalized = await terminalize_successful_run(run_id, **terminalize_kwargs)
             logger.debug(
                 "Workflow lifecycle terminalization settled acknowledged delivery for %s: %s",
                 run_id,
@@ -232,13 +254,14 @@ class EnforcementCompletionMixin:
             )
 
         complete_and_notify_agent_run = _facade_attr("complete_and_notify_agent_run")
-        await complete_and_notify_agent_run(
-            self._runner,
-            run_id,
-            completion_registry=self._completion_registry,
-            notify_result=notify_result,
-            message=message,
-        )
+        completion_kwargs: dict[str, Any] = {
+            "completion_registry": self._completion_registry,
+            "notify_result": notify_result,
+            "message": message,
+        }
+        if terminal_reason is not None:
+            completion_kwargs["terminal_reason"] = terminal_reason
+        await complete_and_notify_agent_run(self._runner, run_id, **completion_kwargs)
         await offload(
             cleanup_agent_runtime_state,
             self.db,
@@ -494,6 +517,7 @@ class EnforcementCompletionMixin:
                         await self._complete_agent_workflow_run(
                             session_id,
                             instance.agent_name,
+                            merged_vars,
                         )
 
                 break

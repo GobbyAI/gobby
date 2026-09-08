@@ -141,19 +141,17 @@ async fn submit_response(
 }
 
 fn parse_prompt(entry: RosterEntry) -> Option<Prompt> {
-    let attention = entry.fields.get("attention")?.as_object()?;
+    let attention = entry.attention?;
     if attention
-        .get("kind")
-        .and_then(serde_json::Value::as_str)
+        .kind
+        .as_deref()
         .is_some_and(|kind| kind != "actionable")
     {
         return None;
     }
-    let attention_id = attention.get("attention_id")?.as_str()?.to_string();
-    let fingerprint = attention.get("fingerprint")?.as_str()?.to_string();
-    let payload = attention
-        .get("payload")
-        .or_else(|| attention.get("prompt"))?;
+    let attention_id = attention.attention_id?;
+    let fingerprint = attention.fingerprint?;
+    let payload = attention.payload?;
     let prompt = payload
         .get("prompt")
         .or_else(|| payload.get("question"))

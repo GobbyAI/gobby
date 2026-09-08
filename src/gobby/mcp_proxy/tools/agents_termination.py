@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
-from gobby.agents.run_completion import agent_run_task_dirty_paths
+from gobby.agents.run_completion import (
+    agent_run_task_dirty_paths,
+    build_agent_exit_notification,
+)
 from gobby.agents.sandbox_reaper import reap_terminal_sandbox_run
 from gobby.mcp_proxy.tools.agents_runtime import facade
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
-    from gobby.storage.agents import AgentRunTerminalReason
 
 logger = logging.getLogger(__name__)
 
@@ -86,22 +87,16 @@ async def _complete_self_terminated_run(
         except Exception as e:
             agents.logger.debug("Failed to read session variables for %s: %s", agent_session_id, e)
 
-    terminal_reason: AgentRunTerminalReason | None = (
-        "task_blocker" if session_vars.get("blocker_handed_off") is True else None
+    dirty_paths = agent_run_task_dirty_paths(
+        kill_db,
+        session_manager or getattr(runner, "_session_manager", None),
+        run,
+        variables=session_vars,
     )
-    dirty_paths = agent_run_task_dirty_paths(runner, run, variables=session_vars)
-    notify_result: dict[str, Any] = {
-        "status": "blocked" if terminal_reason == "task_blocker" else "success",
-        "run_id": run.id,
-        "dirty_paths": dirty_paths,
-    }
-    if terminal_reason is not None:
-        notify_result["terminal_reason"] = terminal_reason
-    verdict = session_vars.get("adversary_verdict")
-    if isinstance(verdict, str) and verdict:
-        notify_result["signoff_message"] = verdict
-    completion_message = (
-        f"Agent {run.id} completed; dirty_paths={json.dumps(dirty_paths, separators=(',', ':'))}"
+    terminal_reason, notify_result, completion_message = build_agent_exit_notification(
+        run.id,
+        variables=session_vars,
+        dirty_paths=dirty_paths,
     )
     transitioned_here = False
 

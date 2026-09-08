@@ -9,6 +9,7 @@ mod live_loop;
 mod pane;
 mod persistence;
 pub mod run_loop;
+pub mod sidebar_model;
 
 pub use attach::AttachState;
 pub use live_loop::menu::{
@@ -25,8 +26,8 @@ pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
 
 use crate::copy_mode::PASTE_MAX_BYTES;
 use crate::daemon::{
-    Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon, ScriptedDaemon,
-    Snapshot, TerminalRow,
+    Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, LiveDaemon, RosterEntry,
+    ScriptedDaemon, SidebarRows, Snapshot, TerminalRow,
 };
 use crate::frame_source::{
     AttachLocator, FrameDelivery, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource,
@@ -34,9 +35,11 @@ use crate::frame_source::{
 };
 use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use serde_json::{json, Value};
+use sidebar_model::{PendingSidebar, SidebarModel};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tokio::sync::broadcast::error::TryRecvError;
+use tokio::time::Instant;
 
 const WORKSPACE_EVENT_BUFFER: usize = 1024;
 
@@ -44,8 +47,19 @@ const WORKSPACE_EVENT_BUFFER: usize = 1024;
 struct AttentionState {
     epoch: String,
     seq: u64,
-    entries: Vec<String>,
+    entries: Vec<RosterEntry>,
     applied_seqs: Vec<u64>,
+}
+
+impl AttentionState {
+    fn empty() -> Self {
+        Self {
+            epoch: String::new(),
+            seq: 0,
+            entries: Vec::new(),
+            applied_seqs: Vec::new(),
+        }
+    }
 }
 
 pub struct Workspace<D: Daemon = ScriptedDaemon> {
@@ -59,6 +73,13 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// Tab order from the saved snapshot; the first roster page follows it.
     saved_tab_order: Vec<String>,
     attention: AttentionState,
+    /// This machine's id, the default home for an agent without one.
+    local_machine: String,
+    /// The last rows fetched for the sidebar; `sidebar` is built from them.
+    sidebar_rows: SidebarRows,
+    sidebar: SidebarModel,
+    git_refreshed_at: Instant,
+    pending_sidebar: PendingSidebar,
     pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
     frame_delivery: FrameDelivery,
@@ -128,12 +149,12 @@ impl Workspace {
             next_pane: 1,
             roster_ids: Vec::new(),
             saved_tab_order: Vec::new(),
-            attention: AttentionState {
-                epoch: String::new(),
-                seq: 0,
-                entries: Vec::new(),
-                applied_seqs: Vec::new(),
-            },
+            attention: AttentionState::empty(),
+            local_machine: String::new(),
+            sidebar_rows: SidebarRows::default(),
+            sidebar: SidebarModel::default(),
+            git_refreshed_at: Instant::now(),
+            pending_sidebar: PendingSidebar::default(),
             pending_attention: None,
             gobby_home: None,
             frame_delivery: FrameDelivery::Auto,
@@ -176,14 +197,6 @@ impl Workspace {
         }
     }
 
-    pub fn roster_terminal_ids(&self) -> Vec<String> {
-        self.roster_ids.clone()
-    }
-
-    pub fn attention_entry_ids(&self) -> Vec<String> {
-        self.attention.entries.clone()
-    }
-
     pub fn reconcile_subscribe_first(&mut self) -> Result<(), DaemonError> {
         self.daemon.subscribe();
         let buffered = self.daemon.take_attention_events();
@@ -192,6 +205,8 @@ impl Workspace {
         for event in buffered {
             self.ingest_attention(event)?;
         }
+        self.sidebar_rows = self.daemon.sidebar_rows();
+        self.rebuild_sidebar();
         Ok(())
     }
 
@@ -207,9 +222,10 @@ impl Workspace {
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(|entry| entry.get("entry_id")?.as_str().map(str::to_string))
+            .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
             .collect();
         self.attention.applied_seqs = vec![self.attention.seq];
+        self.rebuild_sidebar();
     }
 
     pub(super) fn ingest_attention(&mut self, event: Value) -> Result<(), DaemonError> {
@@ -227,13 +243,10 @@ impl Workspace {
         if epoch == self.attention.epoch && seq <= self.attention.seq {
             return Ok(());
         }
-        if let Some(id) = event.get("entry_id").and_then(Value::as_str) {
-            if !self.attention.entries.iter().any(|e| e == id) {
-                self.attention.entries.push(id.to_string());
-            }
-        }
+        self.note_attention_event(&event);
         self.attention.seq = self.attention.seq.max(seq);
         self.attention.applied_seqs.push(seq);
+        self.rebuild_sidebar();
         Ok(())
     }
 

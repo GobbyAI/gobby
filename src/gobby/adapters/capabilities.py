@@ -345,7 +345,13 @@ def _codex_capabilities() -> ProviderCapabilities:
             decision_style = ProviderDecisionStyle.COMPACT_STOP
         elif hook_name == "Stop":
             decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {"SessionStart", "SubagentStart", "UserPromptSubmit", "PostToolUse"}:
+        elif hook_name in {
+            "SessionStart",
+            "SubagentStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "Interrupt",
+        }:
             decision_style = ProviderDecisionStyle.NONE
 
         events[hook_name] = HookCapability(

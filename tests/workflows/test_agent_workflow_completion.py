@@ -350,6 +350,76 @@ async def test_task_blocker_for_other_task_does_not_terminate(
     assert "step_workflow_complete" not in variables
 
 
+@pytest.mark.asyncio
+async def test_assigned_task_blocker_terminalizes_with_blocked_payload(
+    db: HubDatabase,
+) -> None:
+    instance_manager = _register_bundled_agent_workflow(
+        db,
+        agent_name="backend-developer",
+        current_step="implement",
+    )
+    run_id = "33333333-3333-4333-8333-333333333333"
+    run = MagicMock(
+        id=run_id,
+        task_id=ASSIGNED_TASK_UUID,
+        child_session_id=AGENT_SESSION_ID,
+        terminal_reason=None,
+    )
+    runner = MagicMock()
+    runner.run_storage.get_by_session.return_value = run
+    runner._session_manager = None
+    terminalize = AsyncMock(return_value=True)
+    runner.agent_lifecycle_monitor.terminalize_successful_run = terminalize
+    engine = RuleEngine(db, runner=runner)
+    variables: dict[str, object] = {
+        "assigned_task_id": "#21617",
+        "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        "parent_session_id": PARENT_SESSION_UUID,
+        "parent_session_ref": PARENT_SESSION_REF,
+    }
+
+    with (
+        patch(
+            "gobby.workflows.engine.enforcement.agent_run_task_dirty_paths",
+            return_value=["src/dirty.py"],
+        ),
+        patch("gobby.workflows.engine.enforcement.cleanup_agent_runtime_state"),
+    ):
+        response = await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-agents",
+                mcp_tool="send_message",
+                tool_arguments={
+                    "target": "session",
+                    "target_id": PARENT_SESSION_UUID,
+                    "message_type": "task_blocker",
+                    "metadata": {"task_id": ASSIGNED_TASK_UUID},
+                    "content": "The assigned task cannot proceed.",
+                },
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+    instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["blocker_handed_off"] is True
+    assert response.decision == "allow"
+    terminalize.assert_awaited_once_with(
+        run_id,
+        notify_result={
+            "status": "blocked",
+            "run_id": run_id,
+            "dirty_paths": ["src/dirty.py"],
+            "terminal_reason": "task_blocker",
+        },
+        message=f'Agent {run_id} completed; dirty_paths=["src/dirty.py"]',
+        terminal_reason="task_blocker",
+    )
+
+
 class TestAgentWorkflowCompletion:
     @pytest.mark.asyncio
     async def test_exit_condition_terminalizes_agent_run_through_lifecycle_cleanup(

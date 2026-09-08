@@ -580,8 +580,8 @@ fn ready_carries_a_resolved_project() {
     let _: fn(&Ready) -> &String = project_field_is_string;
     let views_source = include_str!("../src/views/mod.rs");
     assert!(
-        views_source.contains("workspace.select_project(ready.project);"),
-        "run_ready must select the resolved project"
+        views_source.contains("workspace.restore_project(&ready.project)"),
+        "run_ready must restore the resolved project"
     );
     assert!(
         !views_source.contains("if let Some(project) = ready.project"),

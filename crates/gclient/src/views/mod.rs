@@ -47,6 +47,11 @@ pub fn run_ready(
                 LiveDaemon::connect(ready.daemon_url, ready.token.unwrap_or_default()).await?;
             let mut workspace = Workspace::live(daemon);
             workspace.set_gobby_home(ready.gobby_home);
+            // Without a machine id the sidebar still lists agents; they just
+            // sit under an empty machine name until the daemon fills it in.
+            workspace.set_local_machine(
+                gobby_core::machine::read_local_machine_id().unwrap_or_default(),
+            );
             workspace.restore_project(&ready.project).map_err(|error| {
                 anyhow::anyhow!("failed to restore the workspace snapshot: {error}")
             })?;

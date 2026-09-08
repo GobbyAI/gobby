@@ -178,7 +178,12 @@ Follow this order exactly:
 6. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
    `preview=true`. Include exact validation commands and results in `changes_summary`.
    A ready call links the commit and closes atomically.
-7. Call `review_task_memories` on the `gobby-memory` server after `closed=true`
+7. If `close_task` returns `error="agentic_review_required"`, call
+   `wait_for_agent(run_id=validator_run_id)` once with the returned validator run ID,
+   then end the turn. The explicit registration is idempotent with the automatic
+   durable completion subscription. Do not poll status or re-call `close_task` while
+   the review runs; the daemon applies the verdict and wakes this session.
+8. Call `review_task_memories` on the `gobby-memory` server after `closed=true`
    (`call_tool("gobby-memory", "review_task_memories", {...})`), passing the closed
    task and the same `changes_summary`; create, update, or delete only valuable
    durable facts.

@@ -47,6 +47,8 @@ from .interactive import (
     PermissionRequestOutput,
 )
 from .lifecycle import (
+    InterruptInput,
+    InterruptOutput,
     PostCompactInput,
     PostCompactOutput,
     PreCompactInput,
@@ -94,6 +96,7 @@ HOOK_INPUT_MODELS: dict[HookType, type[HookInput]] = {
     HookType.PRE_COMPACT: PreCompactInput,
     HookType.POST_COMPACT: PostCompactInput,
     HookType.STOP: StopInput,
+    HookType.INTERRUPT: InterruptInput,
     HookType.STOP_FAILURE: StopFailureInput,
     HookType.SUBAGENT_START: SubagentStartInput,
     HookType.SUBAGENT_STOP: SubagentStopInput,
@@ -130,6 +133,7 @@ HOOK_OUTPUT_MODELS: dict[HookType, type[HookOutput]] = {
     HookType.PRE_COMPACT: PreCompactOutput,
     HookType.POST_COMPACT: PostCompactOutput,
     HookType.STOP: StopOutput,
+    HookType.INTERRUPT: InterruptOutput,
     HookType.STOP_FAILURE: StopFailureOutput,
     HookType.SUBAGENT_START: SubagentStartOutput,
     HookType.SUBAGENT_STOP: SubagentStopOutput,

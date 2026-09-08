@@ -155,13 +155,12 @@ async def test_duplicate_completed_turn_within_deadline_stays_quiet() -> None:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_completed_turn_with_finished_work_completes_run() -> None:
+async def test_completed_turn_with_finished_work_completes_before_reprompt() -> None:
     host = _FakeHost(work_finished=True)
 
     assert await _recover(host) == 1
-    _age_reprompt(host, _IDLE_TIMEOUT_SECONDS + 1)
-
-    assert await _recover(host) == 1
     assert host.completions == 1
+    assert host.reprompts == []
     assert host.failures == []
+    assert host._completed_turn_recovery == {}
     assert ("completing idle agent whose work already finished", logging.INFO) in host.snapshot_logs
