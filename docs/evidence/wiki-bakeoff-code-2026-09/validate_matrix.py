@@ -162,9 +162,10 @@ def _table_rows(matrix: str, prefix: str) -> list[list[str]]:
 
 def _validate_question_bindings(matrix: str) -> None:
     domain_rows = _table_rows(matrix, "D")
-    domains = {row[0] for row in domain_rows if re.fullmatch(r"D\d{2}", row[0])}
-    if domains != {f"D{number:02d}" for number in range(1, 11)}:
-        raise AssertionError("domain inventory must define D01-D10")
+    domain_ids = [row[0] for row in domain_rows if re.fullmatch(r"D\d{2}", row[0])]
+    domains = set(domain_ids)
+    if len(domain_ids) != 10 or domains != {f"D{number:02d}" for number in range(1, 11)}:
+        raise AssertionError("domain inventory must define D01-D10 exactly once")
     for row in domain_rows:
         if re.fullmatch(r"D\d{2}", row[0]):
             expected = CHANGE_SHA if row[0] == "D10" else BASE_SHA
@@ -172,8 +173,9 @@ def _validate_question_bindings(matrix: str) -> None:
                 raise AssertionError(f"{row[0]} citations are not pinned to {expected}")
 
     question_rows = _table_rows(matrix, "Q")
-    questions = {row[0]: row for row in question_rows if re.fullmatch(r"Q\d{2}", row[0])}
-    if set(questions) != {f"Q{number:02d}" for number in range(1, 15)}:
+    question_rows = [row for row in question_rows if re.fullmatch(r"Q\d{2}", row[0])]
+    questions = {row[0]: row for row in question_rows}
+    if len(question_rows) != 14 or set(questions) != {f"Q{number:02d}" for number in range(1, 15)}:
         raise AssertionError("question key must define Q01-Q14 exactly once")
     for question_id, row in questions.items():
         if len(row) != 6:
