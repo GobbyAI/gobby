@@ -269,15 +269,17 @@ class TestResolveProject:
         mock_pm.get.return_value = mock_project
         mock_pm.db = MagicMock()
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_local_machine_id",
+            "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
         )
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_root",
+            "gobby.servers.routes.source_control_git.require_root",
             lambda _db, _project_id, _machine_id: "/tmp/repo",
         )
 
-        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+        with patch(
+            "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
+        ):
             from gobby.servers.routes.source_control import _resolve_project
 
             repo_path, github_repo = _resolve_project(mock_server, "proj-123")
@@ -297,15 +299,17 @@ class TestResolveProject:
         mock_pm.list.return_value = [mock_proj]
         mock_pm.db = MagicMock()
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_local_machine_id",
+            "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
         )
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_root",
+            "gobby.servers.routes.source_control_git.require_root",
             lambda _db, _project_id, _machine_id: "/tmp/fallback",
         )
 
-        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+        with patch(
+            "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
+        ):
             from gobby.servers.routes.source_control import _resolve_project
 
             repo_path, github_repo = _resolve_project(mock_server, None)
@@ -329,17 +333,19 @@ class TestResolveProject:
         mock_pm.list.return_value = [orphaned, real]
         mock_pm.db = MagicMock()
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_local_machine_id",
+            "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
         )
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_root",
+            "gobby.servers.routes.source_control_git.require_root",
             lambda _db, project_id, _machine_id: "/tmp/real"
             if project_id == "real"
             else "/tmp/orphaned",
         )
 
-        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+        with patch(
+            "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
+        ):
             from gobby.servers.routes.source_control import _resolve_project
 
             repo_path, github_repo = _resolve_project(mock_server, None)
@@ -374,7 +380,7 @@ class TestResolveProject:
         mock_pm.list.return_value = [global_project, personal, real]
         mock_pm.db = MagicMock()
         monkeypatch.setattr(
-            "gobby.servers.routes.source_control.require_local_machine_id",
+            "gobby.servers.routes.source_control_git.require_local_machine_id",
             lambda _provided, **_kwargs: "machine-1",
         )
         resolved: list[str] = []
@@ -385,9 +391,13 @@ class TestResolveProject:
                 raise CheckoutSentinelRejectedError(project_id)
             return "/tmp/real"
 
-        monkeypatch.setattr("gobby.servers.routes.source_control.require_root", fake_require_root)
+        monkeypatch.setattr(
+            "gobby.servers.routes.source_control_git.require_root", fake_require_root
+        )
 
-        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+        with patch(
+            "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
+        ):
             from gobby.servers.routes.source_control import _resolve_project
 
             repo_path, github_repo = _resolve_project(mock_server, None)
@@ -410,9 +420,11 @@ class TestResolveProject:
         def refuse(*_args: Any, **_kwargs: Any) -> str:
             raise AssertionError("sentinel projects must not resolve a checkout")
 
-        monkeypatch.setattr("gobby.servers.routes.source_control.require_root", refuse)
+        monkeypatch.setattr("gobby.servers.routes.source_control_git.require_root", refuse)
 
-        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+        with patch(
+            "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
+        ):
             from gobby.servers.routes.source_control import _resolve_project
 
             repo_path, github_repo = _resolve_project(mock_server, PERSONAL_PROJECT_ID)
@@ -432,7 +444,9 @@ class TestResolveProject:
         mock_pm.db = MagicMock()
         monkeypatch.setattr(sc_module, "_get_github", lambda _server, _project_id: None)
 
-        with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
+        with patch(
+            "gobby.servers.routes.source_control_git.LocalProjectManager", return_value=mock_pm
+        ):
             response = client.get(
                 "/api/source-control/status", params={"project_id": PERSONAL_PROJECT_ID}
             )
@@ -446,6 +460,8 @@ class TestResolveProject:
             "worktree_count": 0,
             "clone_count": 0,
             "repo_path": None,
+            "ahead": None,
+            "behind": None,
         }
 
 
@@ -465,7 +481,7 @@ class TestGetProjectManager:
         assert exc_info.value.status_code == 503
 
     def test_returns_project_manager(self, mock_server: MagicMock) -> None:
-        with patch("gobby.servers.routes.source_control.LocalProjectManager") as mock_cls:
+        with patch("gobby.servers.routes.source_control_git.LocalProjectManager") as mock_cls:
             from gobby.servers.routes.source_control import _get_project_manager
 
             _get_project_manager(mock_server)
@@ -701,6 +717,7 @@ class TestGetStatus:
         # Mock git responses
         branch_result = MagicMock(returncode=0, stdout="feature/test\n")
         list_result = MagicMock(returncode=0, stdout="  main\n* feature/test\n  develop\n")
+        tracking_result = MagicMock(returncode=0, stdout="\t\n")
 
         with (
             patch(
@@ -710,7 +727,7 @@ class TestGetStatus:
             patch(
                 "gobby.servers.routes.source_control._run_git",
                 new_callable=AsyncMock,
-                side_effect=[branch_result, list_result],
+                side_effect=[branch_result, list_result, tracking_result],
             ),
             patch(
                 "gobby.servers.routes.source_control._get_github",
@@ -2307,6 +2324,68 @@ def test_resolve_project_uses_machine_checkout(  # tdd-red window
 
     assert repo_path == isolated.root_path
     assert github_repo == isolated.project.github_repo
+
+
+@pytest.mark.parametrize(
+    ("upstream", "track", "expected_ahead", "expected_behind"),
+    [
+        ("origin/feature/test", "[ahead 3, behind 2]", 3, 2),
+        ("", "", None, None),
+    ],
+)
+def test_status_reports_ahead_behind(
+    client: TestClient,
+    mock_server: MagicMock,
+    upstream: str,
+    track: str,
+    expected_ahead: int | None,
+    expected_behind: int | None,
+) -> None:
+    mock_server.services.worktree_storage = None
+    mock_server.services.clone_storage = None
+
+    async def run_git(args: list[str], _cwd: str, timeout: int = 10) -> SimpleNamespace:
+        del timeout
+        if args == ["branch", "--show-current"]:
+            return SimpleNamespace(returncode=0, stdout="feature/test\n")
+        if args == ["branch", "--list"]:
+            return SimpleNamespace(returncode=0, stdout="  main\n* feature/test\n  develop\n")
+        return SimpleNamespace(returncode=0, stdout=f"{upstream}\t{track}\n")
+
+    with (
+        patch(
+            "gobby.servers.routes.source_control._resolve_project",
+            return_value=("/tmp/repo", "owner/repo"),
+        ),
+        patch(
+            "gobby.servers.routes.source_control._run_git",
+            new_callable=AsyncMock,
+            side_effect=run_git,
+        ) as mock_run_git,
+        patch("gobby.servers.routes.source_control._get_github", return_value=None),
+    ):
+        response = client.get(
+            "/api/source-control/status", params={"project_id": f"project-{expected_ahead}"}
+        )
+        cached_response = client.get(
+            "/api/source-control/status", params={"project_id": f"project-{expected_ahead}"}
+        )
+
+    expected = {
+        "github_available": False,
+        "github_repo": "owner/repo",
+        "current_branch": "feature/test",
+        "branch_count": 3,
+        "worktree_count": 0,
+        "clone_count": 0,
+        "repo_path": "/tmp/repo",
+        "ahead": expected_ahead,
+        "behind": expected_behind,
+    }
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert cached_response.json() == expected
+    assert mock_run_git.await_count == 3
 
 
 def test_source_control_missing_checkout_is_409(  # tdd-red window

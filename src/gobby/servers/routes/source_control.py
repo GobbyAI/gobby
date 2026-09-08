@@ -5,25 +5,37 @@ from __future__ import annotations
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for git operations
-import threading
-import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.servers.routes import source_control_github as _source_control_github
-from gobby.servers.routes.projects import HIDDEN_PROJECT_NAMES, _checkout_http_error
-from gobby.storage.project_checkouts import (
-    CheckoutNotFoundError,
-    CheckoutSentinelRejectedError,
-    MissingMachineContextError,
-    require_root,
+from gobby.servers.routes.source_control_git import (
+    _GIT_TTL,
+    _GITHUB_TTL,
+    _delete_cached,
+    _run_git,
+    parse_upstream_track,
 )
-from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
-from gobby.storage.workspace_machine_scope import (
-    MachineOwnershipMismatchError,
-    require_local_machine_id,
+from gobby.servers.routes.source_control_git import (
+    _MAX_CACHE_SIZE as _MAX_CACHE_SIZE,
 )
+from gobby.servers.routes.source_control_git import (
+    _cache as _cache,
+)
+from gobby.servers.routes.source_control_git import (
+    _get_cached as _get_cached,
+)
+from gobby.servers.routes.source_control_git import (
+    _get_project_manager as _get_project_manager,
+)
+from gobby.servers.routes.source_control_git import (
+    _resolve_project as _resolve_project,
+)
+from gobby.servers.routes.source_control_git import (
+    _set_cached as _set_cached,
+)
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
@@ -41,13 +53,6 @@ logger = logging.getLogger(__name__)
 
 MAX_PATCH_BYTES = 100_000
 
-# Simple TTL cache: key -> (timestamp, value)
-_cache: dict[str, tuple[float, Any]] = {}
-_cache_lock = threading.Lock()
-_GITHUB_TTL = 30.0
-_GIT_TTL = 10.0
-_MAX_CACHE_SIZE = 256
-
 # Strict regex for git ref names — blocks shell metacharacters and traversal
 _GIT_REF_RE = re.compile(r"^[a-zA-Z0-9._/\-]+$")
 
@@ -58,103 +63,6 @@ def _validate_git_ref(ref: str, param_name: str = "ref") -> None:
         raise HTTPException(400, f"Invalid git ref for {param_name}: {ref!r}")
 
 
-def _get_cached(key: str, ttl: float) -> dict[str, Any] | None:
-    """Get a cached value if still valid."""
-    with _cache_lock:
-        entry = _cache.get(key)
-        if entry and (time.time() - entry[0]) < ttl:
-            return cast(dict[str, Any], entry[1])
-        return None
-
-
-def _set_cached(key: str, value: Any) -> None:
-    """Store a value in cache."""
-    with _cache_lock:
-        if len(_cache) >= _MAX_CACHE_SIZE:
-            # Evict oldest entries
-            oldest = sorted(_cache, key=lambda k: _cache[k][0])[: _MAX_CACHE_SIZE // 4]
-            for k in oldest:
-                del _cache[k]
-        _cache[key] = (time.time(), value)
-
-
-def _delete_cached(key: str) -> None:
-    """Delete cache entry if present."""
-    with _cache_lock:
-        _cache.pop(key, None)
-
-
-async def _run_git(
-    args: list[str], cwd: str, timeout: int = 10
-) -> subprocess.CompletedProcess[str]:
-    """Run a git command and return result (non-blocking)."""
-    import asyncio
-
-    return await asyncio.to_thread(
-        subprocess.run,  # nosec B603 B607
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-
-
-def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
-    """Get a LocalProjectManager from the server."""
-    if server.session_manager is None:
-        raise HTTPException(503, "Session manager not available")
-    return LocalProjectManager(server.session_manager.db)
-
-
-def _resolve_project(server: HTTPServer, project_id: str | None) -> tuple[str | None, str | None]:
-    """Resolve project_id to (checkout root, github_repo).
-
-    A checkout-free sentinel project resolves to (None, github_repo) so callers
-    return an empty payload instead of an error. When project_id is None, falls
-    back to the first checkout-owning project with a local checkout. A named
-    real project with no checkout is HTTP 409, not an empty diff.
-    """
-    try:
-        pm = _get_project_manager(server)
-        if project_id:
-            project = pm.get(project_id)
-            if not project:
-                return None, None
-            if project.id in CHECKOUT_FREE_PROJECT_IDS:
-                return None, project.github_repo
-            machine_id = require_local_machine_id(
-                None, resource_kind="project_checkout", resource_id=project.id
-            )
-            try:
-                return require_root(pm.db, project.id, machine_id), project.github_repo
-            except CheckoutNotFoundError as exc:
-                raise _checkout_http_error(exc) from exc
-        for project in pm.list():
-            if project.name in HIDDEN_PROJECT_NAMES or project.id in CHECKOUT_FREE_PROJECT_IDS:
-                continue
-            try:
-                machine_id = require_local_machine_id(
-                    None, resource_kind="project_checkout", resource_id=project.id
-                )
-                return require_root(pm.db, project.id, machine_id), project.github_repo
-            except (CheckoutNotFoundError, CheckoutSentinelRejectedError):
-                continue
-    except HTTPException as exc:
-        if exc.status_code == 409:
-            raise
-        logger.debug("Failed to resolve project %s: %s", project_id, exc)
-    except (
-        MissingMachineContextError,
-        MachineOwnershipMismatchError,
-        CheckoutSentinelRejectedError,
-    ) as exc:
-        raise _checkout_http_error(exc) from exc
-    except (ValueError, OSError) as exc:
-        logger.debug("Failed to resolve project %s: %s", project_id, exc)
-    return None, None
-
-
 def create_source_control_router(server: HTTPServer) -> APIRouter:
     """Create the source control API router."""
     router = APIRouter(prefix="/api/source-control", tags=["source-control"])
@@ -163,11 +71,19 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     async def get_status(project_id: str | None = None) -> dict[str, Any]:
         """Get source control status overview."""
         repo_path, github_repo = await server.run_db(_resolve_project, server, project_id)
+
+        cache_key = f"status:{project_id or 'default'}"
+        cached = _get_cached(cache_key, _GIT_TTL)
+        if cached:
+            return cached
+
         gh = _get_github(server, project_id)
         github_available = gh.is_available() if gh else False
 
         current_branch = None
         branch_count = 0
+        ahead = None
+        behind = None
         if repo_path:
             try:
                 r = await _run_git(["branch", "--show-current"], repo_path)
@@ -178,6 +94,19 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                     branch_count = len(
                         [line for line in r2.stdout.strip().split("\n") if line.strip()]
                     )
+                if current_branch:
+                    tracking = await _run_git(
+                        [
+                            "for-each-ref",
+                            "--format=%(upstream:short)\t%(upstream:track)",
+                            f"refs/heads/{current_branch}",
+                        ],
+                        repo_path,
+                    )
+                    if tracking.returncode == 0:
+                        upstream, _, track = tracking.stdout.rstrip("\n").partition("\t")
+                        if upstream:
+                            ahead, behind = parse_upstream_track(track)
             except (OSError, ValueError) as e:
                 logger.warning("Failed to count branches: %s", e)
 
@@ -194,7 +123,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             )
             clone_count = len(cls)
 
-        return {
+        result = {
             "github_available": github_available,
             "github_repo": github_repo,
             "current_branch": current_branch,
@@ -202,7 +131,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             "worktree_count": worktree_count,
             "clone_count": clone_count,
             "repo_path": repo_path,
+            "ahead": ahead,
+            "behind": behind,
         }
+        _set_cached(cache_key, result)
+        return result
 
     @router.get("/branches")
     async def list_branches(project_id: str | None = None) -> dict[str, Any]:
@@ -243,18 +176,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                     track = parts[2] if len(parts) > 2 else ""
                     date = parts[3] if len(parts) > 3 else ""
 
-                    ahead = 0
-                    behind = 0
-                    if "[ahead " in track:
-                        try:
-                            ahead = int(track.split("[ahead ")[1].split("]")[0].split(",")[0])
-                        except (ValueError, IndexError):
-                            pass
-                    if "behind " in track:
-                        try:
-                            behind = int(track.split("behind ")[1].split("]")[0])
-                        except (ValueError, IndexError):
-                            pass
+                    ahead, behind = parse_upstream_track(track)
 
                     # Check if branch has a worktree
                     worktree_id = None
@@ -360,6 +282,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(500, "Failed to checkout branch") from e
 
         _delete_cached(f"branches:{project_id or 'default'}")
+        _delete_cached(f"status:{project_id or 'default'}")
         return {
             "success": True,
             "current_branch": current_branch,
