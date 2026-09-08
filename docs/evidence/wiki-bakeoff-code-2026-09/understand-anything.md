@@ -15,8 +15,8 @@ each frozen manifest passed before execution.
 
 | Case | Frozen commit | Input-tree SHA-256 | Status |
 | --- | --- | --- | --- |
-| C0, C1, C2, C7, C8-baseline, C9-baseline | `0216f1e33f05962d49467d95fe84609041c6dba8` | `91a0a531ffabbd112b53e6a58f5da058297bef8d12bf8609c87b36deeb30090e` | C0 complete; remaining baseline cases pending |
-| C3, C8-change, C9-change | `8b24ac26699aac8b24254a647aa70b208287b492` | `f3a6e0e3b90fd03bdde868aa3209e67cdab1ced3564fa60d4e664a29bb108a94` | C3 active; remaining change cases pending |
+| C0, C1, C2, C7, C8-baseline, C9-baseline | `0216f1e33f05962d49467d95fe84609041c6dba8` | `91a0a531ffabbd112b53e6a58f5da058297bef8d12bf8609c87b36deeb30090e` | complete |
+| C3, C8-change, C9-change | `8b24ac26699aac8b24254a647aa70b208287b492` | `f3a6e0e3b90fd03bdde868aa3209e67cdab1ced3564fa60d4e664a29bb108a94` | complete |
 
 ## C0 cold generation
 
