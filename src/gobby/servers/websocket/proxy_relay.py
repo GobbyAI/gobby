@@ -288,6 +288,7 @@ class ProxyHub:
         event = self._owner._leases().finalize(attachment_id, reason)
         if event is None:
             return
+        await self._owner._apply_terminal_sizing(event.terminal_id, event.sizing)
         payload = {
             "type": "terminal_attachment_finalized",
             "terminal_id": event.terminal_id,
@@ -310,7 +311,9 @@ class ProxyHub:
     async def _on_socket_fail(self, websocket: Any, reason: str) -> None:
         ids = list(self.by_socket.get(websocket, set()))
         for attachment_id in ids:
-            self._owner._leases().finalize(attachment_id, reason)
+            event = self._owner._leases().finalize(attachment_id, reason)
+            if event is not None:
+                await self._owner._apply_terminal_sizing(event.terminal_id, event.sizing)
             record = self.attachments.pop(attachment_id, None)
             if record is None:
                 continue

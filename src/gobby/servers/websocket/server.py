@@ -56,7 +56,13 @@ if TYPE_CHECKING:
 
 
 class WebSocketServer(
-    VoiceMixin, TmuxMixin, SessionControlMixin, ChatMixin, HandlerMixin, AuthMixin, BroadcastMixin
+    VoiceMixin,
+    TmuxMixin,
+    SessionControlMixin,
+    ChatMixin,
+    HandlerMixin,
+    AuthMixin,
+    BroadcastMixin,
 ):
     """
     WebSocket server for real-time communication.

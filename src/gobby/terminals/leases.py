@@ -9,7 +9,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
@@ -28,6 +28,8 @@ class LifecyclePublicationError(RuntimeError):
 
 
 LifecyclePublisher = Callable[[dict[str, Any]], Awaitable[None]]
+Viewer = Literal["web", "gclient"]
+_VIEWER_RANK: dict[Viewer, int] = {"web": 2, "gclient": 1}
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,36 @@ class WriteAdmit:
 
 
 @dataclass(frozen=True)
+class SizingDecision:
+    """Runtime sizing effect selected by viewer precedence."""
+
+    owner_viewer: Viewer | None
+    rows: int | None = None
+    cols: int | None = None
+
+    @property
+    def applied(self) -> bool:
+        return self.rows is not None and self.cols is not None
+
+
+@dataclass(frozen=True)
+class ResizeAdmit:
+    """Decision for one attachment's requested terminal geometry."""
+
+    ok: bool
+    reason: str | None = None
+    sizing: SizingDecision | None = None
+
+    @property
+    def applied(self) -> bool:
+        return self.sizing is not None and self.sizing.applied
+
+    @property
+    def owner_viewer(self) -> Viewer | None:
+        return None if self.sizing is None else self.sizing.owner_viewer
+
+
+@dataclass(frozen=True)
 class FinalizedEvent:
     """Client-visible attachment death."""
 
@@ -58,6 +90,7 @@ class FinalizedEvent:
     attachment_id: str
     reason: str
     lease_generation: int
+    sizing: SizingDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +115,9 @@ class _Attachment:
     attachment_id: str
     terminal_id: str
     frame_delivery: str
+    viewer: Viewer = "gclient"
+    geometry: tuple[int, int] | None = None
+    resize_seq: int = 0
     viewport: tuple[int, int] | None = None
     scroll_offset: int = 0
     finalized: bool = False
@@ -94,6 +130,7 @@ class _Attachment:
 class _Lease:
     holder: str | None = None
     generation: int = 0
+    sizing_owner: str | None = None
 
 
 @dataclass
@@ -114,6 +151,7 @@ class TerminalLeaseRegistry:
         if daemon_epoch is not None:
             self.daemon_epoch = daemon_epoch
         self._lifecycle_seq = 0
+        self._sizing_seq = 0
         self._lifecycle_committed_epoch = self.daemon_epoch
         self._lifecycle_committed_seq = 0
         self._lifecycle_counter_lock = threading.Lock()
@@ -275,6 +313,7 @@ class TerminalLeaseRegistry:
         *,
         websocket: object | None = None,
         attachment_id: str | None = None,
+        viewer: Viewer = "gclient",
     ) -> _Attachment:
         delivery = "direct" if frame_delivery == "direct" else "proxy"
         minted = attachment_id or secrets.token_hex(16)
@@ -282,6 +321,7 @@ class TerminalLeaseRegistry:
             attachment_id=minted,
             terminal_id=terminal_id,
             frame_delivery=delivery,
+            viewer=viewer,
         )
         self._attachments[minted] = record
         self._lease(terminal_id)
@@ -349,11 +389,21 @@ class TerminalLeaseRegistry:
             lease.holder = None
         record.finalized = True
         record.writes.clear()
+        sizing: SizingDecision | None = None
+        if lease.sizing_owner == attachment_id:
+            owner = self._elect_sizing_owner(record.terminal_id)
+            lease.sizing_owner = None if owner is None else owner.attachment_id
+            if owner is not None and owner.geometry is not None:
+                sizing = SizingDecision(owner.viewer, *owner.geometry)
+        if not self._live_viewers(record.terminal_id):
+            lease.sizing_owner = None
+            sizing = SizingDecision(None)
         return FinalizedEvent(
             terminal_id=record.terminal_id,
             attachment_id=attachment_id,
             reason=reason,
             lease_generation=lease.generation,
+            sizing=sizing,
         )
 
     def finalize_websocket(self, websocket: object, reason: str) -> list[FinalizedEvent]:
@@ -385,18 +435,25 @@ class TerminalLeaseRegistry:
     def scroll_offset(self, attachment_id: str) -> int:
         return self._require_live(attachment_id).scroll_offset
 
-    def resize_pty(self, attachment_id: str, rows: object, cols: object) -> WriteAdmit:
+    def resize_pty(self, attachment_id: str, rows: object, cols: object) -> ResizeAdmit:
         record = self.get(attachment_id)
         if record is None:
-            return WriteAdmit(False, "stale_attachment")
+            return ResizeAdmit(False, "stale_attachment")
         try:
-            validate_dimensions(rows, cols)
+            validated = validate_dimensions(rows, cols)
         except InvalidTerminalDimensionsError:
-            return WriteAdmit(False, "invalid_dimensions")
+            return ResizeAdmit(False, "invalid_dimensions")
         lease = self._lease(record.terminal_id)
-        if lease.holder != attachment_id:
-            return WriteAdmit(False, "held")
-        return WriteAdmit(True)
+        self._sizing_seq += 1
+        record.geometry = validated
+        record.resize_seq = self._sizing_seq
+        owner = self._elect_sizing_owner(record.terminal_id)
+        assert owner is not None and owner.geometry is not None
+        lease.sizing_owner = owner.attachment_id
+        sizing = SizingDecision(owner.viewer, *owner.geometry)
+        if owner.attachment_id != attachment_id:
+            sizing = SizingDecision(owner.viewer)
+        return ResizeAdmit(True, sizing=sizing)
 
     def admit_write(
         self,
@@ -477,6 +534,25 @@ class TerminalLeaseRegistry:
             lease = _Lease()
             self._leases[terminal_id] = lease
         return lease
+
+    def _elect_sizing_owner(self, terminal_id: str) -> _Attachment | None:
+        candidates = [
+            record
+            for record in self._attachments.values()
+            if record.terminal_id == terminal_id
+            and not record.finalized
+            and record.geometry is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda record: (_VIEWER_RANK[record.viewer], record.resize_seq))
+
+    def _live_viewers(self, terminal_id: str) -> list[_Attachment]:
+        return [
+            record
+            for record in self._attachments.values()
+            if record.terminal_id == terminal_id and not record.finalized
+        ]
 
     def _bump(self, lease: _Lease) -> None:
         if lease.generation >= TERMINAL_WS_SAFE_INTEGER_MAX:

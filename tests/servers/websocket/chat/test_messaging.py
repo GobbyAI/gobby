@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -497,10 +497,15 @@ class TestFireLifecycle:
         )
         captured_event = None
 
-        async def fake_run_db(_owner, _func, event):
+        def evaluate(event):
             nonlocal captured_event
             captured_event = event
             return HookResponse(decision="allow")
+
+        async def fake_run_db(_owner, func):
+            return func()
+
+        mixin.workflow_handler.evaluate = evaluate
 
         with patch("gobby.servers.websocket.chat._lifecycle.run_db", new=fake_run_db):
             result = await mixin._fire_lifecycle(
@@ -528,10 +533,15 @@ class TestFireLifecycle:
         )
         captured_event = None
 
-        async def fake_run_db(_owner, _func, event):
+        def evaluate(event):
             nonlocal captured_event
             captured_event = event
             return HookResponse(decision="allow")
+
+        async def fake_run_db(_owner, func):
+            return func()
+
+        mixin.workflow_handler.evaluate = evaluate
 
         with patch("gobby.servers.websocket.chat._lifecycle.run_db", new=fake_run_db):
             result = await mixin._fire_lifecycle(
@@ -829,12 +839,14 @@ class TestStreamChatResponse:
         assert session_manager.get(stored_session.id).status == "paused"
 
     @pytest.mark.asyncio
-    async def test_stream_client_disconnect(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_stream_client_disconnect(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
         session = AsyncMock()
         mixin._chat_sessions["c1"] = session
 
-        async def dummy_stream(content):
+        async def dummy_stream(content: str) -> AsyncIterator[ThinkingEvent]:
             yield ThinkingEvent(content="hmm")
 
         # send_message must return an async generator directly (not a coroutine)
