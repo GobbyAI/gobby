@@ -144,6 +144,7 @@ class TestCreateAgentsRegistry:
             "spawn_agent",  # Unified spawn with isolation support
             "get_agent_result",
             "get_agent_capture",
+            "get_agent_live_output",
             "wait_for_agent",
             "wait_for_output",
             "list_agent_runs",
