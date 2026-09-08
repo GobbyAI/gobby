@@ -22,6 +22,7 @@ pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;
+mod write;
 
 pub use poll::{
     classify_poll, parse_poll_batch, truncate_attach_history, PollClass, POLL_FIELD_COUNT,
