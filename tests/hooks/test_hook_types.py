@@ -16,6 +16,8 @@ from gobby.hooks.hook_types import (
     HookOutput,
     # Enums
     HookType,
+    InterruptInput,
+    InterruptOutput,
     MessageDisplayInput,
     MessageDisplayOutput,
     # Notification
@@ -78,6 +80,7 @@ class TestHookTypeEnum:
             "PRE_COMPACT",
             "POST_COMPACT",
             "STOP",
+            "INTERRUPT",
             "STOP_FAILURE",
             "SUBAGENT_START",
             "SUBAGENT_STOP",
@@ -115,6 +118,7 @@ class TestHookTypeEnum:
         assert HookType.POST_TOOL_BATCH.value == "post-tool-batch"
         assert HookType.PRE_COMPACT.value == "pre-compact"
         assert HookType.STOP.value == "stop"
+        assert HookType.INTERRUPT.value == "interrupt"
         assert HookType.SUBAGENT_START.value == "subagent-start"
         assert HookType.SUBAGENT_STOP.value == "subagent-stop"
         assert HookType.NOTIFICATION.value == "notification"
@@ -535,6 +539,24 @@ class TestSubagentStartInput:
         assert input_data.agent_id == "agent-456"
 
 
+class TestInterruptModels:
+    """Tests for first-class interrupt hook models."""
+
+    def test_provider_neutral_input_and_native_output(self) -> None:
+        input_data = InterruptInput(
+            external_id="session-123",
+            turn_id="turn-456",
+            permission_mode="default",
+            reason="user_cancelled",
+        )
+        assert input_data.model_dump()["reason"] == "user_cancelled"
+
+        output = InterruptOutput(systemMessage="Interruption recorded")
+        assert output.model_dump(by_alias=True, exclude_none=True)["systemMessage"] == (
+            "Interruption recorded"
+        )
+
+
 class TestSubagentStopInput:
     """Tests for SubagentStopInput model."""
 
@@ -598,6 +620,7 @@ class TestHookMappings:
         assert HOOK_INPUT_MODELS[HookType.POST_TOOL_USE] == PostToolUseInput
         assert HOOK_INPUT_MODELS[HookType.PRE_COMPACT] == PreCompactInput
         assert HOOK_INPUT_MODELS[HookType.STOP] == StopInput
+        assert HOOK_INPUT_MODELS[HookType.INTERRUPT] == InterruptInput
         assert HOOK_INPUT_MODELS[HookType.SUBAGENT_START] == SubagentStartInput
         assert HOOK_INPUT_MODELS[HookType.SUBAGENT_STOP] == SubagentStopInput
         assert HOOK_INPUT_MODELS[HookType.NOTIFICATION] == NotificationInput
@@ -616,6 +639,7 @@ class TestHookMappings:
         assert HOOK_OUTPUT_MODELS[HookType.POST_TOOL_USE] == PostToolUseOutput
         assert HOOK_OUTPUT_MODELS[HookType.PRE_COMPACT] == PreCompactOutput
         assert HOOK_OUTPUT_MODELS[HookType.STOP] == StopOutput
+        assert HOOK_OUTPUT_MODELS[HookType.INTERRUPT] == InterruptOutput
         assert HOOK_OUTPUT_MODELS[HookType.SUBAGENT_START] == SubagentStartOutput
         assert HOOK_OUTPUT_MODELS[HookType.SUBAGENT_STOP] == SubagentStopOutput
         assert HOOK_OUTPUT_MODELS[HookType.NOTIFICATION] == NotificationOutput

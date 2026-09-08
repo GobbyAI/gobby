@@ -1124,6 +1124,7 @@ class TestWebSocketBroadcastConfig:
         config = WebSocketBroadcastConfig()
         assert config.enabled is True
         assert "session-start" in config.broadcast_events
+        assert "interrupt" in config.broadcast_events
         assert config.include_payload is True
 
 

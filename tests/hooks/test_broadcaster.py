@@ -232,6 +232,45 @@ async def test_broadcast_event_unified(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "data"),
+    [
+        (SessionSource.CODEX, {"turn_id": "turn-456", "permission_mode": "default"}),
+        (SessionSource.CLAUDE, {"reason": "user_cancelled"}),
+    ],
+)
+async def test_broadcast_event_interrupt_is_normalized_and_default_enabled(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    caplog: pytest.LogCaptureFixture,
+    source: SessionSource,
+    data: dict[str, Any],
+) -> None:
+    """Interrupt broadcasts use one normalized shape for Codex and other providers."""
+    from datetime import UTC, datetime
+
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.INTERRUPT,
+        session_id="test-session",
+        source=source,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    payload = mock_websocket_server.broadcast.call_args.args[0]
+    assert payload["event_type"] == "interrupt"
+    assert payload["session_id"] == "test-session"
+    assert payload["data"]["external_id"] == "test-session"
+    for field, value in data.items():
+        assert payload["data"][field] == value
+    assert "unknown hook type" not in caplog.text.lower()
+
+
+@pytest.mark.asyncio
 async def test_broadcast_event_session_start_source_new_alias(
     mock_websocket_server: MagicMock,
     default_config: DaemonConfig,

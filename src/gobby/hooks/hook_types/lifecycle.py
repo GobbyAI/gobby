@@ -78,6 +78,24 @@ class StopOutput(HookOutput):
     pass  # Uses base HookOutput fields only
 
 
+class InterruptInput(HookInput):
+    """Input model for a user interruption of an active main-agent turn."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    turn_id: str | None = Field(default=None, description="Interrupted provider turn identifier")
+    transcript_path: str | None = Field(default=None, description="Path to session transcript")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class InterruptOutput(HookOutput):
+    """Output model for interruption tracking and observer broadcasts."""
+
+    system_message: str | None = Field(default=None, alias="systemMessage")
+
+
 class StopFailureInput(HookInput):
     """Input model for stop-failure hook."""
 

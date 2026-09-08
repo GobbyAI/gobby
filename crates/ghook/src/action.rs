@@ -75,14 +75,14 @@ pub(crate) fn continue_action(source: &str, hook_type: &str) -> HookAction {
     }
     HookAction {
         exit_code: 0,
-        stdout_json: Some(skip_stdout_json(source, hook_type)),
+        stdout_json: skip_stdout_json(source, hook_type),
         stderr_message: None,
     }
 }
 
-/// Malformed stdin: `{}` plus the host's JSON-error exit. A zero exit in the
-/// matrix means the host fails open, so it gets its skip JSON on stdout and
-/// the parse error on stderr instead of a silent `{}`.
+/// Malformed stdin uses the host's JSON-error exit. A zero exit in the matrix
+/// fails open with host-legal skip output and the parse error on stderr;
+/// outputless native hooks remain silent.
 pub(crate) fn action_from_malformed_input(
     cfg: &CliConfig,
     hook_type: &str,
@@ -92,13 +92,13 @@ pub(crate) fn action_from_malformed_input(
     if exit_code == 0 {
         return HookAction {
             exit_code,
-            stdout_json: Some(skip_stdout_json(cfg.source, hook_type)),
+            stdout_json: skip_stdout_json(cfg.source, hook_type),
             stderr_message: Some(format!("Malformed hook input: {detail}")),
         };
     }
     HookAction {
         exit_code,
-        stdout_json: Some("{}".to_string()),
+        stdout_json: (!is_codex_interrupt(cfg.source, hook_type)).then(|| "{}".to_string()),
         stderr_message: None,
     }
 }
@@ -119,16 +119,24 @@ fn worktree_create_failure(detail: &str) -> HookAction {
     }
 }
 
-/// Host-legal skip / fail-open stdout. AGY protojson-rejects unknown fields such
-/// as `continue`; other CLIs still consume `{"continue":true}`.
-fn skip_stdout_json(source: &str, hook_type: &str) -> String {
+/// Whether the native hook's stdout contract permits only `systemMessage`.
+pub(crate) fn is_codex_interrupt(source: &str, hook_type: &str) -> bool {
+    source.eq_ignore_ascii_case("codex") && hook_type.eq_ignore_ascii_case("Interrupt")
+}
+
+/// Host-legal skip / fail-open stdout. Codex Interrupt is outputless, while AGY
+/// protojson-rejects unknown fields such as `continue`.
+fn skip_stdout_json(source: &str, hook_type: &str) -> Option<String> {
+    if is_codex_interrupt(source, hook_type) {
+        return None;
+    }
     if source == "agy" {
         if hook_type.eq_ignore_ascii_case("PreToolUse") {
-            return serde_json::json!({"decision": "allow"}).to_string();
+            return Some(serde_json::json!({"decision": "allow"}).to_string());
         }
-        return "{}".to_string();
+        return Some("{}".to_string());
     }
-    serde_json::json!({"continue": true}).to_string()
+    Some(serde_json::json!({"continue": true}).to_string())
 }
 
 pub(crate) fn emit_empty_json() {
@@ -171,6 +179,20 @@ pub(crate) fn action_from_success_response(
 
     let result: Value = serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
     let serialized = serde_json::to_string(&result).map_err(|e| e.to_string())?;
+
+    if is_codex_interrupt(canonical_source, hook_type) {
+        let stdout_json = result
+            .as_object()
+            .and_then(|map| map.get("systemMessage"))
+            .and_then(Value::as_str)
+            .filter(|message| !message.is_empty())
+            .map(|message| serde_json::json!({"systemMessage": message}).to_string());
+        return Ok(HookAction {
+            exit_code: 0,
+            stdout_json,
+            stderr_message: None,
+        });
+    }
 
     if canonical_source == "droid" {
         return Ok(action_from_droid_success(result, serialized));
@@ -321,6 +343,14 @@ pub(crate) fn action_from_failure(
         transport::DeliveryFailureKind::Other => detail.to_string(),
     };
 
+    if is_codex_interrupt(cfg.source, hook_type) {
+        return HookAction {
+            exit_code: 1,
+            stdout_json: None,
+            stderr_message: Some(message),
+        };
+    }
+
     if cfg.source == "droid" {
         return HookAction {
             exit_code: 1,
@@ -336,7 +366,7 @@ pub(crate) fn action_from_failure(
     if cfg.source == "agy" {
         return HookAction {
             exit_code: 0,
-            stdout_json: Some(skip_stdout_json(cfg.source, hook_type)),
+            stdout_json: skip_stdout_json(cfg.source, hook_type),
             stderr_message: Some(message),
         };
     }
@@ -874,6 +904,41 @@ mod tests {
         assert_eq!(action.exit_code, 1);
         let parsed: Value = serde_json::from_str(action.stdout_json.as_deref().unwrap()).unwrap();
         assert_eq!(parsed["message"], "Hook execution timeout");
+    }
+
+    #[test]
+    fn codex_interrupt_stdout_matches_native_contract() {
+        let cfg = CliConfig::for_cli("codex").expect("supported CLI");
+        assert!(continue_action("codex", "Interrupt").stdout_json.is_none());
+        assert!(
+            action_from_malformed_input(&cfg, "Interrupt", "invalid")
+                .stdout_json
+                .is_none()
+        );
+        assert!(
+            action_from_failure("Interrupt", &cfg, DeliveryFailureKind::Timeout, "timeout")
+                .stdout_json
+                .is_none()
+        );
+
+        let empty = action_from_success_response(
+            "codex",
+            "Interrupt",
+            r#"{"continue":true,"decision":"block","context":"drop"}"#,
+        )
+        .unwrap();
+        assert!(empty.stdout_json.is_none());
+
+        let message = action_from_success_response(
+            "codex",
+            "Interrupt",
+            r#"{"systemMessage":"recorded","continue":false}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            message.stdout_json.as_deref(),
+            Some(r#"{"systemMessage":"recorded"}"#)
+        );
     }
 
     #[test]

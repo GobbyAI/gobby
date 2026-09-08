@@ -106,6 +106,8 @@ from .interactive import (
     PermissionRequestOutput,
 )
 from .lifecycle import (
+    InterruptInput,
+    InterruptOutput,
     PostCompactInput,
     PostCompactOutput,
     PreCompactInput,
@@ -167,6 +169,8 @@ __all__ = [
     "HookInput",
     "HookOutput",
     "HookType",
+    "InterruptInput",
+    "InterruptOutput",
     "InstructionsLoadedInput",
     "InstructionsLoadedOutput",
     "MessageDisplayInput",
