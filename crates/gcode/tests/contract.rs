@@ -29,6 +29,14 @@ fn contract_builder_matches_pinned_json() {
 }
 
 #[test]
+fn search_contract_is_hybrid_symbol_search() {
+    assert_eq!(
+        command(&pinned_contract(), "search")["summary"],
+        "Hybrid symbol search."
+    );
+}
+
+#[test]
 fn contract_command_emits_pinned_json() {
     let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
         .args(["contract", "--format", "json"])

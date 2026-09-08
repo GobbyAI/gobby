@@ -201,7 +201,7 @@ fn continuation_command_from(
         .join(" ")
 }
 
-fn shell_quote(value: &OsStr) -> String {
+pub(super) fn shell_quote(value: &OsStr) -> String {
     let value = value.to_string_lossy();
     if !value.is_empty()
         && value

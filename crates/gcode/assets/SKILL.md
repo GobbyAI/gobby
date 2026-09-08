@@ -11,18 +11,33 @@ metadata:
 
 This project is indexed. Use `gcode` via Bash for fast code search and navigation — saves 90%+ tokens vs reading entire files.
 
-## Search
+## Choose the command first
+
+| Intent | Command |
+|---|---|
+| Known symbol | `gcode search-symbol "name"` |
+| Exact identifier occurrence | `gcode grep -w "identifier" -m 50` |
+| Exact literal or call site | `gcode grep -F "literal" -m 50` |
+| Repository text, docs, or config | `gcode search-content "text"` |
+| Fuzzy code concept | `gcode search "concept"` (hybrid symbol search) |
+| Parser-backed source structure | `gcode outline path/to/file` |
+
+Switch lanes after irrelevant or empty results: use the query shape to select the
+right command. Do not paraphrase the same `search` query or page through irrelevant results.
+Direct `gcode` calls do not require loading this skill.
+
+## Search details
 
 - `gcode grep -w <identifier> [PATH ...] -m 50` — whole-word ASCII identifier grep over `code_content_chunks`; use this for identifier-like text search
 - `gcode grep "regex" [PATH ...] -m 50` — regex grep over indexed `code_content_chunks`; defaults to grouped text output for bounded line matches
 - `gcode grep -F "literal" [PATH ...] -m 50` — fixed-string grep over indexed `code_content_chunks`; use this when the literal text contains regex metacharacters
 - `gcode grep -l "pattern" [PATH ...] -m 50` — list matching file paths instead of matching lines
-- `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy concepts or natural-language queries)
+- `gcode search "query" [PATH ...]` — hybrid symbol search: symbol BM25 + semantic symbol vectors + graph boost (best for fuzzy concepts or natural-language queries); it never ranks content chunks
 - `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
 - `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-w/--word`, `-g/--glob`, `-i`, `-F`, `-l/--files-with-matches`, `-C/-A/-B`, and `-m/--limit`; `--max-count` is an alias for `--limit`. `-E`, `-n`, `-r`, and `-R` are accepted no-ops (rg/grep muscle memory). Unknown flags return a one-line JSON usage error with a `recovery` hint; do not retry the failing gcode call. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, deterministic `sources`, and hints when literal-ish queries should use `grep` or `search-content`; path globs that require post-filter fallback surface a hint/warning.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-w/--word`, `-g/--glob`, `-i`, `-F`, `-l/--files-with-matches`, `-C/-A/-B`, and `-m/--limit`; `--max-count` is an alias for `--limit`. `-E`, `-n`, `-r`, and `-R` are accepted no-ops (rg/grep muscle memory). Unknown flags return a one-line JSON usage error with a `recovery` hint; do not retry the failing gcode call. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, deterministic `sources`, and actionable `hint` redirects for identifier/literal queries, empty symbol results, or content-only paths; path globs that require post-filter fallback surface a hint/warning. Text hints go to stderr unless `--quiet` is set.
 
 Bare `gcode grep "pattern"` is regex-backed, and the dialect is Rust regex, not grep
 BRE. Write alternation as `a|b`: `a\|b` is a literal pipe, so it silently returns zero
@@ -31,7 +46,7 @@ result. Use `-F` for literal text containing regex metacharacters like `(`, `)`,
 
 ## Retrieval
 
-- `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than Read)
+- `gcode outline path/to/file.py` — hierarchical AST symbol map for parser-backed source files (much cheaper than Read)
 - `gcode symbol-at path/to/file.py:42` or `gcode symbol-at path/to/file.py:42:7` — retrieve the symbol containing a known file location, falling back to the nearest visible symbol
 - `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
 - `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve bounded source bodies by exact stored IDs
@@ -40,13 +55,18 @@ Symbol IDs must be full stored UUIDs from `gcode search --format json`, `gcode s
 
 Edited files invalidate content-derived symbol IDs. When an ID is missing, rerun `gcode outline` for the edited file or use `gcode symbol-at`; batch retrieval still returns every valid requested symbol and reports every missing ID.
 
+`outline` is AST-only. Content-only files return success with no symbols and a recovery
+diagnostic. For Markdown headings use
+`gcode grep '^#{1,6} ' path/to/file.md -m 200`; use `gcode search-content` for broader
+Markdown, documentation, config, or other content-only file retrieval.
+
 ## Recommended Workflow
 
 When navigating code for context or understanding:
 
 1. **Locate with gcode**: `gcode grep -w <identifier> [PATH ...] -m 50` for identifier text search, `gcode grep -F "literal string" [PATH ...] -m 50` for literal strings and call sites, `gcode grep "regex" [PATH ...] -m 50` for regex text search, `gcode search "concept"` for fuzzy concepts, `gcode search-symbol "name"` for known symbols, or `gcode search-content "text"` for ranked file-content hits.
 2. **Known file/line**: use `gcode symbol-at path/to/file.py:42` after search, grep, diagnostics, stack traces, or user-provided locations.
-3. **Navigate by structure/ID**: use `gcode outline path/to/file` to survey structure. Request `--verbose` or `--format json` only when IDs or ranking diagnostics are required, then use `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> ...`.
+3. **Navigate parser-backed source by structure/ID**: use `gcode outline path/to/file` to survey AST structure. For Markdown or other content-only files, switch to `gcode grep` or `gcode search-content`. Request `--verbose` or `--format json` only when IDs or ranking diagnostics are required, then use `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> ...`.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
 
 Search output is intentionally snippet-sized. Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
@@ -127,7 +147,8 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 | An exact string literal, call site, dotted config key, quoted string, doc phrase, config value, comment, script line, CSS rule | `gcode grep -F "literal" [PATH ...]` |
 | Ranked content search across comments/docs/config/source text | `gcode search-content "query" [PATH ...]` |
 | Source code at a known file and line | `gcode symbol-at path/to/file:42` |
-| Structure of a file without reading it | `gcode outline path/to/file` |
+| AST structure of a parser-backed source file | `gcode outline path/to/file` |
+| Markdown headings | `gcode grep '^#{1,6} ' path/to/file.md -m 200` |
 | Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |
 | Who calls a function | `gcode callers <symbol-id>` |

@@ -1,6 +1,7 @@
 use super::*;
 use manifest::{ContentVersion, RetiredFile};
 
+#[cfg(gcode_postgres_tests)]
 #[path = "tests/serial_db.rs"]
 mod serial_db;
 

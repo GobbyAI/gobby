@@ -247,8 +247,28 @@ fn unsupported_file_type_diagnostic(file: &str) -> Option<String> {
         return None;
     }
 
+    let quoted_file = token_budget::shell_quote(file.as_ref());
+    let prefix =
+        format!("file type has no AST parser support; `gcode outline` is AST-only: {file}");
+    if Path::new(file)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "mdown" | "mkd" | "mkdn"
+            )
+        })
+    {
+        return Some(format!(
+            "{prefix}\nFor Markdown headings, use `gcode grep '^#{{1,6}} ' {quoted_file} -m 200`; \
+             for ranked document text, use `gcode search-content \"query\" {quoted_file}`."
+        ));
+    }
+
     Some(format!(
-        "file type has no AST parser support; indexed as text chunks only: {file}"
+        "{prefix}\nUse `gcode grep \"pattern\" {quoted_file} -m 50` for exact or regex text, \
+         or `gcode search-content \"query\" {quoted_file}` for ranked content."
     ))
 }
 
@@ -606,12 +626,28 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_file_type_diagnostic_mentions_text_only_indexing() {
+    fn markdown_outline_diagnostic_provides_heading_and_content_recovery() {
+        assert_eq!(
+            unsupported_file_type_diagnostic("docs/owner's guide.md"),
+            Some(
+                "file type has no AST parser support; `gcode outline` is AST-only: \
+                 docs/owner's guide.md\nFor Markdown headings, use `gcode grep '^#{1,6} ' \
+                 'docs/owner'\"'\"'s guide.md' -m 200`; for ranked document text, use \
+                 `gcode search-content \"query\" 'docs/owner'\"'\"'s guide.md'`."
+                    .to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn non_markdown_outline_diagnostic_provides_general_content_recovery() {
         assert_eq!(
             unsupported_file_type_diagnostic("Dockerfile"),
             Some(
-                "file type has no AST parser support; indexed as text chunks only: Dockerfile"
-                    .to_string()
+                "file type has no AST parser support; `gcode outline` is AST-only: Dockerfile\n\
+                 Use `gcode grep \"pattern\" Dockerfile -m 50` for exact or regex text, or \
+                 `gcode search-content \"query\" Dockerfile` for ranked content."
+                    .to_string(),
             )
         );
         assert_eq!(unsupported_file_type_diagnostic("src/lib.rs"), None);

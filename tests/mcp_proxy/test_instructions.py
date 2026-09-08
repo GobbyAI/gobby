@@ -119,10 +119,39 @@ class TestBuildGobbyInstructions:
         fallback_section = skills_section(_FALLBACK_INSTRUCTIONS)
 
         assert prompt_section == fallback_section
-        assert "Each `get_skill` request must use its own outer tool result" in prompt_section
-        assert "complete body is available in active context" in prompt_section
+        assert "Each request returns one content page" in prompt_section
+        assert "final entrypoint page is available in active context" in prompt_section
         assert "Collapsed UI previews are presentation-only" in prompt_section
         assert "Do not use `Promise.all`" in prompt_section
-        assert "`structuredContent.result.skill.content`" in prompt_section
+        assert "current page's `content` together with `page`" in prompt_section
         assert "`…N tokens truncated…`" in prompt_section
-        assert "retry that skill individually" in prompt_section
+        assert "restart that skill or file lookup individually" in prompt_section
+
+    def test_prompt_and_fallback_have_identical_code_search_routing(self) -> None:
+        """Always-visible and fallback instructions must select the same search lane."""
+        from gobby.mcp_proxy.instructions import (
+            _FALLBACK_INSTRUCTIONS,
+            build_gobby_instructions,
+        )
+
+        def code_search_section(instructions: str) -> str:
+            return instructions.split("<code_search>", maxsplit=1)[1].split(
+                "</code_search>", maxsplit=1
+            )[0]
+
+        prompt_section = code_search_section(build_gobby_instructions())
+        fallback_section = code_search_section(_FALLBACK_INSTRUCTIONS)
+
+        assert prompt_section == fallback_section
+        assert '`gcode search-symbol "name"`' in prompt_section
+        assert '`gcode grep -w "identifier" -m 50`' in prompt_section
+        assert '`gcode grep -F "literal" -m 50`' in prompt_section
+        assert '`gcode search-content "text"`' in prompt_section
+        assert '`gcode search "concept"`' in prompt_section
+        assert "hybrid symbol search" in prompt_section
+        assert "parser-backed source structure" in prompt_section
+        assert "switch lanes" in prompt_section
+        assert "Do not paraphrase" in prompt_section
+        assert (
+            "Direct `gcode` calls do not require loading the `code-index` skill" in prompt_section
+        )

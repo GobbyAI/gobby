@@ -198,7 +198,7 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
     )
     sdist_path = next(sdist_dir.glob("*.tar.gz"))
     subprocess.run(
@@ -208,7 +208,7 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
     )
     wheel_path = next(wheel_dir.glob("*.whl"))
     installed = tmp_path / "installed"

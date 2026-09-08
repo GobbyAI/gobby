@@ -131,10 +131,7 @@ pub fn contract() -> CliContract {
                     flags
                 },
                 json_output_keys: search_keys(),
-                ..CommandContract::new(
-                    "search",
-                    "Hybrid symbol and content search over the code index.",
-                )
+                ..CommandContract::new("search", "Hybrid symbol search.")
             },
             CommandContract {
                 daemon_consumed: true,
@@ -224,7 +221,10 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::required("FILE")],
                 flags: paged_navigation_flags(),
                 json_output_keys: outline_keys(),
-                ..CommandContract::new("outline", "Show a hierarchical symbol tree for a file.")
+                ..CommandContract::new(
+                    "outline",
+                    "Show a hierarchical AST symbol tree for a parser-backed source file.",
+                )
             },
             CommandContract {
                 daemon_consumed: true,

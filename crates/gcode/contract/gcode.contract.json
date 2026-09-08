@@ -258,7 +258,7 @@
     },
     {
       "name": "search",
-      "summary": "Hybrid symbol and content search over the code index.",
+      "summary": "Hybrid symbol search.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -742,7 +742,7 @@
     },
     {
       "name": "outline",
-      "summary": "Show a hierarchical symbol tree for a file.",
+      "summary": "Show a hierarchical AST symbol tree for a parser-backed source file.",
       "daemon_consumed": true,
       "positionals": [
         {

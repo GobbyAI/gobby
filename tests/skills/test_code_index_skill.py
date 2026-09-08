@@ -62,6 +62,31 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
     assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
 
 
+def test_code_index_skill_front_loads_command_selection_and_lane_recovery() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    selection_position = body.index("## Choose the command first")
+    search_details_position = body.index("## Search details")
+    assert selection_position < search_details_position
+    assert '`gcode search-symbol "name"`' in body
+    assert '`gcode grep -w "identifier" -m 50`' in body
+    assert '`gcode grep -F "literal" -m 50`' in body
+    assert '`gcode search-content "text"`' in body
+    assert '`gcode search "concept"`' in body
+    assert "hybrid symbol search" in body
+    assert "Switch lanes" in body
+    assert "Do not paraphrase the same `search` query or page through irrelevant results" in body
+
+
+def test_code_index_skill_documents_ast_only_outline_and_markdown_recovery() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "`outline` is AST-only" in body
+    assert "parser-backed source files" in body
+    assert "gcode grep '^#{1,6} ' path/to/file.md -m 200" in body
+    assert "content-only files" in body
+
+
 def test_code_index_skill_documents_allow_stale_flag() -> None:
     body = parse_skill_file(SKILL_PATH).content
 
