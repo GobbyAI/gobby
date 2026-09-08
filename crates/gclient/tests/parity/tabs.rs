@@ -21,14 +21,15 @@ use super::token_map::{palette, theme};
 /// on `Chrome`, with an empty title marking a tab as auto-named.
 fn chrome_with_one_tab() -> Chrome {
     let mut chrome = Chrome::new(theme());
-    chrome.tabs.push(Tab::new("", PaneId(1)));
+    chrome.tabs_mut().tabs.push(Tab::new("", PaneId(1)));
     chrome
 }
 
 /// herdr `ws.test_add_tab(Some(name))`: returns the new tab's index.
 fn add_tab(chrome: &mut Chrome, name: Option<&str>) -> usize {
-    let idx = chrome.tabs.len();
+    let idx = chrome.tabs().tabs.len();
     chrome
+        .tabs_mut()
         .tabs
         .push(Tab::new(name.unwrap_or(""), PaneId(idx as u32 + 1)));
     idx
@@ -36,7 +37,7 @@ fn add_tab(chrome: &mut Chrome, name: Option<&str>) -> usize {
 
 /// herdr `tabs[i].set_custom_name(name)`.
 fn set_custom_name(chrome: &mut Chrome, idx: usize, name: &str) {
-    chrome.tabs[idx].title = name.to_string();
+    chrome.tabs_mut().tabs[idx].title = name.to_string();
 }
 
 /// Draws the tab bar into `rect` and returns the terminal plus hit areas.
@@ -64,9 +65,9 @@ parity_tests! {
     "src/ui/tabs.rs" => {
         fn tab_bar_marks_zoomed_tabs_without_renaming_them() {
             let mut chrome = chrome_with_one_tab();
-            chrome.tabs[0].zoomed = true;
+            chrome.tabs_mut().tabs[0].zoomed = true;
             let custom_tab = add_tab(&mut chrome, Some("test"));
-            chrome.tabs[custom_tab].zoomed = true;
+            chrome.tabs_mut().tabs[custom_tab].zoomed = true;
 
             let tab_bar_rect = Rect::new(0, 0, 30, 1);
             let (term, _) = draw_tab_bar(&chrome, tab_bar_rect);
@@ -74,9 +75,9 @@ parity_tests! {
             let row = buffer_row_text(&term, tab_bar_rect, 0);
             assert!(row.contains(" 1 Z"), "tab row: {row:?}");
             assert!(row.contains(" test Z"), "tab row: {row:?}");
-            assert_eq!(tab_display_name(&chrome.tabs, 0).as_deref(), Some("1"));
+            assert_eq!(tab_display_name(&chrome.tabs().tabs, 0).as_deref(), Some("1"));
             assert_eq!(
-                tab_display_name(&chrome.tabs, custom_tab).as_deref(),
+                tab_display_name(&chrome.tabs().tabs, custom_tab).as_deref(),
                 Some("test")
             );
         }
@@ -98,9 +99,9 @@ parity_tests! {
         fn zoom_marker_counts_toward_tab_width() {
             let mut chrome = chrome_with_one_tab();
             set_custom_name(&mut chrome, 0, "abcdefgh");
-            chrome.tabs[0].zoomed = true;
+            chrome.tabs_mut().tabs[0].zoomed = true;
 
-            assert_eq!(tab_width(&chrome.tabs, 0), 14);
+            assert_eq!(tab_width(&chrome.tabs().tabs, 0), 14);
         }
 
         fn tab_width_uses_display_width_for_cjk_labels() {
@@ -108,7 +109,7 @@ parity_tests! {
             set_custom_name(&mut chrome, 0, "提交 herdr 的反馈");
 
             assert_eq!(
-                tab_width(&chrome.tabs, 0),
+                tab_width(&chrome.tabs().tabs, 0),
                 display_width_u16("提交 herdr 的反馈") + 4
             );
         }
@@ -146,7 +147,7 @@ fn tab_bar_chrome(width: u16, titles: &[&str]) -> (Workspace, Chrome, Rect) {
             .expect("open scripted terminal");
         chrome.open_tab(pane, title);
     }
-    chrome.active_tab = 0;
+    chrome.tabs_mut().active_tab = 0;
     let area = Rect::new(0, 0, width, 12);
     draw_with_hits(&ws, &mut chrome, area);
     (ws, chrome, area)
@@ -184,7 +185,12 @@ fn tab_cell(chrome: &Chrome, index: usize) -> (u16, u16) {
 }
 
 fn titles(chrome: &Chrome) -> Vec<&str> {
-    chrome.tabs.iter().map(|tab| tab.title.as_str()).collect()
+    chrome
+        .tabs()
+        .tabs
+        .iter()
+        .map(|tab| tab.title.as_str())
+        .collect()
 }
 
 /// The pane `tab_bar_chrome` opened for the `index`th title.
@@ -210,7 +216,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
             observe_only: false
         }
     );
-    assert_eq!(chrome.active_tab, 1);
+    assert_eq!(chrome.tabs().active_tab, 1);
     assert_eq!(
         chrome.gesture,
         Some(MouseGesture::TabDrag {
@@ -228,7 +234,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         MouseOutcome::Handled
     );
     assert_eq!(chrome.gesture, None, "the release ends the click");
-    assert_eq!(chrome.active_tab, 1, "a plain click keeps the tab");
+    assert_eq!(chrome.tabs().active_tab, 1, "a plain click keeps the tab");
 
     // Alt observes the tab's pane without taking control.
     let (col, _) = tab_cell(&chrome, 0);
@@ -276,12 +282,13 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
             observe_only: false
         }
     );
-    assert_eq!(chrome.active_tab, 1);
+    assert_eq!(chrome.tabs().active_tab, 1);
     wheel(&mut chrome, MouseEventKind::ScrollUp, bar.x + 1);
-    assert_eq!(chrome.active_tab, 0);
+    assert_eq!(chrome.tabs().active_tab, 0);
     wheel(&mut chrome, MouseEventKind::ScrollUp, bar.x + 1);
     assert_eq!(
-        chrome.active_tab, 2,
+        chrome.tabs().active_tab,
+        2,
         "up from the first tab wraps to the last"
     );
     wheel(
@@ -290,7 +297,8 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         bar.x + bar.width - 1,
     );
     assert_eq!(
-        chrome.active_tab, 0,
+        chrome.tabs().active_tab,
+        0,
         "down from the last tab wraps to the first"
     );
 
@@ -383,7 +391,7 @@ fn tab_drag_reorders_or_clicks() {
         MouseOutcome::Handled
     );
     assert_eq!(titles(&chrome), ["alpha", "beta", "gamma"]);
-    assert_eq!(chrome.active_tab, 0);
+    assert_eq!(chrome.tabs().active_tab, 0);
     assert_eq!(chrome.gesture, None);
 
     // Past the threshold the tab is dragged and drawn reversed on surface0.
@@ -416,7 +424,7 @@ fn tab_drag_reorders_or_clicks() {
         MouseOutcome::Handled
     );
     assert_eq!(titles(&chrome), ["beta", "gamma", "alpha"]);
-    assert_eq!(chrome.active_tab, 2);
+    assert_eq!(chrome.tabs().active_tab, 2);
     assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
     assert_eq!(chrome.gesture, None);
 
@@ -428,7 +436,7 @@ fn tab_drag_reorders_or_clicks() {
     route_mouse(&ws, &mut chrome, &at(LEFT_DRAG, first));
     route_mouse(&ws, &mut chrome, &at(LEFT_UP, first));
     assert_eq!(titles(&chrome), ["alpha", "beta", "gamma"]);
-    assert_eq!(chrome.active_tab, 0);
+    assert_eq!(chrome.tabs().active_tab, 0);
 
     // A moved tab released off every tab stays where it was.
     route_mouse(&ws, &mut chrome, &at(LEFT_DOWN, first));

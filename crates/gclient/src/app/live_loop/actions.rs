@@ -26,8 +26,12 @@ use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 
+/// Reap the slots whose pane left the workspace and the tabs that emptied.
+/// Panes are never opened here: the tab bar is restored from the snapshot or
+/// seeded by `projects::restore_focused`, and grows only by user action.
 pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
-    for tab in &mut chrome.tabs {
+    let set = chrome.tabs_mut();
+    for tab in &mut set.tabs {
         let stale: Vec<_> = tab
             .slots
             .iter()
@@ -43,23 +47,9 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
             tab.slots.remove(&slot);
         }
     }
-    chrome.tabs.retain(|tab| !tab.slots.is_empty());
-    if chrome.active_tab >= chrome.tabs.len() {
-        chrome.active_tab = chrome.tabs.len().saturating_sub(1);
-    }
-
-    let shown: Vec<_> = chrome
-        .tabs
-        .iter()
-        .flat_map(|tab| tab.slots.values().copied())
-        .collect();
-    for terminal_id in workspace.roster_terminal_ids() {
-        let Some(pane_id) = workspace.pane_for_terminal(&terminal_id) else {
-            continue;
-        };
-        if !shown.contains(&pane_id) {
-            chrome.open_pane(pane_id, workspace.pane(pane_id).display_name());
-        }
+    set.tabs.retain(|tab| !tab.slots.is_empty());
+    if set.active_tab >= set.tabs.len() {
+        set.active_tab = set.tabs.len().saturating_sub(1);
     }
 }
 
@@ -207,7 +197,7 @@ async fn focus_menu_target(
             chrome.focus_pane(pane);
             observe_live_pane(workspace, pane).await?;
         }
-        ContextMenuKind::Tab(index) if index != chrome.active_tab => {
+        ContextMenuKind::Tab(index) if index != chrome.tabs().active_tab => {
             activate_live_tab(workspace, chrome, index).await?;
         }
         _ => {}
@@ -476,11 +466,11 @@ async fn activate_relative_live_tab(
     chrome: &mut Chrome,
     delta: isize,
 ) -> Result<(), FrameError> {
-    let len = chrome.tabs.len();
+    let len = chrome.tabs().tabs.len();
     if len == 0 {
         return Ok(());
     }
-    let next = (chrome.active_tab as isize + delta).rem_euclid(len as isize) as usize;
+    let next = (chrome.tabs().active_tab as isize + delta).rem_euclid(len as isize) as usize;
     activate_live_tab(workspace, chrome, next).await
 }
 
@@ -491,7 +481,12 @@ async fn activate_live_tab(
     chrome: &mut Chrome,
     index: usize,
 ) -> Result<(), FrameError> {
-    if let Some(pane_id) = chrome.tabs.get(index).and_then(|tab| tab.focused_pane()) {
+    if let Some(pane_id) = chrome
+        .tabs()
+        .tabs
+        .get(index)
+        .and_then(|tab| tab.focused_pane())
+    {
         focus_live_shown_pane(workspace, chrome, pane_id).await?;
     }
     Ok(())
@@ -622,6 +617,10 @@ pub(super) async fn spawn_live_terminal(
     }
     let request = SpawnRequest {
         project_id: workspace.project_id().map(str::to_owned),
+        cwd: match placement {
+            Placement::Tab => workspace.focused_checkout_path(),
+            Placement::SplitRight | Placement::SplitDown => None,
+        },
         ..SpawnRequest::default()
     };
     match workspace.daemon().spawn(request).await? {

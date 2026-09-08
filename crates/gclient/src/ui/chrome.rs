@@ -2,6 +2,7 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
+use crate::app::project_tabs::{ProjectTabs, TabSet};
 use crate::app::sidebar_model::{agent_row_state, pane_state, SidebarModel};
 use crate::app::{
     short_terminal_id, ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace,
@@ -210,6 +211,8 @@ pub struct SidebarState {
     pub attention_scroll: usize,
     /// Selected roster row (navigate mode).
     pub selected: usize,
+    /// Machine whose agents the sidebar lists; none lists every machine.
+    pub machine_filter: Option<String>,
 }
 
 impl Default for SidebarState {
@@ -224,6 +227,7 @@ impl Default for SidebarState {
             scroll: 0,
             attention_scroll: 0,
             selected: 0,
+            machine_filter: None,
         }
     }
 }
@@ -270,6 +274,20 @@ impl Tab {
         let (layout, slot) = TileLayout::new();
         let mut slots = HashMap::new();
         slots.insert(slot, first);
+        Self {
+            title: title.into(),
+            layout,
+            slots,
+            zoomed: false,
+        }
+    }
+
+    /// A tab over a rebuilt layout whose slots are already mapped.
+    pub fn with_layout(
+        title: impl Into<String>,
+        layout: TileLayout,
+        slots: HashMap<layout::PaneId, PaneId>,
+    ) -> Self {
         Self {
             title: title.into(),
             layout,
@@ -361,8 +379,8 @@ pub struct Chrome {
     pub prefs: ClientPrefs,
     pub mode: Mode,
     pub sidebar: SidebarState,
-    pub tabs: Vec<Tab>,
-    pub active_tab: usize,
+    /// Every project's tabs; the focused project's set is the tab bar.
+    pub project_tabs: ProjectTabs,
     pub tab_scroll: usize,
     pub tab_scroll_follow_active: bool,
     pub navigator: NavigatorState,
@@ -406,8 +424,7 @@ impl Chrome {
             prefs: ClientPrefs::default(),
             mode: Mode::Terminal,
             sidebar: SidebarState::default(),
-            tabs: Vec::new(),
-            active_tab: 0,
+            project_tabs: ProjectTabs::default(),
             tab_scroll: 0,
             tab_scroll_follow_active: true,
             navigator: NavigatorState::default(),
@@ -447,12 +464,21 @@ impl Chrome {
         self.prefs = prefs;
     }
 
+    /// The focused project's tab bar.
+    pub fn tabs(&self) -> &TabSet {
+        self.project_tabs.set()
+    }
+
+    pub fn tabs_mut(&mut self) -> &mut TabSet {
+        self.project_tabs.set_mut()
+    }
+
     pub fn active_tab(&self) -> Option<&Tab> {
-        self.tabs.get(self.active_tab)
+        self.tabs().active()
     }
 
     pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs.get_mut(self.active_tab)
+        self.tabs_mut().active_mut()
     }
 
     /// Focused workspace pane in the active tab.
@@ -479,14 +505,15 @@ impl Chrome {
     }
 
     fn open_split(&mut self, pane: PaneId, title: &str, direction: Direction) -> layout::PaneId {
-        if self.tabs.is_empty() {
+        let set = self.tabs_mut();
+        if set.tabs.is_empty() {
             let tab = Tab::new(title, pane);
             let slot = tab.layout.focused();
-            self.tabs.push(tab);
-            self.active_tab = 0;
+            set.tabs.push(tab);
+            set.active_tab = 0;
             return slot;
         }
-        let tab = &mut self.tabs[self.active_tab];
+        let tab = &mut set.tabs[set.active_tab];
         let slot = tab.layout.split_focused(direction);
         tab.slots.insert(slot, pane);
         slot
@@ -494,19 +521,21 @@ impl Chrome {
 
     /// Open `pane` in a fresh tab and make it active.
     pub fn open_tab(&mut self, pane: PaneId, title: &str) {
-        self.tabs.push(Tab::new(title, pane));
-        self.active_tab = self.tabs.len() - 1;
+        let set = self.tabs_mut();
+        set.tabs.push(Tab::new(title, pane));
+        set.active_tab = set.tabs.len() - 1;
     }
 
     /// Close the focused slot; drops the tab when it was the last slot.
     pub fn close_focused(&mut self) -> Option<PaneId> {
-        let tab = self.tabs.get_mut(self.active_tab)?;
+        let set = self.tabs_mut();
+        let tab = set.tabs.get_mut(set.active_tab)?;
         let slot = tab.layout.focused();
         let pane = tab.slots.remove(&slot);
         if !tab.layout.close_focused() {
-            self.tabs.remove(self.active_tab);
-            if self.active_tab > 0 && self.active_tab >= self.tabs.len() {
-                self.active_tab = self.tabs.len().saturating_sub(1);
+            set.tabs.remove(set.active_tab);
+            if set.active_tab > 0 && set.active_tab >= set.tabs.len() {
+                set.active_tab = set.tabs.len().saturating_sub(1);
             }
         }
         pane
@@ -517,6 +546,7 @@ impl Chrome {
     /// shows it.
     pub fn focus_pane(&mut self, pane: PaneId) -> bool {
         let Some((index, slot)) = self
+            .tabs()
             .tabs
             .iter()
             .enumerate()
@@ -525,11 +555,12 @@ impl Chrome {
             return false;
         };
         let previous = self.focused_pane();
-        if index != self.active_tab {
-            self.active_tab = index;
+        let set = self.tabs_mut();
+        if index != set.active_tab {
+            set.active_tab = index;
             self.tab_scroll_follow_active = true;
         }
-        self.tabs[index].layout.focus_pane(slot);
+        self.tabs_mut().tabs[index].layout.focus_pane(slot);
         if previous != Some(pane) {
             self.last_focused = previous;
         }
@@ -559,7 +590,7 @@ impl Chrome {
     }
 
     pub fn show_tab_bar(&self) -> bool {
-        !(self.tabs.len() <= 1 && self.prefs.hide_tab_bar_when_single_tab)
+        !(self.tabs().tabs.len() <= 1 && self.prefs.hide_tab_bar_when_single_tab)
     }
 
     /// Write the rects the renderers drew back where the hit tests read

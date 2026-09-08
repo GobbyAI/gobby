@@ -1,29 +1,44 @@
 //! Atomic workspace snapshot persistence and restore.
 
 use gobby_client::persist::{
-    load_snapshot, save_snapshot, LayoutNode, SplitAxis, WorkspaceSnapshot,
+    load_snapshot, save_snapshot, LayoutNode, SplitAxis, TabSnapshot, WorkspaceSnapshot,
 };
 use gobby_client::prefs::{load_prefs, prefs_path, save_prefs, PrefsError};
 use gobby_client::ui::settings::{ClientPrefs, PassthroughModifier};
+use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+fn pane(terminal_id: &str) -> LayoutNode {
+    LayoutNode::Pane {
+        terminal_id: terminal_id.to_string(),
+    }
+}
+
+fn split(children: Vec<LayoutNode>) -> LayoutNode {
+    LayoutNode::Split {
+        axis: SplitAxis::Horizontal,
+        ratio: 0.5,
+        children,
+    }
+}
+
+fn tab(layout: LayoutNode, focused: &str) -> TabSnapshot {
+    TabSnapshot {
+        title: String::new(),
+        layout,
+        focused: Some(focused.to_string()),
+    }
+}
+
+/// One tab per terminal, the first one active and focused.
 fn snapshot(project_id: &str, terminal_ids: &[&str]) -> WorkspaceSnapshot {
-    let panes = terminal_ids
-        .iter()
-        .map(|terminal_id| LayoutNode::Pane {
-            terminal_id: (*terminal_id).to_string(),
-        })
-        .collect();
     WorkspaceSnapshot {
         project_id: project_id.to_string(),
-        layout: LayoutNode::Split {
-            axis: SplitAxis::Horizontal,
-            children: panes,
-        },
-        tab_order: terminal_ids.iter().map(|id| (*id).to_string()).collect(),
+        tabs: terminal_ids.iter().map(|id| tab(pane(id), id)).collect(),
+        active_tab: 0,
         focused_terminal_id: terminal_ids.first().map(|id| (*id).to_string()),
     }
 }
@@ -52,10 +67,69 @@ fn workspace_round_trip_and_corrupt_file() {
     let mut ws = Workspace::scripted();
     ws.set_gobby_home(home);
     ws.daemon_mut().set_live_terminals(vec!["live-1".into()]);
-    ws.restore_project("proj-1").expect("restore");
+    let tabs = ws.restore_project("proj-1").expect("restore");
+    assert_eq!(
+        tabs.tabs.len(),
+        1,
+        "the tab of the dead terminal is dropped"
+    );
     assert_eq!(ws.tab_order(), vec!["live-1"]);
     assert_eq!(ws.focused_terminal_id(), Some("live-1"));
     assert_eq!(ws.pane_count(), 1);
+}
+
+/// 2.2.3: a snapshot with split tabs round-trips, and the restore keeps a
+/// live split intact, collapses a split around a vanished terminal, drops a
+/// tab with none left, and rewrites the file without the vanished ones.
+#[test]
+fn snapshot_restores_tab_layouts() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let expected = WorkspaceSnapshot {
+        project_id: "proj".to_string(),
+        tabs: vec![
+            tab(split(vec![pane("live-1"), pane("dead-1")]), "dead-1"),
+            tab(split(vec![pane("live-2"), pane("live-3")]), "live-3"),
+            tab(pane("dead-2"), "dead-2"),
+        ],
+        active_tab: 1,
+        focused_terminal_id: Some("live-3".to_string()),
+    };
+    save_snapshot(&home, &expected).expect("save");
+    assert_eq!(load_snapshot(&home, "proj").expect("load"), expected);
+
+    let mut ws = Workspace::scripted();
+    ws.set_gobby_home(home.clone());
+    ws.daemon_mut()
+        .set_live_terminals(vec!["live-1".into(), "live-2".into(), "live-3".into()]);
+    let tabs = ws.restore_project("proj").expect("restore");
+    assert_eq!(tabs.tabs.len(), 2, "the tab holding only dead-2 is dropped");
+    assert_eq!(
+        tabs.tabs[0].layout.pane_count(),
+        1,
+        "the split collapses to live-1"
+    );
+    assert_eq!(
+        tabs.tabs[1].layout.pane_count(),
+        2,
+        "the live split stays intact"
+    );
+    assert_eq!(tabs.active_tab, 1);
+    let focused = tabs.tabs[1].focused_pane().expect("focused slot");
+    assert_eq!(ws.pane(focused).terminal_id, "live-3");
+    assert_eq!(ws.focused_terminal_id(), Some("live-3"));
+    assert_eq!(ws.pane_count(), 3);
+
+    let rewritten = load_snapshot(&home, "proj").expect("rewritten snapshot");
+    assert_eq!(rewritten.tabs.len(), 2);
+    assert_eq!(rewritten.terminal_ids(), ["live-1", "live-2", "live-3"]);
+    assert_eq!(
+        rewritten.tabs[0].focused.as_deref(),
+        Some("live-1"),
+        "focus falls to the surviving slot"
+    );
+    assert_eq!(rewritten.active_tab, 1);
+    assert_eq!(rewritten.focused_terminal_id.as_deref(), Some("live-3"));
 }
 
 #[test]
@@ -89,7 +163,7 @@ fn workspace_write_is_atomic() {
         let observed: WorkspaceSnapshot =
             serde_json::from_slice(&bytes).expect("reader sees complete JSON");
         assert_eq!(observed.project_id, "proj-race");
-        assert_eq!(observed.tab_order.len(), 1);
+        assert_eq!(observed.tabs.len(), 1);
     }
     for writer in writers {
         writer.join().unwrap().expect("concurrent save");
@@ -124,26 +198,42 @@ fn workspace_write_is_atomic() {
     }
 }
 
+/// Opening and focusing terminals writes nothing; the snapshot is the tab
+/// set the caller hands `persist_workspace`.
 #[test]
-fn workspace_mutations_persist_atomically() {
+fn workspace_persists_the_tab_set_it_is_given() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let mut ws = Workspace::scripted();
     ws.set_gobby_home(home.clone());
     ws.select_project("proj-mutations");
 
-    ws.open_terminal("term-a", "native", "epoch-a").unwrap();
+    let pane_a = ws.open_terminal("term-a", "native", "epoch-a").unwrap();
     let pane_b = ws.open_terminal("term-b", "native", "epoch-a").unwrap();
-    let opened = load_snapshot(&home, "proj-mutations").unwrap();
-    assert_eq!(opened.tab_order, vec!["term-a", "term-b"]);
-
     ws.focus_pane(pane_b).unwrap();
-    let focused = load_snapshot(&home, "proj-mutations").unwrap();
-    assert_eq!(focused.focused_terminal_id.as_deref(), Some("term-b"));
+    assert_eq!(
+        load_snapshot(&home, "proj-mutations")
+            .expect_err("nothing is written until a tab set is persisted")
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
 
-    ws.set_tab_order(&["term-b", "term-a"]).unwrap();
-    let reordered = load_snapshot(&home, "proj-mutations").unwrap();
-    assert_eq!(reordered.tab_order, vec!["term-b", "term-a"]);
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane_a, "a");
+    chrome.open_pane_below(pane_b, "b");
+    ws.persist_workspace(chrome.tabs()).expect("persist");
+    let saved = load_snapshot(&home, "proj-mutations").unwrap();
+    assert_eq!(saved.tabs.len(), 1);
+    assert!(
+        matches!(
+            &saved.tabs[0].layout,
+            LayoutNode::Split { axis: SplitAxis::Vertical, children, .. } if children.len() == 2
+        ),
+        "{:?}",
+        saved.tabs[0].layout
+    );
+    assert_eq!(saved.terminal_ids(), ["term-a", "term-b"]);
+    assert_eq!(saved.focused_terminal_id.as_deref(), Some("term-b"));
 }
 
 #[test]

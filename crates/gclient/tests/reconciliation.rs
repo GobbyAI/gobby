@@ -4,6 +4,7 @@ mod mock_daemon;
 
 use gobby_client::app::run_loop::{ReconnectAttempt, ReconnectSupervisor};
 use gobby_client::daemon::{Daemon, DaemonEvent, LiveDaemon};
+use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
 use serde_json::{json, Value};
@@ -1208,6 +1209,15 @@ async fn saved_roster_order_restores_on_the_next_start() {
     first
         .set_tab_order(&["terminal-c", "terminal-a", "terminal-b"])
         .expect("reorder");
+    // The order that persists is the tab set's: one tab per pane, in order.
+    let mut chrome = Chrome::dark();
+    for terminal_id in first.tab_order() {
+        let pane = first.pane_for_terminal(&terminal_id).expect("listed pane");
+        chrome.open_tab(pane, &terminal_id);
+    }
+    first
+        .persist_workspace(chrome.tabs())
+        .expect("save the tab set");
     drop(first);
 
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
