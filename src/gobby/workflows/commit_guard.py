@@ -5,10 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import shlex
-import subprocess
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -402,33 +400,6 @@ def foreign_owned_dirty_paths(
     return {path: owners[path] for path in paths if path in owners}
 
 
-def inspect_checkout_path_ownership(
-    db: HubDatabase,
-    *,
-    project_id: str,
-    checkout_root: str,
-) -> tuple[CheckoutPathOwnership, ...]:
-    """Return every dirty or staged path with active ownership, including gaps."""
-    try:
-        owners = _active_path_owners(
-            db,
-            project_id=project_id,
-            checkout_root=checkout_root,
-        )
-        states = _git_status_path_states(checkout_root)
-    except (psycopg.OperationalError, PoolTimeout) as exc:
-        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-    return tuple(
-        CheckoutPathOwnership(
-            path=path,
-            dirty=True,
-            staged=staged,
-            owners=owners.get(path, ()),
-        )
-        for path, staged in sorted(states.items())
-    )
-
-
 async def inspect_checkout_path_ownership_async(
     db: HubDatabase,
     *,
@@ -455,39 +426,6 @@ async def inspect_checkout_path_ownership_async(
         )
         for path, staged in sorted(states.items())
     )
-
-
-def _git_status_path_states(project_path: str) -> dict[str, bool]:
-    """Map porcelain-status paths to whether each path has an index change."""
-    try:
-        result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            cwd=Path(project_path),
-            check=False,
-            capture_output=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise DirtyEditOwnershipInspectionError("git ownership inspection failed") from exc
-    if result.returncode != 0:
-        stderr = os.fsdecode(result.stderr).strip()
-        raise DirtyEditOwnershipInspectionError(f"git status failed: {stderr}")
-
-    states: dict[str, bool] = {}
-    records = iter(result.stdout.split(b"\0"))
-    for record in records:
-        if len(record) < 4:
-            continue
-        status = record[:2]
-        staged = status[:1] not in {b" ", b"?"}
-        path = normalize_task_edited_path(os.fsdecode(record[3:]))
-        if path is not None:
-            states[path] = states.get(path, False) or staged
-        if b"R" in status or b"C" in status:
-            original = normalize_task_edited_path(os.fsdecode(next(records, b"")))
-            if original is not None:
-                states[original] = states.get(original, False) or staged
-    return states
 
 
 async def _git_status_path_states_async(project_path: str) -> dict[str, bool]:
