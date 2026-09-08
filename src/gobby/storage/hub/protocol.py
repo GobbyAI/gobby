@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Literal, Protocol
 Row = Mapping[str, Any]
 
 __all__ = [
+    "AgentTaskClaimMutation",
     "BuildDryRunMutation",
     "Cursor",
     "ChatAttachmentMutation",
@@ -79,6 +80,14 @@ class AgentCapAdmission:
 
     PRIORITY: ClassVar[int] = 100
     project_id: str | None
+
+
+@dataclass(frozen=True)
+class AgentTaskClaimMutation:
+    """Serializes agent-facing task claims for one session."""
+
+    PRIORITY: ClassVar[int] = 150
+    session_id: str
 
 
 @dataclass(frozen=True)

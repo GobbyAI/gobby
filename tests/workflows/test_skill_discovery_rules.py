@@ -3800,12 +3800,17 @@ class TestRequireCodeIndexSkillStructure:
         assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert _skill_fetch_template("code-index") in body.effects[0].reason
-        assert (
-            "If that call fails, its recorded failure fails this rule open"
-            in body.effects[0].reason
-        )
-        assert "list_tools" not in body.effects[0].reason
+        reason = body.effects[0].reason
+        assert reason is not None
+        assert _skill_fetch_template("code-index") in reason
+        assert "If that call fails, its recorded failure fails this rule open" in reason
+        assert '`gcode search-symbol "name"`' in reason
+        assert '`gcode grep -w "identifier" -m 50`' in reason
+        assert '`gcode grep -F "literal" -m 50`' in reason
+        assert '`gcode search-content "text"`' in reason
+        assert '`gcode search "concept"`' in reason
+        assert "switch lanes" in reason
+        assert "list_tools" not in reason
 
     def test_code_index_navigation_rules_sync(self, db, manager) -> None:
         _sync_bundled(db)
@@ -4064,12 +4069,13 @@ class TestCodeIndexNavigationRules:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert (
-            'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; '
-            "exit 0 even with no matches) or "
-            '`gcode search-content "query"` — '
-            "the code index has full access to this repo and returns ranked, token-cheap pages."
-        ) in response.reason
+        assert '`gcode search-symbol "name"`' in response.reason
+        assert '`gcode grep -w "identifier" -m 50`' in response.reason
+        assert '`gcode grep -F "literal" -m 50`' in response.reason
+        assert '`gcode search-content "text"`' in response.reason
+        assert '`gcode search "concept"`' in response.reason
+        assert "hybrid symbol search" in response.reason
+        assert "switch lanes" in response.reason
         assert "Run any printed continuation command exactly" in response.reason
         assert "follow the `recovery` directive" in response.reason
         assert "do NOT re-run the failing gcode call" in response.reason
@@ -4210,7 +4216,7 @@ class TestCodeIndexNavigationRules:
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
         assert response.decision == "block"
-        assert 'gcode grep "pattern"' in (response.reason or "")
+        assert 'gcode grep -F "literal"' in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_pathless_search_in_linked_worktree_defaults_scope_to_cwd(
@@ -4254,7 +4260,7 @@ class TestCodeIndexNavigationRules:
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
         assert response.decision == "block"
-        assert 'gcode grep "pattern"' in (response.reason or "")
+        assert 'gcode grep -F "literal"' in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_mixed_scratchpad_and_indexed_paths_redirects_for_indexed_path(
@@ -4864,6 +4870,20 @@ class TestCodeIndexNavigationRules:
 
         assert allowed.decision == "allow"
         assert variables["code_index_navigation_used_this_turn"] is True
+
+    @pytest.mark.asyncio
+    async def test_direct_gcode_call_does_not_require_skill_loading(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        event = self._normalized_bash_event('gcode search "concept" src')
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=False),
+        )
+
+        assert event.data["canonical_code_index_navigation"] is True
+        assert response.decision == "allow"
 
     @pytest.mark.parametrize(
         ("rule_name", "command"),

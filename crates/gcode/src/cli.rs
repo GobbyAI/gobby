@@ -108,9 +108,9 @@ pub(crate) enum Command {
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
-    /// Hybrid search: pg_search BM25 + semantic (Qdrant) + graph boost (FalkorDB)
+    /// Hybrid symbol search: pg_search BM25 + semantic (Qdrant) + graph boost (FalkorDB)
     #[command(
-        after_help = "`gcode search` is hybrid/fuzzy concept search. Use `gcode grep \"pattern\" [PATH...] -m 50` for exact literals, call sites, dotted config keys, quoted strings, and paths. Use `gcode search-content \"query\" [PATH...]` for ranked file-content matches."
+        after_help = "`gcode search` is hybrid symbol search for fuzzy code concepts. Use `gcode search-symbol \"name\" [PATH...]` for a known symbol, `gcode grep -w identifier [PATH...] -m 50` for exact identifier occurrences, `gcode grep -F \"literal\" [PATH...] -m 50` for literal text, and `gcode search-content \"query\" [PATH...]` for repository text, docs, or config."
     )]
     Search {
         query: String,
@@ -251,7 +251,7 @@ pub(crate) enum Command {
     },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
-    /// Hierarchical symbol tree for a file
+    /// Hierarchical AST symbol tree for a parser-backed source file
     Outline {
         file: String,
         #[arg(long, value_parser = positive_usize)]

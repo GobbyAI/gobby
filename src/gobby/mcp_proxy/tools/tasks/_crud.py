@@ -10,6 +10,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
     dependency_payload,
     task_discovery_payload,
@@ -24,7 +25,12 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import DependencyCycleError
-from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
+from gobby.storage.tasks import (
+    TASK_TYPE_CHOICES,
+    VALID_CATEGORIES,
+    AgentTaskClaimConflictError,
+    TaskNotFoundError,
+)
 from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
@@ -206,23 +212,66 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if invariant_error:
             return {"error": invariant_error}
 
-        # Create task
-        create_result = ctx.task_manager.create_task_with_decomposition(
-            project_id=project_id,
-            title=title,
-            description=description,
-            priority=priority,
-            task_type=task_type,
-            parent_task_id=parent_task_id,
-            labels=labels,
-            category=category,
-            validation_criteria=validation_criteria,
-            implementation_domain=implementation_domain,
-            additional_skills=additional_skills,
-            created_in_session_id=resolved_session_id,
-        )
+        claim_warning: str | None = None
+        if claim:
+            try:
+                claim_session = ctx.session_manager.get(resolved_session_id)
+            except Exception:
+                claim_session = None
+            if claim_session and project_id != claim_session.project_id:
+                logger.info(
+                    "Skipping auto-claim: task project %s != session project %s",
+                    project_id,
+                    claim_session.project_id,
+                )
+                claim = False
+                claim_warning = "claim=true ignored: cannot claim a task in a different project"
+            elif not confirm_claiming_session_activity(
+                ctx,
+                resolved_session_id,
+                claim_session,
+            ):
+                logger.warning(
+                    "Skipping auto-claim: session %s could not be marked active",
+                    resolved_session_id,
+                )
+                claim = False
+                claim_warning = "claim=true ignored: current session could not be marked active"
 
-        task = ctx.task_manager.get_task(create_result["task"]["id"])
+        task_fields: dict[str, Any] = {
+            "project_id": project_id,
+            "title": title,
+            "description": description,
+            "priority": priority,
+            "task_type": task_type,
+            "parent_task_id": parent_task_id,
+            "labels": labels,
+            "category": category,
+            "validation_criteria": validation_criteria,
+            "implementation_domain": implementation_domain,
+            "additional_skills": additional_skills,
+            "created_in_session_id": resolved_session_id,
+        }
+        try:
+            if claim:
+                task = ctx.task_manager.create_task_for_agent(
+                    session_id=resolved_session_id,
+                    **task_fields,
+                )
+            else:
+                create_result = ctx.task_manager.create_task_with_decomposition(**task_fields)
+                task = ctx.task_manager.get_task(create_result["task"]["id"])
+        except AgentTaskClaimConflictError as e:
+            return task_error(
+                str(e),
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                claimed_task_id=e.claimed_task_id,
+                claimed_task_ref=e.claimed_task_ref,
+                message=(
+                    f"Task was not created. Finish and close task {e.claimed_task_ref} "
+                    "before creating and claiming another task."
+                ),
+            )
 
         if affected_files:
             TaskAffectedFileManager(ctx.task_manager.db).set_files(
@@ -248,48 +297,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "Failed to link task %s to session %s: %s", task.id, resolved_session_id, e
             )
 
-        # Auto-claim if requested.
-        claim_warning: str | None = None
         if claim:
-            # Block cross-project claiming
             try:
-                claim_session = ctx.session_manager.get(resolved_session_id)
-            except Exception:
-                claim_session = None
-            if claim_session and project_id != claim_session.project_id:
-                logger.info(
-                    "Skipping auto-claim for task %s: task project %s != session project %s",
-                    task.id,
-                    project_id,
-                    claim_session.project_id,
-                )
-                claim = False
-                claim_warning = "claim=true ignored: cannot claim a task in a different project"
-            elif not confirm_claiming_session_activity(
-                ctx,
-                resolved_session_id,
-                claim_session,
-            ):
-                logger.warning(
-                    "Skipping auto-claim for task %s: session %s could not be marked active",
-                    task.id,
-                    resolved_session_id,
-                )
-                claim = False
-                claim_warning = "claim=true ignored: current session could not be marked active"
-
-        if claim:
-            updated_task = ctx.task_manager.claim_task(task.id, resolved_session_id)
-            if updated_task is None:
-                logger.warning("Failed to auto-claim task %s: update_task returned None", task.id)
-            else:
-                task = updated_task
-                # Link task to session with "claimed" action (best-effort)
-                try:
-                    ctx.session_task_manager.link_task(resolved_session_id, task.id, "claimed")
-                except Exception as e:
-                    logger.warning("Failed to link claimed task %s: %s", task.id, e)
-                    pass
+                ctx.session_task_manager.link_task(resolved_session_id, task.id, "claimed")
+            except Exception as e:
+                logger.warning("Failed to link claimed task %s: %s", task.id, e)
 
             # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
             # This mirrors claim_task behavior in _lifecycle.py

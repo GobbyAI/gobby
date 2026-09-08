@@ -61,19 +61,31 @@ wiring.
 ### First Search
 
 ```bash
-gcode search "handleAuth"
+gcode search-symbol "handleAuth"
 ```
 
 Returns matching symbols ranked by relevance — function names, class definitions, method signatures — with file paths, line numbers, and signatures. JSON output is wrapped in a pagination envelope showing `total`, `offset`, and `limit`.
 
 ## Search
 
-gcode offers four search modes for different use cases.
+gcode offers distinct symbol, exact-content, and ranked-content search lanes.
+Choose before searching, then switch lanes if results are empty or irrelevant:
+
+| Intent | Command |
+|---|---|
+| Known symbol | `gcode search-symbol "name"` |
+| Exact identifier occurrence | `gcode grep -w "identifier" -m 50` |
+| Exact literal or call site | `gcode grep -F "literal" -m 50` |
+| Repository text, docs, or config | `gcode search-content "text"` |
+| Fuzzy code concept | `gcode search "concept"` |
+| Parser-backed source structure | `gcode outline path/to/file` |
 
 ### Hybrid Search (`gcode search`)
 
-The default. Combines pg_search BM25 text matching with semantic similarity,
-graph boost, and graph expansion using Reciprocal Rank Fusion. Full hybrid
+Combines pg_search symbol BM25 with semantic symbol similarity, graph boost,
+and graph expansion using Reciprocal Rank Fusion. `gcode search` does not search
+content chunks; use `search-content` for repository prose, docs, config,
+comments, or source text. Full hybrid
 ranking requires PostgreSQL with `pg_search`, Qdrant, FalkorDB, and a reachable
 embedding endpoint; the daemon grant and hub schema provide that stack. When
 semantic or graph services are unavailable, search degrades to the reachable
@@ -102,6 +114,12 @@ gcode search "Context" --language rust         # Scope to Rust sources
 - Positional `PATH` arguments after the query — Filter by one or more paths or globs (e.g. `src`, `src/**/*.rs`, `tests/*`). Bare paths match the exact file path and descendants; multiple paths use OR semantics.
 
 `--kind`, `--language`, and positional paths compose — combine them to narrow as far as you need. Globs that cannot be converted to SQL prefixes are still honored through post-filtering; JSON output includes a hint and text output prints a warning when that broader fetch path is used.
+
+Snake_case queries receive shell-safe `search-symbol` and `grep -w` redirects;
+literal-like queries receive `grep -F`. Empty symbol results and content-only
+path filters receive a `search-content` redirect. These diagnostics preserve the
+query and path filters, use the existing JSON `hint` field, print to stderr in
+text mode, and are suppressed by `--quiet`.
 
 ### Symbol Search (`gcode search-symbol`)
 
@@ -198,10 +216,19 @@ Get the hierarchical symbol tree for a file:
 gcode outline src/config.rs
 ```
 
-Returns functions, classes, methods, structs, Markdown headings, JSON/YAML
-properties, etc. with their line ranges and signatures. Each page unit is one
-complete top-level symbol subtree. Compact text omits IDs; use `--verbose` or
-`--format json` when IDs are required. Much cheaper than reading the entire file.
+`outline` is AST-only and returns functions, classes, methods, structs, JSON/YAML
+properties, and other parser-backed symbols with their line ranges and
+signatures. Each page unit is one complete top-level symbol subtree. Compact
+text omits IDs; use `--verbose` or `--format json` when IDs are required. Much
+cheaper than reading the entire file.
+
+Markdown and other content-only files return exit `0` with no symbols and a
+stderr recovery diagnostic. For Markdown headings use:
+
+```bash
+gcode grep '^#{1,6} ' docs/guide.md -m 200
+gcode search-content "heading or topic" docs/guide.md
+```
 
 ### Symbol by ID
 
@@ -673,9 +700,12 @@ gcode projects
 ### Empty search results
 
 - Run `gcode status` to verify the project is indexed
-- Try `gcode search-text` for exact name matches
-- Try `gcode grep "pattern" [PATH ...]` for exact string/comment searches
-- Try `gcode search-content` for ranked string/comment searches
+- Use `gcode search-symbol "name"` for a known symbol
+- Use `gcode grep -w "identifier" [PATH ...] -m 50` for an identifier occurrence
+- Use `gcode grep -F "literal" [PATH ...] -m 50` for an exact literal or call site
+- Use `gcode search-content "text" [PATH ...]` for docs, config, comments, or other content
+- Use `gcode search "concept"` only for a fuzzy symbol concept
+- Follow the emitted hint and switch lanes instead of paraphrasing or increasing `--offset`
 - Run `gcode index` to pick up recently changed files
 
 ### Graph commands return empty results

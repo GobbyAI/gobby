@@ -30,6 +30,9 @@ const FORBIDDEN: &[&str] = &[
 ];
 
 const FORK_HEADER: &str = "// upstream: herdr v0.8.0 ";
+/// Header of a `src/ui` module written for Gobby rather than carved from the
+/// fork; a parenthetical after it may name what the module was modelled on.
+const NATIVE_HEADER: &str = "// upstream: none";
 
 fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -168,7 +171,8 @@ fn carve_matches_upstream_map_and_renders_data() {
                 }
             }
             let name = path.file_name().unwrap().to_string_lossy().to_string();
-            if name != "mod.rs" && name != "tests.rs" && !text.starts_with(FORK_HEADER) {
+            let headed = text.starts_with(FORK_HEADER) || text.starts_with(NATIVE_HEADER);
+            if name != "mod.rs" && name != "tests.rs" && !headed {
                 headerless.push(path.display().to_string());
             }
         }

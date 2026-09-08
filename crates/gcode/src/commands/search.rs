@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::path::Path;
 
 mod output;
 
@@ -34,7 +36,6 @@ pub struct TextSearchOptions<'a> {
     pub verbose: bool,
 }
 
-const LITERAL_QUERY_HINT: &str = "`gcode search` is hybrid/fuzzy concept search. For exact strings, call sites, dotted config keys, quoted strings, or paths, use `gcode grep \"pattern\" [PATH...] -m 50`; for ranked file-content matches, use `gcode search-content \"query\" [PATH...]`.";
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SemanticLane {
     Hits(Vec<(String, f64)>),
@@ -215,11 +216,19 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             result
         })
         .collect();
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let literal_hint = literal_query_hint(query);
+    let is_empty = results.is_empty();
+    let lane_hint = search_lane_hint(
+        query,
+        options.paths,
+        options.kind,
+        options.language,
+        is_empty,
+        true,
+    );
     let path_hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-    let hint = token_budget::combine_hints(literal_hint, path_hint);
+    let hint = token_budget::combine_hints(lane_hint, path_hint);
+    output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
         project_id: &ctx.project_id,
         total,
@@ -240,7 +249,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         for warning in &assembled.warnings {
             output::print_search_warning(ctx, options.verbose, Some(&warning.message));
         }
-        output::print_search_warning(ctx, options.verbose, hint.as_deref());
+        output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
     output::print_page(&page, meta, options.format, |rows| {
         output::render_search_results(rows, options.verbose)
@@ -296,9 +305,19 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         .take(options.limit)
         .collect();
 
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint =
+    let is_empty = results.is_empty();
+    let lane_hint = search_lane_hint(
+        query,
+        options.paths,
+        options.kind,
+        options.language,
+        is_empty,
+        false,
+    );
+    let path_hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
+    let hint = token_budget::combine_hints(lane_hint, path_hint);
+    output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let results = results
         .into_iter()
         .map(|symbol| {
@@ -323,7 +342,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         |rows| output::render_exact_results(rows, options.verbose),
     );
     if matches!(options.format, Format::Text) {
-        output::print_search_warning(ctx, options.verbose, hint.as_deref());
+        output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
     output::print_page(&page, meta, options.format, |rows| {
         output::render_exact_results(rows, options.verbose)
@@ -405,9 +424,19 @@ fn search_symbol_with_graph(
         })
         .collect();
 
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint =
+    let is_empty = results.is_empty();
+    let lane_hint = search_lane_hint(
+        query,
+        options.paths,
+        options.kind,
+        options.language,
+        is_empty,
+        false,
+    );
+    let path_hint =
         fts::path_filter_requires_post_filter(expanded_paths).then(path_filter_post_filter_hint);
+    let hint = token_budget::combine_hints(lane_hint, path_hint);
+    output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
         project_id: &ctx.project_id,
         total,
@@ -424,7 +453,7 @@ fn search_symbol_with_graph(
         |rows| output::render_exact_results(rows, options.verbose),
     );
     if matches!(options.format, Format::Text) {
-        output::print_search_warning(ctx, options.verbose, hint.as_deref());
+        output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
     output::print_page(&page, meta, options.format, |rows| {
         output::render_exact_results(rows, options.verbose)
@@ -475,7 +504,10 @@ pub fn search_text(
         .take(options.limit)
         .collect();
 
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    let is_empty = results.is_empty();
+    let lane_hint = search_lane_hint(query, options.paths, None, options.language, is_empty, true);
+    let hint = token_budget::combine_hints(lane_hint, hint);
+    output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
         project_id: &ctx.project_id,
         total,
@@ -492,7 +524,7 @@ pub fn search_text(
         |rows| output::render_search_results(rows, options.verbose),
     );
     if matches!(options.format, Format::Text) {
-        output::print_search_warning(ctx, options.verbose, hint.as_deref());
+        output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
     output::print_page(&page, meta, options.format, |rows| {
         output::render_search_results(rows, options.verbose)
@@ -573,7 +605,7 @@ pub fn search_content(
         .take(options.limit)
         .collect();
 
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total, None);
     let meta = output::SearchPageMeta {
         project_id: &ctx.project_id,
         total,
@@ -691,8 +723,122 @@ fn path_filter_post_filter_hint() -> String {
         .to_string()
 }
 
-fn literal_query_hint(query: &str) -> Option<String> {
-    literal_like_query(query).then(|| LITERAL_QUERY_HINT.to_string())
+fn search_lane_hint(
+    query: &str,
+    paths: &[String],
+    kind: Option<&str>,
+    language: Option<&str>,
+    results_empty: bool,
+    recommend_search_symbol: bool,
+) -> Option<String> {
+    let mut hints = Vec::new();
+
+    if snake_case_identifier(query) {
+        let grep = grep_command("-w", query, paths);
+        if recommend_search_symbol {
+            let exact = ranked_search_command("search-symbol", query, paths, kind, language);
+            hints.push(format!(
+                "For a known symbol, use `{exact}`; for exact identifier occurrences, use `{grep}`."
+            ));
+        } else {
+            hints.push(format!("For exact identifier occurrences, use `{grep}`."));
+        }
+    } else if literal_like_query(query) {
+        let grep = grep_command("-F", query, paths);
+        hints.push(format!("For exact literal text, use `{grep}`."));
+    }
+
+    if results_empty || content_only_path_filters(paths) {
+        let content = ranked_search_command("search-content", query, paths, None, language);
+        hints.push(format!(
+            "For repository text, docs, or config, use `{content}`."
+        ));
+    }
+
+    (!hints.is_empty()).then(|| hints.join(" "))
+}
+
+fn ranked_search_command(
+    subcommand: &str,
+    query: &str,
+    paths: &[String],
+    kind: Option<&str>,
+    language: Option<&str>,
+) -> String {
+    let mut parts = vec![
+        "gcode".to_string(),
+        subcommand.to_string(),
+        token_budget::shell_quote(OsStr::new(query)),
+    ];
+    parts.extend(
+        paths
+            .iter()
+            .map(|path| token_budget::shell_quote(OsStr::new(path))),
+    );
+    if let Some(kind) = kind {
+        parts.extend([
+            "--kind".to_string(),
+            token_budget::shell_quote(OsStr::new(kind)),
+        ]);
+    }
+    if let Some(language) = language {
+        parts.extend([
+            "--language".to_string(),
+            token_budget::shell_quote(OsStr::new(language)),
+        ]);
+    }
+    parts.join(" ")
+}
+
+fn grep_command(flag: &str, query: &str, paths: &[String]) -> String {
+    let mut parts = vec![
+        "gcode".to_string(),
+        "grep".to_string(),
+        flag.to_string(),
+        token_budget::shell_quote(OsStr::new(query)),
+    ];
+    parts.extend(
+        paths
+            .iter()
+            .map(|path| token_budget::shell_quote(OsStr::new(path))),
+    );
+    parts.extend(["-m".to_string(), "50".to_string()]);
+    parts.join(" ")
+}
+
+fn snake_case_identifier(query: &str) -> bool {
+    let query = query.trim();
+    query.contains('_')
+        && query.bytes().any(|byte| byte.is_ascii_alphabetic())
+        && query
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn content_only_path_filters(paths: &[String]) -> bool {
+    paths.iter().any(|path| {
+        let trimmed = path.trim().trim_end_matches('/');
+        let path = Path::new(trimmed);
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let looks_like_file = path.extension().is_some()
+            || matches!(
+                file_name.to_ascii_lowercase().as_str(),
+                ".dockerignore"
+                    | ".editorconfig"
+                    | ".gitignore"
+                    | ".npmrc"
+                    | ".prettierrc"
+                    | "dockerfile"
+                    | "gemfile"
+                    | "makefile"
+                    | "procfile"
+                    | "rakefile"
+            );
+        looks_like_file && crate::index::languages::detect_language(trimmed).is_none()
+    })
 }
 
 fn literal_like_query(query: &str) -> bool {

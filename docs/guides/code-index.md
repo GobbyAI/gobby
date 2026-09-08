@@ -1,8 +1,9 @@
 # Code Index
 
 Gobby's code index is a native `gcode` CLI plus daemon-side HTTP and storage
-surfaces. Use it to search symbols, inspect outlines, retrieve exact symbol
-source, and trace graph relationships without reading whole source files.
+surfaces. Use it to search symbols or content through distinct commands,
+inspect AST outlines, retrieve exact symbol source, and trace graph
+relationships without reading whole source files.
 
 The current user-facing surface is `gcode`. Older Gobby CLI and MCP examples
 for direct code-index access are stale; use the commands below.
@@ -21,7 +22,7 @@ gcode invalidate --force
 Use indexed navigation before opening large files:
 
 ```bash
-gcode grep "spawn_ui_server(" src -m 50
+gcode grep -F "spawn_ui_server(" src -m 50
 gcode search "task validation"
 gcode search-symbol "TaskValidator" --kind class
 gcode search-content "code_index_available" "src/**/*.py"
@@ -100,7 +101,7 @@ All commands accept these global options unless noted:
 | Option | Description |
 | :--- | :--- |
 | `--project <PROJECT>` | Override project root detection |
-| `--format json\|text` | Select JSON or text output; JSON is the default |
+| `--format json\|text` | Select JSON or text output; navigation commands default to compact text |
 | `--quiet` | Suppress warnings |
 | `--verbose` | Enable verbose output |
 | `--allow-stale` | Allow stale index data by skipping read-time freshness checks |
@@ -123,11 +124,11 @@ All commands accept these global options unless noted:
 | Command | Purpose |
 | :--- | :--- |
 | `gcode grep <PATTERN> [PATH...]` | Exact indexed content grep over file content chunks |
-| `gcode search <QUERY>` | Hybrid search: full-text plus optional semantic and graph boost |
+| `gcode search <QUERY>` | Hybrid symbol search: symbol BM25 plus optional semantic and graph boost |
 | `gcode search-symbol <QUERY>` | Exact-first symbol/name lookup |
 | `gcode search-text <QUERY>` | Full-text search over symbol names, signatures, and docstrings |
 | `gcode search-content <QUERY>` | Full-text search over file content chunks |
-| `gcode outline <FILE>` | Hierarchical symbol outline for one file |
+| `gcode outline <FILE>` | AST-only hierarchical symbol outline for one parser-backed source file |
 | `gcode symbol <ID>` | Fetch one symbol's source by byte offset |
 | `gcode symbols <IDS>...` | Fetch bounded source for multiple symbols and report stale IDs |
 | `gcode kinds` | List indexed symbol kinds |
@@ -140,6 +141,20 @@ positional path filters after the query. `gcode search` and
 paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`.
 Bare project-file paths resolve from the project root; `./` and `../` resolve
 from the current directory. Multiple tree paths use OR semantics.
+
+Choose the search lane from the query shape: `search-symbol` for a known symbol,
+`grep -w` for an exact identifier occurrence, `grep -F` for an exact literal or
+call site, `search-content` for repository text/docs/config, and `search` for a
+fuzzy code concept. `gcode search` ranks symbols only; it never merges content
+chunks into ranking or pagination. When results are empty or irrelevant, switch
+lanes instead of paraphrasing the same query or paging through noise. Text
+diagnostics are suppressed by `--quiet`; structured results keep actionable
+redirects in the existing JSON `hint` field.
+
+`outline` is AST-only. Markdown and other content-only files return success with
+no symbols plus recovery guidance. For Markdown headings use
+`gcode grep '^#{1,6} ' path/to/file.md -m 200`; use `search-content` for broader
+document retrieval.
 
 ### Graph Queries
 
@@ -185,10 +200,10 @@ AST symbol extraction is configured for:
 | :--- | :--- |
 | Core app languages | Python, JavaScript, TypeScript, Go, Rust, Java |
 | Additional runtimes | PHP, Dart, C#, C, C++, Elixir, Ruby |
-| Structured docs/config | Markdown, YAML, JSON |
+| Structured config | YAML, JSON |
 
 Additional content-only extensions are indexed for text search, including
-`.html`, `.css`, `.scss`, `.less`, `.toml`, `.cfg`, `.ini`, shell scripts,
+Markdown, `.html`, `.css`, `.scss`, `.less`, `.toml`, `.cfg`, `.ini`, shell scripts,
 `.sql`, `.graphql`, `.proto`, `.txt`, `.rst`, `.csv`, `.gitignore`, and
 `.editorconfig`.
 
@@ -303,9 +318,13 @@ to:
 
 ```bash
 gcode grep "pattern" [PATH...] -m 50
+gcode grep -w "identifier" [PATH...] -m 50
+gcode grep -F "literal" [PATH...] -m 50
 gcode search-content "query" [PATH...]
 gcode search-symbol "name" [PATH...]
+gcode search "concept" [PATH...]
 gcode outline path/to/file
+gcode grep '^#{1,6} ' path/to/file.md -m 200
 gcode symbol <id>
 gcode callers <symbol_name>
 gcode usages <symbol_name>
@@ -317,10 +336,12 @@ the rules engine before claiming a rule is disabled.
 ## Typical Workflow
 
 1. Run `gcode status` to confirm an index exists.
-2. Use `gcode grep` for exact strings and call sites, `gcode search-content`
-   for ranked text, `gcode search-symbol` for known names, or `gcode search`
-   for fuzzy concepts.
-3. Use `gcode outline <FILE>` before opening a large file.
+2. Use `gcode grep -w` for identifiers, `gcode grep -F` for exact strings and
+   call sites, `gcode search-content` for ranked repository text,
+   `gcode search-symbol` for known names, or `gcode search` for fuzzy symbol
+   concepts. Switch lanes after empty or irrelevant results.
+3. Use `gcode outline <FILE>` before opening a large parser-backed source file.
+   For Markdown headings, use `gcode grep '^#{1,6} ' <FILE> -m 200` instead.
 4. Use `gcode symbol <ID>` for the exact implementation when the outline points
    to a specific function, class, or method.
 5. Use `gcode callers`, `gcode usages`, `gcode imports`, or
@@ -333,4 +354,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-06-02_
+_Last verified: 2026-09-07_

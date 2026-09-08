@@ -203,17 +203,56 @@ pub(super) fn print_search_warning(ctx: &Context, verbose: bool, hint: Option<&s
     }
 }
 
-pub(super) fn print_empty_diagnostic(ctx: &Context, is_empty: bool, offset: usize, total: usize) {
-    if !is_empty || ctx.quiet {
-        return;
+pub(super) fn print_search_hint(ctx: &Context, is_empty: bool, hint: Option<&str>) {
+    if let Some(hint) = search_hint_text(ctx.quiet, is_empty, hint) {
+        eprintln!("Hint: {hint}");
     }
-    if offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
-        eprintln!("No index found for this project. Run `gcode index` first.");
-    } else if offset > 0 {
-        eprintln!("No results at offset {offset} (total {total})");
+}
+
+fn search_hint_text(quiet: bool, is_empty: bool, hint: Option<&str>) -> Option<&str> {
+    (!quiet && !is_empty).then_some(hint).flatten()
+}
+
+pub(super) fn print_empty_diagnostic(
+    ctx: &Context,
+    is_empty: bool,
+    offset: usize,
+    total: usize,
+    hint: Option<&str>,
+) {
+    let has_identity = crate::project::has_identity_file(&ctx.project_root);
+    if let Some(diagnostic) =
+        empty_diagnostic_text(is_empty, ctx.quiet, has_identity, offset, total, hint)
+    {
+        eprintln!("{diagnostic}");
+    }
+}
+
+fn empty_diagnostic_text(
+    is_empty: bool,
+    quiet: bool,
+    has_identity: bool,
+    offset: usize,
+    total: usize,
+    hint: Option<&str>,
+) -> Option<String> {
+    if !is_empty || quiet {
+        return None;
+    }
+    if offset == 0 && !has_identity {
+        return Some("No index found for this project. Run `gcode index` first.".to_string());
+    }
+
+    let mut diagnostic = if offset > 0 {
+        format!("No results at offset {offset} (total {total})")
     } else {
-        eprintln!("No results.");
+        "No results.".to_string()
+    };
+    if let Some(hint) = hint {
+        diagnostic.push_str("\nHint: ");
+        diagnostic.push_str(hint);
     }
+    Some(diagnostic)
 }
 
 #[cfg(test)]
@@ -245,5 +284,49 @@ mod tests {
         assert!(verbose.contains("id=symbol-id"));
         assert!(verbose.contains("score=0.9000"));
         assert!(verbose.contains("via=fts"));
+    }
+
+    #[test]
+    fn empty_diagnostic_honors_quiet_and_appends_actionable_hint() {
+        assert_eq!(
+            empty_diagnostic_text(true, false, true, 20, 3, Some("switch lanes")),
+            Some("No results at offset 20 (total 3)\nHint: switch lanes".to_string())
+        );
+        assert_eq!(
+            empty_diagnostic_text(true, true, true, 20, 3, Some("switch lanes")),
+            None
+        );
+    }
+
+    #[test]
+    fn json_page_keeps_existing_hint_field() {
+        let meta = SearchPageMeta {
+            project_id: "project-id",
+            total: 0,
+            offset: 0,
+            limit: 10,
+            hint: Some("use gcode search-content"),
+            warnings: &[],
+        };
+
+        let value = serde_json::to_value(page::<SearchResult>(meta, &[], None, false))
+            .expect("serialize search page");
+        assert_eq!(value["hint"], "use gcode search-content");
+    }
+
+    #[test]
+    fn non_empty_text_hint_is_visible_unless_quiet() {
+        assert_eq!(
+            search_hint_text(false, false, Some("use gcode grep -w")),
+            Some("use gcode grep -w")
+        );
+        assert_eq!(
+            search_hint_text(true, false, Some("use gcode grep -w")),
+            None
+        );
+        assert_eq!(
+            search_hint_text(false, true, Some("use gcode grep -w")),
+            None
+        );
     }
 }

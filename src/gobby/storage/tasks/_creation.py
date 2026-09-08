@@ -6,7 +6,13 @@ import logging
 import psycopg
 from psycopg.errors import UniqueViolation
 
-from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation, Transaction
+from gobby.storage.hub.protocol import (
+    AgentTaskClaimMutation,
+    HubDatabase,
+    TaskSeqAllocation,
+    Transaction,
+)
+from gobby.storage.tasks._agent_claims import ensure_agent_claim_available
 from gobby.storage.tasks._id import generate_task_id
 from gobby.storage.tasks._models import (
     SeqNumCollisionError,
@@ -69,6 +75,47 @@ def create_task(
             github_repo=github_repo,
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
+        )
+
+
+def create_task_for_agent(
+    db: HubDatabase,
+    session_id: str,
+    project_id: str,
+    title: str,
+    description: str | None = None,
+    parent_task_id: str | None = None,
+    created_in_session_id: str | None = None,
+    priority: int = 2,
+    task_type: str = "task",
+    labels: list[str] | None = None,
+    category: str | None = None,
+    validation_criteria: str | None = None,
+    assigned_agent: str | None = None,
+    implementation_domain: str | None = None,
+    additional_skills: list[str] | None = None,
+) -> str:
+    """Atomically create and claim a task for an agent session."""
+    with db.transaction_immediate(AgentTaskClaimMutation(session_id)) as conn:
+        ensure_agent_claim_available(conn, session_id)
+        conn.acquire_additional_lock(TaskSeqAllocation(project_id=project_id))
+        return _create_task_in_transaction(
+            db,
+            conn,
+            project_id=project_id,
+            title=title,
+            description=description,
+            parent_task_id=parent_task_id,
+            created_in_session_id=created_in_session_id,
+            priority=priority,
+            task_type=task_type,
+            claimed_by_session_id=session_id,
+            labels=labels,
+            category=category,
+            validation_criteria=validation_criteria,
+            assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
+            additional_skills=additional_skills,
         )
 
 

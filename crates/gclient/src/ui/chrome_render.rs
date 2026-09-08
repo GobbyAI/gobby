@@ -8,14 +8,16 @@ use crate::ui::panes::PaneContent;
 use crate::ui::settings::SettingsHits;
 use crate::ui::sidebar::SidebarHits;
 use crate::ui::tabs::TabBarHits;
-use crate::ui::{dialogs, keybind_help, navigator, panes, settings, sidebar, status, tab_surface};
+use crate::ui::{
+    context_menu, dialogs, keybind_help, navigator, panes, settings, sidebar, status, tab_surface,
+};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Block;
 use ratatui::Frame;
 
 /// Every rect the chrome renderers drew this frame; the run loop writes it
-/// back into `ViewState` with `apply_hits` so hit tests match the screen.
+/// back with `Chrome::apply_hits` so hit tests match the screen.
 #[derive(Debug, Clone, Default)]
 pub struct ChromeHits {
     pub tab_bar: TabBarHits,
@@ -23,6 +25,9 @@ pub struct ChromeHits {
     pub control_indicator: Option<Rect>,
     pub toast: Option<Rect>,
     pub settings: Option<SettingsHits>,
+    /// Rows of the context menu as drawn, in item order, whenever the menu
+    /// overlay ran; `Chrome::apply_hits` writes them into the open menu.
+    pub menu_rows: Option<Vec<Rect>>,
 }
 
 /// Compose the whole frame; `content` paints each pane's terminal grid.
@@ -75,14 +80,12 @@ pub fn render_workspace_with<W: WorkspaceView>(
             dim_background(frame, area);
             navigator::render_navigator(frame, area, ws, chrome);
         }
-        // The menu popup draws with plan 5.2; until then the workspace
-        // stays as it was under the open menu.
-        Mode::Terminal
-        | Mode::Navigate
-        | Mode::Prefix
-        | Mode::Copy
-        | Mode::Resize
-        | Mode::ContextMenu => {}
+        // Composited last and over an undimmed workspace: the menu is
+        // contextual, so what it acts on stays readable.
+        Mode::ContextMenu => {
+            hits.menu_rows = Some(context_menu::render_context_menu(frame, area, chrome));
+        }
+        Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
     }
     hits
 }
