@@ -1086,7 +1086,7 @@ async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_s
     review, created = store.create_or_get_active(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
-        caller_session_id=cast(str, run.parent_session_id),
+        caller_session_id=run.parent_session_id,
         close_arguments={"preview": True},
         expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
@@ -1098,8 +1098,8 @@ async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_s
     assert created is True
     store.bind_run(review.id, run.id)
     subscribers = CompletionSubscriberManager(temp_db)
-    subscribers.add_completion_subscriber(run.id, cast(str, run.parent_session_id))
-    registry.register(run.id, subscribers=[cast(str, run.parent_session_id)])
+    subscribers.add_completion_subscriber(run.id, run.parent_session_id)
+    registry.register(run.id, subscribers=[run.parent_session_id])
 
     with _pane_text(monitor, _CAPACITY_PANE):
         await monitor.check_idle_agents()
