@@ -1504,11 +1504,9 @@ fn drawn_ids(areas: &[(String, Rect)]) -> Vec<&str> {
     areas.iter().map(|(id, _)| id.as_str()).collect()
 }
 
-#[test]
-fn project_rows_focus_toggle_and_reorder() {
-    // herdr `FocusWorkspace` from a workspace-card click, the worktree group
-    // toggle, workspace-list drag reorder, and navigate-mode enter, over
-    // gclient's project rows.
+/// `project_workspace(2)` drawn once at `area` under a chrome focused on
+/// `alpha` with one tab open there.
+fn project_board() -> (Workspace, Chrome, Rect) {
     let ws = project_workspace(2);
     let mut chrome = chrome();
     chrome.project_tabs.focus("proj-alpha");
@@ -1520,129 +1518,155 @@ fn project_rows_focus_toggle_and_reorder() {
         ["proj-alpha", "proj-beta"]
     );
     assert_eq!(drawn_ids(&chrome.view.worktree_hit_areas), ["wt-1"]);
+    (ws, chrome, area)
+}
 
-    // A project click asks the loop to focus it and swaps the tab bar to
-    // that project's set at once; a release without movement is the click.
-    let (col, row) = row_cell(&chrome.view.project_hit_areas, "proj-beta");
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, col, row),
-        MouseOutcome::FocusProject("proj-beta".to_string())
-    );
-    assert_eq!(chrome.project_tabs.focused.as_deref(), Some("proj-beta"));
-    assert!(chrome.tabs().tabs.is_empty(), "beta has no tabs yet");
-    assert_eq!(
-        chrome.gesture,
-        Some(MouseGesture::ProjectDrag {
-            project_id: "proj-beta".to_string(),
-            origin_row: row,
-            moved: false,
-        })
-    );
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_UP, col, row),
-        MouseOutcome::Handled
-    );
-    assert_eq!(chrome.gesture, None);
-    chrome.project_tabs.focus("proj-alpha");
-    assert_eq!(chrome.tabs().tabs.len(), 1, "alpha's tab set survives");
+/// Plan 3.1.2: the project rows' pointer and navigate entry points, one
+/// test per behaviour.
+mod project_rows_focus_toggle_and_reorder {
+    use super::*;
 
-    // A worktree click opens it; the row starts no drag.
-    draw_with_hits(&ws, &mut chrome, area);
-    let (col, row) = row_cell(&chrome.view.worktree_hit_areas, "wt-1");
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, col, row),
-        MouseOutcome::OpenWorktree("wt-1".to_string())
-    );
-    assert_eq!(chrome.gesture, None);
-    route(&ws, &mut chrome, LEFT_UP, col, row);
+    #[test]
+    fn project_card_click_focuses_it_and_swaps_the_tab_set() {
+        // herdr `FocusWorkspace` from a workspace-card click, over gclient's
+        // project cards: the press asks the loop to focus the project and swaps
+        // the tab bar to that project's set at once; a release without movement
+        // is the click.
+        let (ws, mut chrome, _) = project_board();
+        let (col, row) = row_cell(&chrome.view.project_hit_areas, "proj-beta");
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_DOWN, col, row),
+            MouseOutcome::FocusProject("proj-beta".to_string())
+        );
+        assert_eq!(chrome.project_tabs.focused.as_deref(), Some("proj-beta"));
+        assert!(chrome.tabs().tabs.is_empty(), "beta has no tabs yet");
+        assert_eq!(
+            chrome.gesture,
+            Some(MouseGesture::ProjectDrag {
+                project_id: "proj-beta".to_string(),
+                origin_row: row,
+                moved: false,
+            })
+        );
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_UP, col, row),
+            MouseOutcome::Handled
+        );
+        assert_eq!(chrome.gesture, None);
+        chrome.project_tabs.focus("proj-alpha");
+        assert_eq!(chrome.tabs().tabs.len(), 1, "alpha's tab set survives");
+    }
 
-    // The group toggle collapses the worktree rows and expands them again.
-    let (toggle_id, toggle) = chrome.view.group_toggle_hit_areas[0].clone();
-    assert_eq!(toggle_id, "proj-alpha");
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
-        MouseOutcome::Handled
-    );
-    assert!(chrome.sidebar.collapsed_projects.contains("proj-alpha"));
-    route(&ws, &mut chrome, LEFT_UP, toggle.x, toggle.y);
-    draw_with_hits(&ws, &mut chrome, area);
-    assert!(chrome.view.worktree_hit_areas.is_empty());
-    assert_eq!(
-        drawn_ids(&chrome.view.project_hit_areas),
-        ["proj-alpha", "proj-beta"]
-    );
-    let (_, toggle) = chrome.view.group_toggle_hit_areas[0].clone();
-    route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y);
-    route(&ws, &mut chrome, LEFT_UP, toggle.x, toggle.y);
-    assert!(!chrome.sidebar.collapsed_projects.contains("proj-alpha"));
-    draw_with_hits(&ws, &mut chrome, area);
-    assert_eq!(drawn_ids(&chrome.view.worktree_hit_areas), ["wt-1"]);
+    #[test]
+    fn worktree_row_click_opens_a_shell_there() {
+        // A worktree row asks the loop for a shell in that worktree; the row
+        // starts no drag.
+        let (ws, mut chrome, _) = project_board();
+        let (col, row) = row_cell(&chrome.view.worktree_hit_areas, "wt-1");
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_DOWN, col, row),
+            MouseOutcome::OpenWorktree("wt-1".to_string())
+        );
+        assert_eq!(chrome.gesture, None);
+        route(&ws, &mut chrome, LEFT_UP, col, row);
+    }
 
-    // A project dragged onto another takes its place; the order is chrome
-    // state that `session.json` keeps.
-    let (col, row_alpha) = row_cell(&chrome.view.project_hit_areas, "proj-alpha");
-    let (_, row_beta) = row_cell(&chrome.view.project_hit_areas, "proj-beta");
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, col, row_alpha),
-        MouseOutcome::FocusProject("proj-alpha".to_string())
-    );
-    assert_eq!(
-        route(
-            &ws,
-            &mut chrome,
-            LEFT_DRAG,
-            col,
-            row_alpha + PROJECT_DRAG_THRESHOLD
-        ),
-        MouseOutcome::Handled
-    );
-    assert!(matches!(
-        chrome.gesture,
-        Some(MouseGesture::ProjectDrag { moved: true, .. })
-    ));
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_UP, col, row_beta),
-        MouseOutcome::Handled
-    );
-    assert_eq!(chrome.gesture, None);
-    assert_eq!(chrome.sidebar.project_order, ["proj-beta", "proj-alpha"]);
-    draw_with_hits(&ws, &mut chrome, area);
-    assert_eq!(
-        drawn_ids(&chrome.view.project_hit_areas),
-        ["proj-beta", "proj-alpha"]
-    );
-    let session = ClientSession {
-        focused_project: Some("proj-alpha".to_string()),
-        sidebar: sidebar_snapshot(&chrome.sidebar),
-    };
-    let saved = serde_json::to_string(&session).expect("serialise session");
-    let loaded: ClientSession = serde_json::from_str(&saved).expect("parse session");
-    assert_eq!(loaded, session);
-    let mut restored = SidebarState::default();
-    apply_sidebar_snapshot(&mut restored, &loaded.sidebar);
-    assert_eq!(restored.project_order, ["proj-beta", "proj-alpha"]);
+    #[test]
+    fn group_toggle_and_card_drag_persist_in_chrome_state() {
+        // The group toggle folds and unfolds a card's worktree rows; a card
+        // dragged onto another takes its place; both are sidebar state that
+        // `session.json` keeps.
+        let (ws, mut chrome, area) = project_board();
+        let (toggle_id, toggle) = chrome.view.group_toggle_hit_areas[0].clone();
+        assert_eq!(toggle_id, "proj-alpha");
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
+            MouseOutcome::Handled
+        );
+        assert!(chrome.sidebar.collapsed_projects.contains("proj-alpha"));
+        route(&ws, &mut chrome, LEFT_UP, toggle.x, toggle.y);
+        draw_with_hits(&ws, &mut chrome, area);
+        assert!(chrome.view.worktree_hit_areas.is_empty());
+        assert_eq!(
+            drawn_ids(&chrome.view.project_hit_areas),
+            ["proj-alpha", "proj-beta"]
+        );
+        let (_, toggle) = chrome.view.group_toggle_hit_areas[0].clone();
+        route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y);
+        route(&ws, &mut chrome, LEFT_UP, toggle.x, toggle.y);
+        assert!(!chrome.sidebar.collapsed_projects.contains("proj-alpha"));
+        draw_with_hits(&ws, &mut chrome, area);
+        assert_eq!(drawn_ids(&chrome.view.worktree_hit_areas), ["wt-1"]);
 
-    // Navigate: down walks the project rows, worktrees included, and enter
-    // focuses the selected project or opens the selected worktree.
-    chrome.mode = Mode::Navigate;
-    chrome.sidebar.selected = 0;
-    assert_eq!(
-        route_modal_key(&ws, &mut chrome, &key(KeyCode::Down)),
-        ModalOutcome::Consumed
-    );
-    assert_eq!(chrome.sidebar.selected, 1);
-    assert_eq!(
-        route_modal_key(&ws, &mut chrome, &key(KeyCode::Enter)),
-        ModalOutcome::FocusProject("proj-alpha".to_string())
-    );
-    assert_eq!(chrome.mode, Mode::Terminal);
-    chrome.mode = Mode::Navigate;
-    chrome.sidebar.selected = 2;
-    assert_eq!(
-        route_modal_key(&ws, &mut chrome, &key(KeyCode::Enter)),
-        ModalOutcome::OpenWorktree("wt-1".to_string())
-    );
-    assert_eq!(chrome.mode, Mode::Terminal);
+        let (col, row_alpha) = row_cell(&chrome.view.project_hit_areas, "proj-alpha");
+        let (_, row_beta) = row_cell(&chrome.view.project_hit_areas, "proj-beta");
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_DOWN, col, row_alpha),
+            MouseOutcome::FocusProject("proj-alpha".to_string())
+        );
+        assert_eq!(
+            route(
+                &ws,
+                &mut chrome,
+                LEFT_DRAG,
+                col,
+                row_alpha + PROJECT_DRAG_THRESHOLD
+            ),
+            MouseOutcome::Handled
+        );
+        assert!(matches!(
+            chrome.gesture,
+            Some(MouseGesture::ProjectDrag { moved: true, .. })
+        ));
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_UP, col, row_beta),
+            MouseOutcome::Handled
+        );
+        assert_eq!(chrome.gesture, None);
+        assert_eq!(chrome.sidebar.project_order, ["proj-beta", "proj-alpha"]);
+        draw_with_hits(&ws, &mut chrome, area);
+        assert_eq!(
+            drawn_ids(&chrome.view.project_hit_areas),
+            ["proj-beta", "proj-alpha"]
+        );
+        let session = ClientSession {
+            focused_project: Some("proj-alpha".to_string()),
+            sidebar: sidebar_snapshot(&chrome.sidebar),
+        };
+        let saved = serde_json::to_string(&session).expect("serialise session");
+        let loaded: ClientSession = serde_json::from_str(&saved).expect("parse session");
+        assert_eq!(loaded, session);
+        let mut restored = SidebarState::default();
+        apply_sidebar_snapshot(&mut restored, &loaded.sidebar);
+        assert_eq!(restored.project_order, ["proj-beta", "proj-alpha"]);
+    }
+
+    #[test]
+    fn navigate_enter_focuses_a_project_or_opens_a_worktree() {
+        // Navigate: down walks the project rows, worktrees included (alpha,
+        // its worktree, beta), and enter opens the selected worktree or
+        // focuses the selected project.
+        let (ws, mut chrome, _) = project_board();
+        chrome.mode = Mode::Navigate;
+        chrome.sidebar.selected = 0;
+        assert_eq!(
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Down)),
+            ModalOutcome::Consumed
+        );
+        assert_eq!(chrome.sidebar.selected, 1);
+        assert_eq!(
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Enter)),
+            ModalOutcome::OpenWorktree("wt-1".to_string())
+        );
+        assert_eq!(chrome.mode, Mode::Terminal);
+        chrome.mode = Mode::Navigate;
+        chrome.sidebar.selected = 2;
+        assert_eq!(
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Enter)),
+            ModalOutcome::FocusProject("proj-beta".to_string())
+        );
+        assert_eq!(chrome.mode, Mode::Terminal);
+    }
 }
 
 /// One bare key as the modal routers see it.
