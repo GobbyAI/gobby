@@ -17,6 +17,7 @@ from gobby.workflows.observer_context_usage import (
     PRESSURE_BAND_VARIABLE,
     TOOL_CALLS_SINCE_NUDGE_VARIABLE,
     UNKNOWN_ANNOUNCED_VARIABLE,
+    _pressure_band,
     _thresholds,
     detect_context_compact_guidance,
     detect_mid_turn_context_compact_guidance,
@@ -116,11 +117,14 @@ def _after_tool(
 @pytest.mark.parametrize(
     ("window", "expected"),
     [
-        (None, (128_000, 256_000, 5)),
-        (1_000_000, (128_000, 256_000, 5)),
-        (256_000, (128_000, 256_000, 5)),
-        (200_000, (80_000, 160_000, 5)),
-        (128_000, (51_200, 102_400, 5)),
+        (None, (200_000, 256_000, 5)),
+        (0, (200_000, 256_000, 5)),
+        (255_999, (128_000, 191_999, 5)),
+        (256_000, (200_000, 256_000, 5)),
+        (258_400, (200_000, 256_000, 5)),
+        (499_999, (200_000, 256_000, 5)),
+        (500_000, (250_000, 300_000, 5)),
+        (1_000_000, (250_000, 300_000, 5)),
     ],
 )
 def test_threshold_matrix_uses_window_classes(
@@ -137,15 +141,43 @@ def test_threshold_overrides_reconfigure_every_field_and_boundary() -> None:
         small_window_tokens=300_000,
         small_window_warn_ratio=0.25,
         small_window_block_ratio=0.75,
+        extended_window_tokens=600_000,
+        extended_warn_tokens=350_000,
+        extended_block_tokens=400_000,
         warn_every_tool_calls=3,
     )
     assert _thresholds(config, None) == (90_000, 180_000, 3)
     assert _thresholds(config, 256_000) == (64_000, 192_000, 3)
+    assert _thresholds(config, 300_000) == (90_000, 180_000, 3)
+    assert _thresholds(config, 599_999) == (90_000, 180_000, 3)
+    assert _thresholds(config, 600_000) == (350_000, 400_000, 3)
+
+
+@pytest.mark.parametrize(
+    ("window", "warn_threshold", "block_threshold"),
+    [
+        (128_000, 64_000, 96_000),
+        (None, 200_000, 256_000),
+        (256_000, 200_000, 256_000),
+        (500_000, 250_000, 300_000),
+    ],
+)
+def test_pressure_bands_change_exactly_at_selected_thresholds(
+    window: int | None,
+    warn_threshold: int,
+    block_threshold: int,
+) -> None:
+    warn, block, _every = _thresholds(None, window)
+    assert (warn, block) == (warn_threshold, block_threshold)
+    assert _pressure_band(warn - 1, warn, block) == "none"
+    assert _pressure_band(warn, warn, block) == "warn"
+    assert _pressure_band(block - 1, warn, block) == "warn"
+    assert _pressure_band(block, warn, block) == "block"
 
 
 @pytest.mark.parametrize(
     ("used", "expected_band"),
-    [(130_000, "warn"), (260_000, "block")],
+    [(250_000, "warn"), (300_000, "block")],
 )
 def test_turn_start_repeats_guidance_and_writes_block_message_only_in_block(
     used: int,
@@ -169,7 +201,7 @@ def test_turn_start_repeats_guidance_and_writes_block_message_only_in_block(
 
 def test_after_tool_warns_on_crossing_then_every_configured_calls() -> None:
     variables = _variables()
-    manager = _SessionManager(130_000, 1_000_000)
+    manager = _SessionManager(250_000, 1_000_000)
 
     assert _after_tool(variables, manager)
     assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
@@ -182,7 +214,7 @@ def test_after_tool_warns_on_crossing_then_every_configured_calls() -> None:
 
 def test_after_tool_block_band_announces_every_call() -> None:
     variables = _variables()
-    manager = _SessionManager(260_000, 1_000_000)
+    manager = _SessionManager(300_000, 1_000_000)
 
     assert _after_tool(variables, manager)
     assert _after_tool(variables, manager)

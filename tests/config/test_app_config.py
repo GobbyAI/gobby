@@ -399,11 +399,14 @@ class TestContextHandoffConfig:
 
     def test_defaults(self) -> None:
         config = ContextHandoffConfig()
-        assert config.warn_tokens == 128_000
+        assert config.warn_tokens == 200_000
         assert config.block_tokens == 256_000
         assert config.small_window_tokens == 256_000
-        assert config.small_window_warn_ratio == 0.40
-        assert config.small_window_block_ratio == 0.80
+        assert config.small_window_warn_ratio == 0.50
+        assert config.small_window_block_ratio == 0.75
+        assert config.extended_window_tokens == 500_000
+        assert config.extended_warn_tokens == 250_000
+        assert config.extended_block_tokens == 300_000
         assert config.warn_every_tool_calls == 5
         assert DaemonConfig().context_handoff == config
         assert all(field.description for field in ContextHandoffConfig.model_fields.values())
@@ -418,6 +421,9 @@ class TestContextHandoffConfig:
             ("small_window_warn_ratio", 1.01),
             ("small_window_block_ratio", 0),
             ("small_window_block_ratio", 1.01),
+            ("extended_window_tokens", 0),
+            ("extended_warn_tokens", 0),
+            ("extended_block_tokens", 0),
             ("warn_every_tool_calls", 0),
         ],
     )
@@ -439,6 +445,18 @@ class TestContextHandoffConfig:
                 small_window_warn_ratio=0.40,
                 small_window_block_ratio=block_ratio,
             )
+
+    @pytest.mark.parametrize("extended_window_tokens", [255_999, 256_000])
+    def test_rejects_extended_window_not_above_small_window(
+        self,
+        extended_window_tokens: int,
+    ) -> None:
+        with pytest.raises(ValidationError, match="extended_window_tokens"):
+            ContextHandoffConfig(extended_window_tokens=extended_window_tokens)
+
+    def test_rejects_extended_block_below_warn(self) -> None:
+        with pytest.raises(ValidationError, match="extended_block_tokens"):
+            ContextHandoffConfig(extended_warn_tokens=300_000, extended_block_tokens=299_999)
 
 
 class TestFeedbackReviewConfig:

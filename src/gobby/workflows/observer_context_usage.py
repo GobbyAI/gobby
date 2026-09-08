@@ -14,8 +14,14 @@ from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceed
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WARN_TOKENS = 128_000
+DEFAULT_WARN_TOKENS = 200_000
 DEFAULT_BLOCK_TOKENS = 256_000
+DEFAULT_SMALL_WINDOW_TOKENS = 256_000
+DEFAULT_SMALL_WINDOW_WARN_RATIO = 0.50
+DEFAULT_SMALL_WINDOW_BLOCK_RATIO = 0.75
+DEFAULT_EXTENDED_WINDOW_TOKENS = 500_000
+DEFAULT_EXTENDED_WARN_TOKENS = 250_000
+DEFAULT_EXTENDED_BLOCK_TOKENS = 300_000
 DEFAULT_WARN_EVERY_TOOL_CALLS = 5
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 
@@ -63,6 +69,9 @@ class _ContextHandoffConfig(Protocol):
     small_window_tokens: int
     small_window_warn_ratio: float
     small_window_block_ratio: float
+    extended_window_tokens: int
+    extended_warn_tokens: int
+    extended_block_tokens: int
     warn_every_tool_calls: int
 
 
@@ -348,16 +357,33 @@ def _thresholds(
     warn_tokens = _positive_int(getattr(config, "warn_tokens", None), DEFAULT_WARN_TOKENS)
     block_tokens = _positive_int(getattr(config, "block_tokens", None), DEFAULT_BLOCK_TOKENS)
     small_window_tokens = _positive_int(
-        getattr(config, "small_window_tokens", None), DEFAULT_BLOCK_TOKENS
+        getattr(config, "small_window_tokens", None), DEFAULT_SMALL_WINDOW_TOKENS
+    )
+    extended_window_tokens = _positive_int(
+        getattr(config, "extended_window_tokens", None), DEFAULT_EXTENDED_WINDOW_TOKENS
     )
     every = _positive_int(
         getattr(config, "warn_every_tool_calls", None), DEFAULT_WARN_EVERY_TOOL_CALLS
     )
-    if window is None or window <= 0 or window >= small_window_tokens:
+    if window is None or window <= 0:
         return warn_tokens, block_tokens, every
-    warn_ratio = _positive_float(getattr(config, "small_window_warn_ratio", None), 0.40)
-    block_ratio = _positive_float(getattr(config, "small_window_block_ratio", None), 0.80)
-    return round(window * warn_ratio), round(window * block_ratio), every
+    if window < small_window_tokens:
+        warn_ratio = _positive_float(
+            getattr(config, "small_window_warn_ratio", None), DEFAULT_SMALL_WINDOW_WARN_RATIO
+        )
+        block_ratio = _positive_float(
+            getattr(config, "small_window_block_ratio", None), DEFAULT_SMALL_WINDOW_BLOCK_RATIO
+        )
+        return round(window * warn_ratio), round(window * block_ratio), every
+    if window >= extended_window_tokens:
+        extended_warn_tokens = _positive_int(
+            getattr(config, "extended_warn_tokens", None), DEFAULT_EXTENDED_WARN_TOKENS
+        )
+        extended_block_tokens = _positive_int(
+            getattr(config, "extended_block_tokens", None), DEFAULT_EXTENDED_BLOCK_TOKENS
+        )
+        return extended_warn_tokens, extended_block_tokens, every
+    return warn_tokens, block_tokens, every
 
 
 def _write_band(

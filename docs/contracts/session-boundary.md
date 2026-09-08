@@ -87,12 +87,14 @@ closes.
 
 Context-pressure enforcement reads live `context_handoff.*` config. Windows
 strictly below `small_window_tokens` use `small_window_warn_ratio` and
-`small_window_block_ratio`; larger and unknown windows use `warn_tokens` and
-`block_tokens`. Warnings repeat every turn and every `warn_every_tool_calls` tool
-calls. Plan mode, pipelines, and web chat are exempt. At block pressure, handoff
-prerequisites and schema discovery remain callable. A non-retryable missing
-terminal compaction path caps the epoch at warning pressure; a background delivery
-failure remains blocked until `set_handoff` is retried.
+`small_window_block_ratio`; windows at or above that cutoff and below
+`extended_window_tokens`, plus unknown or invalid windows, use `warn_tokens` and
+`block_tokens`; windows at or above the extended cutoff use `extended_warn_tokens`
+and `extended_block_tokens`. Warnings repeat every turn and every
+`warn_every_tool_calls` tool calls. Plan mode, pipelines, and web chat are exempt.
+At block pressure, handoff prerequisites and schema discovery remain callable. A
+non-retryable missing terminal compaction path caps the epoch at warning pressure;
+a background delivery failure remains blocked until `set_handoff` is retried.
 
 `summary_markdown` remains the transcript-generated archival summary. It never doubles
 as a live handoff.

@@ -253,14 +253,14 @@ class ContextHandoffConfig(BaseModel):
     """Context-pressure handoff thresholds and warning cadence."""
 
     warn_tokens: int = Field(
-        default=128_000,
+        default=200_000,
         gt=0,
-        description="Warning threshold for large and unknown context windows",
+        description="Warning threshold for standard and unknown context windows",
     )
     block_tokens: int = Field(
         default=256_000,
         gt=0,
-        description="Tool-block threshold for large and unknown context windows",
+        description="Tool-block threshold for standard and unknown context windows",
     )
     small_window_tokens: int = Field(
         default=256_000,
@@ -268,16 +268,31 @@ class ContextHandoffConfig(BaseModel):
         description="Windows below this size use the small-window ratio thresholds",
     )
     small_window_warn_ratio: float = Field(
-        default=0.40,
+        default=0.50,
         gt=0,
         le=1,
         description="Warning threshold ratio for small context windows",
     )
     small_window_block_ratio: float = Field(
-        default=0.80,
+        default=0.75,
         gt=0,
         le=1,
         description="Tool-block threshold ratio for small context windows",
+    )
+    extended_window_tokens: int = Field(
+        default=500_000,
+        gt=0,
+        description="Windows at or above this size use the extended thresholds",
+    )
+    extended_warn_tokens: int = Field(
+        default=250_000,
+        gt=0,
+        description="Warning threshold for extended context windows",
+    )
+    extended_block_tokens: int = Field(
+        default=300_000,
+        gt=0,
+        description="Tool-block threshold for extended context windows",
     )
     warn_every_tool_calls: int = Field(
         default=5,
@@ -292,5 +307,11 @@ class ContextHandoffConfig(BaseModel):
         if self.small_window_block_ratio <= self.small_window_warn_ratio:
             raise ValueError(
                 "small_window_block_ratio must be greater than small_window_warn_ratio"
+            )
+        if self.extended_window_tokens <= self.small_window_tokens:
+            raise ValueError("extended_window_tokens must be greater than small_window_tokens")
+        if self.extended_block_tokens < self.extended_warn_tokens:
+            raise ValueError(
+                "extended_block_tokens must be greater than or equal to extended_warn_tokens"
             )
         return self

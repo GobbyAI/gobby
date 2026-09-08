@@ -67,11 +67,14 @@ def handler(temp_db: HubDatabase, session_manager: Any) -> WorkflowHookHandler:
 
 def _context_handoff_config(**overrides: Any) -> SimpleNamespace:
     values = {
-        "warn_tokens": 128_000,
+        "warn_tokens": 200_000,
         "block_tokens": 256_000,
         "small_window_tokens": 256_000,
-        "small_window_warn_ratio": 0.40,
-        "small_window_block_ratio": 0.80,
+        "small_window_warn_ratio": 0.50,
+        "small_window_block_ratio": 0.75,
+        "extended_window_tokens": 500_000,
+        "extended_warn_tokens": 250_000,
+        "extended_block_tokens": 300_000,
         "warn_every_tool_calls": 5,
     }
     values.update(overrides)
@@ -191,10 +194,10 @@ async def test_warn_nudge_repeats_every_configured_tool_count_and_turn_start(
     session_manager: Any,
 ) -> None:
     session_manager.session.context_window = 1_000_000
-    session_manager.session.context_used_tokens = 100_000
+    session_manager.session.context_used_tokens = 240_000
 
     below = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
-    session_manager.session.context_used_tokens = 150_000
+    session_manager.session.context_used_tokens = 250_000
     first_turn = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
     first_tool = await handler._evaluate_rules(_arbitrary_after_tool_event())
     middle_tools = [await handler._evaluate_rules(_arbitrary_after_tool_event()) for _ in range(3)]
@@ -203,12 +206,12 @@ async def test_warn_nudge_repeats_every_configured_tool_count_and_turn_start(
     stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
 
     assert below.context is None
-    assert "Context is 150k tokens" in (first_turn.context or "")
+    assert "Context is 250k tokens" in (first_turn.context or "")
     assert EFFECT_COPY in (first_turn.context or "")
     assert first_tool.context is None
     assert all(response.context is None for response in middle_tools)
-    assert "Context is 150k tokens" in (cadence_tool.context or "")
-    assert "Context is 150k tokens" in (next_turn.context or "")
+    assert "Context is 250k tokens" in (cadence_tool.context or "")
+    assert "Context is 250k tokens" in (next_turn.context or "")
     assert stored["context_compact_mid_turn_pressure_band"] == "warn"
     assert stored["context_compact_tool_calls_since_nudge"] == 0
 
@@ -248,7 +251,7 @@ async def test_failed_handoff_keeps_real_engine_nudges_enabled(
     handler: WorkflowHookHandler,
     session_manager: Any,
 ) -> None:
-    session_manager.session.context_used_tokens = 150_000
+    session_manager.session.context_used_tokens = 125_000
 
     failed = await handler._evaluate_rules(
         _set_handoff_event({"success": True, "result": {"compacted": False, "reason": "no pane"}})
@@ -422,14 +425,14 @@ async def test_context_limit_blocks_bash_with_self_contained_handoff_sequence(
     session_manager: Any,
 ) -> None:
     session_manager.session.context_window = 1_000_000
-    session_manager.session.context_used_tokens = 256_000
+    session_manager.session.context_used_tokens = 300_000
 
     pressure = await handler._evaluate_rules(_arbitrary_after_tool_event())
     blocked = await handler._evaluate_rules(_arbitrary_tool_event())
 
-    assert "Context is 256k tokens" in (pressure.context or "")
+    assert "Context is 300k tokens" in (pressure.context or "")
     assert blocked.decision == "block"
-    assert "256k" in (blocked.reason or "")
+    assert "300k" in (blocked.reason or "")
     assert "get_tool_schema" in (blocked.reason or "")
     assert "set_handoff" in (blocked.reason or "")
 
@@ -473,7 +476,7 @@ async def test_context_limit_allows_handoff_prerequisite_tools(
     tool_event: dict[str, str],
 ) -> None:
     session_manager.session.context_window = 1_000_000
-    session_manager.session.context_used_tokens = 256_000
+    session_manager.session.context_used_tokens = 300_000
     await handler._evaluate_rules(_arbitrary_after_tool_event())
 
     allowed = await handler._evaluate_rules(
@@ -560,6 +563,9 @@ async def test_context_limit_uses_live_config_override(
             small_window_tokens=300_000,
             small_window_warn_ratio=0.25,
             small_window_block_ratio=0.50,
+            extended_window_tokens=350_000,
+            extended_warn_tokens=15_000,
+            extended_block_tokens=20_000,
             warn_every_tool_calls=2,
         ),
     )

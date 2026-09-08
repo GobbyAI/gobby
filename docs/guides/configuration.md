@@ -417,18 +417,24 @@ session_lifecycle:
   transcript_archive_dir: ~/.gobby/session_transcripts
 
 context_handoff:
-  warn_tokens: 128000
+  warn_tokens: 200000
   block_tokens: 256000
   small_window_tokens: 256000
-  small_window_warn_ratio: 0.40
-  small_window_block_ratio: 0.80
+  small_window_warn_ratio: 0.50
+  small_window_block_ratio: 0.75
+  extended_window_tokens: 500000
+  extended_warn_tokens: 250000
+  extended_block_tokens: 300000
   warn_every_tool_calls: 5
 ```
 
 Context windows strictly below `context_handoff.small_window_tokens` use the
-configured warn and block ratios. Larger windows and sessions without a known
-window use the absolute token thresholds. Warnings repeat at every turn start
-and after each configured number of tool calls while pressure remains elevated.
+configured warn and block ratios. Windows from `small_window_tokens` up to but
+excluding `extended_window_tokens` use `warn_tokens` and `block_tokens`, as do
+sessions without a known valid window. Windows at or above
+`extended_window_tokens` use `extended_warn_tokens` and `extended_block_tokens`.
+Warnings repeat at every turn start and after each configured number of tool
+calls while pressure remains elevated.
 
 ### Tasks And Workflows
 

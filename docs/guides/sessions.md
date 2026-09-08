@@ -317,8 +317,10 @@ a staging retry does not duplicate feedback. The retired before-tool survey gate
 is no longer part of this path.
 
 Context pressure is configured under `context_handoff`. Windows below
-`small_window_tokens` use the ratio thresholds; larger and unknown windows use
-the absolute thresholds. Warnings repeat every turn start and every
+`small_window_tokens` use the ratio thresholds; standard windows below
+`extended_window_tokens` and unknown windows use `warn_tokens` and `block_tokens`;
+windows at or above `extended_window_tokens` use the extended thresholds. Warnings
+repeat every turn start and every
 `warn_every_tool_calls` calls. At the block threshold, only `set_handoff`,
 `feedback`, `get_handoff`, `review_task_memories`, `end_agent_run`, and MCP schema
 discovery remain callable. Plan mode, pipelines, and web-chat sessions skip this
