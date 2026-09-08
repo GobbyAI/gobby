@@ -6,14 +6,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use base64::Engine;
 use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, watch, Mutex};
 
 use super::config::HostConfig;
 use super::helpers::{
-    err, list_rows, named_key_bytes, native_entitlements, push_terminal_ansi, s, spawn_fingerprint,
-    truncate_title,
+    err, list_rows, native_entitlements, push_terminal_ansi, s, spawn_fingerprint, truncate_title,
 };
 #[cfg(feature = "vt-engine")]
 use super::spawn::{spawn_prepared, PreparedChild};
@@ -22,7 +20,7 @@ use crate::protocol::{
     validate_dimensions, ObservationReason, ObservationState, RenderEncoding, ServerMessage,
     CONTROL_DELIVERY_DEADLINE_MS, CONTROL_QUEUE_BYTES, CONTROL_QUEUE_ENTRIES, DELTA_LAG_TIMEOUT_MS,
     DELTA_QUEUE_BYTES, DELTA_QUEUE_ENTRIES, EVENT_QUEUE_BYTES, EVENT_QUEUE_ENTRIES,
-    LIFECYCLE_RESERVED_SLOTS, MAX_FRAME_SIZE, MAX_WRITE_BYTES, SNAPSHOT_DEFAULT_MAX_BYTES,
+    LIFECYCLE_RESERVED_SLOTS, MAX_FRAME_SIZE, SNAPSHOT_DEFAULT_MAX_BYTES,
     SNAPSHOT_DEFAULT_MAX_LINES,
 };
 
@@ -565,72 +563,6 @@ impl HostState {
     }
 
     #[allow(unused_variables, unused_mut)]
-    pub async fn write(&self, extra: &Map<String, Value>) -> Value {
-        let host_terminal_id = s(extra, "host_terminal_id");
-        let kind = s(extra, "kind");
-        let encoding = extra
-            .get("encoding")
-            .and_then(Value::as_str)
-            .unwrap_or("utf8-b64");
-        if encoding != "utf8-b64" {
-            return err("invalid_encoding");
-        }
-        let data_b64 = s(extra, "data");
-        let raw = match base64::engine::general_purpose::STANDARD.decode(data_b64.as_bytes()) {
-            Ok(bytes) => bytes,
-            Err(_) => return err("invalid_encoding"),
-        };
-        if raw.len() > MAX_WRITE_BYTES {
-            return err("request_too_large");
-        }
-        let text = String::from_utf8_lossy(&raw).into_owned();
-        let inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return err("not_found");
-        };
-        let Some(slot) = inner.terminals.get(&identity) else {
-            return err("not_found");
-        };
-        #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_ref() {
-            let payload = match kind.as_str() {
-                "paste" => {
-                    drop(inner);
-                    return self.write_paste(&host_terminal_id, text).await;
-                }
-                "key" => named_key_bytes(&text),
-                _ => {
-                    let mut data = text.into_bytes();
-                    if extra
-                        .get("submit")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                    {
-                        data.push(b'\n');
-                    }
-                    data
-                }
-            };
-            let _ = child.runtime.try_send_bytes(bytes::Bytes::from(payload));
-        }
-        json!({"ok": true, "written": true})
-    }
-
-    #[cfg(feature = "vt-engine")]
-    async fn write_paste(&self, host_terminal_id: &str, text: String) -> Value {
-        let inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(host_terminal_id).cloned() else {
-            return err("not_found");
-        };
-        let Some(slot) = inner.terminals.get(&identity) else {
-            return err("not_found");
-        };
-        if let Some(child) = slot.child.as_ref() {
-            let _ = child.runtime.try_send_paste(text);
-        }
-        json!({"ok": true, "written": true})
-    }
-
     #[allow(unused_variables, unused_mut)]
     pub async fn snapshot(&self, extra: &Map<String, Value>) -> Value {
         let host_terminal_id = s(extra, "host_terminal_id");

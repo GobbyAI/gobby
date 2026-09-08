@@ -94,6 +94,7 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["error"] == "agentic_review_required"
+    assert result["validator_run_id"] == "run"
     assert result["review_status"] == "running"
     assert "run_id" not in result
     assert "spawn_request" not in result
@@ -672,6 +673,7 @@ async def test_submit_close_review_claims_before_heavy_work(
         _write_test_bootstrap(gobby_home, temp_db.conninfo, port)
         environment = os.environ.copy()
         environment.pop("GOBBY_CONFIG_FILE", None)
+        environment.pop("GOBBY_DAEMON_URL", None)
         environment.update(
             {
                 "GOBBY_HOME": str(gobby_home),
