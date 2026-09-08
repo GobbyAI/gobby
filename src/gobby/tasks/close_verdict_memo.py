@@ -41,10 +41,6 @@ class CloseVerdictMemo(Protocol):
         """Record a freshly reviewed verdict against this evidence state."""
         ...
 
-    def get_previous(self) -> CloseVerdict | None:
-        """Return the latest prior verdict for inter-attempt continuity."""
-        ...
-
 
 class TaskCloseVerdictMemo:
     """Persist one task's criteria verdicts in ``task_close_reviews``.
@@ -84,9 +80,6 @@ class TaskCloseVerdictMemo:
             evidence_fingerprint=evidence_fingerprint,
         )
         return self._parse(payload)
-
-    def get_previous(self) -> CloseVerdict | None:
-        return self._parse(self._store.get_latest_memoized_verdict(task_id=self._task_id))
 
     def _parse(self, payload: object) -> CloseVerdict | None:
         if payload is None:

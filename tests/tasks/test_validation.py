@@ -144,7 +144,7 @@ async def _evaluate(
     )
 
 
-async def test_rejection_evidence_reaches_response_and_next_review(
+async def test_rejection_evidence_reaches_response_but_not_the_next_review(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -184,10 +184,9 @@ async def test_rejection_evidence_reaches_response_and_next_review(
     )
 
     second_prompt = json.loads(call_json_feature.await_args_list[1].args[1])
-    prior_requirements = second_prompt["prior_requirements"]
-    assert "Criterion 1" in prior_requirements
-    assert f"Gap: {_GAP}" in prior_requirements
-    assert f"Required evidence: {_REQUIRED_EVIDENCE}" in prior_requirements
+    assert second_prompt["prior_requirements"] == (
+        "No requirements were stated by a prior rejected review."
+    )
     complete_requirement = f"{_GAP} Required evidence: {_REQUIRED_EVIDENCE}"
     assert result.extra["blocking_reasons"] == [complete_requirement]
     assert result.extra["required_actions"] == [complete_requirement]

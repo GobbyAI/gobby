@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
@@ -25,9 +24,6 @@ from gobby.tasks.agentic_close_review import (
     build_terminal_review_payload,
     validator_spawn_overrides,
 )
-from gobby.tasks.close_verdict_memo import TaskCloseVerdictMemo
-from gobby.tasks.criteria_contract import split_validation_criteria
-from gobby.tasks.validation import render_prior_requirements
 from gobby.utils.session_context import get_current_agent_run_id, get_current_session_id
 
 logger = logging.getLogger(__name__)
@@ -98,27 +94,6 @@ async def launch_close_review(
     registry = ctx.agent_registry
     if registry is None:
         return _finish_launch_error(store, review, "Internal agent registry is unavailable.")
-    criteria = split_validation_criteria(task.validation_criteria or "")
-    prior_requirements = None
-    if criteria:
-        verdict_memo = TaskCloseVerdictMemo(
-            store,
-            task_id=task.id,
-            task_ref=task_ref,
-            caller_session_id=evaluation.resolved_session_id,
-            close_arguments={
-                "reason": close_arguments.get("reason"),
-                "changes_summary": close_arguments.get("changes_summary"),
-                "commit_sha": close_arguments.get("commit_sha"),
-                "project_path": close_arguments.get("project_path"),
-                "override_justification": close_arguments.get("override_justification"),
-                "scope_justification": close_arguments.get("scope_justification"),
-            },
-            criteria=criteria,
-        )
-        previous_verdict = await asyncio.to_thread(verdict_memo.get_previous)
-        if previous_verdict is not None:
-            prior_requirements = render_prior_requirements(previous_verdict)
     validation_commands = evaluation.extra.get("validation_commands")
     prompt = build_agentic_review_prompt(
         review_id=review.id,
@@ -131,7 +106,6 @@ async def launch_close_review(
         validation_commands=(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
-        prior_requirements=prior_requirements,
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
     )
     prompt_limit = (ctx.validation_config or TaskValidationConfig()).close_review_prompt_max_chars
