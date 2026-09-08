@@ -33,8 +33,15 @@ After reassembling `SKILL.md`, follow its topic index. Load only references whos
 </skills>
 
 <code_search>
-If the project has a code index, use `gcode` via Bash for fast symbol-level search and retrieval.
-Key commands: `gcode search "query"`, `gcode outline path/to/file`, and `gcode symbol-at path/to/file:line` after a search hit. Navigation defaults to compact text with lossless pages; run the printed continuation command exactly. Use `--format json` or `--verbose` only when IDs or diagnostics are required.
+If the project has a code index, choose the `gcode` lane from the query shape:
+- Known symbol: `gcode search-symbol "name"`.
+- Exact identifier occurrence: `gcode grep -w "identifier" -m 50`.
+- Exact literal or call site: `gcode grep -F "literal" -m 50`.
+- Repository text, docs, or config: `gcode search-content "text"`.
+- Fuzzy code concept: `gcode search "concept"` (hybrid symbol search).
+- parser-backed source structure: `gcode outline path/to/file`; for Markdown headings use `gcode grep '^#{1,6} ' path/to/file.md -m 200`.
+
+After irrelevant or empty results, switch lanes based on the query shape. Do not paraphrase the same `search` query or page through noise. Direct `gcode` calls do not require loading the `code-index` skill. Navigation defaults to compact text with lossless pages; run the printed continuation command exactly. Use `gcode symbol-at path/to/file:line` after a search hit, and use `--format json` or `--verbose` only when IDs or diagnostics are required.
 Use these instead of reading entire files — saves 90%+ tokens on large files.
 Run `gcode --help` for all available commands.
 </code_search>

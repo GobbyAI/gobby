@@ -13,7 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import AgentTaskClaimConflictError, TaskNotFoundError
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -881,11 +881,7 @@ class TestCreateTaskTool:
                 "status": "in_progress",
                 "claimed_by_session_id": "test-session",
             }
-            mock_task_manager.create_task_with_decomposition.return_value = {
-                "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
-            }
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.claim_task.return_value = mock_task
+            mock_task_manager.create_task_for_agent.return_value = mock_task
 
             result = await registry.call(
                 "create_task",
@@ -898,10 +894,10 @@ class TestCreateTaskTool:
             )
 
             assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
-            mock_task_manager.claim_task.assert_called_once_with(
-                "550e8400-e29b-41d4-a716-446655440021",
-                canonical_task_session.id,
-            )
+            claim_kwargs = mock_task_manager.create_task_for_agent.call_args.kwargs
+            assert claim_kwargs["session_id"] == canonical_task_session.id
+            assert claim_kwargs["title"] == "New Task"
+            mock_task_manager.claim_task.assert_not_called()
             assert mock_st_instance.link_task.call_count == 2
             mock_st_instance.link_task.assert_any_call(
                 canonical_task_session.id,
@@ -913,6 +909,50 @@ class TestCreateTaskTool:
                 "550e8400-e29b-41d4-a716-446655440021",
                 "claimed",
             )
+
+    @pytest.mark.asyncio
+    async def test_create_and_claim_refuses_second_task_without_creating_it(
+        self,
+        mock_task_manager: MagicMock,
+        canonical_task_session: Session,
+    ) -> None:
+        """A claim-capacity failure leaves task storage and session links untouched."""
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+        ) as MockSessionTaskManager:
+            mock_session_tasks = MagicMock()
+            MockSessionTaskManager.return_value = mock_session_tasks
+            mock_task_manager.create_task_for_agent.side_effect = AgentTaskClaimConflictError(
+                "550e8400-e29b-41d4-a716-446655440040",
+                "#40",
+            )
+            registry = create_task_registry(mock_task_manager)
+
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "Second claimed task",
+                    "category": "research",
+                    "claim": True,
+                    "validation_criteria": "The task is never created.",
+                },
+            )
+
+            assert result == {
+                "success": False,
+                "status": "error",
+                "error": "Session already owns open claimed task #40",
+                "error_code": "TASK_CLAIM_CONFLICT",
+                "claimed_task_id": "550e8400-e29b-41d4-a716-446655440040",
+                "claimed_task_ref": "#40",
+                "message": (
+                    "Task was not created. Finish and close task #40 before creating and "
+                    "claiming another task."
+                ),
+            }
+            mock_task_manager.create_task_with_decomposition.assert_not_called()
+            mock_task_manager.get_task.assert_not_called()
+            mock_session_tasks.link_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_sets_task_claimed_via_session_variables(
@@ -944,11 +984,7 @@ class TestCreateTaskTool:
             mock_task.seq_num = 101
             mock_task.status = "in_progress"
             mock_task.claimed_by_session_id = "test-session"
-            mock_task_manager.create_task_with_decomposition.return_value = {
-                "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
-            }
-            mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.claim_task.return_value = mock_task
+            mock_task_manager.create_task_for_agent.return_value = mock_task
 
             result = await registry.call(
                 "create_task",
@@ -997,11 +1033,8 @@ class TestCreateTaskTool:
             mock_task.validation_criteria = "Update src/gobby/tasks/demo.py"
             mock_task.additional_skills = ["context7"]
             mock_task.to_dict.return_value = {"id": mock_task.id, "title": mock_task.title}
-            mock_task_manager.create_task_with_decomposition.return_value = {
-                "task": {"id": mock_task.id},
-            }
+            mock_task_manager.create_task_for_agent.return_value = mock_task
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.claim_task.return_value = mock_task
 
             result = await registry.call(
                 "create_task",
@@ -1126,12 +1159,8 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_task.seq_num = 500
             mock_task.status = "in_progress"
             mock_task.claimed_by_session_id = "test-session"
-            mock_task_manager.create_task_with_decomposition.return_value = {
-                "task": {"id": mock_task.id},
-            }
-            mock_task_manager.get_task.return_value = mock_task
 
-            def claim_after_activity(*args: Any, **kwargs: Any) -> MagicMock:
+            def create_after_activity(*args: Any, **kwargs: Any) -> MagicMock:
                 mock_session_manager.update_session_status.assert_called_once_with(
                     "test-session",
                     "active",
@@ -1139,7 +1168,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
                 )
                 return mock_task
 
-            mock_task_manager.claim_task.side_effect = claim_after_activity
+            mock_task_manager.create_task_for_agent.side_effect = create_after_activity
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
@@ -1157,10 +1186,9 @@ class TestCreateTaskCrossProjectClaimBlocking:
                 # Task should be created and claimed
                 assert result["id"] == mock_task.id
                 assert "warning" not in result
-                mock_task_manager.claim_task.assert_called_once_with(
-                    mock_task.id,
-                    "test-session",
-                )
+                call_kwargs = mock_task_manager.create_task_for_agent.call_args.kwargs
+                assert call_kwargs["session_id"] == "test-session"
+                mock_task_manager.claim_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_task_claim_skipped_when_session_cannot_reactivate(

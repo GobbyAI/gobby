@@ -58,7 +58,8 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 | Installed skills | `gobby-skills.search_skills` | Skill names, descriptions, metadata | Finding local workflow guidance |
 | Skill hubs | `gobby-skills.search_hub`, `gobby skills search` | Configured external skill hubs | Finding installable skills |
 | MCP tools | `search_tools`, `recommend_tools` | Registered MCP tools | Tool discovery during agent work |
-| Code | `gcode search` | Indexed repository symbols and content | Source navigation |
+| Code symbols | `gcode search`, `gcode search-symbol`, `gcode search-text` | Indexed AST symbols | Fuzzy concepts, known names, and symbol metadata |
+| Code content | `gcode grep`, `gcode search-content` | Indexed repository text chunks | Exact identifiers/literals and ranked docs/config/source text |
 
 ## Unified Search Modes
 

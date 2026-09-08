@@ -28,12 +28,30 @@ The proxy validates every `call_tool`. Invalid arguments always return the curre
 <skills>
 `list_skills`, `get_skill`, and `search_skills` on `gobby-skills` are bootstrap tools. Call them directly through `call_tool`; they are exempt from the schema gate.
 
-Each `get_skill` request must use its own outer tool result. A skill is loaded only after its complete body is available in active context. Collapsed UI previews are presentation-only.
+Initial `get_skill` and `get_skill_file` lookups default to `brief=true`: instruction content stays exact while management metadata is omitted. Use `brief=false` only for management work.
+
+Each request returns one content page and must use its own outer tool result. Inspect `page.next_cursor`; while it is non-null, call the same tool again with only `cursor=<opaque cursor>`. Cursor continuation preserves the initial view. A skill is loaded only after the final entrypoint page is available in active context. Collapsed UI previews are presentation-only.
 
 For multiple skills, call `get_skill` sequentially in required order after deduplicating names. Do not use `Promise.all` or aggregate full responses into one wrapper output.
 
-When using an execution wrapper, emit only `structuredContent.result.skill.content`. If the complete body is absent or the result contains an explicit truncation marker such as `…N tokens truncated…`, retry that skill individually before continuing.
+When using an execution wrapper, emit the current page's `content` together with `page`, keeping one page per outer result. Reassemble pages in order. If content is absent or contains an explicit truncation marker such as `…N tokens truncated…`, restart that skill or file lookup individually.
+
+After reassembling `SKILL.md`, follow its topic index. Load only references whose stated conditions apply, using the exact `get_skill_file(name="<skill>", path="references/<topic>.md")` call, and follow each file cursor until null.
 </skills>
+
+<code_search>
+If the project has a code index, choose the `gcode` lane from the query shape:
+- Known symbol: `gcode search-symbol "name"`.
+- Exact identifier occurrence: `gcode grep -w "identifier" -m 50`.
+- Exact literal or call site: `gcode grep -F "literal" -m 50`.
+- Repository text, docs, or config: `gcode search-content "text"`.
+- Fuzzy code concept: `gcode search "concept"` (hybrid symbol search).
+- parser-backed source structure: `gcode outline path/to/file`; for Markdown headings use `gcode grep '^#{1,6} ' path/to/file.md -m 200`.
+
+After irrelevant or empty results, switch lanes based on the query shape. Do not paraphrase the same `search` query or page through noise. Direct `gcode` calls do not require loading the `code-index` skill. Navigation defaults to compact text with lossless pages; run the printed continuation command exactly. Use `gcode symbol-at path/to/file:line` after a search hit, and use `--format json` or `--verbose` only when IDs or diagnostics are required.
+Use these instead of reading entire files — saves 90%+ tokens on large files.
+Run `gcode --help` for all available commands.
+</code_search>
 
 <leases>
 Schema leases survive ordinary session resume and daemon restart. Context loss such as clear or compact resets schema leases, so fetch the schema again before the next ordinary call. Inventory observations from `list_tools` and `list_mcp_servers` are preserved.
@@ -48,12 +66,18 @@ get_tool_schema("gobby-tasks", "create_task")  # Learn required params
 call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "category": "code"})
 </common_mistakes>
 
+<call_context>
+`call_tool` session_id is wrapper context: it accepts #N, N, UUID, or prefix, propagates to the
+daemon for context/workflow resolution, and is auto-supplied to target arguments when the target
+schema requires it. Use arguments.session_id only to target a DIFFERENT session; local #N refs
+resolve in the caller project; address a session in another project as `<project>-S#N`
+(e.g. `gobby-S#11265`, project name or UUID) or by its full session UUID. Prefer
+`arguments` over its `args` alias (both accept dict or JSON string).
+</call_context>
+
 <variables>
 `set_variable` and `get_variable` are top-level tools — no progressive discovery needed.
 Call directly: set_variable(name="flag", value=true, session_id="#123")
-session_id is required for variable tools. Omit name in get_variable to return all variables.
-Both set_variable and get_variable accept an optional workflow parameter to scope reads and
-writes to a specific workflow instance.
 </variables>
 
 <rules>

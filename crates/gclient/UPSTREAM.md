@@ -40,6 +40,13 @@ Keep-set count: 15 accepted upstream files carve into 18 modules under
 (split modules repeat their source's header). 4 upstream UI modules are
 dropped. `tests/ui_carve_guard.rs` checks this table against the tree.
 
+Modules written for Gobby under `src/ui/` carry `// upstream: none` instead,
+optionally followed by what they were modelled on: `ui/hit.rs` (the hit map
+over `ViewState`) and `ui/context_menu.rs` (the right-click popup, adapted
+from herdr v0.9.0 `src/client/shell/overlays.rs::render_context_menu`, which
+post-dates the fork; v0.8.0 has no context menu). The guard accepts either
+header and still rejects a headerless module.
+
 ### Keymap provenance
 
 - Default chords are transcribed from herdr `src/config/model.rs`

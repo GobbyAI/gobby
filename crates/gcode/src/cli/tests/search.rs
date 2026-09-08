@@ -181,7 +181,7 @@ fn test_parse_search_path_flag_rejected() {
 }
 
 #[test]
-fn search_help_routes_literal_and_ranked_content_queries() {
+fn search_help_selects_symbol_and_content_lanes_explicitly() {
     let mut command = Cli::command();
     let help = command
         .find_subcommand_mut("search")
@@ -189,8 +189,9 @@ fn search_help_routes_literal_and_ranked_content_queries() {
         .render_help()
         .to_string();
 
-    assert!(help.contains("hybrid/fuzzy concept search"));
-    assert!(help.contains("gcode grep \"pattern\" [PATH...] -m 50"));
-    assert!(help.contains("exact literals, call sites, dotted config keys"));
+    assert!(help.contains("Hybrid symbol search"));
+    assert!(help.contains("gcode search-symbol \"name\" [PATH...]"));
+    assert!(help.contains("gcode grep -w identifier [PATH...] -m 50"));
+    assert!(help.contains("gcode grep -F \"literal\" [PATH...] -m 50"));
     assert!(help.contains("gcode search-content \"query\" [PATH...]"));
 }

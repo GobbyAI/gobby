@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Any, cast
 
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import AgentTaskClaimMutation, HubDatabase
+from gobby.storage.tasks._agent_claims import ensure_agent_claim_available
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
@@ -165,6 +166,26 @@ def claim_task(
         raise TaskAlreadyClaimedError(task_id, current_owner)
 
     return get_task(db, task_id)
+
+
+def claim_task_for_agent(
+    db: HubDatabase,
+    task_id: str,
+    session_id: str,
+    *,
+    force: bool = False,
+    expected_owner: str | None = None,
+) -> Task:
+    """Atomically claim a task while enforcing one open claim for the session."""
+    with db.transaction_immediate(AgentTaskClaimMutation(session_id)) as conn:
+        ensure_agent_claim_available(conn, session_id, target_task_id=task_id)
+        return claim_task(
+            db,
+            task_id,
+            session_id,
+            force=force,
+            expected_owner=expected_owner,
+        )
 
 
 def release_task_claim(

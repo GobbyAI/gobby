@@ -22,13 +22,21 @@ are pinned in `gcode.contract.json` and asserted by drift tests.
 ### Query surfaces
 
 - `contract`, `index` — project and index metadata
-- `search`, `search-symbol`, `search-text`, `search-content` — paged ranked results
-  (`project_id, total, offset, limit, next_offset, budget_exceeded, results[]`, each hit carrying `id, name,
-  qualified_name, kind, language, file_path, line_start, line_end, signature,
-  score`)
+- `search` — paged hybrid symbol results from symbol BM25, semantic symbol vectors,
+  and graph lanes; content chunks are never merged into its ranking or pagination
+- `search-symbol`, `search-text` — paged symbol results for exact-first and BM25
+  symbol-metadata lookup
+- `search-content` — paged BM25 results over repository content chunks
+
+All four ranked query surfaces use the `project_id, total, offset, limit,
+next_offset, budget_exceeded, results[]` envelope. Each hit carries `id, name,
+qualified_name, kind, language, file_path, line_start, line_end, signature,
+score`.
 - `grep` — paged exact pattern matches with intact spans and context blocks
-- `outline` — paged top-level subtrees containing `id, name, kind, line_start,
-  line_end, signature` symbols
+- `outline` — AST-only paged top-level subtrees for parser-backed source files,
+  containing `id, name, kind, line_start, line_end, signature` symbols. Markdown
+  and other content-only files return success with no symbols and a stderr
+  redirect; use `gcode grep '^#{1,6} ' <FILE> -m 200` for Markdown headings
 - `symbol` — a stored symbol record plus the on-disk `source` snippet
 - `symbol-at` — same as `symbol`, plus a `lookup` block describing how the
   location resolved
@@ -93,6 +101,12 @@ and exposes a retrieval path through `next_offset` or an exact shell-safe text
 continuation command. `budget_exceeded` is present only when a complete item or
 page metadata exceeds the requested budget. `grep -m/--max-count` remains an
 alias for canonical `--limit`.
+
+Search diagnostics do not change result ordering, pagination, keys, or exit
+codes. Snake_case inputs redirect to shell-safe `search-symbol` and `grep -w`
+commands; literal-like inputs redirect to `grep -F`; empty symbol results and
+content-only paths redirect to `search-content`. Text diagnostics go to stderr
+and honor `--quiet`; JSON keeps the redirect in the existing `hint` field.
 
 ## Embeddings Doctor
 

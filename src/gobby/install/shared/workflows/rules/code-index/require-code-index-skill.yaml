@@ -127,7 +127,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("code-index") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, use compact `gcode grep "pattern" [PATH...] -m 50` (supports -F -i -w -l -A/-B/-C -g), `gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, or `gcode symbol-at path/to/file:line`; run printed continuation commands exactly.'
+        reason: '{{ skill_fetch_directive("code-index") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, choose by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
 
   prefer-gcode-for-code-search:
     description: "Block broad shell search in indexed projects after code-index is loaded"
@@ -148,7 +148,7 @@ rules:
       and not paths_written_this_turn(event.data.get('canonical_file_paths'))
     effects:
       - type: block
-        reason: 'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; exit 0 even with no matches) or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap pages. Patterns are Rust regex, not grep BRE: write alternation as `a|b`, because `a\|b` matches a literal pipe and silently returns nothing. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
+        reason: 'Choose by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search). After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. Bare grep patterns are Rust regex, not grep BRE: write alternation as `a|b`, because `a\|b` matches a literal pipe and silently returns nothing. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
 
   prefer-gcode-for-file-navigation:
     description: "Block gcode-replicable find navigation in indexed checkouts"

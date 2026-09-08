@@ -27,7 +27,7 @@ token-efficient access to symbols, docs, configs, content chunks, and dependency
 graphs.
 
 ```
-$ gcode search "handleAuth"
+$ gcode search-symbol "handleAuth"
 src/auth/middleware.ts:42 [function] handleAuth
 ```
 
@@ -47,7 +47,7 @@ codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / 
 
 1. **Index** — Walk files, parse ASTs with tree-sitter, and chunk safe repo text
 2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
-3. **Search** — Hybrid ranking: pg_search BM25 + required semantic/graph sources that can degrade → exact-tiered RRF results with raw `rrf_score` metadata
+3. **Search** — Hybrid symbol ranking: symbol BM25 + required semantic/graph sources that can degrade → exact-tiered RRF results with raw `rrf_score` metadata; content chunks stay in `grep` and `search-content`
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
 ## Installation
@@ -104,13 +104,24 @@ gcode is installed automatically as part of the [Gobby](https://github.com/Gobby
 
 ## Usage
 
+Choose the command from the query shape:
+
+| Intent | Command |
+|---|---|
+| Known symbol | `gcode search-symbol "name"` |
+| Exact identifier occurrence | `gcode grep -w "identifier" -m 50` |
+| Exact literal or call site | `gcode grep -F "literal" -m 50` |
+| Repository text, docs, or config | `gcode search-content "text"` |
+| Fuzzy code concept | `gcode search "concept"` |
+| Parser-backed source structure | `gcode outline path/to/file` |
+
 ```bash
 # Index a Gobby-registered checkout and install the gcode skill
 # (run `gobby init` in the checkout first; gcode never creates identities)
 gcode init
 
 # Search
-gcode search "query"                      # Hybrid: BM25 + semantic + graph boost
+gcode search "query"                      # Hybrid symbol search: BM25 + semantic + graph boost
 gcode search "query" --kind function      # Filter by symbol kind
 gcode search "query" --language rust      # Filter by source language
 gcode search "query" src/**/*.rs          # Filter by path or glob
@@ -122,12 +133,14 @@ gcode search-text "query"                 # BM25 on symbol names/signatures
 gcode search-text "query" crates/gcode/src
 gcode grep "pattern"                      # Exact indexed content grep
 gcode grep -w note_path [PATH...]         # ASCII identifier whole-word grep
+gcode grep -F "literal(call)" [PATH...]   # Exact literal or call-site grep
 gcode grep '\bnote_path\b' src -m 50      # Rust regex word boundaries are supported
 gcode search-content "query"              # BM25 on source, comments, skill files, docs/Markdown, configs, CSS, SQL, and extensionless text
 gcode search-content "query" docs/**/*.md crates/gcode/src
 
 # Symbol retrieval
-gcode outline src/auth.ts                 # Hierarchical symbol tree
+gcode outline src/auth.ts                 # Hierarchical AST symbol tree
+gcode grep '^#{1,6} ' docs/guide.md -m 200 # Markdown headings (content-only)
 gcode symbol-at src/auth.ts:42            # Symbol containing or nearest to a line
 gcode symbol <id>                         # Source code by symbol ID
 gcode symbols <id1> <id2> ...             # Batch source; reports stale IDs
@@ -238,7 +251,7 @@ Gobby daemon          → grants, auto-indexing triggers, config/secrets, sessio
 
 Gobby adds scheduling, shared runtime config, semantic services, and infrastructure that makes gcode better at its core job. Rust still owns code graph/vector projection writes; daemon and UI callers delegate that work to gcode APIs or commands.
 
-**Search quality improves.** With FalkorDB, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
+**Search quality improves.** With FalkorDB, `gcode search` blends BM25 symbol matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar symbols even when the exact words don't match. Repository prose and other content chunks remain a separate `search-content` lane.
 
 **Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials come from the daemon grant and served config. No env vars to juggle.
 
