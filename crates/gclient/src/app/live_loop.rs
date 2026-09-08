@@ -1,6 +1,7 @@
 //! Interactive Tokio loop for the authenticated live daemon transport.
 
 use std::io::Write as _;
+use std::path::Path;
 use std::time::Duration;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -17,6 +18,7 @@ use crate::daemon::{Daemon, DaemonError, DaemonEvent, EventReceiver, Generation,
 use crate::frame_source::{FrameError, FrameSource};
 use crate::input::key_to_bytes_with_protocol;
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
+use crate::teardown::MouseCaptureSwitch;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::attention::route_response_input;
@@ -27,10 +29,14 @@ use super::{PaneId, Workspace};
 
 mod actions;
 mod control;
+pub(super) mod modal_input;
 pub(super) mod mouse;
 
-use actions::{apply_live_mouse_outcome, handle_live_action, sync_live_chrome};
+use actions::{
+    apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action, sync_live_chrome,
+};
 use control::{apply_live_write_outcome, focus_live_pane, send_live_input, send_live_write};
+use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
@@ -58,6 +64,10 @@ impl WorkspaceView for Workspace<LiveDaemon> {
 
     fn daemon_ready(&self) -> bool {
         Workspace::<LiveDaemon>::daemon_ready(self)
+    }
+
+    fn gobby_home(&self) -> Option<&Path> {
+        self.gobby_home()
     }
 }
 
@@ -138,6 +148,7 @@ pub async fn run_live_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     chrome: &mut Chrome,
     mut input: mpsc::Receiver<RawInputEvent>,
+    switch: &mut dyn MouseCaptureSwitch,
 ) -> Result<(), FrameError> {
     let daemon = workspace.daemon().clone();
     let mut loop_error = None;
@@ -306,6 +317,13 @@ pub async fn run_live_loop<B: Backend>(
                     workspace.latch_exit(error.to_string());
                     loop_error = Some(error);
                 }
+            }
+        }
+        // The settings toggle only records the wish; the terminal flag is
+        // flipped here, outside any borrow of the chrome.
+        if let Some(on) = chrome.pending_mouse_capture.take() {
+            if let Err(error) = switch.set_mouse_capture(on) {
+                chrome.status_message = Some(error.to_string());
             }
         }
     }
@@ -536,6 +554,11 @@ async fn route_live_input(
                 .await
                 .map_err(FrameError::from)?;
             return Ok(false);
+        }
+        let outcome = route_modal_key(&*workspace, chrome, &input);
+        if outcome != ModalOutcome::Passthrough {
+            *prefix_armed = false;
+            return apply_live_modal_outcome(workspace, chrome, outcome).await;
         }
         match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
             Resolution::Prefix => {

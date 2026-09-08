@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEven
 use gobby_client::app::run_live_loop;
 use gobby_client::app::run_loop::RENDER_TICK;
 use gobby_client::daemon::LiveDaemon;
+use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::attention_label;
 use gobby_client::ui::dialogs::Dialog;
 use gobby_client::ui::sidebar::{attention_body_rect, expanded_sections};
@@ -132,8 +133,15 @@ async fn respond_reaches_daemon() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -286,8 +294,15 @@ async fn attention_click_jumps_and_labels_the_terminal() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");

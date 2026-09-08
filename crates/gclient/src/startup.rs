@@ -500,6 +500,6 @@ pub fn run() -> anyhow::Result<()> {
     }
     let env = resolve_probe_env(&args)?;
     let health = HttpHealthClient::new();
-    let (ready, _guard) = start_session(args, env, &health, CrosstermBackend)?;
-    crate::views::run_ready(ready)
+    let (ready, mut guard) = start_session(args, env, &health, CrosstermBackend)?;
+    crate::views::run_ready(ready, &mut guard)
 }

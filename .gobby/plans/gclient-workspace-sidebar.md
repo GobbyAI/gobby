@@ -273,6 +273,9 @@ Targets:
 - `src/gobby/terminals/tmux_runtime.py::*` — scope-reason: `TmuxTerminalRuntime.prepare_spawn` threads the validated rows/cols through and reads back the created pane size
 - `src/gobby/agents/tmux/session_manager.py::TmuxSessionManager.create_session`
 - `src/gobby/agents/tmux/session_activation.py::activate_session`
+- `src/gobby/agents/tmux/spawner.py::*` — scope-reason: the agent-spawn call site of `create_session` keeps the 200x50 default and is verified unchanged
+- `tests/agents/test_tmux.py::*` — scope-reason: existing `create_session` cases keep passing with the default geometry
+- `tests/agents/test_tmux_integration.py::*` — scope-reason: existing spawn cases keep passing with the default geometry
 - `tests/terminals/test_tmux_runtime.py::*` — scope-reason: new test functions appended
 
 Absorbs #21914. `prepare_spawn` validates the requested rows/cols and then drops them while
@@ -447,6 +450,7 @@ Targets:
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: the pane records `sized_by`
 - `crates/gclient/src/views/grid.rs::render`
 - `crates/gclient/src/ui/panes.rs::render_panes`
+- `crates/gclient/src/ui/tab_surface.rs::*` — scope-reason: the tab-surface caller of `render_panes` passes the pane rects through unchanged
 - `crates/gclient/tests/client_loop.rs::*` — scope-reason: new test functions appended
 
 Carries mouse-parity 4.4. Every live capture in the parity review shows only the focused
@@ -717,6 +721,7 @@ Targets:
 - `crates/gclient/src/ui/keymap.rs::*` — scope-reason: `Keymap::defaults` takes the effective prefix; `DEFAULT_PREFIX` is replaced by the prefix module's function; `build` accepts the effective prefix
 - `crates/gclient/src/ui/keymap/prefix.rs`
 - `crates/gclient/src/tmux_identity.rs::current`
+- `crates/gclient/src/frame_source.rs::*` — scope-reason: the frame-source caller of `tmux_identity::current` is unchanged; listed as its other consumer
 - `crates/gclient/src/startup.rs::prepare_at`
 - `crates/gclient/src/key_input.rs::*` — scope-reason: literal-prefix passthrough and the `ctrl+\` escape join terminal mode
 - `crates/gclient/src/ui/keybind_help.rs::*` — scope-reason: entries render the live prefix
@@ -871,6 +876,7 @@ Activation dispatches through the project helpers of 3.3 (`FocusProject`,
 Targets:
 - `crates/gclient/src/views/grid.rs::render`
 - `crates/gclient/src/ui/panes.rs::render_panes`
+- `crates/gclient/src/ui/tab_surface.rs::*` — scope-reason: the tab-surface caller of `render_panes` is unchanged; the clear happens inside `render_panes`
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: the pane records the last painted rect
 - `crates/gclient/tests/client_loop.rs::*` — scope-reason: new test functions appended
 
@@ -940,3 +946,392 @@ inventory hash updated), Python route tests per P1 leaf, `tests/e2e/test_termina
 | 4.3 | #21923 (re-parented at expansion) | open |
 | plan artifact | #21908 (closes on materialization + validate) | open |
 | D1 | #20202 | open, blocked |
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Add ahead and behind counts to source-control status
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The status payload carries `ahead` and `behind` for
+    a branch with an upstream and `null` for one without, with the existing fields
+    unchanged. symbol: `src/gobby/servers/routes/source_control.py::get_status`. test:
+    `tests/servers/routes/test_source_control_routes.py::test_status_reports_ahead_behind`.'
+  labels:
+  - covers:gclient-workspace-sidebar:1.1:1.1.1
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Add the client worktree create route
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Posting a valid body creates a `client` worktree, returns
+    its row and publishes `worktree_event created`; the conflict, missing-project
+    and invalid-branch cases return 409, 404 and 400. file: `src/gobby/servers/routes/source_control_worktrees.py`.
+    test: `tests/servers/routes/test_source_control_routes.py::test_create_client_worktree`.
+
+    1.2.2: Deleting a `client` worktree that still hosts a live gobby-owned terminal
+    returns 409 `terminals_live`; after the terminal exits the delete succeeds. file:
+    `src/gobby/servers/routes/source_control_worktrees.py`. test: `tests/servers/routes/test_source_control_routes.py::test_delete_client_worktree_refuses_live_terminals`.'
+  labels:
+  - covers:gclient-workspace-sidebar:1.2:1.2.1
+  - covers:gclient-workspace-sidebar:1.2:1.2.2
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Add the project init route
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.3.1: Initializing a fresh directory returns the project
+    payload with this machine''s checkout and publishes `project_event checkout_registered`;
+    a relative or missing path is 400 and a directory already bound to another project
+    is 409. file: `src/gobby/servers/routes/projects.py`. test: `tests/servers/routes/test_projects_routes.py::test_init_project_route`.'
+  labels:
+  - covers:gclient-workspace-sidebar:1.3:1.3.1
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Arbitrate terminal size by viewer precedence
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.5'
+  validation_criteria: '1.4.1: With a web and a gclient attachment on one terminal,
+    a gclient resize is recorded but not applied while the web attachment holds the
+    owner slot; the web resize is applied; after the web attachment finalizes the
+    gclient geometry is applied. symbol: `src/gobby/terminals/leases.py::TerminalLeaseRegistry.resize_pty`.
+    test: `tests/terminals/test_lease_authority.py::test_sizing_owner_follows_viewer_precedence`.
+
+    1.4.2: A gclient resize of an `external` tmux row pins the window to manual size
+    and resizes it; finalizing the last gclient attachment unsets `window-size`; native
+    rows are resized through the PTY without the pin. file: `src/gobby/servers/websocket/terminal_sizing.py`.
+    test: `tests/servers/test_terminal_ws_resize.py::test_external_tmux_row_resizes_and_releases`.
+
+    1.4.3: The web hook sends `viewer: "web"` on attach and keeps sending `terminal_resize`
+    on fit. file: `web/src/hooks/tmuxSessionMessages.ts`. test: `web/src/hooks/__tests__/useTmuxSessions.test.ts::attach
+    declares the web viewer`.'
+  labels:
+  - covers:gclient-workspace-sidebar:1.4:1.4.1
+  - covers:gclient-workspace-sidebar:1.4:1.4.2
+  - covers:gclient-workspace-sidebar:1.4:1.4.3
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: fullstack
+- title: Make tmux spawns honour their request and report their real geometry
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.5.1: A tmux spawn requesting rows 24 cols 80 creates a pane
+    tmux reports as 80x24 and the terminals row carries 80x24; an agent spawn without
+    a request creates 200x50 and the row carries 200x50; the request-to-row agreement
+    test fails if they diverge. symbol: `src/gobby/terminals/tmux_runtime.py::TmuxTerminalRuntime.prepare_spawn`.
+    test: `tests/terminals/test_tmux_runtime.py::test_spawn_geometry_matches_request_and_row`.'
+  labels:
+  - covers:gclient-workspace-sidebar:1.5:1.5.1
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Allow the Ghostty Zig dependency host in managed sandbox builds
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.6.1: With `allow_package_registries` on, the SRT policy
+    allows `deps.files.ghostty.org` and still denies an unrelated control host; with
+    it off both are denied. symbol: `src/gobby/agents/sandbox_policy.py::allowed_domains`.
+    test: `tests/agents/test_sandbox_policy.py::test_ghostty_dependency_host_grant`.'
+  labels:
+  - covers:gclient-workspace-sidebar:1.6:1.6.1
+  tdd: true
+  source_section: '1.6'
+  assigned_agent: backend-developer
+- title: Build the typed roster and the sidebar model
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '5.2'
+  validation_criteria: '2.1.1: A roster entry with `attention == null` renders `idle`/`working`,
+    only an entry with `attention` set renders `blocked`, and an entry without a `terminal`
+    never becomes an agent row. symbol: `crates/gclient/src/app/sidebar_model.rs::agent_state`.
+    test: `crates/gclient/tests/sidebar_model.rs::agent_state_follows_attention_and_terminal`.
+
+    2.1.2: From mock responses for projects, status, worktrees, sessions, runs and
+    the roster, `build` yields projects with branch and ahead/behind, worktree children
+    with task refs, and agents grouped to the right project with the joined ref, title
+    and machine id. symbol: `crates/gclient/src/app/sidebar_model.rs::build`. test:
+    `crates/gclient/tests/sidebar_model.rs::build_joins_projects_worktrees_and_agents`.
+
+    2.1.3: A `worktree_event` or `project_event` on the live socket refetches the
+    affected project''s status and worktrees once per tick; stale roster entries the
+    daemon no longer returns are dropped on every attention refetch. symbol: `crates/gclient/src/app/live.rs::apply_live_event`.
+    test: `crates/gclient/tests/client_loop.rs::sidebar_model_follows_daemon_events`.'
+  labels:
+  - covers:gclient-workspace-sidebar:2.1:2.1.1
+  - covers:gclient-workspace-sidebar:2.1:2.1.2
+  - covers:gclient-workspace-sidebar:2.1:2.1.3
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: frontend
+- title: Give each project its tab set, restore the snapshot, open one shell on first
+    run
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Starting against a daemon with eight roster terminals
+    and no snapshot opens exactly one tab holding one freshly spawned shell in the
+    focused project; the eight terminals appear only as agent rows. symbol: `crates/gclient/src/app/live_loop/actions.rs::sync_live_chrome`.
+    test: `crates/gclient/tests/client_loop.rs::first_run_opens_one_shell_and_never_auto_opens`.
+
+    2.2.2: Two projects keep separate tab sets: focusing the second project swaps
+    the tab bar, a tab opened from its agent row lands in its set, and refocusing
+    the first restores its tabs and active tab. symbol: `crates/gclient/src/app/project_tabs.rs::ProjectTabs`.
+    test: `crates/gclient/tests/client_loop.rs::tab_sets_follow_the_focused_project`.
+
+    2.2.3: A snapshot with two tabs (one split) round-trips through `save_snapshot`/`load_snapshot`
+    and is rebuilt on startup with the split intact and a vanished terminal dropped.
+    symbol: `crates/gclient/src/persist.rs::WorkspaceSnapshot`. test: `crates/gclient/tests/persist.rs::snapshot_restores_tab_layouts`.'
+  labels:
+  - covers:gclient-workspace-sidebar:2.2:2.2.1
+  - covers:gclient-workspace-sidebar:2.2:2.2.2
+  - covers:gclient-workspace-sidebar:2.2:2.2.3
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: frontend
+- title: Every shown pane renders its frame and sizes its terminal
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '2.2'
+  validation_criteria: '2.3.1: After startup and after every slot change each live
+    pane has received `SetViewport` with its inner rect and a `terminal_resize` of
+    the same size with `viewer: "gclient"`, for tmux and native panes alike, held
+    or observing (the scripted daemon records the messages). symbol: `crates/gclient/src/app/run_loop.rs::propagate_geometry`.
+    test: `crates/gclient/tests/client_loop.rs::every_shown_pane_sizes_its_terminal`.
+
+    2.3.2: With two panes fed by two frame sources both bodies render their frame
+    text; a mismatched frame renders `frame_size_mismatch`; a frameless live pane
+    renders `waiting for frames`; a `terminal_resize_result` with `applied: false`
+    renders the `sized by web` note and keeps the crop. symbol: `crates/gclient/src/views/grid.rs::render`.
+    test: `crates/gclient/tests/client_loop.rs::both_panes_render_and_report_size_owner`.'
+  labels:
+  - covers:gclient-workspace-sidebar:2.3:2.3.1
+  - covers:gclient-workspace-sidebar:2.3:2.3.2
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: frontend
+- title: Render the projects section
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '3.1.1: A model with two projects, one carrying a worktree
+    child and ahead/behind counts, renders the two-line rows, the indented child with
+    its task ref, the group toggle and the focused-row background exactly as the `projects_agents`
+    golden pins; the collapsed rail lists the projects. symbol: `crates/gclient/src/ui/sidebar/projects.rs`.
+    test: `crates/gclient/tests/screens.rs::projects_agents_golden`.
+
+    3.1.2: Clicking a project row focuses it and swaps the tab set, clicking its worktree
+    child opens a shell tab in the worktree path, the group toggle collapses and expands,
+    drag reorder persists, and `navigate_down` plus `enter` focus the next project.
+    symbol: `crates/gclient/src/app/live_loop/mouse/pointer.rs::down`. test: `crates/gclient/tests/parity/sidebar.rs::project_rows_focus_toggle_and_reorder`.
+
+    3.1.3: `expanded_sidebar_workspace_rows_show_state_before_name_without_numbers`
+    passes with its `#[deferred]` marker removed and `parity::deferred_cases_are_still_red`
+    stays green. file: `crates/gclient/tests/parity/chrome.rs`. test: `crates/gclient/tests/parity/chrome.rs::expanded_sidebar_workspace_rows_show_state_before_name_without_numbers`.'
+  labels:
+  - covers:gclient-workspace-sidebar:3.1:3.1.1
+  - covers:gclient-workspace-sidebar:3.1:3.1.2
+  - covers:gclient-workspace-sidebar:3.1:3.1.3
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: frontend
+- title: Render the agents section with the machine filter
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Agents of another project or another machine are hidden
+    under the default filter, appear under `all` with the machine token, and the sort
+    toggle reorders blocked rows first. symbol: `crates/gclient/src/ui/sidebar/agents.rs`.
+    test: `crates/gclient/tests/parity/sidebar.rs::agent_rows_follow_project_and_machine_filter`.
+
+    3.2.2: Clicking a blocked agent row focuses its pane and opens the respond dialog;
+    clicking an idle row only focuses; the label shows the session ref and title and
+    never a raw UUID. symbol: `crates/gclient/src/ui/chrome.rs::attention_pane`. test:
+    `crates/gclient/tests/attention_flow.rs::agent_row_click_jumps_and_labels_the_session`.
+
+    3.2.3: `agent_sort` round-trips through prefs.toml and the settings row, and an
+    unknown value is rejected with the line-numbered prefs error. file: `crates/gclient/src/prefs.rs`.
+    test: `crates/gclient/tests/startup.rs::agent_sort_pref_round_trips`.'
+  labels:
+  - covers:gclient-workspace-sidebar:3.2:3.2.1
+  - covers:gclient-workspace-sidebar:3.2:3.2.2
+  - covers:gclient-workspace-sidebar:3.2:3.2.3
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: frontend
+- title: Add project and worktree actions and dialogs
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  - '3.2'
+  validation_criteria: '3.3.1: The new-project dialog renders herdr''s title and,
+    on enter, calls the init route and focuses the created project with one shell
+    tab; `workspace_creation_dialog_renders_new_workspace_title` passes unmarked.
+    symbol: `crates/gclient/src/ui/dialogs/project.rs`. test: `crates/gclient/tests/client_loop.rs::new_project_dialog_inits_and_focuses`.
+
+    3.3.2: New, open and remove worktree flows call the daemon routes and update the
+    child rows; remove refuses to proceed until the terminals inside are gone. symbol:
+    `crates/gclient/src/app/live_loop/projects.rs`. test: `crates/gclient/tests/client_loop.rs::worktree_flows_round_trip_the_daemon`.
+
+    3.3.3: Closing a project with worktree children shows the group-scoped confirm
+    text and terminates only gobby-owned terminals; `confirm_close_text_reports_parent_group_scope`
+    passes unmarked. file: `crates/gclient/tests/parity/dialogs.rs`. test: `crates/gclient/tests/parity/dialogs.rs::confirm_close_text_reports_parent_group_scope`.'
+  labels:
+  - covers:gclient-workspace-sidebar:3.3:3.3.1
+  - covers:gclient-workspace-sidebar:3.3:3.3.2
+  - covers:gclient-workspace-sidebar:3.3:3.3.3
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: frontend
+- title: Modal input routers and the live settings toggle
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '4.1.1: Each modal mode consumes its keys as listed: help and
+    navigator filter on typing, the navigator''s enter focuses the row, confirm-close
+    accepts and cancels, rename commits the edited text, resize steps the ratio, navigate
+    moves the sidebar selection. symbol: `crates/gclient/src/app/live_loop/modal_input.rs`.
+    test: `crates/gclient/tests/parity/dialogs.rs::modal_keys_drive_every_mode`.
+
+    4.1.2: Toggling `mouse capture` in settings flips capture on the guard immediately
+    and persists `mouse_capture` in the prefs file; toggling it back re-enables capture.
+    symbol: `crates/gclient/src/app/live_loop.rs::run_live_loop`. test: `crates/gclient/tests/client_loop.rs::settings_toggle_switches_mouse_capture_and_saves_prefs`.
+
+    4.1.3: Clicking a settings row selects and activates it with the same effect as
+    enter (a boolean flips, `theme` cycles) and a click outside the dialog closes
+    it. symbol: `crates/gclient/src/app/live_loop/modal_input.rs`. test: `crates/gclient/tests/parity/dialogs.rs::settings_rows_respond_to_clicks`.'
+  labels:
+  - covers:gclient-workspace-sidebar:4.1:4.1.1
+  - covers:gclient-workspace-sidebar:4.1:4.1.2
+  - covers:gclient-workspace-sidebar:4.1:4.1.3
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: frontend
+- title: Load keymap overrides at startup and on reload
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.3'
+  validation_criteria: '4.2.1: With an override file that rebinds `help` and `new_project`,
+    `Ready::keymap` carries the new chords and the live chrome resolves them after
+    startup and after `reload_config`; a malformed file is a `StartupError::Keymap`
+    naming the path; a missing file yields the defaults. symbol: `crates/gclient/src/startup.rs::prepare_at`.
+    test: `crates/gclient/tests/startup.rs::keymap_overrides_load_or_fail_loud`.
+
+    4.2.2: `Keymap::load_overrides` on the resolved path is the only keymap source
+    at startup: the override chord wins over the default chord for the same action.
+    file: `crates/gclient/src/views/mod.rs`. test: `crates/gclient/tests/keymap.rs::override_chord_replaces_default_chord`.'
+  labels:
+  - covers:gclient-workspace-sidebar:4.2:4.2.1
+  - covers:gclient-workspace-sidebar:4.2:4.2.2
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: frontend
+- title: Break the nested-tmux prefix lockout
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: With an outer tmux identity present and no override,
+    the effective prefix is `ctrl+]` and help, settings, tab switching and release-control
+    are reachable; with an override the override wins; without nesting it stays `ctrl+b`.
+    symbol: `crates/gclient/src/ui/keymap/prefix.rs`. test: `crates/gclient/tests/keymap.rs::nested_tmux_shifts_the_prefix_unless_overridden`.
+
+    4.3.2: In a held pane `prefix prefix` reaches the pane as the literal chord and
+    `ctrl+\` releases control without the prefix. file: `crates/gclient/src/key_input.rs`.
+    test: `crates/gclient/tests/client_loop.rs::held_pane_has_literal_prefix_and_keyboard_escape`.'
+  labels:
+  - covers:gclient-workspace-sidebar:4.3:4.3.1
+  - covers:gclient-workspace-sidebar:4.3:4.3.2
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: frontend
+- title: Context menu state, items and dispatch for panes, tabs and empty chrome
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '5.1.1: Right-clicking a pane, a tab and empty chrome opens
+    the menu with exactly the listed items for that target and state (held vs observe,
+    blocked vs plain, zoomed vs not, labelled vs not). symbol: `crates/gclient/src/app/live_loop/menu.rs::build_menu`.
+    test: `crates/gclient/src/app/live_loop/menu.rs::menus_list_items_per_target_and_state`.
+
+    5.1.2: Hover follows the pointer, clicking `close pane` terminates the pane''s
+    terminal and reaps the slot, `close tab` runs the confirm-close path, `split right`
+    spawns into a split, keys navigate and activate, and a click outside closes the
+    menu. symbol: `crates/gclient/src/app/live_loop/mouse/pointer.rs::right_down`.
+    test: `crates/gclient/tests/client_loop.rs::context_menu_dispatches_items_and_closes_outside`.'
+  labels:
+  - covers:gclient-workspace-sidebar:5.1:5.1.1
+  - covers:gclient-workspace-sidebar:5.1:5.1.2
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: frontend
+- title: Context menu rendering
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: The rendered menu sits at the anchor, flips to stay
+    inside the frame at the right and bottom edges, marks the selected row with accent
+    plus reversal and disabled rows with dim, and its item rects match the drawn rows.
+    symbol: `crates/gclient/src/ui/context_menu.rs`. test: `crates/gclient/tests/parity/dialogs.rs::context_menu_renders_anchored_and_clamped`.'
+  labels:
+  - covers:gclient-workspace-sidebar:5.2:5.2.1
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: frontend
+- title: Row context menus and the projects footer menu
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: "5.3.1: Right-clicking a project row, a worktree row, an agent\
+    \ row and the projects footer opens the menu with exactly the listed items for\
+    \ that target and state (children vs none, blocked vs plain, held vs observe).\
+    \ symbol: `crates/gclient/src/app/live_loop/menu.rs::build_menu`. test: `crates/gclient/src/app/live_loop/menu.rs::row_menus_list_items_per_target_and_state`.\n\
+    5.3.2: `new worktree`, `delete worktree checkout\u2026`, `close` on a project,\
+    \ `open in new tab` and `mark seen` dispatch to the project and agent helpers\
+    \ and reach the daemon. symbol: `crates/gclient/src/app/live_loop/projects.rs`.\
+    \ test: `crates/gclient/tests/client_loop.rs::row_menus_dispatch_project_and_agent_actions`."
+  labels:
+  - covers:gclient-workspace-sidebar:5.3:5.3.1
+  - covers:gclient-workspace-sidebar:5.3:5.3.2
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: frontend
+- title: Clear stale cells when a pane's frame shrinks or moves
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '6.1.1: After a pane receives a 40x10 frame and then a 20x5
+    frame, every cell outside the new frame inside the pane rect is blank, and after
+    a split moves the pane the vacated cells are blank. symbol: `crates/gclient/src/ui/panes.rs::render_panes`.
+    test: `crates/gclient/tests/client_loop.rs::stale_cells_are_cleared_on_shrink_and_move`.'
+  labels:
+  - covers:gclient-workspace-sidebar:6.1:6.1.1
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: frontend
+```

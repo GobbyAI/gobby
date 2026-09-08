@@ -1,0 +1,446 @@
+header:
+  plan_id: gclient-workspace-sidebar
+  plan_hash: f4a006a250537dbdbf9c36fbed47a7d5aa198b92c72a4c83d508d9a33a0a816c
+  root_task_ref: '21973'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-07T23:30:25Z'
+  task_tree_source: db
+  task_tree_source_hash: 10f320d6d0a7e01cdaaa62433bc4a75ff030f2b2731914c130dd814c96283988
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: b622afc4e474670b0be82ca24d418cb00ef95a15fef3c0097bfac1ab6fe98177
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21980'
+    validation_criteria_snippet: '1.1.1: The status payload carries `ahead` and `behind`
+      for a branch with an upstream and `null` for one without, with the existing
+      fields unchanged. symbol: `s...'
+    matched_artifact_ref: src/gobby/servers/routes/source_control.py::get_status
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 8a1edfac5b3bd34222cf6ccf58625cc486f87821f88bf17e2f8ed9ae2e9cec61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21981'
+    validation_criteria_snippet: '1.2.1: Posting a valid body creates a `client` worktree,
+      returns its row and publishes `worktree_event created`; the conflict, missing-project
+      and invalid-bran...'
+    matched_artifact_ref: src/gobby/servers/routes/source_control_worktrees.py
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 3e3b5baaf8891a177c1c9465bfe42b359e82c516e7559f779bfe57f55325b4a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21981'
+    validation_criteria_snippet: '1.2.1: Posting a valid body creates a `client` worktree,
+      returns its row and publishes `worktree_event created`; the conflict, missing-project
+      and invalid-bran...'
+    matched_artifact_ref: src/gobby/servers/routes/source_control_worktrees.py
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: f6f3a2ef3719211c53e6ed3fd52fa8028e545d62680ed0afd3d56dca497f77c6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21982'
+    validation_criteria_snippet: '1.3.1: Initializing a fresh directory returns the
+      project payload with this machine''s checkout and publishes `project_event checkout_registered`;
+      a relative or...'
+    matched_artifact_ref: src/gobby/servers/routes/projects.py
+  deferral_target: null
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 367ab82bbd62645a3d58b652befe39dddb6c47ef8fd5dd29829a6191d297b224
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21983'
+    validation_criteria_snippet: '1.4.1: With a web and a gclient attachment on one
+      terminal, a gclient resize is recorded but not applied while the web attachment
+      holds the owner slot; the web...'
+    matched_artifact_ref: src/gobby/terminals/leases.py::TerminalLeaseRegistry.resize_pty
+  deferral_target: null
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 8fa39d60d86830b06a78630881403733f795d6edf31d5635a5f8b4a4b9250a22
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21983'
+    validation_criteria_snippet: '1.4.1: With a web and a gclient attachment on one
+      terminal, a gclient resize is recorded but not applied while the web attachment
+      holds the owner slot; the web...'
+    matched_artifact_ref: src/gobby/servers/websocket/terminal_sizing.py
+  deferral_target: null
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: 63405d9e36606b3bfcd874428c8a6693ec73d75605736bf4edebb3fe3627912c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21983'
+    validation_criteria_snippet: '1.4.1: With a web and a gclient attachment on one
+      terminal, a gclient resize is recorded but not applied while the web attachment
+      holds the owner slot; the web...'
+    matched_artifact_ref: web/src/hooks/tmuxSessionMessages.ts
+  deferral_target: null
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: edd226af5adb305722ef656057e13c147d461879df9ae0b4411f164b7dd878ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21914'
+    validation_criteria_snippet: '1.5.1: A tmux spawn requesting rows 24 cols 80 creates
+      a pane tmux reports as 80x24 and the terminals row carries 80x24; an agent spawn
+      without a request creat...'
+    matched_artifact_ref: src/gobby/terminals/tmux_runtime.py::TmuxTerminalRuntime.prepare_spawn
+  deferral_target: null
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: f1517ea7b80350cc2e4058438b7b76ce801ddfa03c61d425fd8110d80196efd8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21932'
+    validation_criteria_snippet: '1.6.1: With `allow_package_registries` on, the SRT
+      policy allows `deps.files.ghostty.org` and still denies an unrelated control
+      host; with it off both are deni...'
+    matched_artifact_ref: src/gobby/agents/sandbox_policy.py::allowed_domains
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: b74106f8bf75f5369c2676c48d17e979dcbbc3248a24425f0f5fc02de4884320
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21986'
+    validation_criteria_snippet: '2.1.1: A roster entry with `attention == null` renders
+      `idle`/`working`, only an entry with `attention` set renders `blocked`, and
+      an entry without a `terminal...'
+    matched_artifact_ref: crates/gclient/src/app/sidebar_model.rs::agent_state
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 3c0f8d56962091e1400b3adcc42d0005bc006a7ee0a7a1a9015c0a33e83305d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21986'
+    validation_criteria_snippet: '2.1.1: A roster entry with `attention == null` renders
+      `idle`/`working`, only an entry with `attention` set renders `blocked`, and
+      an entry without a `terminal...'
+    matched_artifact_ref: crates/gclient/src/app/sidebar_model.rs::build
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 829bf95cf7a4c214cfe4d636b1f5fe125711bac82b4ea42757a7c7f3e9fe18bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21986'
+    validation_criteria_snippet: '2.1.1: A roster entry with `attention == null` renders
+      `idle`/`working`, only an entry with `attention` set renders `blocked`, and
+      an entry without a `terminal...'
+    matched_artifact_ref: crates/gclient/src/app/live.rs::apply_live_event
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: e6857a388c4f4c99ebe3a5b219568d412f9c1038bf5d410d32bb8659b56fc2fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21987'
+    validation_criteria_snippet: '2.2.1: Starting against a daemon with eight roster
+      terminals and no snapshot opens exactly one tab holding one freshly spawned
+      shell in the focused project; th...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/actions.rs::sync_live_chrome
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 599f765f55062613d60e6f65f3241e3e1c2b8921e37c11dcb3c5ea9f70e83ede
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21987'
+    validation_criteria_snippet: '2.2.1: Starting against a daemon with eight roster
+      terminals and no snapshot opens exactly one tab holding one freshly spawned
+      shell in the focused project; th...'
+    matched_artifact_ref: crates/gclient/src/app/project_tabs.rs::ProjectTabs
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 16931445cfc6d317c71ed7dc40ab08321baf8e34563e7ba10e1796d7127c8a46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21987'
+    validation_criteria_snippet: '2.2.1: Starting against a daemon with eight roster
+      terminals and no snapshot opens exactly one tab holding one freshly spawned
+      shell in the focused project; th...'
+    matched_artifact_ref: crates/gclient/src/persist.rs::WorkspaceSnapshot
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 86980049828fd0735380e4de116c34c30bd62b5c6088016da3b090d2ae207763
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21988'
+    validation_criteria_snippet: '2.3.1: After startup and after every slot change
+      each live pane has received `SetViewport` with its inner rect and a `terminal_resize`
+      of the same size with `v...'
+    matched_artifact_ref: crates/gclient/src/app/run_loop.rs::propagate_geometry
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 6d168bb3d1243b0bd7221dc9c2b1c6fb471b10d9ffb9a0da61f11e23ef6480dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21988'
+    validation_criteria_snippet: '2.3.1: After startup and after every slot change
+      each live pane has received `SetViewport` with its inner rect and a `terminal_resize`
+      of the same size with `v...'
+    matched_artifact_ref: crates/gclient/src/views/grid.rs::render
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 61610591437d48d1839c4987d19499146bb5c58c93be3091296e0fe815b12ea3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21989'
+    validation_criteria_snippet: '3.1.1: A model with two projects, one carrying a
+      worktree child and ahead/behind counts, renders the two-line rows, the indented
+      child with its task ref, the g...'
+    matched_artifact_ref: crates/gclient/src/ui/sidebar/projects.rs
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: ccc54e0524621a62aa0431ba351cc20b5bf5f766dffd66d0863ea28994b324f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21989'
+    validation_criteria_snippet: '3.1.1: A model with two projects, one carrying a
+      worktree child and ahead/behind counts, renders the two-line rows, the indented
+      child with its task ref, the g...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/mouse/pointer.rs::down
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 217e0202122a5e7bb6c1d0d1e1cd1a8d8fa117738b4f804630ceba3af0591abd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21989'
+    validation_criteria_snippet: '3.1.1: A model with two projects, one carrying a
+      worktree child and ahead/behind counts, renders the two-line rows, the indented
+      child with its task ref, the g...'
+    matched_artifact_ref: crates/gclient/tests/parity/chrome.rs
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: c56dae6510bc9f751152e97c9a8a42764f98f67ed1c8127b93c20f14b0c2b2ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21990'
+    validation_criteria_snippet: '3.2.1: Agents of another project or another machine
+      are hidden under the default filter, appear under `all` with the machine token,
+      and the sort toggle reorder...'
+    matched_artifact_ref: crates/gclient/src/ui/sidebar/agents.rs
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 6e477fff944e403dc42ca5aac9f94b406033ed03f40d789e4cf01c3ff200479f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21990'
+    validation_criteria_snippet: '3.2.1: Agents of another project or another machine
+      are hidden under the default filter, appear under `all` with the machine token,
+      and the sort toggle reorder...'
+    matched_artifact_ref: crates/gclient/src/ui/chrome.rs::attention_pane
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 4a028acedb4bbc60a5d21389c1ce3e1a577344ec54e009615a6558375a697683
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21990'
+    validation_criteria_snippet: '3.2.1: Agents of another project or another machine
+      are hidden under the default filter, appear under `all` with the machine token,
+      and the sort toggle reorder...'
+    matched_artifact_ref: crates/gclient/src/prefs.rs
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: 3edabac161475a45cd7759739c74ff8c3d614d37137e55a5628b4d65a3d24931
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21991'
+    validation_criteria_snippet: '3.3.1: The new-project dialog renders herdr''s title
+      and, on enter, calls the init route and focuses the created project with one
+      shell tab; `workspace_creation...'
+    matched_artifact_ref: crates/gclient/src/ui/dialogs/project.rs
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 0afd0aa30469d6bbc5e2adfc77982d45a88e75edd07bca3d9921a88f0ea95a33
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21991'
+    validation_criteria_snippet: '3.3.1: The new-project dialog renders herdr''s title
+      and, on enter, calls the init route and focuses the created project with one
+      shell tab; `workspace_creation...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/projects.rs
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 2d825f85ee8728d9705a899323806146ddc338faa448563a929ec9b10d5d04be
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21991'
+    validation_criteria_snippet: '3.3.1: The new-project dialog renders herdr''s title
+      and, on enter, calls the init route and focuses the created project with one
+      shell tab; `workspace_creation...'
+    matched_artifact_ref: crates/gclient/tests/parity/dialogs.rs
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: bbcecf36753e8e272829d3779b1dbbed15479f83b13863f802f4bd142460fe26
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21992'
+    validation_criteria_snippet: '4.1.1: Each modal mode consumes its keys as listed:
+      help and navigator filter on typing, the navigator''s enter focuses the row,
+      confirm-close accepts and cance...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/modal_input.rs
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 584746a0e65c37a931cbef888f9b3f2eb2c8e842d18cb510f355fb88aa75bf9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21992'
+    validation_criteria_snippet: '4.1.1: Each modal mode consumes its keys as listed:
+      help and navigator filter on typing, the navigator''s enter focuses the row,
+      confirm-close accepts and cance...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop.rs::run_live_loop
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: e3631e982299cdf59a1d2d53ffa0ef823af8eecbd570678c892cbca4bebe56c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21992'
+    validation_criteria_snippet: '4.1.1: Each modal mode consumes its keys as listed:
+      help and navigator filter on typing, the navigator''s enter focuses the row,
+      confirm-close accepts and cance...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/modal_input.rs
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: a53e5815b2600ae241cc13d4e53d9d2c7d5eeaf3bb2e74b91eb4103f30ef9930
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21993'
+    validation_criteria_snippet: '4.2.1: With an override file that rebinds `help`
+      and `new_project`, `Ready::keymap` carries the new chords and the live chrome
+      resolves them after startup and ...'
+    matched_artifact_ref: crates/gclient/src/startup.rs::prepare_at
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: e9161ebb0783e4811aa1760d338f4a2667389219802e785cbd12403d9b2f8127
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21993'
+    validation_criteria_snippet: '4.2.1: With an override file that rebinds `help`
+      and `new_project`, `Ready::keymap` carries the new chords and the live chrome
+      resolves them after startup and ...'
+    matched_artifact_ref: crates/gclient/src/views/mod.rs
+  deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: 35bc9a8d0f2c14eb9b99b6707abcaaee9322e7fe58f565020c503867cd457272
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21923'
+    validation_criteria_snippet: '4.3.1: With an outer tmux identity present and no
+      override, the effective prefix is `ctrl+]` and help, settings, tab switching
+      and release-control are reachabl...'
+    matched_artifact_ref: crates/gclient/src/ui/keymap/prefix.rs
+  deferral_target: null
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: f943fea1ba6836577355b6345e3a78d80930b8a1f46144d37efff7ed1d4ee68a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21923'
+    validation_criteria_snippet: '4.3.1: With an outer tmux identity present and no
+      override, the effective prefix is `ctrl+]` and help, settings, tab switching
+      and release-control are reachabl...'
+    matched_artifact_ref: crates/gclient/src/key_input.rs
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 3633ac27b64b34798d1e64f17f15d9a79385a77d8a2c9065bf5265e7ccd4e75d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21995'
+    validation_criteria_snippet: '5.1.1: Right-clicking a pane, a tab and empty chrome
+      opens the menu with exactly the listed items for that target and state (held
+      vs observe, blocked vs plain,...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/menu.rs::build_menu
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: e3fdd6ec59eefe69d8e1668bd1585b72a157d48473699e42ef9998f63c893861
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21995'
+    validation_criteria_snippet: '5.1.1: Right-clicking a pane, a tab and empty chrome
+      opens the menu with exactly the listed items for that target and state (held
+      vs observe, blocked vs plain,...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/mouse/pointer.rs::right_down
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: 3495eddfdb22e92cb237361efa3e5696f9eeefc2eae58b409ef800b20ba9dffb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21996'
+    validation_criteria_snippet: '5.2.1: The rendered menu sits at the anchor, flips
+      to stay inside the frame at the right and bottom edges, marks the selected row
+      with accent plus reversal and...'
+    matched_artifact_ref: crates/gclient/src/ui/context_menu.rs
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.1
+  plan_node_hash: 62bd046dccc41d66e17373eda94005b73cd10f386191adb754944f177ac0d49b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21997'
+    validation_criteria_snippet: '5.3.1: Right-clicking a project row, a worktree
+      row, an agent row and the projects footer opens the menu with exactly the listed
+      items for that target and stat...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/menu.rs::build_menu
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.2
+  plan_node_hash: 732a70603df8b264bcfe44f256254ddc4798328ed2173109640ff31f82fb31ec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21997'
+    validation_criteria_snippet: '5.3.1: Right-clicking a project row, a worktree
+      row, an agent row and the projects footer opens the menu with exactly the listed
+      items for that target and stat...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/projects.rs
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: ee5f0929a1e079e4ea9b3650a0cca384c364c773d261fed36609b38e30f24348
+  status: covered
+  leaves:
+  - leaf_task_ref: '#21998'
+    validation_criteria_snippet: '6.1.1: After a pane receives a 40x10 frame and then
+      a 20x5 frame, every cell outside the new frame inside the pane rect is blank,
+      and after a split moves the p...'
+    matched_artifact_ref: crates/gclient/src/ui/panes.rs::render_panes
+  deferral_target: null
+- section_id: D1
+  item_id: 3.2.4
+  plan_node_hash: 0f9d62e8dedde5444411947528555305c94468e38b443e95b5719a9f529bc124
+  status: deferred
+  leaves: []
+  deferral_target: '#20202'

@@ -18,6 +18,7 @@ use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Collapsed sidebar width (herdr `COLLAPSED_WIDTH`).
 pub const COLLAPSED_WIDTH: u16 = 4;
@@ -41,6 +42,7 @@ pub trait WorkspaceView {
     /// `pane_for_terminal` or the chrome's own slots.
     fn pane(&self, id: PaneId) -> &Pane;
     fn daemon_ready(&self) -> bool;
+    fn gobby_home(&self) -> Option<&Path>;
 }
 
 // Inherent methods win over trait methods in method-call syntax, so these
@@ -69,6 +71,10 @@ impl WorkspaceView for Workspace {
     fn daemon_ready(&self) -> bool {
         // The scripted daemon is always reachable.
         true
+    }
+
+    fn gobby_home(&self) -> Option<&Path> {
+        self.gobby_home()
     }
 }
 
@@ -374,6 +380,9 @@ pub struct Chrome {
     pub link_opener: String,
     /// Pane focus last left, for `LastPane` (herdr `previous_pane_focus`).
     pub last_focused: Option<PaneId>,
+    /// Mouse-capture state the settings toggle asked for; the live loop
+    /// applies it to the terminal guard after the current event.
+    pub pending_mouse_capture: Option<bool>,
 }
 
 impl Chrome {
@@ -404,6 +413,7 @@ impl Chrome {
             last_copy: None,
             link_opener: DEFAULT_LINK_OPENER.to_owned(),
             last_focused: None,
+            pending_mouse_capture: None,
         }
     }
 

@@ -21,7 +21,8 @@ use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
 use serde_json::json;
 
-use super::{route_mouse, MouseOutcome};
+use super::live_loop::modal_input::apply_rename;
+use super::{route_modal_key, route_mouse, ModalOutcome, MouseOutcome};
 use super::{PaneId, Workspace};
 use crate::daemon::{DaemonEvent, ScriptedDaemon};
 use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
@@ -116,6 +117,11 @@ fn route_scripted_input(
         return Ok(false);
     }
     if let Some(input) = key_input(event, KeyboardProtocol::Legacy) {
+        let outcome = route_modal_key(&*workspace, chrome, &input);
+        if outcome != ModalOutcome::Passthrough {
+            *prefix_armed = false;
+            return apply_scripted_modal_outcome(workspace, chrome, outcome);
+        }
         match resolve_chord(&chrome.keymap, chrome.mode, &input.key, *prefix_armed) {
             Resolution::Prefix => {
                 *prefix_armed = true;
@@ -215,6 +221,31 @@ fn apply_scripted_action(chrome: &mut Chrome, action: Action) -> bool {
         _ => chrome.mode = Mode::Terminal,
     }
     false
+}
+
+/// Apply a modal outcome on the scripted carrier: focus and renames land on
+/// the workspace, actions go through `apply_scripted_action`, and a confirmed
+/// close is a no-op like the other terminal-reaching actions here.
+fn apply_scripted_modal_outcome(
+    workspace: &mut Workspace,
+    chrome: &mut Chrome,
+    outcome: ModalOutcome,
+) -> Result<bool, FrameError> {
+    match outcome {
+        ModalOutcome::Consumed
+        | ModalOutcome::Close
+        | ModalOutcome::Passthrough
+        | ModalOutcome::Confirm(_) => {}
+        ModalOutcome::Focus(pane) => {
+            chrome.focus_pane(pane);
+            workspace
+                .focus_pane(pane)
+                .map_err(|error| FrameError::Other(error.to_string()))?;
+        }
+        ModalOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
+        ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
+    }
+    Ok(false)
 }
 
 async fn recv_scripted_frame(

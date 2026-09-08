@@ -100,6 +100,10 @@ impl Board {
 }
 
 impl WorkspaceView for Board {
+    fn gobby_home(&self) -> Option<&std::path::Path> {
+        None
+    }
+
     fn project_id(&self) -> Option<&str> {
         None
     }

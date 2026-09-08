@@ -3,6 +3,7 @@
 mod mock_daemon;
 
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,8 +22,9 @@ use gobby_client::daemon::{
 use gobby_client::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
 };
+use gobby_client::prefs::prefs_path;
 use gobby_client::startup::Ready;
-use gobby_client::teardown::TerminalGuard;
+use gobby_client::teardown::{RecordingBackend, TerminalGuard};
 use gobby_client::ui::keymap::Keymap;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
 use gobby_client::ui::scrollbar::{
@@ -248,16 +250,19 @@ async fn live_workspace_with_scripted_direct(
 
 #[test]
 fn live_entry_connects_before_running() {
-    let result = gobby_client::views::run_ready(Ready {
-        daemon_url: "not a URL".to_string(),
-        token: Some("test-token".to_string()),
-        project: "project-1".to_string(),
-        frame_delivery: gobby_client::FrameDelivery::Auto,
-        host: None,
-        host_notice: None,
-        prefs: gobby_client::ui::settings::ClientPrefs::default(),
-        gobby_home: std::path::PathBuf::new(),
-    });
+    let result = gobby_client::views::run_ready(
+        Ready {
+            daemon_url: "not a URL".to_string(),
+            token: Some("test-token".to_string()),
+            project: "project-1".to_string(),
+            frame_delivery: gobby_client::FrameDelivery::Auto,
+            host: None,
+            host_notice: None,
+            prefs: gobby_client::ui::settings::ClientPrefs::default(),
+            gobby_home: std::path::PathBuf::new(),
+        },
+        &mut TerminalGuard::recording().0,
+    );
 
     assert!(
         result.is_err(),
@@ -333,8 +338,15 @@ async fn live_created_event_attaches_before_next_reconciliation() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -616,8 +628,15 @@ async fn input_encoder_covers_named_keys() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -754,8 +773,15 @@ async fn focus_moves_control_and_settles_pending_input_once() {
         focused_terminal_id
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, focused_terminal_id) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -863,8 +889,15 @@ async fn write_outcomes_drive_pane_state() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -894,8 +927,15 @@ async fn proxy_fallback_uses_fresh_attachment() {
             wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("detach-result fallback loop");
@@ -956,8 +996,15 @@ async fn proxy_fallback_uses_fresh_attachment() {
             wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("finalization fallback loop");
@@ -994,8 +1041,15 @@ async fn proxy_fallback_uses_fresh_attachment() {
             .expect("deadline recovery reattaches");
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("deadline fallback loop");
@@ -1026,8 +1080,15 @@ async fn proxy_fallback_uses_fresh_attachment() {
             settle_live_event().await;
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("refused fallback loop");
@@ -1066,8 +1127,15 @@ async fn proxy_fallback_uses_fresh_attachment() {
             settle_live_event().await;
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("buffered finalization loop");
@@ -1226,8 +1294,15 @@ async fn live_resize_propagates_geometry_by_policy() {
             direct_viewport
         };
 
+        let mut switch = TerminalGuard::recording().0;
         let (result, direct_viewport) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("live resize loop");
@@ -1311,8 +1386,15 @@ async fn live_resize_propagates_geometry_by_policy() {
             assert!(websocket_requests(&mock, "terminal_resize").is_empty());
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("zero-size resize loop");
@@ -1532,8 +1614,15 @@ async fn select_spawn_attach_terminate_loop() {
             drop(input_tx);
         };
 
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("spawn and terminate live loop");
@@ -1659,8 +1748,15 @@ async fn select_spawn_attach_terminate_loop() {
             drop(input_tx);
         };
 
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("event-before-reply and reconnect live loop");
@@ -1711,8 +1807,15 @@ async fn select_spawn_attach_terminate_loop() {
             settle_live_event().await;
             drop(input_tx);
         };
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("spawn refusal live loop");
@@ -1997,8 +2100,15 @@ async fn latched_exit_issues_no_further_requests() {
             before_exit
         };
 
+        let mut switch = TerminalGuard::recording().0;
         let (result, before_exit) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("exit cancels reconnect");
@@ -2048,8 +2158,15 @@ async fn latched_exit_issues_no_further_requests() {
             before_exit
         };
 
+        let mut switch = TerminalGuard::recording().0;
         let (result, before_exit) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("exit cancels fallback");
@@ -2176,8 +2293,15 @@ async fn detach_deadlines_recover_through_the_supervisor() {
         attachments
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, old_attachments) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("deadline recovery loop");
@@ -2414,8 +2538,15 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("daemon loss recovery loop");
@@ -2575,8 +2706,15 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         tokio::time::resume();
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     drop(input_tx);
@@ -2714,8 +2852,15 @@ async fn control_tombstone_retires_the_attachment() {
         old_attachment
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, old_attachment) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("control tombstone recovery loop");
@@ -2814,8 +2959,15 @@ async fn prefix_help_and_settings_open_their_modes_in_the_live_loop() {
             drop(input_tx);
         };
 
+        let mut switch = TerminalGuard::recording().0;
         let (result, ()) = tokio::join!(
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
             driver
         );
         result.expect("live loop exits cleanly");
@@ -3015,8 +3167,15 @@ async fn pane_click_focuses_and_takes_control_unless_alt() {
         initial
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, initial) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -3202,8 +3361,15 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         (initial, other)
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, (initial, other)) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -3526,8 +3692,15 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         dragged
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, dragged) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -3685,8 +3858,15 @@ async fn control_indicator_click_toggles_control() {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -3776,8 +3956,15 @@ async fn ctrl_click_link_with(opener: &str) -> Chrome {
         drop(input_tx);
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, ()) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -3953,8 +4140,15 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         before_jumps
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (result, before_jumps) = tokio::join!(
-        run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
         driver
     );
     result.expect("live loop exits cleanly");
@@ -4018,5 +4212,72 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         gobby_client::ui::chrome::Mode::Respond,
         "the attention jump opens the prompt"
     );
+    mock.shutdown().await;
+}
+
+/// Poll `condition` on the test runtime until it holds or two seconds pass.
+async fn wait_until(mut condition: impl FnMut() -> bool) {
+    timeout(Duration::from_secs(2), async {
+        while !condition() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("condition holds before the deadline");
+}
+
+/// 4.1.2: toggling the settings `mouse capture` row flips the terminal's
+/// capture through the guard while the loop runs and writes the pref to
+/// `<gobby_home>/client/prefs.toml` at once.
+#[tokio::test]
+async fn settings_toggle_switches_mouse_capture_and_saves_prefs() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _) = live_workspace_with_scripted_direct(&mock, "terminal-prefs", 1).await;
+    let home = tempfile::tempdir().expect("gobby home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    let pane = workspace
+        .pane_for_terminal("terminal-prefs")
+        .expect("terminal pane");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "loop");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let backend = RecordingBackend::default();
+    let captured = backend.mouse_capture();
+    let mut guard = TerminalGuard::new(backend);
+    guard.arm(true).expect("arm the recording guard");
+    let prefs_file = prefs_path(home.path());
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = {
+        let captured = Arc::clone(&captured);
+        let prefs_file = prefs_file.clone();
+        async move {
+            tokio::task::yield_now().await;
+            send_chord(&input_tx, KeyCode::Char('s'), KeyModifiers::NONE).await;
+            send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
+            send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+            wait_until(|| !captured.load(Ordering::SeqCst)).await;
+            let saved = std::fs::read_to_string(&prefs_file).expect("prefs written on toggle");
+            assert!(saved.contains("mouse_capture = false"), "{saved}");
+            send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+            wait_until(|| captured.load(Ordering::SeqCst)).await;
+            drop(input_tx);
+        }
+    };
+
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut guard
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(chrome.prefs.mouse_capture);
+    let saved = std::fs::read_to_string(&prefs_file).expect("prefs written on toggle back");
+    assert!(saved.contains("mouse_capture = true"), "{saved}");
     mock.shutdown().await;
 }

@@ -22,6 +22,7 @@ use super::control::{
     focus_live_pane, observe_live_pane, release_live_control, send_live_write,
     set_live_scroll_offset, take_live_control,
 };
+use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 
 pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
@@ -125,6 +126,32 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::Reorder { order } => workspace
             .set_tab_order(&order)
             .map_err(|error| FrameError::Other(error.to_string()))?,
+    }
+    Ok(false)
+}
+
+/// Apply what a modal mode asked the loop for; `true` means quit.
+pub(super) async fn apply_live_modal_outcome(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    outcome: ModalOutcome,
+) -> Result<bool, FrameError> {
+    match outcome {
+        ModalOutcome::Consumed | ModalOutcome::Close | ModalOutcome::Passthrough => {}
+        ModalOutcome::Focus(pane) => {
+            chrome.focus_pane(pane);
+            focus_live_pane(workspace, pane).await?;
+        }
+        ModalOutcome::Action(Action::Quit) => return Ok(true),
+        ModalOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
+        ModalOutcome::Confirm(CloseTarget::Tab) => close_live_tab(workspace, chrome).await?,
+        ModalOutcome::Confirm(CloseTarget::Pane | CloseTarget::Terminal) => {
+            if let Some(pane) = chrome.focused_pane() {
+                terminate_live_terminal(workspace, pane).await?;
+                sync_live_chrome(workspace, chrome);
+            }
+        }
+        ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
     }
     Ok(false)
 }
@@ -331,7 +358,7 @@ async fn focus_live_shown_pane(
 
 /// Area the directional actions navigate: the last frame's terminal area,
 /// or a nominal one before the first frame (the layout is ratios).
-fn live_layout_area(chrome: &Chrome) -> Rect {
+pub(super) fn live_layout_area(chrome: &Chrome) -> Rect {
     let area = chrome.view.terminal_area;
     if area.width > 0 && area.height > 0 {
         area
@@ -422,7 +449,7 @@ fn open_live_rename(chrome: &mut Chrome, kind: RenameKind, value: String) {
 
 /// Terminate every pane of the active tab; `sync_live_chrome` then drops
 /// the emptied tab.
-async fn close_live_tab(
+pub(super) async fn close_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {

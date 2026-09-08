@@ -193,6 +193,17 @@ pub struct TerminalGuard<B: ModeBackend = CrosstermBackend> {
 
 pub type TerminalModeGuard<B = CrosstermBackend> = TerminalGuard<B>;
 
+/// Mouse-capture control the live loop drives from the settings toggle.
+pub trait MouseCaptureSwitch {
+    fn set_mouse_capture(&mut self, on: bool) -> io::Result<()>;
+}
+
+impl<B: ModeBackend> MouseCaptureSwitch for TerminalGuard<B> {
+    fn set_mouse_capture(&mut self, on: bool) -> io::Result<()> {
+        TerminalGuard::set_mouse_capture(self, on)
+    }
+}
+
 impl TerminalGuard<RecordingBackend> {
     pub fn recording() -> (Self, Arc<AtomicUsize>) {
         let backend = RecordingBackend::default();

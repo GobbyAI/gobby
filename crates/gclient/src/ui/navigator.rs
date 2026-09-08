@@ -281,7 +281,12 @@ fn render_rows(
     current: Option<PaneId>,
     chrome: &Chrome,
 ) {
-    let start = chrome.navigator.scroll.min(rows.len());
+    let height = usize::from(body.height).max(1);
+    let start = chrome
+        .navigator
+        .scroll
+        .min(rows.len())
+        .max((chrome.navigator.selected + 1).saturating_sub(height));
     let end = rows
         .len()
         .min(start.saturating_add(usize::from(body.height)));

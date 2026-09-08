@@ -1,9 +1,16 @@
 //! herdr `src/ui/dialogs.rs` (4) keep-set render tests.
 
-use gobby_client::ui::chrome::Chrome;
-use gobby_client::ui::dialogs::{render_dialog, CloseTarget, Dialog};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::{route_modal_key, route_mouse, ModalOutcome, MouseOutcome};
+use gobby_client::key_input::KeyInput;
+use gobby_client::ui::chrome::{Chrome, Mode};
+use gobby_client::ui::dialogs::{render_dialog, CloseTarget, Dialog, RenameKind};
+use gobby_client::ui::navigator::NavigatorState;
 use gobby_client::ui::widgets::centered_popup_rect;
+use gobby_client::ui::{render_workspace, Action};
+use gobby_client::Workspace;
 use ratatui::layout::Rect;
+use serde_json::json;
 
 use super::fixtures::{rect_rows, render};
 use super::token_map::theme;
@@ -104,4 +111,289 @@ parity_tests! {
             assert_eq!(detail, "main — 2 workspaces, 2 panes");
         }
     }
+}
+
+/// One bare key as the modal routers see it; the pane bytes never matter here.
+fn key(code: KeyCode) -> KeyInput {
+    KeyInput {
+        key: KeyEvent::new(code, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    }
+}
+
+fn press(ws: &Workspace, chrome: &mut Chrome, code: KeyCode) -> ModalOutcome {
+    route_modal_key(ws, chrome, &key(code))
+}
+
+fn type_text(ws: &Workspace, chrome: &mut Chrome, text: &str) {
+    for ch in text.chars() {
+        assert_eq!(press(ws, chrome, KeyCode::Char(ch)), ModalOutcome::Consumed);
+    }
+}
+
+fn left_click(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// Two roster terminals plus one blocked attention entry on the first.
+fn modal_workspace() -> Workspace {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+    }));
+    ws.reconcile_subscribe_first().expect("scripted roster");
+    ws.open_terminal("term-alpha", "native", "epoch")
+        .expect("open term-alpha");
+    ws.open_terminal("term-beta", "native", "epoch")
+        .expect("open term-beta");
+    ws
+}
+
+fn pane_rects(chrome: &Chrome, area: Rect) -> Vec<Rect> {
+    chrome
+        .active_tab()
+        .expect("active tab")
+        .layout
+        .panes(area)
+        .into_iter()
+        .map(|pane| pane.rect)
+        .collect()
+}
+
+fn confirm_close_terminal() -> Dialog {
+    Dialog::ConfirmClose {
+        target: CloseTarget::Terminal,
+        title: "term-alpha".to_string(),
+        panes: 1,
+    }
+}
+
+/// 4.1.1: every modal mode consumes its own keys and reports what the loop
+/// must do next; Terminal mode passes keys through to the keymap.
+#[test]
+fn modal_keys_drive_every_mode() {
+    let ws = modal_workspace();
+    let alpha = ws.pane_for_terminal("term-alpha").expect("alpha pane");
+    let beta = ws.pane_for_terminal("term-beta").expect("beta pane");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(alpha, "");
+
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('j')),
+        ModalOutcome::Passthrough
+    );
+    chrome.mode = Mode::Copy;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Esc),
+        ModalOutcome::Passthrough
+    );
+
+    // KeybindHelp: `/` focuses the search, typing filters, esc backs out,
+    // then esc closes the overlay.
+    chrome.mode = Mode::KeybindHelp;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('/')),
+        ModalOutcome::Consumed
+    );
+    assert!(chrome.keybind_help.search_focused);
+    type_text(&ws, &mut chrome, "spl");
+    assert_eq!(chrome.keybind_help.query, "spl");
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Esc),
+        ModalOutcome::Consumed
+    );
+    assert!(!chrome.keybind_help.search_focused);
+    assert_eq!(press(&ws, &mut chrome, KeyCode::Esc), ModalOutcome::Close);
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // Navigator: a query narrows the rows to term-beta and enter focuses it.
+    chrome.mode = Mode::Navigator;
+    chrome.navigator = NavigatorState::default();
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('/')),
+        ModalOutcome::Consumed
+    );
+    type_text(&ws, &mut chrome, "bet");
+    assert_eq!(chrome.navigator.query, "bet");
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Enter),
+        ModalOutcome::Focus(beta)
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // Navigator: the attention row after both terminals answers with its
+    // 1-based attention index so the loop can reuse `FocusAttention`.
+    chrome.mode = Mode::Navigator;
+    chrome.navigator = NavigatorState::default();
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Down),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Down),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(chrome.navigator.selected, 2);
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Enter),
+        ModalOutcome::Action(Action::FocusAttention(1))
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // ConfirmClose: n cancels, y confirms the dialog's target.
+    chrome.dialog = Some(confirm_close_terminal());
+    chrome.mode = Mode::ConfirmClose;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('n')),
+        ModalOutcome::Close
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert_eq!(chrome.dialog, None);
+    chrome.dialog = Some(confirm_close_terminal());
+    chrome.mode = Mode::ConfirmClose;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('y')),
+        ModalOutcome::Confirm(CloseTarget::Terminal)
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert_eq!(chrome.dialog, None);
+
+    // Rename: edits land at the cursor and enter commits the value.
+    chrome.dialog = Some(Dialog::Rename {
+        kind: RenameKind::Tab,
+        value: "ab".to_string(),
+        cursor: 2,
+    });
+    chrome.mode = Mode::Rename;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Left),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('x')),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Enter),
+        ModalOutcome::Commit(RenameKind::Tab, "axb".to_string())
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert_eq!(chrome.dialog, None);
+
+    // Resize: l moves the split under the focused pane; enter leaves the mode.
+    chrome.open_pane(beta, "");
+    let area = Rect::new(0, 0, 120, 40);
+    let before = pane_rects(&chrome, area);
+    chrome.mode = Mode::Resize;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Char('l')),
+        ModalOutcome::Consumed
+    );
+    assert_ne!(pane_rects(&chrome, area), before);
+    assert_eq!(press(&ws, &mut chrome, KeyCode::Enter), ModalOutcome::Close);
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // Navigate: down walks the roster and enter focuses the selected pane.
+    chrome.mode = Mode::Navigate;
+    chrome.sidebar.selected = 0;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Down),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(chrome.sidebar.selected, 1);
+    let second = ws
+        .pane_for_terminal(&ws.roster_terminal_ids()[1])
+        .expect("second roster pane");
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Enter),
+        ModalOutcome::Focus(second)
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    // Settings: enter toggles the selected row and queues the capture switch;
+    // right steps the sidebar width; esc closes.
+    chrome.mode = Mode::Settings;
+    chrome.settings.selected = 0;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Down),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(chrome.settings.selected, 1);
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Enter),
+        ModalOutcome::Consumed
+    );
+    assert!(!chrome.prefs.mouse_capture);
+    assert_eq!(chrome.pending_mouse_capture, Some(false));
+    chrome.settings.selected = 7;
+    let width = chrome.prefs.sidebar_width;
+    assert_eq!(
+        press(&ws, &mut chrome, KeyCode::Right),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(chrome.prefs.sidebar_width, width + 1);
+    assert_eq!(chrome.sidebar.width, width + 1);
+    assert_eq!(press(&ws, &mut chrome, KeyCode::Esc), ModalOutcome::Close);
+    assert_eq!(chrome.mode, Mode::Terminal);
+}
+
+/// 4.1.3: a click on a settings row selects and activates it, the wheel moves
+/// the selection, and a click outside the popup closes it.
+#[test]
+fn settings_rows_respond_to_clicks() {
+    let ws = modal_workspace();
+    let alpha = ws.pane_for_terminal("term-alpha").expect("alpha pane");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(alpha, "");
+    chrome.mode = Mode::Settings;
+    let area = Rect::new(0, 0, 100, 30);
+    chrome.compute_view(&ws, area);
+    let mut hits = None;
+    render(area.width, area.height, |frame| {
+        hits = Some(render_workspace(frame, &ws, &chrome));
+    });
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    let rows = chrome.view.settings_row_hit_areas.clone();
+    let row = |index: usize| {
+        rows.iter()
+            .find(|(row, _)| *row == index)
+            .map(|(_, rect)| *rect)
+            .expect("settings row drawn")
+    };
+
+    let borders = row(2);
+    let borders_before = chrome.prefs.pane_borders;
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &left_click(borders.x + 2, borders.y)),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.settings.selected, 2);
+    assert_eq!(chrome.prefs.pane_borders, !borders_before);
+
+    let theme_row = row(0);
+    route_mouse(&ws, &mut chrome, &left_click(theme_row.x + 2, theme_row.y));
+    assert_eq!(chrome.settings.selected, 0);
+    assert_eq!(chrome.prefs.theme, "light");
+
+    let wheel = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: theme_row.x + 2,
+        row: theme_row.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(route_mouse(&ws, &mut chrome, &wheel), MouseOutcome::Handled);
+    assert_eq!(chrome.settings.selected, 1);
+
+    assert_eq!(
+        route_mouse(&ws, &mut chrome, &left_click(0, 0)),
+        MouseOutcome::Handled
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
 }

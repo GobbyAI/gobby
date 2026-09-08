@@ -7,14 +7,16 @@
 //! `Chrome::gesture`: a press may start one, drags feed it, and a release
 //! always ends it, handing it to `pointer::up` to finish.
 
-use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
 use crate::ui::chrome::Tab;
 use crate::ui::hit::{hit_test, Hit, SidebarSection};
+use crate::ui::settings::SettingsRow;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::PaneId;
+use super::modal_input::{activate_settings_row, close_modal};
 
 mod forward;
 mod links;
@@ -154,12 +156,10 @@ pub fn route_mouse<W: WorkspaceView>(
         .flatten();
     match chrome.mode {
         Mode::Copy => return MouseOutcome::Ignore,
-        Mode::ConfirmClose
-        | Mode::Rename
-        | Mode::Respond
-        | Mode::Settings
-        | Mode::KeybindHelp
-        | Mode::Navigator => return MouseOutcome::Handled,
+        Mode::Settings => return settings_mouse(ws, chrome, mouse),
+        Mode::ConfirmClose | Mode::Rename | Mode::Respond | Mode::KeybindHelp | Mode::Navigator => {
+            return MouseOutcome::Handled
+        }
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Resize => {}
     }
     let hit = hit_test(&chrome.view, mouse.column, mouse.row);
@@ -188,6 +188,35 @@ pub fn route_mouse<W: WorkspaceView>(
             outcome
         }
     }
+}
+
+/// Settings overlay: a left press on a row selects and activates it, the
+/// wheel moves the selection, and a press outside the popup closes it.
+fn settings_mouse<W: WorkspaceView>(
+    ws: &W,
+    chrome: &mut Chrome,
+    mouse: &MouseEvent,
+) -> MouseOutcome {
+    let last = SettingsRow::ALL.len() - 1;
+    let selected = chrome.settings.selected;
+    match (mouse.kind, hit_test(&chrome.view, mouse.column, mouse.row)) {
+        (MouseEventKind::Down(MouseButton::Left), Hit::SettingsRow(index)) => {
+            chrome.settings.selected = index.min(last);
+            activate_settings_row(ws, chrome);
+        }
+        (MouseEventKind::Down(_), Hit::SettingsRow(_) | Hit::SettingsDialog) => {}
+        (MouseEventKind::Down(_), _) => {
+            close_modal(chrome);
+        }
+        (MouseEventKind::ScrollUp, Hit::SettingsRow(_) | Hit::SettingsDialog) => {
+            chrome.settings.selected = selected.saturating_sub(1);
+        }
+        (MouseEventKind::ScrollDown, Hit::SettingsRow(_) | Hit::SettingsDialog) => {
+            chrome.settings.selected = (selected + 1).min(last);
+        }
+        _ => {}
+    }
+    MouseOutcome::Handled
 }
 
 /// Focus the active tab's focused pane. A tab whose slots have all gone is

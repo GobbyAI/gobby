@@ -679,10 +679,17 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         (exit_started, reconnect)
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (loop_result, (exit_started, reconnect)) = tokio::join!(
         timeout(
             Duration::from_millis(2_500),
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
         ),
         driver,
     );
@@ -851,10 +858,17 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
         }
     };
 
+    let mut switch = TerminalGuard::recording().0;
     let (loop_result, ()) = tokio::join!(
         timeout(
             Duration::from_secs(30),
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input_rx),
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
         ),
         driver,
     );

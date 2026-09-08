@@ -35,7 +35,10 @@ pub fn run() -> anyhow::Result<()> {
     crate::startup::run()
 }
 
-pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
+pub fn run_ready(
+    ready: crate::startup::Ready,
+    switch: &mut dyn crate::teardown::MouseCaptureSwitch,
+) -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -53,7 +56,7 @@ pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
             chrome.status_message = ready.host_notice;
             let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
             let input = gobby_terminal::raw_input::spawn_input_reader();
-            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input).await?;
+            run_live_loop(&mut workspace, &mut terminal, &mut chrome, input, switch).await?;
             Ok(())
         })
 }
