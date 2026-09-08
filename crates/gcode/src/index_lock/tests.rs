@@ -697,15 +697,11 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn the_reported_age_measures_the_hold_not_the_holder_connection() {
-        // A connection that idles before it locks -- the daemon's long-lived
-        // content GC connection is exactly this -- makes its own age a wild
-        // over-report of the contention an operator is deciding about.
+    fn the_reported_age_uses_the_lock_acquisition_stamp() {
         let database_url = connect_postgres_test_db();
         let project_id = "gcode-lock-hold-vs-connection";
         let key = project_lock_key(project_id);
         let mut holder = db::connect_readwrite(&database_url).expect("connect idle holder");
-        std::thread::sleep(Duration::from_millis(2500));
         let acquired = try_acquire_project_key(
             &mut holder,
             project_id,
@@ -715,6 +711,15 @@ mod serial_db {
         )
         .expect("hold project advisory lock");
         assert_eq!(acquired, IndexLockResult::Acquired(()));
+        holder
+            .execute(
+                "SELECT set_config(
+                    'application_name',
+                    'gobby-cli' || $1 || floor(extract(epoch FROM now()) - 120)::bigint,
+                    false)",
+                &[&LOCK_ACQUIRED_TAG],
+            )
+            .expect("backdate the test acquisition stamp");
 
         let mut observer = db::connect_readwrite(&database_url).expect("connect observer");
         let description =
@@ -735,16 +740,12 @@ mod serial_db {
             .get(0);
 
         assert!(
-            connection_age >= 2.0,
-            "the holder idled before locking, so its connection must be older: {connection_age}"
+            held_for >= 119,
+            "the synthetic acquisition stamp is two minutes old: {description}"
         );
-        // The stamp floors to whole seconds, so a sub-second hold may render as
-        // 1s; what must never happen is the idle time before the lock being
-        // counted into it.
         assert!(
-            (held_for as f64) + 1.0 < connection_age,
-            "the lock was taken moments ago, so {connection_age:.1}s of connection age must not \
-             be reported as the hold: {description}"
+            (held_for as f64) > connection_age + 100.0,
+            "the reported hold must come from the stamp, not the newer connection: {description}"
         );
     }
 
