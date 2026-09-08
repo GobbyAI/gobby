@@ -108,6 +108,7 @@ class TranscriptValidationSegment:
     #: Normalized argv text with wrappers and env assignments stripped.
     command: str
     categories: tuple[str, ...]
+    segment_index: int = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -850,7 +851,9 @@ def _validation_segments(
     return tuple(
         dict.fromkeys(
             TranscriptValidationSegment(
-                command=match.normalized_command, categories=match.categories
+                command=match.normalized_command,
+                categories=match.categories,
+                segment_index=match.segment_index,
             )
             for match in matches
         )

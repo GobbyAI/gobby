@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
+from gobby.terminals.native_runtime import (
+    NativeBatchFailure,
+    NativeBatchOperation,
+    NativeBatchResult,
+    NativeBatchTarget,
+    NativeTerminalRuntime,
+)
 from gobby.terminals.runtime import (
     AutomaticWriteQuarantined,
     Delivered,
@@ -65,6 +73,17 @@ class SequenceDelay:
     """Inter-step delay held under the per-terminal lock."""
 
     seconds: float
+
+
+@dataclass(frozen=True)
+class NativeWakeBatchRequest:
+    """One native terminal's complete composer-clear and wake action."""
+
+    result_id: str
+    terminal_id: str
+    clear_action_key: str
+    wake_action_key: str
+    operations: tuple[NativeBatchOperation, ...]
 
 
 class StaleTerminalLeaseError(RuntimeError):
@@ -225,6 +244,139 @@ class WriteCoordinator:
                 if exc.stage == "none" and not dispatched:
                     self._clear(terminal_id, action_key)
                 raise
+
+    async def run_native_wake_batch(
+        self,
+        requests: Sequence[NativeWakeBatchRequest],
+    ) -> list[NativeBatchResult]:
+        """Latch and atomically order one bounded native-host wake batch."""
+        results: dict[str, NativeBatchResult] = {}
+        duplicate_terminals = {
+            terminal_id
+            for terminal_id in {request.terminal_id for request in requests}
+            if sum(request.terminal_id == terminal_id for request in requests) > 1
+        }
+        lock_ids = sorted({request.terminal_id for request in requests} - duplicate_terminals)
+        async with AsyncExitStack() as stack:
+            for terminal_id in lock_ids:
+                await stack.enter_async_context(self._lock(terminal_id))
+
+            runtime: NativeTerminalRuntime | None = None
+            prepared: list[NativeBatchTarget] = []
+            had_wake_latch: dict[str, bool] = {}
+            for request in requests:
+                if request.terminal_id in duplicate_terminals:
+                    results[request.result_id] = NativeBatchResult(
+                        request.result_id,
+                        NativeBatchFailure(
+                            stage="none",
+                            code="duplicate_terminal",
+                            detail="native wake batch targets must be grouped by terminal",
+                        ),
+                    )
+                    continue
+                try:
+                    terminal = self._require(request.terminal_id)
+                    blocked = self._blocked_automatic(
+                        request.terminal_id,
+                        request.clear_action_key,
+                        "automatic",
+                    )
+                except KeyError:
+                    results[request.result_id] = NativeBatchResult(
+                        request.result_id,
+                        NativeBatchFailure(
+                            stage="none",
+                            code="terminal_not_found",
+                            detail=f"terminal {request.terminal_id} was not found",
+                        ),
+                    )
+                    continue
+                if blocked is not None:
+                    results[request.result_id] = NativeBatchResult(request.result_id, blocked)
+                    continue
+                try:
+                    candidate_runtime = self.runtime_for(terminal)
+                except UnregisteredBackendError as exc:
+                    results[request.result_id] = NativeBatchResult(
+                        request.result_id,
+                        NativeBatchFailure(
+                            stage="none", code="backend_unregistered", detail=str(exc)
+                        ),
+                    )
+                    continue
+                if not isinstance(candidate_runtime, NativeTerminalRuntime):
+                    results[request.result_id] = NativeBatchResult(
+                        request.result_id,
+                        NativeBatchFailure(
+                            stage="none",
+                            code="native_batch_unavailable",
+                            detail="terminal runtime does not support native wake batching",
+                        ),
+                    )
+                    continue
+                if runtime is None:
+                    runtime = candidate_runtime
+                elif runtime is not candidate_runtime:
+                    results[request.result_id] = NativeBatchResult(
+                        request.result_id,
+                        NativeBatchFailure(
+                            stage="none",
+                            code="native_batch_unavailable",
+                            detail="native wake targets do not share one host connection",
+                        ),
+                    )
+                    continue
+
+                had_latch = request.wake_action_key in terminal.unresolved_writes
+                had_wake_latch[request.result_id] = had_latch
+                if not had_latch:
+                    try:
+                        self._persist(request.terminal_id, request.wake_action_key, "automatic")
+                    except UnresolvedWriteCapacityError as exc:
+                        results[request.result_id] = NativeBatchResult(
+                            request.result_id,
+                            NativeBatchFailure(
+                                stage="none",
+                                code="unresolved_write_capacity",
+                                detail=str(exc),
+                            ),
+                        )
+                        continue
+                prepared.append(
+                    NativeBatchTarget(
+                        result_id=request.result_id,
+                        terminal=terminal,
+                        operations=request.operations,
+                    )
+                )
+
+            if prepared and runtime is not None:
+                in_flight = asyncio.create_task(runtime.write_batch(prepared))
+                try:
+                    batch_results = await in_flight
+                except asyncio.CancelledError:
+                    await asyncio.shield(in_flight)
+                    raise
+                except Exception as exc:
+                    batch_results = [
+                        NativeBatchResult(target.result_id, IndeterminateWrite(detail=str(exc)))
+                        for target in prepared
+                    ]
+                request_by_result = {request.result_id: request for request in requests}
+                for result in batch_results:
+                    request = request_by_result[result.result_id]
+                    if isinstance(result.outcome, Delivered):
+                        self._clear(request.terminal_id, request.wake_action_key)
+                    elif (
+                        isinstance(result.outcome, NativeBatchFailure)
+                        and result.outcome.stage == "none"
+                        and not had_wake_latch[result.result_id]
+                    ):
+                        self._clear(request.terminal_id, request.wake_action_key)
+                    results[result.result_id] = result
+
+        return [results[request.result_id] for request in requests]
 
     async def _write_locked(
         self,

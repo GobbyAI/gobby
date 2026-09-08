@@ -16,6 +16,7 @@ import logging
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Coroutine
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
@@ -87,6 +88,19 @@ class WebChatSessionRegistryProtocol(Protocol):
     async def wake_session(self, session_id: str) -> dict[str, Any]: ...
 
 
+@dataclass(frozen=True)
+class NativeWakeTarget:
+    session_id: str
+    terminal_id: str
+    cli_source: str | None
+
+
+class NativeBatchSender(Protocol):
+    def __call__(
+        self, targets: list[NativeWakeTarget]
+    ) -> Coroutine[Any, Any, list[dict[str, Any]]]: ...
+
+
 class WakeDispatcher:
     """Dispatches wake messages to sessions based on their type.
 
@@ -105,6 +119,7 @@ class WakeDispatcher:
         ism_manager: InterSessionMessageManager,
         tmux_sender: TmuxSender | None = None,
         tmux_pane_sender: TmuxPaneSender | None = None,
+        native_batch_sender: NativeBatchSender | None = None,
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
         web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
@@ -116,6 +131,7 @@ class WakeDispatcher:
         self._ism_manager = ism_manager
         self._tmux_sender = tmux_sender
         self._tmux_pane_sender = tmux_pane_sender
+        self._native_batch_sender = native_batch_sender
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
         self._web_chat_session_registry = web_chat_session_registry
@@ -203,6 +219,17 @@ class WakeDispatcher:
                         exc_info=True,
                     )
             return await self._dispatch_live_wake_unlocked(session_id, priority=priority)
+
+    async def dispatch_live_wakes(
+        self,
+        session_ids: list[str],
+        *,
+        priority: str = "normal",
+    ) -> list[dict[str, Any]]:
+        """Batch eligible native-terminal wakes and preserve recipient order."""
+        from gobby.events.wake_batch import dispatch_live_wakes
+
+        return await dispatch_live_wakes(self, session_ids, priority=priority)
 
     async def _dispatch_live_wake_unlocked(
         self,

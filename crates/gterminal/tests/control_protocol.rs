@@ -237,9 +237,42 @@ fn control_surface_round_trip() {
     send_json(
         &mut stream,
         &json!({
+            "method": "write_batch",
+            "id": "wb1",
+            "operation_seq": 3,
+            "targets": [
+                {
+                    "recipient_id": "recipient-live",
+                    "host_terminal_id": host_terminal_id,
+                    "operations": [
+                        {"kind": "text", "encoding": "utf8-b64", "data": "eQ==", "delay_ms": 0},
+                        {"kind": "key", "encoding": "utf8-b64", "data": "ZW50ZXI=", "delay_ms": 0},
+                    ],
+                },
+                {
+                    "recipient_id": "recipient-missing",
+                    "host_terminal_id": "missing-terminal",
+                    "operations": [
+                        {"kind": "text", "encoding": "utf8-b64", "data": "eg==", "delay_ms": 0},
+                    ],
+                },
+            ],
+        }),
+    );
+    let batch = recv_json(&mut stream);
+    assert_eq!(batch["ok"], true, "{batch}");
+    assert_eq!(batch["results"][0]["recipient_id"], "recipient-live");
+    assert_eq!(batch["results"][0]["written"], true);
+    assert_eq!(batch["results"][1]["recipient_id"], "recipient-missing");
+    assert_eq!(batch["results"][1]["error"], "not_found");
+    assert_eq!(batch["results"][1]["stage"], "none");
+
+    send_json(
+        &mut stream,
+        &json!({
             "method": "resize",
             "id": "z1",
-            "operation_seq": 3,
+            "operation_seq": 4,
             "host_terminal_id": host_terminal_id,
             "rows": 30,
             "cols": 100,
@@ -289,7 +322,7 @@ fn control_surface_round_trip() {
         &json!({
             "method": "kill",
             "id": "k1",
-            "operation_seq": 4,
+            "operation_seq": 5,
             "host_terminal_id": host_terminal_id,
             "grace_ms": 50,
         }),
@@ -361,6 +394,61 @@ fn operation_seq_ledger_is_total() {
     conflict["argv"] = json!(["/bin/true"]);
     let mismatched = seq_spawn(&mut stream, 1, conflict);
     assert_eq!(mismatched["error"], "operation_conflict");
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    let _ = recv_json(&mut stream);
+    let _ = wait_exit(&mut child, Duration::from_secs(5));
+}
+
+#[test]
+fn write_batch_enforces_target_and_operation_limits() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let token = "control-token-batch-limits";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+    let targets: Vec<_> = (0..65)
+        .map(|index| {
+            json!({
+                "recipient_id": format!("recipient-{index}"),
+                "host_terminal_id": format!("terminal-{index}"),
+                "operations": [
+                    {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0},
+                ],
+            })
+        })
+        .collect();
+    send_json(
+        &mut stream,
+        &json!({"method": "write_batch", "operation_seq": 1, "targets": targets}),
+    );
+    let too_many_targets = recv_json(&mut stream);
+    assert_eq!(too_many_targets["error"], "too_many_targets");
+
+    let operations: Vec<_> = (0..129)
+        .map(|_| json!({"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0}))
+        .collect();
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "write_batch",
+            "operation_seq": 2,
+            "targets": [{
+                "recipient_id": "recipient",
+                "host_terminal_id": "terminal",
+                "operations": operations,
+            }],
+        }),
+    );
+    let too_many_operations = recv_json(&mut stream);
+    assert_eq!(too_many_operations["ok"], true);
+    assert_eq!(
+        too_many_operations["results"][0]["error"],
+        "too_many_operations"
+    );
+    assert_eq!(too_many_operations["results"][0]["stage"], "none");
+
     send_json(
         &mut stream,
         &json!({"method": "host_shutdown", "grace_ms": 20}),

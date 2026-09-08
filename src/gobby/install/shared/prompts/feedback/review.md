@@ -1,6 +1,6 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
-version: "2.1"
+version: "3.0"
 required_variables:
   - observations
   - max_tasks
@@ -71,7 +71,7 @@ found work.
 
 ## Output
 
-Return strict JSON only, exactly this shape:
+Produce exactly this JSON shape:
 
 {
   "clusters": [
@@ -97,3 +97,8 @@ phrase naming the underlying behavior), `classification`, and `digest_note`;
 marked `llm-reviewed` and `awaiting-human-review`; a human removes the latter label
 after verification to make the task dispatchable. Do not add other keys. Do not
 invent observation ids, task refs, paths, or behavior beyond the evidence.
+
+Submit the compact JSON object as the exact `current_state` value in your
+`end_agent_run` handoff, with one nonblank `next_steps` item telling deterministic
+feedback intake to validate and apply the proposal. Do not wrap the JSON in
+Markdown or add commentary to `current_state`.

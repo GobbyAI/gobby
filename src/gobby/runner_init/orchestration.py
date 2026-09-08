@@ -19,6 +19,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.events.wake import NativeWakeTarget
     from gobby.runner import GobbyRunner
     from gobby.system_automation import PipelineHeartbeatService
 
@@ -49,6 +50,91 @@ def bind_wake_write_services(manager: Any, coordinator: Any) -> None:
     """Bind composition-root write services for daemon wake delivery."""
     _WAKE_WRITE_SERVICES.manager = manager
     _WAKE_WRITE_SERVICES.coordinator = coordinator
+
+
+async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
+    """Send complete composer-clear/wake sequences in one native-host request."""
+    from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
+    from gobby.events.wake import CONTINUE_WAKE_MESSAGE
+    from gobby.terminals.composer import composer_clear_sequence
+    from gobby.terminals.native_runtime import NativeBatchFailure, NativeBatchOperation
+    from gobby.terminals.runtime import (
+        AutomaticWriteQuarantined,
+        Delivered,
+        IndeterminateWrite,
+        Suppressed,
+    )
+    from gobby.terminals.write_coordinator import NativeWakeBatchRequest
+
+    _, coordinator = _wake_write_services()
+    delay_ms = round(TMUX_TEXT_ENTER_DELAY_SECONDS * 1_000)
+    requests = []
+    for target in targets:
+        operations = [
+            NativeBatchOperation(kind="key", payload=key)
+            for key in composer_clear_sequence(target.cli_source)
+        ]
+        operations.extend(
+            [
+                NativeBatchOperation(
+                    kind="text",
+                    payload=CONTINUE_WAKE_MESSAGE,
+                    delay_ms=delay_ms,
+                ),
+                NativeBatchOperation(kind="key", payload="enter", delay_ms=delay_ms),
+            ]
+        )
+        requests.append(
+            NativeWakeBatchRequest(
+                result_id=target.session_id,
+                terminal_id=target.terminal_id,
+                clear_action_key=f"wake-clear:{target.terminal_id}",
+                wake_action_key=f"wake:{target.terminal_id}",
+                operations=tuple(operations),
+            )
+        )
+
+    batch_results = await coordinator.run_native_wake_batch(requests)
+    wake_results: list[dict[str, Any]] = []
+    for result in batch_results:
+        outcome = result.outcome
+        if isinstance(outcome, Delivered):
+            wake_results.append(
+                {"session_id": result.result_id, "delivered": True, "method": "terminal"}
+            )
+        elif isinstance(outcome, IndeterminateWrite):
+            wake_results.append(
+                {
+                    "session_id": result.result_id,
+                    "delivered": False,
+                    "method": "terminal",
+                    "indeterminate": True,
+                    "error_message": outcome.detail,
+                }
+            )
+        elif isinstance(outcome, Suppressed | AutomaticWriteQuarantined):
+            wake_results.append(
+                {
+                    "session_id": result.result_id,
+                    "delivered": False,
+                    "method": "terminal",
+                    "error": outcome.reason,
+                    "error_code": outcome.reason,
+                    "error_message": f"automatic write declined: {outcome.reason}",
+                }
+            )
+        elif isinstance(outcome, NativeBatchFailure):
+            wake_results.append(
+                {
+                    "session_id": result.result_id,
+                    "delivered": False,
+                    "method": "terminal",
+                    "error": outcome.code,
+                    "error_code": outcome.code,
+                    "error_message": outcome.detail,
+                }
+            )
+    return wake_results
 
 
 async def _send_tmux_session_wake(
@@ -397,6 +483,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         ism_manager=ism_manager,
         tmux_sender=_send_tmux_session_wake,
         tmux_pane_sender=_send_tmux_pane_wake,
+        native_batch_sender=_send_native_wake_batch,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,
@@ -667,37 +754,44 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 mark_service_degraded(runner, "memory_dream_cron")
                 logger.exception("Failed to register memory dream cron handler")
 
-        if runner.llm_service is None:
-            mark_service_degraded(runner, "feedback_review_cron")
-            logger.warning("Skipping feedback review cron registration; LLM service unavailable")
-        else:
-            try:
-                from gobby.feedback.cron import register_feedback_review_cron
-                from gobby.feedback.service import FeedbackReviewService
+        try:
+            from gobby.feedback.agent import FeedbackReviewerAgent
+            from gobby.feedback.cron import register_feedback_review_cron
+            from gobby.feedback.service import FeedbackReviewService
 
-                feedback_review_config = config.session_feedback.review
-                runner.feedback_review_service = FeedbackReviewService(
-                    runner.database,
-                    runner.llm_service,
-                    feedback_review_config,
-                    runner.task_manager,
-                )
-                interrupted = runner.feedback_review_service.store.mark_running_interrupted()
-                if interrupted:
-                    logger.info(
-                        "Marked %d orphaned feedback review run(s) interrupted", interrupted
-                    )
-                registered = register_feedback_review_cron(
-                    cron_storage=runner.cron_storage,
-                    cron_executor=cron_executor,
-                    service=runner.feedback_review_service,
-                    config=feedback_review_config,
-                    project_id=runner.project_id,
-                )
-                logger.debug("Feedback review cron handlers registered: %s", registered)
-            except Exception:
-                mark_service_degraded(runner, "feedback_review_cron")
-                logger.exception("Failed to register feedback review cron handler")
+            feedback_review_config = config.session_feedback.review
+            feedback_reviewer = FeedbackReviewerAgent(
+                db=runner.database,
+                runner=runner.agent_runner,
+                session_manager=runner.session_manager,
+                completion_registry=runner.completion_registry,
+                project_id=runner.project_id,
+                project_path=(
+                    str(runner.git_manager.repo_path) if runner.git_manager is not None else None
+                ),
+                git_manager=runner.git_manager,
+                daemon_config=config,
+            )
+            runner.feedback_review_service = FeedbackReviewService(
+                runner.database,
+                feedback_reviewer,
+                feedback_review_config,
+                runner.task_manager,
+            )
+            interrupted = runner.feedback_review_service.store.mark_running_interrupted()
+            if interrupted:
+                logger.info("Marked %d orphaned feedback review run(s) interrupted", interrupted)
+            registered = register_feedback_review_cron(
+                cron_storage=runner.cron_storage,
+                cron_executor=cron_executor,
+                service=runner.feedback_review_service,
+                config=feedback_review_config,
+                project_id=runner.project_id,
+            )
+            logger.debug("Feedback review cron handlers registered: %s", registered)
+        except Exception:
+            mark_service_degraded(runner, "feedback_review_cron")
+            logger.exception("Failed to register feedback review cron handler")
 
         runner.code_index_pruner = None
         runner.code_index_nightly_repairer = None
