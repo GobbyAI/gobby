@@ -7,12 +7,14 @@ project root, and schedules work on the asyncio event loop.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.code_index.gcode_gateway import (
+    GcodeCommandResult,
     GcodeDaemonConfigUnavailableError,
     GcodeGateway,
 )
@@ -32,8 +34,8 @@ class _LaunchFactorySource(Protocol):
 class CodeIndexTrigger:
     """End-of-tick trigger for post-edit incremental code indexing.
 
-    Accepts file change notifications from any thread and coalesces
-    them into serialized gcode index calls per canonical project root.
+    Accepts file change notifications from any thread and coalesces duplicate
+    paths while allowing disjoint gcode index calls to overlap.
     """
 
     def __init__(
@@ -63,7 +65,8 @@ class CodeIndexTrigger:
         # roots, None for ordinary project roots.
         self._overlay_by_root: dict[str, str | None] = {}
         self._scheduled_by_root: dict[str, asyncio.Handle] = {}
-        self._active_tasks_by_root: dict[str, asyncio.Task[None]] = {}
+        self._active_tasks_by_root: dict[str, set[asyncio.Task[None]]] = {}
+        self._active_files_by_root: dict[str, set[str]] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._retry_delay_by_root: dict[str, float] = {}
 
@@ -99,7 +102,7 @@ class CodeIndexTrigger:
         self._project_id_by_root[root_key] = project_id
         self._overlay_by_root[root_key] = code_overlay_project_id
 
-        if root_key in self._scheduled_by_root or root_key in self._active_tasks_by_root:
+        if root_key in self._scheduled_by_root:
             return
         self._schedule_batch(root_key)
 
@@ -114,30 +117,52 @@ class CodeIndexTrigger:
         self._scheduled_by_root[root_key] = handle
 
     def _start_batch(self, root_key: str) -> None:
-        """Start a root's pending batch when no other run is active."""
+        """Start a root's pending files that do not overlap active work."""
         self._scheduled_by_root.pop(root_key, None)
-        if root_key in self._active_tasks_by_root:
-            return
-        if not self._pending_by_root.get(root_key):
-            self._project_id_by_root.pop(root_key, None)
-            self._overlay_by_root.pop(root_key, None)
+        pending = self._pending_by_root.get(root_key)
+        if not pending:
+            if not self._active_tasks_by_root.get(root_key):
+                self._project_id_by_root.pop(root_key, None)
+                self._overlay_by_root.pop(root_key, None)
             return
 
+        active_files = self._active_files_by_root.setdefault(root_key, set())
+        files = pending - active_files
+        if not files:
+            return
+        pending.difference_update(files)
+        if not pending:
+            self._pending_by_root.pop(root_key, None)
+        active_files.update(files)
+
         project_id = self._project_id_by_root[root_key]
-        task = self._loop.create_task(self._flush(root_key, project_id))
-        self._active_tasks_by_root[root_key] = task
+        task = self._loop.create_task(self._flush(root_key, project_id, files=files))
+        self._active_tasks_by_root.setdefault(root_key, set()).add(task)
         self._background_tasks.add(task)
 
         def _consume_result(done_task: asyncio.Task[None]) -> None:
-            self._batch_done(root_key, done_task)
+            self._batch_done(root_key, done_task, files)
 
         task.add_done_callback(_consume_result)
 
-    def _batch_done(self, root_key: str, task: asyncio.Task[None]) -> None:
+    def _batch_done(
+        self,
+        root_key: str,
+        task: asyncio.Task[None],
+        files: set[str],
+    ) -> None:
         """Consume task completion and queue edits received during the run."""
         self._background_tasks.discard(task)
-        if self._active_tasks_by_root.get(root_key) is task:
-            self._active_tasks_by_root.pop(root_key, None)
+        active = self._active_tasks_by_root.get(root_key)
+        if active is not None:
+            active.discard(task)
+            if not active:
+                self._active_tasks_by_root.pop(root_key, None)
+        active_files = self._active_files_by_root.get(root_key)
+        if active_files is not None:
+            active_files.difference_update(files)
+            if not active_files:
+                self._active_files_by_root.pop(root_key, None)
 
         try:
             task.result()
@@ -149,7 +174,7 @@ class CodeIndexTrigger:
         if self._pending_by_root.get(root_key):
             if root_key not in self._scheduled_by_root:
                 self._schedule_batch(root_key)
-        elif root_key not in self._scheduled_by_root:
+        elif root_key not in self._scheduled_by_root and root_key not in self._active_tasks_by_root:
             self._project_id_by_root.pop(root_key, None)
             self._overlay_by_root.pop(root_key, None)
 
@@ -200,12 +225,19 @@ class CodeIndexTrigger:
             return os.path.normpath(os.fspath(resolved.relative_to(root)))
         return os.path.normpath(os.fspath(resolved))
 
-    async def _flush(self, root_key: str, project_id: str) -> None:
+    async def _flush(
+        self,
+        root_key: str,
+        project_id: str,
+        *,
+        files: set[str] | None = None,
+    ) -> None:
         """Flush pending files for a root through the shared gcode gateway."""
-        files = self._pending_by_root.pop(root_key, set())
-        scheduled = self._scheduled_by_root.pop(root_key, None)
-        if scheduled is not None:
-            scheduled.cancel()
+        if files is None:
+            files = self._pending_by_root.pop(root_key, set())
+            scheduled = self._scheduled_by_root.pop(root_key, None)
+            if scheduled is not None:
+                scheduled.cancel()
 
         if not files:
             return
@@ -250,16 +282,24 @@ class CodeIndexTrigger:
             self._daemon_config_breaker.record_success()
             if result.success:
                 self._clear_retry_backoff(root_key)
+                busy_files = _busy_files_from_result(result, files)
+                if busy_files:
+                    self._requeue_for_retry(root_key, project_id, busy_files)
                 logger.debug(
-                    "gcode indexed %s files for project %s at %s", len(files), project_id, root_key
+                    "gcode indexed %s files for project %s at %s; %s busy",
+                    len(files) - len(busy_files),
+                    project_id,
+                    root_key,
+                    len(busy_files),
                 )
             elif result.returncode == 3:
+                busy_files = _busy_files_from_result(result, files) or files
                 logger.debug(
                     "gcode index skipped %s files for project %s (index lock busy); requeuing",
-                    len(files),
+                    len(busy_files),
                     project_id,
                 )
-                self._requeue_for_retry(root_key, project_id, files)
+                self._requeue_for_retry(root_key, project_id, busy_files)
             else:
                 detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
                 if result.timed_out:
@@ -295,3 +335,16 @@ class CodeIndexTrigger:
             self._daemon_config_breaker.record_success()
             logger.warning("gcode index failed for project %s at %s: %s", project_id, root_key, e)
             self._requeue_for_retry(root_key, project_id, files)
+
+
+def _busy_files_from_result(result: GcodeCommandResult, requested: set[str]) -> set[str]:
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    busy = payload.get("busy_files")
+    if not isinstance(busy, list):
+        return set()
+    return {path for path in busy if isinstance(path, str) and path in requested}

@@ -13,9 +13,11 @@ import pytest
 
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.gcode_gateway import (
+    GcodeBusyError,
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
     GcodeEmbeddingTransportError,
+    GcodeGateway,
     GcodeIndexedFileNotFoundError,
     _classify_gcode_command_error,
 )
@@ -279,6 +281,55 @@ class RetryingVectorGateway:
         return {"success": True}
 
 
+class ConcurrentGraphGateway(GcodeGateway):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.active = 0
+        self.max_active = 0
+        self.both_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def graph_sync_file(
+        self, project_root: Path, file_path: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        self.calls.append(file_path)
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        if self.active == 2:
+            self.both_started.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.active -= 1
+        return {"success": True}
+
+
+class BusyProjectionGateway(GcodeGateway):
+    def __init__(self, busy_projection: str) -> None:
+        self.busy_projection = busy_projection
+
+    def _result(self, projection: str, file_path: str) -> dict[str, Any]:
+        if projection == self.busy_projection:
+            stdout = f'{{"status":"busy","completed_files":[],"busy_files":["{file_path}"]}}'
+            raise GcodeBusyError(
+                ("gcode", projection, "sync-file", file_path),
+                3,
+                stdout,
+                [file_path],
+            )
+        return {"success": True}
+
+    async def vector_sync_file(
+        self, project_root: Path, file_path: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        return self._result("vector", file_path)
+
+    async def graph_sync_file(
+        self, project_root: Path, file_path: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        return self._result("graph", file_path)
+
+
 def _write_files(root: Path, paths: list[str]) -> None:
     for path in paths:
         full = root / path
@@ -304,6 +355,90 @@ def _config(
         embedding_enabled=embedding_enabled,
         graph_enabled=graph_enabled,
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_pass_runs_disjoint_files_concurrently(tmp_path: Path) -> None:
+    paths = ["src/first.py", "src/second.py"]
+    _write_files(tmp_path, paths)
+    files = [_indexed_file(path, vectors_synced=True, graph_synced=False) for path in paths]
+    storage = _make_storage(tmp_path, files)
+    gateway = ConcurrentGraphGateway()
+
+    sync_task = asyncio.create_task(
+        _sync_pass(
+            storage=storage,
+            gcode_gateway=gateway,
+            config=_config(embedding_enabled=False, graph_enabled=True),
+            batch_size=50,
+        )
+    )
+    await asyncio.wait_for(gateway.both_started.wait(), timeout=1.0)
+    gateway.release.set()
+    await asyncio.wait_for(sync_task, timeout=1.0)
+
+    assert gateway.max_active == 2
+    assert set(gateway.calls) == set(paths)
+    assert storage.mark_graph_synced.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy_projection", ["vector", "graph"])
+async def test_file_contention_requeues_only_busy_projection(
+    tmp_path: Path,
+    busy_projection: str,
+) -> None:
+    path = "src/app.py"
+    _write_files(tmp_path, [path])
+    storage = _make_storage(
+        tmp_path,
+        [_indexed_file(path, vectors_synced=False, graph_synced=False)],
+    )
+    gateway = BusyProjectionGateway(busy_projection)
+    vector_breaker = make_breaker(failure_threshold=1)
+    gateway_breaker = make_breaker(failure_threshold=1)
+
+    await _sync_pass(
+        storage=storage,
+        gcode_gateway=gateway,
+        config=_config(embedding_enabled=True, graph_enabled=True),
+        batch_size=50,
+        vector_breaker=vector_breaker,
+        gateway_breaker=gateway_breaker,
+    )
+
+    assert vector_breaker.state is BreakerState.CLOSED
+    assert gateway_breaker.state is BreakerState.CLOSED
+    if busy_projection == "vector":
+        storage.mark_vectors_synced.assert_not_called()
+        storage.mark_graph_synced.assert_called_once()
+    else:
+        storage.mark_vectors_synced.assert_called_once()
+        storage.mark_graph_synced.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_half_open_vector_breaker_stays_open_on_file_contention(tmp_path: Path) -> None:
+    path = "src/app.py"
+    _write_files(tmp_path, [path])
+    storage = _make_storage(tmp_path, [_indexed_file(path, graph_synced=True)])
+    gateway = BusyProjectionGateway("vector")
+    clock = FakeClock()
+    breaker = make_breaker(clock, failure_threshold=1, base_backoff_seconds=30.0)
+    breaker.record_failure()
+    clock.now = 30.0
+
+    await _sync_pass(
+        storage=storage,
+        gcode_gateway=gateway,
+        config=_config(),
+        batch_size=50,
+        vector_breaker=breaker,
+    )
+
+    assert breaker.state is BreakerState.OPEN
+    assert breaker.retry_after_seconds() == 30.0
+    storage.mark_vectors_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -429,7 +564,8 @@ async def test_successful_probe_closes_and_pass_resumes(tmp_path: Path) -> None:
         vector_breaker=breaker,
     )
     assert breaker.state is BreakerState.CLOSED
-    assert gateway.vector_calls == paths  # probe succeeded, rest of pass proceeded
+    assert gateway.vector_calls[0] == paths[0]
+    assert set(gateway.vector_calls[1:]) == set(paths[1:])
 
 
 @pytest.mark.asyncio
@@ -506,9 +642,9 @@ async def test_daemon_config_failure_stops_subprocesses_and_preserves_pending_wo
     )
 
     assert gateway_breaker.state is BreakerState.OPEN
-    assert gateway.vector_calls == ["src/f0.py"]
+    assert set(gateway.vector_calls) == set(paths)
     assert gateway.graph_calls == []
-    storage.mark_vector_sync_attempted.assert_called_once()
+    assert storage.mark_vector_sync_attempted.call_count == len(paths)
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
@@ -568,8 +704,9 @@ async def test_daemon_config_half_open_allows_one_probe_then_resumes(
         gateway_breaker=gateway_breaker,
     )
     assert_breaker_state(gateway_breaker, BreakerState.CLOSED)
-    assert gateway.vector_calls == paths
-    assert gateway.graph_calls == paths
+    assert gateway.vector_calls[0] == paths[0]
+    assert set(gateway.vector_calls[1:]) == set(paths[1:])
+    assert set(gateway.graph_calls) == set(paths)
 
 
 @pytest.mark.asyncio

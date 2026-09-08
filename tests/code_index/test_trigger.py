@@ -45,11 +45,12 @@ def _result(
     stderr: str = "",
     timed_out: bool = False,
     timeout_seconds: float = 0.01,
+    stdout: str = "",
 ) -> GcodeCommandResult:
     return GcodeCommandResult(
         command=("gcode", "index"),
         returncode=returncode,
-        stdout="",
+        stdout=stdout,
         stderr=stderr,
         started_at="2026-01-01T00:00:00+00:00",
         completed_at="2026-01-01T00:00:01+00:00",
@@ -378,7 +379,7 @@ async def test_different_roots_flush_independently(
 
 
 @pytest.mark.asyncio
-async def test_edits_during_active_run_form_one_serial_follow_up_batch(tmp_path: Path) -> None:
+async def test_edits_during_active_run_start_a_disjoint_concurrent_batch(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     gateway = FirstCallBlockingGateway()
@@ -400,11 +401,41 @@ async def test_edits_during_active_run_form_one_serial_follow_up_batch(tmp_path:
     await _next_loop_turn()
     await _next_loop_turn()
 
+    await _wait_for_call_count(gateway, 2)
+    assert [call[1] for call in gateway.calls] == [("src/a.py",), ("src/b.py", "src/c.py")]
+    assert gateway.max_active_calls == 2
+    gateway.release_first_call.set()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_edit_waits_for_active_file_and_coalesces_follow_up(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    gateway = FirstCallBlockingGateway()
+    trigger = CodeIndexTrigger(
+        loop=asyncio.get_running_loop(),
+        gcode_gateway=gateway,
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="index",
+            failure_threshold=1,
+        ),
+    )
+
+    trigger.notify_file_changed("src/a.py", "proj-1", str(root))
+    await asyncio.wait_for(gateway.first_call_started.wait(), timeout=1.0)
+    trigger.notify_file_changed("src/a.py", "proj-1", str(root))
+    trigger.notify_file_changed("src/a.py", "proj-1", str(root))
+    await _next_loop_turn()
+    await _next_loop_turn()
+
     assert len(gateway.calls) == 1
     gateway.release_first_call.set()
     await _wait_for_call_count(gateway, 2)
-
-    assert [call[1] for call in gateway.calls] == [("src/a.py",), ("src/b.py", "src/c.py")]
+    assert [call[1] for call in gateway.calls] == [("src/a.py",), ("src/a.py",)]
     assert gateway.max_active_calls == 1
 
 
@@ -464,7 +495,12 @@ async def test_lock_busy_requeues_without_warning_and_closes_breaker(
     harness.breaker.record_failure()
     caplog.clear()
     harness.clock.now = 30.0
-    harness.gateway.outcomes.append(_result(returncode=3, stderr="index lock busy"))
+    harness.gateway.outcomes.append(
+        _result(
+            returncode=3,
+            stdout='{"completed_files": [], "busy_files": ["src/foo.py"]}',
+        )
+    )
 
     with caplog.at_level(logging.INFO):
         await harness.trigger._flush(root_key, "proj-1")
@@ -475,6 +511,25 @@ async def test_lock_busy_requeues_without_warning_and_closes_breaker(
     assert harness.breaker.state is BreakerState.CLOSED
     assert "breaker closed" in caplog.text
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_partial_lock_contention_requeues_only_busy_files(
+    harness: TriggerHarness,
+    tmp_path: Path,
+) -> None:
+    root_key = harness.trigger._root_key(str(tmp_path))
+    harness.trigger._pending_by_root[root_key] = {"src/a.py", "src/b.py", "src/c.py"}
+    harness.gateway.outcomes.append(
+        _result(
+            stdout=('{"completed_files": ["src/a.py", "src/c.py"], "busy_files": ["src/b.py"]}')
+        )
+    )
+
+    await harness.trigger._flush(root_key, "proj-1")
+    _cancel_scheduled_callback(harness.trigger, root_key)
+
+    assert harness.trigger._pending_by_root[root_key] == {"src/b.py"}
 
 
 @pytest.mark.asyncio

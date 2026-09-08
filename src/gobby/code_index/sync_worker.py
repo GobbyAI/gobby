@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
 from gobby.code_index.gcode_gateway import (
+    GcodeBusyError,
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
     GcodeEmbeddingTransportError,
@@ -24,7 +25,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeTimeoutError,
     GcodeUnavailableError,
 )
-from gobby.code_index.sync_breaker import SyncCircuitBreaker
+from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.utils.logging import ThrottledLogger
 
@@ -173,11 +174,15 @@ def _record_breaker_outcomes(
     armed: tuple[SyncCircuitBreaker, ...],
     *,
     failed: tuple[SyncCircuitBreaker | None, ...] = (),
+    inconclusive: tuple[SyncCircuitBreaker | None, ...] = (),
 ) -> None:
     failed_ids = {id(breaker) for breaker in failed if breaker is not None}
+    inconclusive_ids = {id(breaker) for breaker in inconclusive if breaker is not None}
     for breaker in armed:
         if id(breaker) in failed_ids:
             breaker.record_failure()
+        elif id(breaker) in inconclusive_ids:
+            breaker.record_inconclusive()
         else:
             breaker.record_success()
 
@@ -367,11 +372,9 @@ async def _sync_pass(
         if not files:
             continue
 
-        synced_count = 0
-
-        for file in files:
+        async def sync_pending_file(file: IndexedFile) -> bool:
             try:
-                did_sync = await _sync_file(
+                return await _sync_file(
                     storage=storage,
                     gcode_gateway=gcode_gateway,
                     config=config,
@@ -382,14 +385,33 @@ async def _sync_pass(
                     vector_breaker=vector_breaker,
                     gateway_breaker=gateway_breaker,
                 )
-                if did_sync:
-                    synced_count += 1
             except Exception as e:
                 logger.exception(
                     "Sync worker: failed to sync %s: %s",
                     file.file_path,
                     e,
                 )
+                return False
+
+        relevant_breakers = tuple(
+            breaker
+            for breaker in (
+                gateway_breaker if gcode_gateway is not None else None,
+                vector_breaker if vectors_wanted else None,
+            )
+            if breaker is not None
+        )
+        pending_files = list(files)
+        synced_count = 0
+        while pending_files and any(
+            breaker.state is BreakerState.OPEN for breaker in relevant_breakers
+        ):
+            if await sync_pending_file(pending_files.pop(0)):
+                synced_count += 1
+
+        if all(breaker.state is BreakerState.CLOSED for breaker in relevant_breakers):
+            results = await asyncio.gather(*(sync_pending_file(file) for file in pending_files))
+            synced_count += sum(results)
 
         if synced_count > 0:
             logger.debug(
@@ -441,6 +463,9 @@ async def _sync_file(
             except GcodeDaemonConfigUnavailableError:
                 _record_breaker_outcomes(armed, failed=(gateway_breaker,))
                 return did_work
+            except GcodeBusyError:
+                _record_breaker_outcomes(armed, inconclusive=(vector_breaker,))
+                logger.debug("Sync worker: vector file lock busy for %s", current.file_path)
             except GcodeIndexedFileNotFoundError as e:
                 # Per-file data error: never affects the breaker.
                 _record_breaker_outcomes(armed)
@@ -530,6 +555,12 @@ async def _sync_file(
                         except GcodeDaemonConfigUnavailableError:
                             _record_breaker_outcomes(armed, failed=(gateway_breaker,))
                             return did_work
+                        except GcodeBusyError:
+                            _record_breaker_outcomes(armed)
+                            logger.debug(
+                                "Sync worker: graph file lock busy for %s",
+                                current.file_path,
+                            )
                         except GcodeIndexedFileNotFoundError as e:
                             _record_breaker_outcomes(armed)
                             if not await _handle_indexed_file_not_found(
