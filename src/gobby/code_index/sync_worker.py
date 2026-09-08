@@ -372,14 +372,18 @@ async def _sync_pass(
         if not files:
             continue
 
-        async def sync_pending_file(file: IndexedFile) -> bool:
+        async def sync_pending_file(
+            file: IndexedFile,
+            project_id: str = project.id,
+            project_root: Path = root,
+        ) -> bool:
             try:
                 return await _sync_file(
                     storage=storage,
                     gcode_gateway=gcode_gateway,
                     config=config,
-                    project_id=project.id,
-                    root=root,
+                    project_id=project_id,
+                    root=project_root,
                     file=file,
                     run_db=run_db,
                     vector_breaker=vector_breaker,
