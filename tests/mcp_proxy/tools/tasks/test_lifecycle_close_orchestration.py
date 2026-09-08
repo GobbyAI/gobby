@@ -54,7 +54,6 @@ from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
-_PERSISTED_TASK_ID = "00000000-0000-4000-8000-000000002608"
 _PERSISTED_SESSION_ID = "00000000-0000-4000-8000-000000002609"
 _FIRST_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002610"
 _SECOND_REVIEW_RUN_ID = "00000000-0000-4000-8000-000000002611"
@@ -277,22 +276,18 @@ async def test_pending_concise_response_keeps_commands_only_in_validator_prompt(
 @pytest.mark.integration
 async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_requirements(
     temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = TaskCloseReviewStore(temp_db)
-    task_manager = SimpleNamespace(db=temp_db)
-    task = Task(
-        id=_PERSISTED_TASK_ID,
-        project_id="00000000-0000-4000-8000-000000002612",
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
         title="Carry prior close evidence",
         priority=1,
-        task_type="task",
         validation_criteria="Focused tests pass.",
-        created_at=datetime(2026, 8, 22, tzinfo=UTC),
-        updated_at=datetime(2026, 8, 22, tzinfo=UTC),
-        seq_num=42,
     )
-    evaluation = CloseEvaluation("#42")
+    evaluation = CloseEvaluation(f"#{task.seq_num}")
     evaluation.task = task
     evaluation.task_id = task.id
     evaluation.resolved_session_id = _PERSISTED_SESSION_ID
@@ -324,7 +319,7 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
 
     first_launch_prompt = registry.call.await_args.args[1]["prompt"]
     assert "prior_requirements=" not in first_launch_prompt
-    first_review = store.get_active_for_task(_PERSISTED_TASK_ID)
+    first_review = store.get_active_for_task(task.id)
     assert first_review is not None
     assert first_review.agent_run_id == _FIRST_REVIEW_RUN_ID
 
@@ -356,8 +351,8 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
     ) -> CloseEvaluation:
         submitted = kwargs["submitted_review"]
         assert isinstance(submitted, SubmittedCloseReview)
-        evaluation = CloseEvaluation("#42")
-        evaluation.task_id = _PERSISTED_TASK_ID
+        evaluation = CloseEvaluation(f"#{task.seq_num}")
+        evaluation.task_id = task.id
         evaluation.error = "validation_failed"
         evaluation.message = "The close evidence is incomplete."
         evaluation.validation_status = "invalid"
@@ -652,7 +647,7 @@ async def test_submit_close_review_claims_before_heavy_work(
     store = TaskCloseReviewStore(temp_db)
     review, created = store.create_or_get_active(
         **{
-            **_persisted_review_intent(),
+            **_persisted_review_intent(task),
             "task_id": task.id,
             "task_ref": f"#{task.seq_num}",
             "close_arguments": {**_arguments(), "task_id": task.id},
@@ -850,10 +845,16 @@ async def test_late_verdict_after_run_end_is_applied(
 @pytest.mark.asyncio
 async def test_late_submission_yields_to_newer_active_review(
     temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = TaskCloseReviewStore(temp_db)
-    old_review, _created = store.create_or_get_active(**_persisted_review_intent())
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Yield an obsolete close review",
+        validation_criteria="The obsolete verdict does not replace the active review.",
+    )
+    old_review, _created = store.create_or_get_active(**_persisted_review_intent(task))
     assert store.bind_run(old_review.id, _FIRST_REVIEW_RUN_ID) is not None
     prior_payload = {
         "event": "task_close_review_completed",
@@ -871,7 +872,7 @@ async def test_late_submission_yields_to_newer_active_review(
     )
     newer, created = store.create_or_get_active(
         **{
-            **_persisted_review_intent(),
+            **_persisted_review_intent(task),
             "review_fingerprint": "newer-review",
             "evidence_fingerprint": "newer-evidence",
         }
@@ -1157,12 +1158,13 @@ def _arguments() -> dict[str, Any]:
     }
 
 
-def _persisted_review_intent() -> dict[str, Any]:
+def _persisted_review_intent(task: Task) -> dict[str, Any]:
     return {
-        "task_id": _PERSISTED_TASK_ID,
-        "task_ref": "#42",
+        "task_id": task.id,
+        "task_ref": f"#{task.seq_num}",
         "caller_session_id": _PERSISTED_SESSION_ID,
         "close_arguments": _arguments(),
+        "expected_task_updated_at": task.updated_at,
         "review_fingerprint": "review",
         "evidence_fingerprint": "evidence",
         "diff_sha": "a" * 64,
