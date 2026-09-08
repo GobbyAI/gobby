@@ -9,6 +9,7 @@ use anyhow::Context;
 use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode};
 use postgres::{Client, NoTls, config::SslMode};
 use postgres_openssl::MakeTlsConnector;
+use std::time::Duration;
 
 const GOBBY_APPLICATION_NAME: &str = "gobby-cli";
 const MANAGED_APPLICATION_NAME_PREFIX: &str = "gobby-agent-";
@@ -121,6 +122,9 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
         .is_some_and(|execution_id| uuid::Uuid::parse_str(execution_id).is_ok());
     if !managed_name {
         config.application_name(GOBBY_APPLICATION_NAME);
+    }
+    if config.get_connect_timeout().is_none() {
+        config.connect_timeout(Duration::from_secs(5));
     }
     Ok(config)
 }
@@ -428,6 +432,28 @@ mod tests {
         ))?;
 
         assert_eq!(config.get_application_name(), Some(managed));
+        Ok(())
+    }
+
+    #[test]
+    fn connection_config_defaults_connect_timeout_to_five_seconds() -> anyhow::Result<()> {
+        let config = connection_config("postgresql://localhost/gobby")?;
+
+        assert_eq!(
+            config.get_connect_timeout().copied(),
+            Some(Duration::from_secs(5))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn connection_config_preserves_explicit_connect_timeout() -> anyhow::Result<()> {
+        let config = connection_config("postgresql://localhost/gobby?connect_timeout=17")?;
+
+        assert_eq!(
+            config.get_connect_timeout().copied(),
+            Some(Duration::from_secs(17))
+        );
         Ok(())
     }
 
