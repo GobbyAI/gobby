@@ -17,6 +17,10 @@ pub(super) fn apply(ws: &mut Workspace, message: &Value) -> Result<(), DaemonErr
         "terminal_write_outcome" => apply_write_outcome(ws, message),
         "terminal_kill_result" => apply_kill_result(ws, message),
         "terminal_event" => apply_event(ws, message),
+        "terminal_resize_result" => {
+            ws.note_resize_result(message);
+            Ok(())
+        }
         "terminal_output" | "terminal_attach_history" => Ok(()),
         _ => Ok(()),
     }

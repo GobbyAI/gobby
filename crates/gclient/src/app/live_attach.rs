@@ -65,6 +65,7 @@ impl Workspace<LiveDaemon> {
                 "terminal_id": terminal_id,
                 "frame_delivery": "direct",
                 "encoding": "semantic_frame",
+                "viewer": "gclient",
             }))
             .await?;
         if reply.get("success").and_then(Value::as_bool) != Some(true) {
@@ -270,6 +271,7 @@ impl Workspace<LiveDaemon> {
                 "terminal_id": terminal_id,
                 "frame_delivery": "proxy",
                 "encoding": "semantic_frame",
+                "viewer": "gclient",
             }))
             .await?;
         if reply.get("success").and_then(Value::as_bool) != Some(true) {

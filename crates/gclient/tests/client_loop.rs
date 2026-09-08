@@ -1365,12 +1365,21 @@ async fn live_resize_propagates_geometry_by_policy() {
                     .and_then(|request| request.get("terminal_id")),
                 Some(&json!("term-controlled"))
             );
+            wait_for_websocket_requests(&mock, "terminal_resize", 3).await;
+            let viewports_before = websocket_requests(&mock, "terminal_set_viewport").len();
+            let resizes_before = websocket_requests(&mock, "terminal_resize").len();
             send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
             wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-            assert_eq!(websocket_requests(&mock, "terminal_set_viewport").len(), 3);
-            send_resize_burst(5);
-            wait_for_websocket_requests(&mock, "terminal_set_viewport", 5).await;
-            wait_for_websocket_requests(&mock, "terminal_resize", 1).await;
+            assert_eq!(
+                websocket_requests(&mock, "terminal_set_viewport").len(),
+                viewports_before,
+                "an iteration at an unchanged geometry resends no viewport"
+            );
+            assert_eq!(
+                websocket_requests(&mock, "terminal_resize").len(),
+                resizes_before,
+                "an iteration at an unchanged geometry resends no size claim"
+            );
             let direct_viewport = timeout(Duration::from_secs(1), async {
                 loop {
                     if let Some(ClientMessage::SetViewport { rows, cols }) = direct_rx.recv().await
@@ -1408,7 +1417,6 @@ async fn live_resize_propagates_geometry_by_policy() {
             "direct source receives the recomputed rectangle"
         );
         let viewports = websocket_requests(&mock, "terminal_set_viewport");
-        assert_eq!(viewports.len(), 5, "the signal burst is coalesced once");
         for terminal_id in ["term-observed", "term-tmux"] {
             let pane_id = workspace
                 .pane_for_terminal(terminal_id)
@@ -1428,19 +1436,26 @@ async fn live_resize_propagates_geometry_by_policy() {
             );
         }
         let resizes = websocket_requests(&mock, "terminal_resize");
-        assert_eq!(resizes.len(), 1);
-        assert_eq!(
-            resizes[0].get("terminal_id"),
-            Some(&json!("term-controlled"))
-        );
-        assert_eq!(
-            resizes[0].get("rows").and_then(Value::as_u64),
-            Some(u64::from(direct_viewport.0))
-        );
-        assert_eq!(
-            resizes[0].get("cols").and_then(Value::as_u64),
-            Some(u64::from(direct_viewport.1))
-        );
+        for terminal_id in ["term-controlled", "term-observed", "term-tmux"] {
+            let pane_id = workspace
+                .pane_for_terminal(terminal_id)
+                .expect("resized pane");
+            let (rows, cols) = workspace.pane(pane_id).viewport();
+            let latest = resizes
+                .iter()
+                .rev()
+                .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
+                .unwrap_or_else(|| panic!("{terminal_id} claimed no size"));
+            assert_eq!(latest.get("viewer"), Some(&json!("gclient")));
+            assert_eq!(
+                latest.get("rows").and_then(Value::as_u64),
+                Some(u64::from(rows))
+            );
+            assert_eq!(
+                latest.get("cols").and_then(Value::as_u64),
+                Some(u64::from(cols))
+            );
+        }
         mock.shutdown().await;
     }
 
@@ -1545,15 +1560,23 @@ async fn resize_geometry_policy_reducer() {
         .collect();
     assert_eq!(
         resizes.len(),
-        1,
-        "only a controlled native pane owns PTY geometry"
+        3,
+        "every live pane claims its size for the gclient viewer"
     );
-    assert_eq!(
-        resizes[0].get("terminal_id"),
-        Some(&json!("term-controlled"))
-    );
-    assert_eq!(resizes[0].get("rows"), Some(&json!(30)));
-    assert_eq!(resizes[0].get("cols"), Some(&json!(100)));
+    for (pane, terminal_id) in [
+        (controlled_native, "term-controlled"),
+        (observed_proxy, "term-observed"),
+        (controlled_tmux, "term-tmux"),
+    ] {
+        let (rows, cols) = ws.pane(pane).viewport();
+        let resize = resizes
+            .iter()
+            .find(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
+            .unwrap_or_else(|| panic!("{terminal_id} claimed no size"));
+        assert_eq!(resize.get("viewer"), Some(&json!("gclient")));
+        assert_eq!(resize.get("rows"), Some(&json!(rows)));
+        assert_eq!(resize.get("cols"), Some(&json!(cols)));
+    }
 }
 
 #[tokio::test]
@@ -1626,20 +1649,30 @@ async fn select_spawn_attach_terminate_loop() {
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
             send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
             wait_for_websocket_requests(&mock, "terminal_create", 1).await;
-            wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
-            let spawned_attachment = websocket_requests(&mock, "terminal_set_viewport")
-                .into_iter()
-                .find(|request| {
-                    request.get("terminal_id")
-                        == Some(&json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
-                })
-                .and_then(|request| {
-                    request
-                        .get("attachment_id")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .expect("spawned attachment");
+            // The survivor's viewport is claimed again as its slot shrinks,
+            // so the spawned pane's claim is found by terminal, not by count.
+            let spawned_attachment = timeout(Duration::from_secs(1), async {
+                loop {
+                    let found = websocket_requests(&mock, "terminal_set_viewport")
+                        .into_iter()
+                        .find(|request| {
+                            request.get("terminal_id")
+                                == Some(&json!("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                        })
+                        .and_then(|request| {
+                            request
+                                .get("attachment_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        });
+                    if let Some(found) = found {
+                        break found;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("spawned attachment");
             // The create reply and relist have already attached the pane. Delivering the
             // lifecycle afterward, twice, must remain idempotent.
             mock.send_event_and_wait(json!({
@@ -2368,6 +2401,11 @@ async fn detach_deadlines_recover_through_the_supervisor() {
                         .to_string(),
                 )
             })
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        let attachments: Vec<(String, String)> = attachments
+            .into_iter()
+            .filter(|(terminal_id, _)| seen.insert(terminal_id.clone()))
             .collect();
         for (index, (terminal_id, attachment_id)) in attachments.iter().enumerate() {
             mock.send_event_and_wait(json!({
@@ -5076,4 +5114,306 @@ async fn tab_sets_follow_the_focused_project() {
     let parked = load_snapshot(home.path(), "project-2").expect("project-2 snapshot");
     assert_eq!(parked.terminal_ids(), [SPAWNED, "terminal-b1"]);
     mock.shutdown().await;
+}
+
+/// Plan 2.3.1: after startup and after a slot change every shown pane, tmux
+/// or native, held or observing, carries the geometry of its inner rect: a
+/// `SetViewport` plus a `terminal_resize` claiming `viewer: "gclient"`.
+#[tokio::test]
+async fn every_shown_pane_sizes_its_terminal() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let page = |terminals: &[(&str, &str)]| {
+        let items: Vec<Value> = terminals
+            .iter()
+            .map(|(id, backend)| json!({"terminal_id": id, "backend": backend, "state": "live"}))
+            .collect();
+        json!({
+            "items": items,
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-size", "seq": 1}
+        })
+    };
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        page(&[("term-native", "native"), ("term-tmux", "tmux")]),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        page(&[
+            ("term-native", "native"),
+            ("term-tmux", "tmux"),
+            (SPAWNED, "native"),
+        ]),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let _home = pin_tabs(&mut workspace, "project-1", &["term-native", "term-tmux"]);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_resize", 2).await;
+        let sized_at_startup: Vec<Value> = websocket_requests(&mock, "terminal_resize")
+            .iter()
+            .filter_map(|request| request.get("terminal_id").cloned())
+            .collect();
+        assert!(
+            sized_at_startup.contains(&json!("term-native")),
+            "startup sizes the native pane: {sized_at_startup:?}"
+        );
+        assert!(
+            sized_at_startup.contains(&json!("term-tmux")),
+            "startup sizes the tmux pane: {sized_at_startup:?}"
+        );
+        send_chord(&input_tx, KeyCode::Char('-'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let sized = websocket_requests(&mock, "terminal_resize")
+                    .iter()
+                    .any(|request| request.get("terminal_id") == Some(&json!(SPAWNED)));
+                if sized {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the spawned pane is sized once its slot opens");
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("sizing loop");
+
+    let tab = chrome.active_tab().expect("active tab");
+    assert_eq!(tab.slots.len(), 3, "the split opened a third slot");
+    let viewports = websocket_requests(&mock, "terminal_set_viewport");
+    let resizes = websocket_requests(&mock, "terminal_resize");
+    assert!(
+        resizes
+            .iter()
+            .all(|request| request.get("viewer") == Some(&json!("gclient"))),
+        "every size claim names the gclient viewer: {resizes:?}"
+    );
+    for info in &chrome.view.pane_infos {
+        let pane = workspace.pane(tab.slots[&info.id]);
+        let rows = u64::from(info.inner_rect.height);
+        let cols = u64::from(info.inner_rect.width);
+        let latest = |requests: &[Value], kind: &str| -> Value {
+            requests
+                .iter()
+                .rev()
+                .find(|request| request.get("terminal_id") == Some(&json!(pane.terminal_id)))
+                .cloned()
+                .unwrap_or_else(|| panic!("{} received no {kind}", pane.terminal_id))
+        };
+        let viewport = latest(&viewports, "terminal_set_viewport");
+        assert_eq!(
+            (
+                viewport.get("rows").and_then(Value::as_u64),
+                viewport.get("cols").and_then(Value::as_u64),
+            ),
+            (Some(rows), Some(cols)),
+            "{} viewport follows its inner rect",
+            pane.terminal_id
+        );
+        let resize = latest(&resizes, "terminal_resize");
+        assert_eq!(
+            (
+                resize.get("rows").and_then(Value::as_u64),
+                resize.get("cols").and_then(Value::as_u64),
+            ),
+            (Some(rows), Some(cols)),
+            "{} size claim follows its inner rect",
+            pane.terminal_id
+        );
+        assert_eq!(
+            resize.get("attachment_id").and_then(Value::as_str),
+            Some(pane.attachment_id()),
+            "{} claims on its live attachment",
+            pane.terminal_id
+        );
+        assert_eq!(
+            pane.viewport(),
+            (info.inner_rect.height, info.inner_rect.width)
+        );
+    }
+    let tmux = workspace.pane_for_terminal("term-tmux").expect("tmux pane");
+    let native = workspace
+        .pane_for_terminal("term-native")
+        .expect("native pane");
+    assert!(
+        workspace.pane(tmux).is_held(),
+        "the focused tmux pane holds control"
+    );
+    assert!(
+        workspace.pane(native).is_observe(),
+        "the native pane observes"
+    );
+    mock.shutdown().await;
+}
+
+/// Draw through the loop's render path and return each pane's body text,
+/// rows joined by newlines.
+fn draw_pane_bodies(
+    terminal: &mut Terminal<TestBackend>,
+    ws: &Workspace,
+    chrome: &mut Chrome,
+    panes: &[gobby_client::app::PaneId],
+) -> Vec<String> {
+    terminal
+        .draw(|frame| {
+            chrome.compute_view(ws, frame.area());
+            let mut content =
+                |frame: &mut ratatui::Frame<'_>, area: Rect, pane: gobby_client::app::PaneId| {
+                    gobby_client::views::grid::render(frame, area, ws.pane(pane));
+                };
+            gobby_client::ui::render_workspace_with(frame, ws, chrome, &mut content);
+        })
+        .expect("draw the workspace");
+    let tab = chrome.active_tab().expect("active tab");
+    let buffer = terminal.backend().buffer();
+    panes
+        .iter()
+        .map(|pane| {
+            let rect = chrome
+                .view
+                .pane_infos
+                .iter()
+                .find(|info| tab.slots.get(&info.id) == Some(pane))
+                .expect("shown pane")
+                .inner_rect;
+            (rect.y..rect.y + rect.height)
+                .map(|y| {
+                    (rect.x..rect.x + rect.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect()
+}
+
+/// Plan 2.3.2: two panes fed by two sources both paint through the shared
+/// render path, and a body that cannot be painted names the reason.
+#[tokio::test]
+async fn both_panes_render_and_report_size_owner() {
+    let mut ws = Workspace::scripted();
+    let left = ws
+        .open_terminal("term-left", "native", "epoch-render")
+        .expect("left pane");
+    let right = ws
+        .open_terminal("term-right", "native", "epoch-render")
+        .expect("right pane");
+    let ServerMessage::Frame(mut short) = semantic_frame("ALPHA") else {
+        unreachable!("semantic_frame builds a frame");
+    };
+    short.cells.truncate(3);
+    let mut left_source = ScriptedFrameSource::new(Transport::Direct);
+    left_source.queue(semantic_frame("ALPHA"));
+    left_source.queue(ServerMessage::Frame(short));
+    left_source.queue(semantic_frame("ALPHA"));
+    ws.replace_frame_source(left, PaneFrameSource::Scripted(left_source))
+        .expect("left source");
+    let mut right_source = ScriptedFrameSource::new(Transport::Direct);
+    right_source.queue(semantic_frame("BRAVO"));
+    ws.replace_frame_source(right, PaneFrameSource::Scripted(right_source))
+        .expect("right source");
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(left, "left");
+    chrome.open_pane(right, "right");
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("test terminal");
+    let panes = [left, right];
+
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    assert!(
+        bodies[0].contains("waiting for frames"),
+        "a frameless live pane says so: {bodies:?}"
+    );
+    assert!(
+        bodies[1].contains("waiting for frames"),
+        "both frameless panes say so: {bodies:?}"
+    );
+
+    ws.recv_pane_frame(left).await.expect("left frame");
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    assert!(
+        bodies[0].contains("ALPHA"),
+        "the left body paints after its pump: {bodies:?}"
+    );
+    assert!(
+        bodies[1].contains("waiting for frames"),
+        "the right body still waits: {bodies:?}"
+    );
+
+    ws.recv_pane_frame(right).await.expect("right frame");
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    assert!(
+        bodies[0].contains("ALPHA"),
+        "the left body keeps its frame: {bodies:?}"
+    );
+    assert!(
+        bodies[1].contains("BRAVO"),
+        "the right body paints after its pump: {bodies:?}"
+    );
+
+    ws.recv_pane_frame(left).await.expect("short frame");
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    assert!(
+        bodies[0].contains("frame_size_mismatch 5x1/3"),
+        "a malformed frame names its dimensions and cell count: {bodies:?}"
+    );
+    assert!(
+        bodies[1].contains("BRAVO"),
+        "the right body is untouched by the left mismatch: {bodies:?}"
+    );
+
+    let left_attachment = ws.pane(left).attachment_id().to_string();
+    ws.apply_ws(&json!({
+        "type": "terminal_resize_result",
+        "attachment_id": left_attachment,
+        "applied": false,
+        "owner_viewer": "web",
+    }))
+    .expect("resize result");
+    ws.recv_pane_frame(left).await.expect("left frame again");
+    let bodies = draw_pane_bodies(&mut terminal, &ws, &mut chrome, &panes);
+    let left_rows: Vec<&str> = bodies[0].lines().collect();
+    assert!(
+        left_rows.first().is_some_and(|row| row.contains("ALPHA")),
+        "the crop keeps the frame at its origin: {bodies:?}"
+    );
+    assert!(
+        left_rows
+            .last()
+            .is_some_and(|row| row.contains("sized by web")),
+        "the note names the owning viewer: {bodies:?}"
+    );
+    assert!(
+        !bodies[1].contains("sized by"),
+        "the right pane keeps its own sizing: {bodies:?}"
+    );
 }

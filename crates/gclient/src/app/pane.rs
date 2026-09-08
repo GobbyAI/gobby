@@ -78,6 +78,9 @@ pub struct Pane {
     pub(super) status_message: Option<String>,
     pub(super) terminating: bool,
     pub(super) viewport: (u16, u16),
+    /// The viewer the daemon says sizes this terminal, from a refused
+    /// `terminal_resize` (decision 14); `None` while gclient's claim stands.
+    pub sized_by: Option<String>,
     pub(crate) latest_frame: Option<FrameData>,
 }
 
@@ -131,6 +134,7 @@ impl Pane {
             status_message: None,
             terminating: false,
             viewport: (24, 80),
+            sized_by: None,
             latest_frame: None,
         }
     }

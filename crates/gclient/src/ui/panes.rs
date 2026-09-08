@@ -81,6 +81,7 @@ pub fn render_panes<W: WorkspaceView>(
         );
 
         content(frame, info.inner_rect, pane_id);
+        render_pane_note(frame, info.inner_rect, pane, &chrome.palette);
         if let Some(selection) = chrome
             .selection
             .as_ref()
@@ -175,6 +176,56 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
         2,
     );
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), rect);
+}
+
+/// What a pane body says when its grid cannot be painted, and who sizes
+/// it when that is not gclient. `grid::render` stays silent on a missing or
+/// malformed frame, so this names the reason instead of leaving the body
+/// blank; a refused size claim keeps the crop and adds a one-line note.
+fn render_pane_note(frame: &mut Frame, area: Rect, pane: &Pane, p: &Palette) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let muted = Style::default().fg(p.overlay0);
+    let body = match pane.latest_frame() {
+        Some(grid) if grid.cells.len() != usize::from(grid.width) * usize::from(grid.height) => {
+            tracing::debug!(
+                pane = pane.id.0,
+                width = grid.width,
+                height = grid.height,
+                cells = grid.cells.len(),
+                "frame_size_mismatch"
+            );
+            Some(format!(
+                "frame_size_mismatch {}x{}/{}",
+                grid.width,
+                grid.height,
+                grid.cells.len()
+            ))
+        }
+        None if pane.frame_source().is_some() => Some("waiting for frames".to_string()),
+        _ => None,
+    };
+    if let Some(text) = body {
+        let rect = Rect::new(
+            area.x,
+            area.y + area.height.saturating_sub(1) / 2,
+            area.width,
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::styled(text, muted)).alignment(Alignment::Center),
+            rect,
+        );
+    }
+    if let Some(viewer) = pane.sized_by.as_deref() {
+        let rect = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+        frame.render_widget(
+            Paragraph::new(Line::styled(format!("sized by {viewer}"), muted))
+                .alignment(Alignment::Center),
+            rect,
+        );
+    }
 }
 
 #[derive(Clone, Copy, Default)]

@@ -19,7 +19,7 @@ use crate::copy_mode::{copy_selection, route_paste_event};
 use crate::daemon::{Daemon, DaemonError, Generation};
 use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::live_loop::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::live_loop::modal_input::apply_rename;
@@ -382,26 +382,49 @@ impl<D: Daemon> Workspace<D> {
                 source
                     .send(&ClientMessage::SetViewport { rows, cols })
                     .await?;
-                (pane.backend == "native" && pane.is_held()).then(|| {
-                    json!({
-                        "type": "terminal_resize",
-                        "request_id": uuid::Uuid::new_v4().to_string(),
-                        "terminal_id": pane.terminal_id,
-                        "attachment_id": pane.attachment_id(),
-                        "lease_generation": pane.lease_generation(),
-                        "rows": rows,
-                        "cols": cols,
-                    })
+                // Decision 14: every live pane claims its size as the gclient
+                // viewer, whatever its backend or hold. A refusal comes back
+                // as `terminal_resize_result` and re-marks the owner.
+                pane.sized_by = None;
+                json!({
+                    "type": "terminal_resize",
+                    "request_id": uuid::Uuid::new_v4().to_string(),
+                    "terminal_id": pane.terminal_id,
+                    "attachment_id": pane.attachment_id(),
+                    "lease_generation": pane.lease_generation(),
+                    "rows": rows,
+                    "cols": cols,
+                    "viewer": "gclient",
                 })
             };
-            if let Some(resize) = resize {
-                self.daemon
-                    .notify(resize)
-                    .await
-                    .map_err(|error| FrameError::Other(error.to_string()))?;
-            }
+            self.daemon
+                .notify(resize)
+                .await
+                .map_err(|error| FrameError::Other(error.to_string()))?;
         }
         Ok(())
+    }
+
+    /// Record who the daemon says sizes a pane's terminal: a refused
+    /// `terminal_resize` names the owning viewer; anything else clears it.
+    pub(super) fn note_resize_result(&mut self, message: &Value) {
+        let Some(pane) = message
+            .get("attachment_id")
+            .and_then(Value::as_str)
+            .and_then(|attachment| self.pane_for_attachment_mut(attachment))
+        else {
+            return;
+        };
+        pane.sized_by = match message.get("applied").and_then(Value::as_bool) {
+            Some(false) => Some(
+                message
+                    .get("owner_viewer")
+                    .and_then(Value::as_str)
+                    .unwrap_or("another viewer")
+                    .to_string(),
+            ),
+            _ => None,
+        };
     }
 }
 

@@ -1165,13 +1165,14 @@ switch_terminal = "ctrl+1..9"
                     // herdr pinned its own frame bytes; gclient's frame is
                     // characterized the same way against its own render.
                     // Rehashed when the status line gained the transport
-                    // field, and again when the control indicator became a
-                    // bracketed button: 4.1.3 requires a glyph change to fail
-                    // here, so this digest moves only alongside a deliberate
-                    // render change.
+                    // field, again when the control indicator became a
+                    // bracketed button, and again when a frameless pane began
+                    // naming its wait (2.3): 4.1.3 requires a glyph change to
+                    // fail here, so this digest moves only alongside a
+                    // deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "407904d05c80ec69217144ab9b5238295f6f053181b09a85ff9d2f0855b9be49"
+                        "5eb01ddf563425949cc094f826c5affb3e0869c457e42239d6c04b7250584962"
                     );
                 });
         }

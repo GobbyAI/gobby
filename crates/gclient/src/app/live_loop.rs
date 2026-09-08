@@ -198,6 +198,14 @@ pub async fn run_live_loop<B: Backend>(
         workspace.latch_exit(error.to_string());
         loop_error = Some(error);
     }
+    let mut sent_geometry = Vec::new();
+    if workspace.exit_reason().is_none() {
+        if let Err(error) =
+            resize_live_workspace(terminal, workspace, chrome, &mut sent_geometry).await
+        {
+            chrome.status_message = Some(error.to_string());
+        }
+    }
 
     while workspace.exit_reason().is_none() {
         tokio::select! {
@@ -324,9 +332,12 @@ pub async fn run_live_loop<B: Backend>(
             {
                 reconnect_job = supervisor.start_due_attempt(daemon.clone());
             }
+            // A resize redraws at the new size; the geometry pass after the
+            // select then reads the rects that draw produced.
             _ = recv_resize_signal(&mut resize_signal) => {
-                if let Err(error) = resize_live_workspace(terminal, workspace, chrome).await {
-                    chrome.status_message = Some(error.to_string());
+                if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                    workspace.latch_exit(error.to_string());
+                    loop_error = Some(error);
                 }
             }
             _ = render_tick.tick() => {
@@ -352,6 +363,17 @@ pub async fn run_live_loop<B: Backend>(
         }
         if let Err(error) = persist_if_changed(workspace, chrome, &mut last_snapshot) {
             chrome.status_message = Some(error.to_string());
+        }
+        // Every shown live pane carries the geometry of its slot: the pass
+        // keys on pane, rect and attachment, so a slot change, an attach
+        // that completed, a transport fallback or a new terminal size each
+        // send once, and a quiet iteration sends nothing.
+        if workspace.exit_reason().is_none() {
+            if let Err(error) =
+                resize_live_workspace(terminal, workspace, chrome, &mut sent_geometry).await
+            {
+                chrome.status_message = Some(error.to_string());
+            }
         }
     }
 
@@ -671,10 +693,20 @@ fn render_live_workspace<B: Backend>(
         .map_err(|error| FrameError::Other(error.to_string()))
 }
 
+/// One entry of the geometry pass: a shown pane, its inner rect and the
+/// attachment it was sized on (empty while the pane is not live).
+type ShownGeometry = (PaneId, u16, u16, String);
+
+/// Send every shown live pane the geometry it does not hold yet. `sent` is
+/// what the previous pass sent, so an unchanged pane costs nothing while a
+/// new rect, a new attachment or a pane that just went live is sized. The
+/// rects come from `chrome.view` as the last draw left it: recomputing the
+/// view here would drop the hit areas that draw recorded.
 async fn resize_live_workspace<B: Backend>(
     terminal: &mut Terminal<B>,
     workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
+    chrome: &Chrome,
+    sent: &mut Vec<ShownGeometry>,
 ) -> Result<(), FrameError> {
     let area = terminal
         .size()
@@ -682,19 +714,37 @@ async fn resize_live_workspace<B: Backend>(
     if area.width == 0 || area.height == 0 {
         return Ok(());
     }
-    chrome.compute_view(workspace, area.into());
-    let updates = match chrome.active_tab() {
+    let shown: Vec<ShownGeometry> = match chrome.active_tab() {
         Some(tab) => chrome
             .view
             .pane_infos
             .iter()
             .filter_map(|info| {
-                tab.slots
-                    .get(&info.id)
-                    .map(|pane_id| (*pane_id, info.inner_rect.height, info.inner_rect.width))
+                let pane_id = *tab.slots.get(&info.id)?;
+                let pane = workspace.panes.get(&pane_id)?;
+                let attachment = if pane.is_live() {
+                    pane.attachment_id().to_string()
+                } else {
+                    String::new()
+                };
+                Some((
+                    pane_id,
+                    info.inner_rect.height,
+                    info.inner_rect.width,
+                    attachment,
+                ))
             })
-            .collect::<Vec<_>>(),
+            .collect(),
         None => Vec::new(),
     };
+    let updates: Vec<(PaneId, u16, u16)> = shown
+        .iter()
+        .filter(|entry| !entry.3.is_empty() && !sent.contains(entry))
+        .map(|&(pane_id, rows, cols, _)| (pane_id, rows, cols))
+        .collect();
+    *sent = shown;
+    if updates.is_empty() {
+        return Ok(());
+    }
     workspace.propagate_geometry(&updates).await
 }

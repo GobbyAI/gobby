@@ -379,6 +379,7 @@ fn daemon_event(value: Value) -> Option<DaemonEvent> {
         "terminal_frame" => Some(DaemonEvent::Frame(value)),
         "terminal_attach_history" => Some(DaemonEvent::AttachHistory(value)),
         "terminal_scroll_offset_applied" => Some(DaemonEvent::ScrollOffsetApplied(value)),
+        "terminal_resize_result" => Some(DaemonEvent::Message(value)),
         "agent_event"
             if matches!(
                 value.get("event").and_then(Value::as_str),

@@ -38,8 +38,8 @@
 17 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 18 |                         ││                                             ││                                             │|
 18 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
-19 |                         ││                                             ││                                             │|
-19 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
+19 |                         ││             waiting for frames              ││             waiting for frames              │|
+19 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*13 overlay0/panel_bg*18 -/panel_bg*14 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*13 overlay0/panel_bg*18 -/panel_bg*14 accent/panel_bg*1
 20 |─────────────────────────││                                             ││                                             │|
 20 : surface_dim/panel_bg*26 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 21 | attention               ││                                             ││                                             │|

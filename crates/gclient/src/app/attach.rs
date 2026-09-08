@@ -248,7 +248,8 @@ impl Workspace {
             "request_id": request_id,
             "terminal_id": terminal_id,
             "frame_delivery": "proxy",
-            "encoding": "semantic_frame"
+            "encoding": "semantic_frame",
+            "viewer": "gclient"
         }))
     }
 

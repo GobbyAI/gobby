@@ -481,7 +481,13 @@ impl Workspace<LiveDaemon> {
                 self.fetch_attention().await?;
                 self.fetch_sidebar_rows().await?;
             }
-            DaemonEvent::Message(message) => self.note_sidebar_message(&message),
+            DaemonEvent::Message(message) => {
+                if message_kind(&message) == Some("terminal_resize_result") {
+                    self.note_resize_result(&message);
+                } else {
+                    self.note_sidebar_message(&message);
+                }
+            }
             DaemonEvent::Output(_)
             | DaemonEvent::Frame(_)
             | DaemonEvent::AttachHistory(_)
