@@ -10,6 +10,7 @@ cooperative ``end_agent_run`` while abandoned callers retain a bounded fallback.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.terminal_delivery import deliver_and_cleanup_terminal_run
 from gobby.autonomous.progress_tracker import ProgressType
@@ -35,6 +37,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.sessions.handoff_records import get_agent_end_handoff
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
@@ -174,6 +177,14 @@ class _Harness:
         )
         self.runs.start(run.id)
         self.spawned.append(run.id)
+        await asyncio.to_thread(
+            subscribe_agent_completion,
+            completion_registry=self.completion_registry,
+            run_id=run.id,
+            subscriber_session_id=str(arguments["parent_session_id"]),
+            db=self.db,
+            strict=True,
+        )
         return {"success": True, "run_id": run.id}
 
     def _evaluation(self, *, ready: bool) -> CloseEvaluation:
@@ -361,14 +372,17 @@ async def test_closed_task_waits_for_verdict_and_cooperative_structured_handoff(
 ) -> None:
     launched = await harness.close_task()
     assert launched["error"] == "agentic_review_required"
-    assert "run_id" not in launched, "the caller must not receive a pollable run handle"
-    [validator_run_id] = harness.spawned
+    validator_run_id = launched["validator_run_id"]
+    assert validator_run_id == harness.spawned[0]
+    subscribers = CompletionSubscriberManager(harness.db)
+    assert subscribers.get_completion_subscribers(validator_run_id) == [harness.caller_session]
 
     waited = await harness.wait_for_agent(validator_run_id)
     assert waited["success"] is True
     assert waited["completed"] is False
     assert waited["notification_registered"] is True
     assert harness.completion_registry.is_awaiting(harness.caller_session) is True
+    assert subscribers.get_completion_subscribers(validator_run_id) == [harness.caller_session]
 
     # Parked: the bare prompt reads idle and the detector reports stagnation, yet
     # neither watchdog touches the caller across repeated ticks.
