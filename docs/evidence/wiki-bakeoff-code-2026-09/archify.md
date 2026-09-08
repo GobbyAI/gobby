@@ -31,6 +31,29 @@ Every final candidate was validated before delivery at quality `showcase`.
 The renderer reported zero crossings, ambiguous corridors, composition errors,
 and composition warnings for each delivery. Complete path and digest inventories
 are `results/archify/inventory.txt` and `results/archify/inventory.sha256`.
+`inventory.txt` is a lexically ordered, relative-path manifest of the evidence
+artifacts and excludes both inventory files. `inventory.sha256` contains the
+SHA-256 of `inventory.txt` only, so verification is nonrecursive:
+`(cd results/archify && shasum -a 256 -c inventory.sha256 && shasum -a 256 -c inventory.txt)`.
+
+### C1 native attempt measurements
+
+The following are the exact metrics reported by the successful native
+`validate` attempts immediately before the matching successful native `deliver`
+attempts. Every attempt passed all 9 checks at `showcase`, with 0 composition
+errors and 0 warnings. Delivery reproduced the HTML digests listed above.
+
+| Diagram | Delivered bytes | Minimum label clearance | Max bends / over limit | Max stretch / over limit | Minimum segment / interior segment | Crossings / corridors / border runs / label issues / readability issues | Short / endpoint-short / interior-short / micro segments |
+| --- | ---: | ---: | --- | --- | --- | --- | --- |
+| Architecture | 709349 | 57.4 | 2 / 0 | 1 / 0 | 30 / 193 | 0 / 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Workflow | 708345 | 82.4 | 2 / 0 | 1.216 / 0 | 16 / 148.4 | 0 / 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Sequence | 704267 | 40 | 0 / 0 | 1 / 0 | 152.8 / null | 0 / 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Dataflow | 703931 | 108.4 | 0 / 0 | 1 / 0 | 103 / null | 0 / 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Lifecycle | 703330 | null | 0 / 0 | 1 / 0 | 36 / null | 0 / 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+
+`minProjectedNodeTextPx` was `null` for all five renderer validation attempts.
+The suggested limits were 2 bends per relationship, stretch 1.35, segment 16px,
+and micro-segment 8px for every attempt.
 
 ## Change and bounded correction evidence
 
