@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -81,6 +81,71 @@ async def test_terminal_payload_without_run_is_redelivered_on_startup(
     assert store.delivered is True
 
 
+@pytest.mark.asyncio
+async def test_periodic_reconciliation_expires_review_and_wakes_subscriber(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+    review = replace(
+        _review(status="running", run_id="run"),
+        close_arguments={"_review_deadline_at": (now - timedelta(seconds=1)).isoformat()},
+    )
+    store = _Store(review)
+    subscribers = _Subscribers()
+    run = SimpleNamespace(id="run", status="running")
+    cleanup = AsyncMock()
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(monkeypatch, store=store, run=run, subscribers=subscribers)
+    monkeypatch.setattr(lifecycle_agents, "utc_now", lambda: now)
+
+    recovered = await lifecycle_agents._reconcile_task_close_reviews(_runner(wake, cleanup=cleanup))
+
+    assert recovered == 2
+    cleanup.assert_awaited_once_with(
+        run,
+        terminal_payload="Task-close validator exceeded its durable deadline.",
+        is_timeout=True,
+    )
+    assert store.finished_status == "error"
+    assert store.delivered is True
+    wake.assert_awaited_once()
+    assert subscribers.removed == [("run", ["parent"])]
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconciliation_delivers_terminal_run_without_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="running", run_id="run"))
+    subscribers = _Subscribers()
+    run = SimpleNamespace(id="run", status="error")
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(monkeypatch, store=store, run=run, subscribers=subscribers)
+
+    def terminal_review_delivery(_db: object, _run_id: str) -> tuple[dict[str, Any], str]:
+        payload = {
+            "event": "task_close_review_completed",
+            "review_id": "review",
+            "status": "error",
+            "message": "validator ended without a verdict",
+        }
+        store.finish("review", status="error", result_payload=payload)
+        return payload, payload["message"]
+
+    monkeypatch.setattr(
+        "gobby.tasks.close_review_delivery.terminal_review_delivery",
+        terminal_review_delivery,
+    )
+
+    recovered = await lifecycle_agents._reconcile_task_close_reviews(_runner(wake))
+
+    assert recovered == 2
+    assert store.finished_status == "error"
+    assert store.delivered is True
+    wake.assert_awaited_once()
+    assert subscribers.removed == [("run", ["parent"])]
+
+
 class _Store:
     def __init__(self, review: TaskCloseReview) -> None:
         self.review = review
@@ -110,10 +175,19 @@ class _Store:
 class _Subscribers:
     def __init__(self) -> None:
         self.added: list[tuple[str, list[str]]] = []
+        self.removed: list[tuple[str, list[str] | None]] = []
 
     def add_completion_subscribers(self, run_id: str, session_ids: list[str]) -> list[str]:
         self.added.append((run_id, session_ids))
         return session_ids
+
+    def remove_completion_subscribers(
+        self,
+        run_id: str,
+        *,
+        session_ids: list[str] | None = None,
+    ) -> None:
+        self.removed.append((run_id, session_ids))
 
 
 def _install(
@@ -143,12 +217,15 @@ class _Runs:
         return self.run
 
 
-def _runner(wake: AsyncMock) -> Any:
-    return SimpleNamespace(
+def _runner(wake: AsyncMock, *, cleanup: AsyncMock | None = None) -> Any:
+    runner = SimpleNamespace(
         database=object(),
         db_executor=None,
         wake_dispatcher=SimpleNamespace(wake=wake),
     )
+    if cleanup is not None:
+        runner.agent_lifecycle_monitor = SimpleNamespace(get_cleanup_agent=lambda: cleanup)
+    return runner
 
 
 def _review(*, status: str, run_id: str | None) -> TaskCloseReview:

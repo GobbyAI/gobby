@@ -68,17 +68,29 @@ _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
 async def test_close_persists_and_launches_one_taskless_validator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    launched_at = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = _Store(_review(status="launching", run_id=None))
     registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
-    ctx = _ctx(registry=registry)
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(
+            candidates=["codex/gpt-5.6-terra"],
+            close_review_total_timeout_seconds=17,
+        ),
+    )
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+    monkeypatch.setattr(orchestration, "utc_now", lambda: launched_at)
     evaluation = _evaluation()
     evaluation.extra["coordinator_owned_pending"] = True
     arguments = _arguments()
 
     result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=arguments)
 
-    assert store.created_arguments == arguments
+    assert store.created_arguments == {
+        **arguments,
+        "_review_deadline_at": "2026-09-08T12:00:17+00:00",
+    }
+    assert "_review_deadline_at" not in arguments
     assert evaluation.task is not None
     assert store.expected_task_updated_at == evaluation.task.updated_at
     registry.call.assert_awaited_once()
