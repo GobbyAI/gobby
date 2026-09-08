@@ -15,7 +15,11 @@ from uuid import uuid4
 import pytest
 
 from gobby.config.sessions import FeedbackReviewConfig
-from gobby.feedback.service import FINDINGS_EPIC_TITLE, FeedbackReviewService
+from gobby.feedback.service import (
+    _RECENT_CLOSED_TASK_LIMIT,
+    FINDINGS_EPIC_TITLE,
+    FeedbackReviewService,
+)
 from gobby.feedback.storage import FeedbackReviewStore
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
@@ -101,6 +105,7 @@ class _FakeTaskManager:
         existing_epic_id: str | None = None,
         tasks_by_ref: dict[str, Any] | None = None,
         existing_tasks: list[SimpleNamespace] | None = None,
+        existing_closed_tasks: list[SimpleNamespace] | None = None,
     ) -> None:
         self.existing_open_titles = existing_open_titles
         self.existing_epic_id = existing_epic_id
@@ -115,9 +120,11 @@ class _FakeTaskManager:
             )
             for index, title in enumerate(existing_open_titles, start=1)
         ]
+        self.existing_closed_tasks = existing_closed_tasks or []
         self.created: list[SimpleNamespace] = []
         self.epics: list[SimpleNamespace] = []
         self.updated: list[SimpleNamespace] = []
+        self.list_calls: list[dict[str, Any]] = []
 
     def get_task(self, task_id: str, project_id: str | None = None) -> Any | None:
         return self.tasks_by_ref.get(task_id)
@@ -131,11 +138,25 @@ class _FakeTaskManager:
         label: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort_by: str = "hierarchy",
+        sort_order: str = "asc",
     ) -> list[Any]:
-        assert closed is False
+        self.list_calls.append(
+            {
+                "closed": closed,
+                "limit": limit,
+                "offset": offset,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+            }
+        )
         wanted = (title_like or "").casefold()
-        rows = [*self.existing_tasks, *self.created]
-        if self.existing_epic_id is not None:
+        rows = (
+            [*self.existing_closed_tasks]
+            if closed is True
+            else [*self.existing_tasks, *self.created]
+        )
+        if closed is not True and self.existing_epic_id is not None:
             rows.append(
                 SimpleNamespace(
                     id=self.existing_epic_id,
@@ -274,6 +295,32 @@ def _commit_file(repo: Path, relative_path: str, committed_at: datetime) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
+def _closed_task(
+    *,
+    task_id: str,
+    title: str,
+    commits: list[str],
+    theme: str = "close-gate validation reruns",
+    validation_status: str = "valid",
+    seq_num: int | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=task_id,
+        seq_num=seq_num,
+        title=title,
+        description=(
+            "Prior finding.\n\n"
+            "Filed by the session-feedback review loop.\n"
+            f"Theme: {theme}\n"
+            "Observations (session_feedback.id): older-observation"
+        ),
+        labels=["feedback-review"],
+        task_type="bug",
+        validation_status=validation_status,
+        commits=commits,
+    )
+
+
 async def test_run_review_files_tasks_marks_rows_and_renders_digest(
     temp_db: HubDatabase, session_id: str
 ) -> None:
@@ -357,6 +404,69 @@ async def test_marked_temporary_checkout_reaches_digest(
     assert "**fixture** [noise, 1 obs]" in run.digest_md
 
 
+async def test_run_review_suppresses_proposal_with_fixed_disposition(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    observation_id = _insert_feedback(
+        temp_db,
+        session_id,
+        disposition="fixed",
+        evidence="Fixed under #42 before feedback review",
+    )
+    task_manager = _FakeTaskManager()
+    llm = _FakeLLM(
+        response={"clusters": [_cluster([observation_id], title="Refix resolved behavior")]}
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    assert result["tasks_filed"] == 0
+    assert task_manager.created == []
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["suppressed"] == [
+        {
+            "title": "Refix resolved behavior",
+            "observation_ids": [observation_id],
+            "disposition": "fixed",
+            "matched_task_ref": "#42",
+            "reason": f"observation {observation_id} has resolved fixed disposition",
+        }
+    ]
+    assert run.digest_md is not None
+    assert "Suppressed Refix resolved behavior (#42)" in run.digest_md
+
+
+async def test_run_review_suppresses_proposal_with_valid_filed_task_disposition(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    observation_id = _insert_feedback(
+        temp_db,
+        session_id,
+        disposition="filed-task",
+        evidence="Filed decision task #42",
+    )
+    referenced_task = SimpleNamespace(labels=["needs-decision"], closed_at=None)
+    task_manager = _FakeTaskManager(tasks_by_ref={"#42": referenced_task})
+    llm = _FakeLLM(
+        response={"clusters": [_cluster([observation_id], title="Duplicate decision task")]}
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    assert result["tasks_filed"] == 0
+    assert task_manager.created == []
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["suppressed"][0] == {
+        "title": "Duplicate decision task",
+        "observation_ids": [observation_id],
+        "disposition": "filed-task",
+        "matched_task_ref": "#42",
+        "reason": f"observation {observation_id} has resolved filed-task disposition",
+    }
+
+
 async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
     temp_db: HubDatabase, session_id: str
 ) -> None:
@@ -381,6 +491,10 @@ async def test_run_review_dedupes_open_titles_and_in_batch_duplicates(
     assert result["deduplicated"] == 2
     assert [task.title for task in task_manager.created] == ["Improve digest wording"]
     assert first in str(task_manager.existing_tasks[0].description)
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["suppressed"][0]["matched_task_ref"] == "existing-1"
+    assert run.actions["suppressed"][0]["reason"] == "matched open task"
 
 
 async def test_run_review_appends_observations_to_open_task_matching_theme(
@@ -419,6 +533,139 @@ async def test_run_review_appends_observations_to_open_task_matching_theme(
     assert len(task_manager.updated) == 1
     assert "older-observation" in existing.description
     assert current in existing.description
+
+
+async def test_run_review_suppresses_duplicate_of_reachable_recent_closed_task(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+) -> None:
+    commit_sha = _commit_file(tmp_path / "gobby", "src/gobby/example.py", _T0)
+    closed_task = _closed_task(
+        task_id="closed-fix",
+        seq_num=21999,
+        title="Stop redundant close validation",
+        commits=[commit_sha],
+    )
+    observation_id = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(hours=1))
+    task_manager = _FakeTaskManager(existing_closed_tasks=[closed_task])
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster(
+                    [observation_id],
+                    title="Stop repeated close-gate checks",
+                    theme="close gate validation reruns",
+                )
+            ]
+        }
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    assert result["tasks_filed"] == 0
+    assert result["deduplicated"] == 1
+    assert task_manager.created == []
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["suppressed"] == [
+        {
+            "title": "Stop repeated close-gate checks",
+            "observation_ids": [observation_id],
+            "matched_task_ref": "#21999",
+            "matched_commits": [commit_sha],
+            "reason": (
+                "matched recently closed valid task whose linked commits are reachable from HEAD"
+            ),
+        }
+    ]
+
+
+async def test_run_review_files_when_closed_duplicate_commit_is_absent_from_head(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "gobby"
+    _commit_file(repo, "README.md", _T0 - timedelta(days=2))
+    _git(repo, "switch", "-c", "resolved-elsewhere")
+    absent_commit = _commit_file(repo, "src/gobby/example.py", _T0 - timedelta(days=1))
+    _git(repo, "switch", "main")
+    closed_task = _closed_task(
+        task_id="closed-elsewhere",
+        title="Stop redundant close validation",
+        commits=[absent_commit],
+    )
+    observation_id = _insert_feedback(temp_db, session_id)
+    task_manager = _FakeTaskManager(existing_closed_tasks=[closed_task])
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster(
+                    [observation_id],
+                    title="Stop repeated close-gate checks",
+                    theme="close gate validation reruns",
+                )
+            ]
+        }
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    assert result["tasks_filed"] == 1
+    assert result["deduplicated"] == 0
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["suppressed"] == []
+
+
+async def test_run_review_bounds_recent_closed_task_lookup(
+    temp_db: HubDatabase,
+    session_id: str,
+    tmp_path: Path,
+) -> None:
+    commit_sha = _commit_file(tmp_path / "gobby", "README.md", _T0)
+    closed_tasks = [
+        _closed_task(
+            task_id=f"recent-{index}",
+            title=f"Unrelated recent task {index}",
+            theme=f"unrelated theme {index}",
+            commits=[commit_sha],
+        )
+        for index in range(_RECENT_CLOSED_TASK_LIMIT)
+    ]
+    closed_tasks.append(
+        _closed_task(
+            task_id="too-old-match",
+            title="Stop redundant close validation",
+            commits=[commit_sha],
+        )
+    )
+    observation_id = _insert_feedback(temp_db, session_id)
+    task_manager = _FakeTaskManager(existing_closed_tasks=closed_tasks)
+    llm = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster(
+                    [observation_id],
+                    title="Stop repeated close-gate checks",
+                    theme="close gate validation reruns",
+                )
+            ]
+        }
+    )
+
+    result = await _service(temp_db, llm, task_manager).run_review()
+
+    assert result["tasks_filed"] == 1
+    closed_call = next(call for call in task_manager.list_calls if call["closed"] is True)
+    assert closed_call == {
+        "closed": True,
+        "limit": _RECENT_CLOSED_TASK_LIMIT,
+        "offset": 0,
+        "sort_by": "updated_at",
+        "sort_order": "desc",
+    }
 
 
 async def test_run_review_marks_missing_cited_path_unverified_at_priority_three(
@@ -461,7 +708,16 @@ async def test_run_review_marks_path_touched_after_observation_possibly_fixed(
         "src/gobby/example.py",
         _T0 + timedelta(hours=1),
     )
-    task_manager = _FakeTaskManager()
+    task_manager = _FakeTaskManager(
+        existing_closed_tasks=[
+            _closed_task(
+                task_id="recent-unrelated",
+                title="Repair unrelated task indexing",
+                theme="task index refresh",
+                commits=[commit_sha],
+            )
+        ]
+    )
     llm = _FakeLLM(
         response={
             "clusters": [
@@ -474,11 +730,14 @@ async def test_run_review_marks_path_touched_after_observation_possibly_fixed(
         }
     )
 
-    await _service(temp_db, llm, task_manager).run_review()
+    result = await _service(temp_db, llm, task_manager).run_review()
 
     task = task_manager.created[0]
     assert "possibly-fixed" in task.labels
     assert commit_sha in task.description
+    run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["suppressed"] == []
 
 
 async def test_run_review_dry_run_writes_digest_but_files_and_flips_nothing(

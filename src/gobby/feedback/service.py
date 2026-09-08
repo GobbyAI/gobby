@@ -47,6 +47,7 @@ GOBBY_PROJECT_NAME = "gobby"
 _RESOLVED_DISPOSITIONS = ("filed-task", "fixed")
 DISTILL_TOTAL_DEADLINE_SECONDS = 900.0
 _DEDUP_LOOKUP_PAGE_SIZE = 200
+_RECENT_CLOSED_TASK_LIMIT = 100
 _THEME_SIMILARITY_THRESHOLD = 0.72
 _CLASSIFICATIONS = ("defect", "guidance-gap", "noise", "praise")
 _OBSERVATION_LINE_RE = re.compile(
@@ -124,6 +125,8 @@ class ReviewTaskManagerProtocol(Protocol):
         label: str | None = ...,
         limit: int = ...,
         offset: int = ...,
+        sort_by: str = ...,
+        sort_order: str = ...,
     ) -> list[Any]: ...
 
     def get_task(self, task_id: str, project_id: str | None = None) -> Any | None: ...
@@ -244,7 +247,12 @@ class FeedbackReviewService:
             if cluster.get("classification") in ("defect", "guidance-gap")
             and isinstance(cluster.get("proposed_task"), dict)
         ]
-        actions: dict[str, Any] = {"filed": [], "deduplicated": 0, "skipped": []}
+        actions: dict[str, Any] = {
+            "filed": [],
+            "deduplicated": 0,
+            "suppressed": [],
+            "skipped": [],
+        }
         if not actionable:
             return actions
         if dry_run:
@@ -260,6 +268,7 @@ class FeedbackReviewService:
         epic_id = await asyncio.to_thread(self._findings_epic_id, project_id)
         actions["epic_task_id"] = epic_id
         open_tasks = await asyncio.to_thread(self._open_tasks, project_id)
+        recent_closed_tasks = await asyncio.to_thread(self._recent_closed_tasks, project_id)
         rows_by_id = {row.id: row for row in rows}
         repo_root: Path | None = None
 
@@ -269,7 +278,22 @@ class FeedbackReviewService:
             if not title:
                 continue
             observation_ids = _cluster_observation_ids(cluster)
-            duplicate = _find_open_duplicate(open_tasks, cluster, title)
+            observed_rows = [rows_by_id[value] for value in observation_ids if value in rows_by_id]
+            resolved = _resolved_feedback_disposition(observed_rows, self._resolve_feedback_task)
+            if resolved is not None:
+                disposition, observation_id, task_ref = resolved
+                suppression = {
+                    "title": title,
+                    "observation_ids": observation_ids,
+                    "disposition": disposition,
+                    "reason": f"observation {observation_id} has resolved {disposition} disposition",
+                }
+                if task_ref is not None:
+                    suppression["matched_task_ref"] = task_ref
+                actions["suppressed"].append(suppression)
+                continue
+
+            duplicate = _find_duplicate(open_tasks, cluster, title)
             if duplicate is not None:
                 await asyncio.to_thread(
                     self._append_observation_ids,
@@ -277,6 +301,42 @@ class FeedbackReviewService:
                     observation_ids,
                 )
                 actions["deduplicated"] += 1
+                actions["suppressed"].append(
+                    {
+                        "title": title,
+                        "observation_ids": observation_ids,
+                        "matched_task_ref": _task_ref(duplicate),
+                        "reason": "matched open task",
+                    }
+                )
+                continue
+
+            if recent_closed_tasks:
+                if repo_root is None:
+                    repo_root = await asyncio.to_thread(self._gobby_repo_root, project_id)
+                closed_duplicate = await asyncio.to_thread(
+                    _find_reachable_closed_duplicate,
+                    recent_closed_tasks,
+                    cluster,
+                    title,
+                    repo_root,
+                )
+            else:
+                closed_duplicate = None
+            if closed_duplicate is not None:
+                actions["deduplicated"] += 1
+                actions["suppressed"].append(
+                    {
+                        "title": title,
+                        "observation_ids": observation_ids,
+                        "matched_task_ref": _task_ref(closed_duplicate),
+                        "matched_commits": list(getattr(closed_duplicate, "commits", ()) or ()),
+                        "reason": (
+                            "matched recently closed valid task whose linked commits "
+                            "are reachable from HEAD"
+                        ),
+                    }
+                )
                 continue
 
             labels = [FEEDBACK_TASK_LABEL, LLM_REVIEWED_LABEL, AWAITING_HUMAN_REVIEW_LABEL]
@@ -397,6 +457,16 @@ class FeedbackReviewService:
             if len(page) < _DEDUP_LOOKUP_PAGE_SIZE:
                 return tasks
             offset += len(page)
+
+    def _recent_closed_tasks(self, project_id: str) -> list[Any]:
+        assert self.task_manager is not None
+        return self.task_manager.list_tasks(
+            project_id=project_id,
+            closed=True,
+            limit=_RECENT_CLOSED_TASK_LIMIT,
+            sort_by="updated_at",
+            sort_order="desc",
+        )
 
     def _gobby_repo_root(self, project_id: str) -> Path:
         return Path(require_root(self.db, project_id, require_machine_id()))
@@ -521,7 +591,7 @@ def _themes_match(first: str, second: str) -> bool:
     )
 
 
-def _find_open_duplicate(candidates: list[Any], cluster: dict[str, Any], title: str) -> Any | None:
+def _find_duplicate(candidates: list[Any], cluster: dict[str, Any], title: str) -> Any | None:
     observation_ids = set(_cluster_observation_ids(cluster))
     theme = str(cluster.get("theme") or "")
     for candidate in candidates:
@@ -534,6 +604,67 @@ def _find_open_duplicate(candidates: list[Any], cluster: dict[str, Any], title: 
             return candidate
         if _themes_match(title, str(getattr(candidate, "title", "") or "")):
             return candidate
+    return None
+
+
+def _find_reachable_closed_duplicate(
+    candidates: list[Any],
+    cluster: dict[str, Any],
+    title: str,
+    repo_root: Path,
+) -> Any | None:
+    for candidate in candidates:
+        if getattr(candidate, "validation_status", None) != "valid":
+            continue
+        if _find_duplicate([candidate], cluster, title) is None:
+            continue
+        if _task_commits_reachable_from_head(repo_root, candidate):
+            return candidate
+    return None
+
+
+def _task_commits_reachable_from_head(repo_root: Path, task: Any) -> bool:
+    raw_commits = getattr(task, "commits", None)
+    if not isinstance(raw_commits, (list, tuple)) or not raw_commits:
+        return False
+    commits = [str(commit).strip() for commit in raw_commits]
+    if any(not commit for commit in commits):
+        return False
+    for commit in commits:
+        result = _run_git(repo_root, "merge-base", "--is-ancestor", commit, "HEAD")
+        if result.returncode == 0:
+            continue
+        if result.returncode != 1:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+            logger.warning("Could not verify feedback task commit %s at HEAD: %s", commit, detail)
+        return False
+    return True
+
+
+def _task_ref(task: Any) -> str:
+    seq_num = getattr(task, "seq_num", None)
+    return f"#{seq_num}" if seq_num is not None else str(getattr(task, "id", ""))
+
+
+def _resolved_feedback_disposition(
+    rows: list[FeedbackRow],
+    resolve_task: Callable[[FeedbackRow, str], Any | None] | None,
+) -> tuple[str, str, str | None] | None:
+    for row in rows:
+        if row.disposition not in _RESOLVED_DISPOSITIONS:
+            continue
+        match = FEEDBACK_TASK_REF_RE.search(row.evidence)
+        task_ref = match.group(0) if match is not None else None
+        if row.disposition == "fixed":
+            return row.disposition, row.id, task_ref
+        task = resolve_task(row, task_ref) if resolve_task is not None and task_ref else None
+        labels = set(getattr(task, "labels", ()) or ())
+        if (
+            is_task_closed(task)
+            or get_claimed_session_id(task) is not None
+            or {"needs-decision", "clean-window"}.intersection(labels)
+        ):
+            return row.disposition, row.id, task_ref
     return None
 
 
@@ -714,11 +845,23 @@ def _render_digest(
     lines.append("## Actions")
     for filed in actions.get("filed", []):
         lines.append(f"- Filed #{filed.get('task_id', '?')}: {filed.get('title', '')}")
+    for suppressed in actions.get("suppressed", []):
+        matched = suppressed.get("matched_task_ref")
+        matched_suffix = f" ({matched})" if matched else ""
+        lines.append(
+            f"- Suppressed {suppressed.get('title', '(untitled)')}{matched_suffix}: "
+            f"{suppressed.get('reason', 'resolved before filing')}"
+        )
     if actions.get("deduplicated"):
-        lines.append(f"- Deduplicated against open tasks: {actions['deduplicated']}")
+        lines.append(f"- Deduplicated against existing tasks: {actions['deduplicated']}")
     for skipped in actions.get("skipped", []):
         lines.append(f"- Skipped: {skipped}")
-    if not actions.get("filed") and not actions.get("deduplicated") and not actions.get("skipped"):
+    if (
+        not actions.get("filed")
+        and not actions.get("suppressed")
+        and not actions.get("deduplicated")
+        and not actions.get("skipped")
+    ):
         lines.append("- None")
     lines.append("")
 
