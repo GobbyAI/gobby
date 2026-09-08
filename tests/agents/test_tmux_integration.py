@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -34,15 +36,16 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def tmux_socket_name() -> Iterator[str]:
-    """Provide a unique tmux socket name and remove its server at teardown."""
+def tmux_socket_path() -> Iterator[Path]:
+    """Provide a unique tmux socket path and remove its server at teardown."""
     if shutil.which("tmux") is None:
         pytest.skip("tmux is not installed")
 
-    socket_name = f"gobby-test-{uuid4().hex}"
-    yield socket_name
+    socket_path = Path(tempfile.gettempdir()) / f"t-{uuid4().hex[:8]}"
+    assert len(str(socket_path).encode()) < 104
+    yield socket_path
     subprocess.run(
-        ["tmux", "-L", socket_name, "-f", "/dev/null", "kill-server"],
+        ["tmux", "-S", str(socket_path), "-f", "/dev/null", "kill-server"],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -51,8 +54,8 @@ def tmux_socket_name() -> Iterator[str]:
 
 
 @pytest.fixture
-def tmux_config(tmux_socket_name: str) -> TmuxConfig:
-    return TmuxConfig(socket_name=tmux_socket_name, config_file="/dev/null")
+def tmux_config(tmux_socket_path: Path) -> TmuxConfig:
+    return TmuxConfig(socket_name="", socket_path=str(tmux_socket_path), config_file="/dev/null")
 
 
 @pytest.fixture
@@ -191,8 +194,6 @@ async def test_agy_live_child_strips_denied_ambient_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import os
-
     from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env
 
     output_path = tmp_path / "child-env.txt"

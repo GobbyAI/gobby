@@ -117,9 +117,27 @@ class TmuxTerminalRuntime:
                 command=shell_cmd,
                 cwd=request.cwd,
                 env=extra_env,
+                rows=request.rows,
+                cols=request.cols,
             )
         except Exception as exc:
             raise TerminalSpawnFailed(str(exc)) from exc
+        dims_rc, dims_stdout, dims_stderr = await self._run(
+            "display-message",
+            "-t",
+            f"={info.name}:",
+            "-p",
+            "#{pane_height} #{pane_width}",
+        )
+        if dims_rc != 0:
+            raise TerminalSpawnFailed(
+                f"tmux pane dimension query failed (rc={dims_rc}): {dims_stderr.strip()}"
+            )
+        try:
+            pane_rows, pane_cols = (int(value) for value in dims_stdout.split())
+            validate_dimensions(pane_rows, pane_cols)
+        except ValueError as exc:
+            raise TerminalSpawnFailed("tmux returned invalid pane dimensions") from exc
         rc, stdout, _stderr = await self._run(
             "display-message",
             "-t",
@@ -169,6 +187,8 @@ class TmuxTerminalRuntime:
             stored_locator=stored_locator,
             locator_key=locator_key,
             pid=info.pane_pid,
+            rows=pane_rows,
+            cols=pane_cols,
         )
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:

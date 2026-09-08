@@ -567,6 +567,9 @@ async def _promote_prepared(
                 terminal_id=terminal_id,
             )
 
+    if prepared.rows is not None and prepared.cols is not None:
+        await asyncio.to_thread(manager.set_dims, terminal_id, prepared.rows, prepared.cols)
+
     pid = prepared.pid
     process = prepared.process
     if pid is None and process is not None:
