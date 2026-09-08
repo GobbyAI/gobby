@@ -1,7 +1,6 @@
 use super::sidebar_model::GIT_REFRESH_INTERVAL;
 use super::*;
 use crate::daemon::message_kind;
-use crate::persist::load_snapshot;
 
 impl Workspace<LiveDaemon> {
     pub fn live(daemon: LiveDaemon) -> Self {
@@ -14,6 +13,7 @@ impl Workspace<LiveDaemon> {
             next_pane: 1,
             roster_ids: Vec::new(),
             saved_tab_order: Vec::new(),
+            saved_snapshot: None,
             attention: AttentionState::empty(),
             local_machine: String::new(),
             sidebar_rows: SidebarRows::default(),
@@ -43,18 +43,18 @@ impl Workspace<LiveDaemon> {
         self.project_id = Some(project_id.into());
     }
 
-    /// Selects the project and loads its saved tab order so the first roster
-    /// page follows it; without a Gobby home or a snapshot, daemon order leads.
+    /// Selects the project and reads its snapshot: the first roster page
+    /// follows the saved tab order and the loop rebuilds the tab bar from
+    /// it. Without a Gobby home nothing is read, and the loop then neither
+    /// restores nor seeds.
     pub fn restore_project(&mut self, project_id: &str) -> std::io::Result<()> {
         self.select_project(project_id);
         let Some(home) = &self.gobby_home else {
             return Ok(());
         };
-        self.saved_tab_order = match load_snapshot(home, project_id) {
-            Ok(snapshot) => snapshot.tab_order,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error),
-        };
+        let snapshot = super::persistence::load_saved(home, project_id)?;
+        self.saved_tab_order = snapshot.terminal_ids();
+        self.saved_snapshot = Some(snapshot);
         Ok(())
     }
 

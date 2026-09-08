@@ -164,6 +164,12 @@ def build_terminal_review_payload(
         required_actions = ["Call close_task again with the current task and commit evidence."]
     elif not required_actions and status == "error":
         required_actions = ["Call close_task again to start a fresh review attempt."]
+    if status == "invalid":
+        result["outstanding_finding_count"] = len(blocking_reasons)
+        result["remediation_guidance"] = (
+            "Address every listed blocking reason, validate the complete fix set, and commit the "
+            "complete fix set before one resubmission."
+        )
     result.update(
         {
             "event": "task_close_review_completed",

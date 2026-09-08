@@ -17,7 +17,6 @@ use gobby_client::app::{
     ROSTER_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::Attention;
-use gobby_client::persist::load_snapshot;
 use gobby_client::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::hit::SidebarSection;
@@ -1056,7 +1055,7 @@ fn roster_click_focuses_the_terminal() {
     let mut chrome = chrome();
     chrome.open_tab(pane(&ws, 0), "0");
     chrome.open_tab(pane(&ws, 1), "1");
-    chrome.active_tab = 0;
+    chrome.tabs_mut().active_tab = 0;
     let area = Rect::new(0, 0, 80, 20);
     draw_with_hits(&ws, &mut chrome, area);
 
@@ -1066,7 +1065,8 @@ fn roster_click_focuses_the_terminal() {
         focused(pane(&ws, 1), false)
     );
     assert_eq!(
-        chrome.active_tab, 1,
+        chrome.tabs().active_tab,
+        1,
         "the tab showing the terminal is activated"
     );
     assert_eq!(chrome.focused_pane(), Some(pane(&ws, 1)));
@@ -1091,11 +1091,11 @@ fn roster_click_focuses_the_terminal() {
         focused(pane(&ws, 2), false)
     );
     assert_eq!(
-        chrome.tabs.len(),
+        chrome.tabs().tabs.len(),
         2,
         "a terminal no tab shows splits into the active tab"
     );
-    assert_eq!(chrome.active_tab, 1);
+    assert_eq!(chrome.tabs().active_tab, 1);
     assert_eq!(chrome.focused_pane(), Some(pane(&ws, 2)));
     route(&ws, &mut chrome, LEFT_UP, col, row);
 
@@ -1112,11 +1112,11 @@ fn roster_click_focuses_the_terminal() {
         focused(pane(&ws, 0), true),
         "alt+click observes"
     );
-    assert_eq!(chrome.active_tab, 0);
+    assert_eq!(chrome.tabs().active_tab, 0);
     route(&ws, &mut chrome, LEFT_UP, col, row);
 
     set_attention(&mut ws, 1);
-    chrome.active_tab = 1;
+    chrome.tabs_mut().active_tab = 1;
     draw_with_hits(&ws, &mut chrome, area);
     let (col, row) = attention_cell(&chrome, "run:term-0");
     assert_eq!(
@@ -1127,7 +1127,8 @@ fn roster_click_focuses_the_terminal() {
         }
     );
     assert_eq!(
-        chrome.active_tab, 0,
+        chrome.tabs().active_tab,
+        0,
         "an attention click jumps to its terminal"
     );
     assert_eq!(chrome.focused_pane(), Some(pane(&ws, 0)));
@@ -1182,14 +1183,8 @@ fn sidebar_drags_reorder_resize_and_scroll() {
             order: reordered.clone()
         }
     );
-    ws.set_tab_order(&reordered).expect("reorder persists");
+    ws.set_tab_order(&reordered).expect("reorder");
     assert_eq!(WorkspaceView::roster_terminal_ids(&ws), reordered);
-    assert_eq!(
-        load_snapshot(&home, "proj-1")
-            .expect("snapshot saved")
-            .tab_order,
-        reordered
-    );
     draw_with_hits(&ws, &mut chrome, area);
     let (col, row1) = roster_cell(&chrome, "term-1");
     let (_, row3) = roster_cell(&chrome, "term-3");

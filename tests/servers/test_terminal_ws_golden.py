@@ -17,6 +17,7 @@ from gobby.servers.websocket import broadcast as broadcast_module
 from gobby.servers.websocket.proxy_relay import _map_host_frame
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals import web_spawn
 from gobby.terminals.leases import TerminalLeaseRegistry
@@ -386,11 +387,12 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
         primed_writes=dict.fromkeys(range(64), b"pending"),
     )
 
-    server, _, _ = _server()
+    server, manager, _ = _server()
     server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
-    await TerminalWsMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
-    _assert_golden("typed_error.json", _sent(websocket))
+    await TerminalSizingMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
+    assert websocket.sent_messages == []
+    assert manager.get(TERMINAL_ID) == _GoldenRow()
 
     server, _, _ = _server()
     websocket = MockWebSocket()

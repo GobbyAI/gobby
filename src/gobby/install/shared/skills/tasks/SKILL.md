@@ -151,12 +151,39 @@ uncommitted content.
 The close tool derives validation evidence from the transcripts of the claiming
 and closing sessions plus every earlier session that claimed or worked the task,
 each within its own link window — an implementer's red/green run still counts
-after it hands the task to a QA session. A later task-attributed file edit makes earlier validation stale;
-commits preserve it. Shell validation must produce a definitive exit code, so
-follow every yielded cell or PTY session until exit. Leading `cd <dir> &&`
-chains and `VAR=value` prefixes are credited through their core command; pipes,
-trailing `; echo` or `&& echo`, `||` fallbacks, backgrounding, and subshell,
-`js_repl`, or node wrappers are uncredited.
+after it hands the task to a QA session. Commits preserve that evidence.
+
+### Close-Validation Command Patterns
+
+Finish all edits and formatting before the final focused validation. Any later
+task-attributed edit makes earlier validation stale. Follow every yielded cell or
+PTY session until the command reaches a definitive exit, then commit and close.
+
+Preferred patterns:
+
+- Run focused validation directly, for example
+  `uv run pytest tests/tasks/test_validation.py -q`.
+- Environment prefixes such as `VAR=value <validation-command>` are credited
+  through the underlying command.
+- Leading directory changes using `cd <dir> && <validation-command>`, or `cd <dir>`
+  followed by the validation command on the next line, are credited through the
+  underlying command.
+
+Conditionally supported pattern:
+
+- A successful top-level `<validation-a> && <validation-b>` may credit each
+  recognized validation segment individually.
+
+Uncredited anti-patterns:
+
+| Pattern | Recovery |
+| --- | --- |
+| Pipelines, including pipefail-enabled forms | Rerun the underlying validation directly after the final edit. |
+| Trailing output such as `<validation>; echo ...` or `<validation> && echo ...` | Rerun the underlying validation directly after the final edit. |
+| Fallbacks such as `<validation> || ...` | Rerun the underlying validation directly after the final edit. |
+| Backgrounding such as `<validation> & ...` | Rerun the underlying validation directly after the final edit. |
+| Subshells such as `(<validation>)` or `sh -c ...` | Rerun the underlying validation directly after the final edit. |
+| `js_repl` or node wrappers | Rerun the underlying validation directly after the final edit. |
 
 Use the verification commands from `.gobby/project.json`, scoped to touched
 files and behavior. Code, refactor, and test tasks need a clean test-category

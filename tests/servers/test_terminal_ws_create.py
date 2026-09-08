@@ -38,6 +38,8 @@ async def test_web_create_uses_row_owning_primitive(
             },
             locator_key="tmux:/tmp/tmux/default:1:2:%1",
             process=None,
+            rows=24,
+            cols=80,
             acknowledge_persist=MagicMock(),
         )
     )
@@ -117,6 +119,8 @@ async def test_native_create_saturates_then_expires(
             prepared.locator_key = f"native:epoch:ht-{request.terminal_id}"
             prepared.process = None
             prepared.host_terminal_id = f"ht-{request.terminal_id}"
+            prepared.rows = request.rows
+            prepared.cols = request.cols
             prepared.acknowledge_persist = MagicMock()
             prepared.acknowledge_observer = MagicMock()
             return prepared
