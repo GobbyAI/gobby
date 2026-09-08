@@ -214,11 +214,7 @@ class MailboxService:
         if wake:
             # Persistence is complete. The dispatcher owns live-wake policy and
             # channel-specific bounds; an outer timeout can interrupt tmux submission.
-            async with asyncio.TaskGroup() as group:
-                wakes = [
-                    group.create_task(self.wake(rid, priority=priority)) for rid in recipient_ids
-                ]
-            wake_results = [wake.result() for wake in wakes]
+            wake_results = await self._wake_many(recipient_ids, priority=priority)
 
         return MailboxSendResult(
             messages=messages,
@@ -825,6 +821,63 @@ class MailboxService:
         if isinstance(result, dict):
             return result
         return {"session_id": session_id, "delivered": False, "method": None}
+
+    async def _wake_many(
+        self,
+        session_ids: list[str],
+        *,
+        priority: str,
+    ) -> list[dict[str, Any]]:
+        dispatcher = self._wake_dispatcher
+        batch_wake = getattr(dispatcher, "dispatch_live_wakes", None)
+        if len(session_ids) > 1 and callable(batch_wake):
+            try:
+                raw_results = await batch_wake(session_ids, priority=priority)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Mailbox batch wake dispatch failed: %s", exc, exc_info=True)
+                raw_results = [
+                    {
+                        "session_id": session_id,
+                        "delivered": False,
+                        "method": None,
+                        "error": str(exc),
+                        "error_code": "wake_dispatch_failed",
+                        "error_message": str(exc),
+                    }
+                    for session_id in session_ids
+                ]
+            if not isinstance(raw_results, list):
+                raw_results = []
+            by_session = {
+                str(result.get("session_id")): result
+                for result in raw_results
+                if isinstance(result, dict) and result.get("session_id") is not None
+            }
+            return [
+                self._normalize_wake_result(
+                    session_id,
+                    by_session.get(
+                        session_id,
+                        {
+                            "session_id": session_id,
+                            "delivered": False,
+                            "method": None,
+                            "error_code": "wake_result_missing",
+                            "error_message": "Wake dispatcher returned no result",
+                        },
+                    ),
+                )
+                for session_id in session_ids
+            ]
+
+        async with asyncio.TaskGroup() as group:
+            wakes = [
+                group.create_task(self.wake(session_id, priority=priority))
+                for session_id in session_ids
+            ]
+        return [wake.result() for wake in wakes]
 
     async def wake(self, session_id: str, *, priority: str = "normal") -> dict[str, Any]:
         """Wake after durable storage using the dispatcher's policy and bounds."""

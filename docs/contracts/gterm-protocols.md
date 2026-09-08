@@ -50,13 +50,24 @@ Wrong protocol version or `local_token` is a typed error before any attach.
 After `hello { protocol_version, control_token }`, the daemon may call `ping`,
 `list`, `host_shutdown`, `reserve_observer`, `release_observer`, `spawn` →
 `spawn_prepared` / `spawn_commit`, `kill`, `resize`, `snapshot`, `write`
-(`encoding: "utf8-b64"`), and `subscribe_events`.
+(`encoding: "utf8-b64"`), `write_batch`, and `subscribe_events`.
 
-`write` / `kill` / `resize` / `spawn` carry a per-connection monotonic
+`write` / `write_batch` / `kill` / `resize` / `spawn` carry a per-connection monotonic
 `operation_seq`. A gap is `operation_gap`; an evicted seq is
 `operation_expired`; a fingerprint mismatch is `operation_conflict`. Across a
 reconnect the ledger is new: `spawn` reconciles, `kill`/`resize` may retry,
 `write` is indeterminate and must not be blind-retried.
+
+`write_batch` is the native wake-specific bounded write surface. One request has
+at most 64 targets with unique `recipient_id` and `host_terminal_id` values. Each
+target has 1–128 ordered `text` or `key` operations. Operation bytes use
+`utf8-b64`; decoded bytes across the request are capped at 1 MiB. Each delay is
+capped at 1,000 ms and cumulative delay per target at 5,000 ms. The host may
+interleave different terminals by due time, but it never reorders operations
+within a terminal. The response preserves target order and includes one result
+per recipient: success reports `ok`/`written`; failure reports an actionable
+`error` and `stage` (`none` or `partial`). A top-level validation failure writes
+nothing. The request uses the existing connection-wide round-trip lock.
 
 ## Daemon WebSocket messages
 
@@ -94,7 +105,8 @@ Each attachment has a droppable 64-entry / 2 MiB delta queue (overflow resyncs
 with a keyframe) and a 16-entry / 64 KiB control queue. Control overflow or a
 2s delivery deadline closes the attachment. Delta lag timeout is 5s. A blocked
 peer may miss the typed error and still sees EOF. Frame and control lines are
-capped at `MAX_FRAME_SIZE` (2 MiB). Raw `write`/`paste` is 1 MiB UTF-8.
+capped at `MAX_FRAME_SIZE` (2 MiB). Raw `write`/`paste` and aggregate decoded
+`write_batch` payloads are capped at 1 MiB.
 
 ## Versioning
 

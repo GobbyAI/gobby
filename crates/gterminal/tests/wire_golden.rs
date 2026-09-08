@@ -220,6 +220,22 @@ fn golden_corpus_bytes_and_fragmented_reads() {
         }),
     );
     write_json(
+        "control_write_batch.json",
+        serde_json::json!({
+            "method":"write_batch","operation_seq":7,"targets":[
+                {"recipient_id":"r1","host_terminal_id":"ht-1","operations":[
+                    {"kind":"text","encoding":"utf8-b64","data":"eA==","delay_ms":0}
+                ]},
+                {"recipient_id":"r2","host_terminal_id":"ht-2","operations":[
+                    {"kind":"key","encoding":"utf8-b64","data":"ZW50ZXI=","delay_ms":15}
+                ]},
+                {"recipient_id":"r3","host_terminal_id":"ht-3","operations":[
+                    {"kind":"text","encoding":"utf8-b64","data":"eQ==","delay_ms":0}
+                ]}
+            ]
+        }),
+    );
+    write_json(
         "control_write_paste_on.json",
         serde_json::json!({
             "method":"write","operation_seq":5,"host_terminal_id":"ht-1",

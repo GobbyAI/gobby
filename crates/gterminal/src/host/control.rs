@@ -137,7 +137,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                 }
                 let mutating = matches!(
                     request.method.as_str(),
-                    "spawn" | "kill" | "resize" | "write"
+                    "spawn" | "kill" | "resize" | "write" | "write_batch"
                 );
                 if mutating {
                     let Some(seq) = request.operation_seq else {
@@ -237,6 +237,7 @@ async fn dispatch(
         "kill" => state.kill(&request.extra).await,
         "resize" => state.resize(&request.extra).await,
         "write" => state.write(&request.extra).await,
+        "write_batch" => state.write_batch(&request.extra).await,
         "snapshot" => state.snapshot(&request.extra).await,
         "subscribe_events" => {
             let (ack, rx) = state.subscribe_events().await;
