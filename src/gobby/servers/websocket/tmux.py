@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.tmux_activation import (
     STATE_ACTIVATING,
@@ -20,7 +21,7 @@ from gobby.servers.websocket.tmux_activation import (
     teardown_bridge,
     teardown_terminal_bridges,
 )
-from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
+from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ _DEFAULT_CONFIG = TmuxConfig(socket_name="")
 _GOBBY_CONFIG = TmuxConfig(socket_name="gobby")
 
 
-class TmuxMixin(TerminalWsMixin):
+class TmuxMixin(TerminalSizingMixin, TerminalWsMixin):
     """Mixin providing tmux session management handlers for WebSocketServer.
 
     Requires on the host class:
@@ -113,7 +114,9 @@ class TmuxMixin(TerminalWsMixin):
         for attachment_id in list(self._tmux_client_bridges.get(websocket, ())):
             await teardown_bridge(self, attachment_id)
             logger.debug("Cleaned up tmux bridge %s for disconnected client", attachment_id)
-        self._leases().finalize_websocket(websocket, "ws_close")
+        events = self._leases().finalize_websocket(websocket, "ws_close")
+        for event in events:
+            await self._apply_terminal_sizing(event.terminal_id, event.sizing)
         hub = getattr(self, "_proxy_hub", None)
         if hub is not None:
             await hub.drop_socket(websocket, "ws_close")
@@ -182,7 +185,8 @@ class TmuxMixin(TerminalWsMixin):
         assert row is not None and isinstance(terminal_id, str)
         session_manager, config, session_name = target
         registry = self._leases()
-        record = registry.attach(terminal_id, "proxy", websocket=websocket)
+        viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
+        record = registry.attach(terminal_id, "proxy", websocket=websocket, viewer=viewer)
         # A tmux client is a typing seat: the newest viewer holds the lease,
         # exactly as every attached desktop client can type.
         displaced = registry.displaced_holder(terminal_id, record.attachment_id)
@@ -227,13 +231,6 @@ class TmuxMixin(TerminalWsMixin):
             await super()._handle_terminal_resize(websocket, data)
             return
         assert isinstance(attachment_id, str)
-        try:
-            rows, cols = validate_dimensions(data.get("rows"), data.get("cols"))
-        except InvalidTerminalDimensionsError:
-            await self._send_json(
-                websocket, {"type": "terminal_error", "code": "invalid_dimensions"}
-            )
-            return
         if pending is not None:
             if pending.owner is not websocket:
                 logger.debug(
@@ -244,6 +241,34 @@ class TmuxMixin(TerminalWsMixin):
                 # Activation is already in flight; there is no bridge to resize
                 # yet, and the client will resend once the terminal is live.
                 return
+        admitted = self._leases().resize_pty(attachment_id, data.get("rows"), data.get("cols"))
+        if not admitted.ok:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "code": admitted.reason,
+                    "attachment_id": attachment_id,
+                },
+            )
+            return
+        record = self._leases().get(attachment_id)
+        if record is None:
+            return
+        if admitted.applied:
+            await self._apply_terminal_sizing(record.terminal_id, admitted.sizing)
+        else:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_resize_result",
+                    "attachment_id": attachment_id,
+                    "applied": False,
+                    "owner_viewer": admitted.owner_viewer,
+                },
+            )
+        rows, cols = validate_dimensions(data.get("rows"), data.get("cols"))
+        if pending is not None:
             pending.state = STATE_ACTIVATING
             await activate_attachment(self, websocket, attachment_id, pending, rows, cols)
             return

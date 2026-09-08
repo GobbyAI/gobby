@@ -257,8 +257,13 @@ fn apply_scripted_menu_action(
         ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(pane) => {
             scripted_focus(workspace, chrome, pane, true)?;
         }
-        ContextMenuKind::Tab(index) if index != chrome.active_tab => {
-            if let Some(pane) = chrome.tabs.get(index).and_then(|tab| tab.focused_pane()) {
+        ContextMenuKind::Tab(index) if index != chrome.tabs().active_tab => {
+            if let Some(pane) = chrome
+                .tabs()
+                .tabs
+                .get(index)
+                .and_then(|tab| tab.focused_pane())
+            {
                 scripted_focus(workspace, chrome, pane, false)?;
             }
         }

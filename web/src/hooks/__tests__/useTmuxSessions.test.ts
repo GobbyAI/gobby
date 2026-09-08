@@ -667,6 +667,22 @@ describe("useTmuxSessions", () => {
     unmount();
   });
 
+  it("attach declares the web viewer", () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    ws.send.mockClear();
+
+    act(() => result.current.attachSession("worker", "gobby"));
+
+    expect(lastOf(sentMessages(ws, "terminal_attach"))).toMatchObject({
+      type: "terminal_attach",
+      terminal_id: "worker",
+      viewer: "web",
+    });
+    unmount();
+  });
+
   it("attach error handling", () => {
     const { result, unmount } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];

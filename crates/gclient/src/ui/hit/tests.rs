@@ -37,7 +37,7 @@ fn split_live() -> (Workspace, Chrome) {
     chrome.open_pane(alpha, "alpha");
     chrome.open_pane(beta, "alpha");
     chrome.open_tab(alpha, "second");
-    chrome.active_tab = 0;
+    chrome.tabs_mut().active_tab = 0;
     assert!(chrome.focus_pane(beta), "focus term-beta");
     (ws, chrome)
 }

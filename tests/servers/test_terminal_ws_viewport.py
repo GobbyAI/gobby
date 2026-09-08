@@ -19,8 +19,9 @@ def test_two_observers_independent_viewports() -> None:
     assert registry.viewport(b.attachment_id) == (40, 120)
     holder = registry.attach("t", frame_delivery="proxy")
     registry.take_control("t", holder.attachment_id, takeover=False)
-    refused = registry.resize_pty(a.attachment_id, rows=10, cols=10)
-    assert refused.ok is False
+    resized = registry.resize_pty(a.attachment_id, rows=10, cols=10)
+    assert resized.ok is True
+    assert resized.applied is True
 
 
 def test_two_observers_independent_scroll_offsets() -> None:

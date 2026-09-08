@@ -26,6 +26,7 @@ _DEFAULT_PROXY_TIMEOUT_SECONDS = 2.0
 _MAX_PROXY_OUTPUT_BYTES = 64 * 1024
 _SHELL_CONTEXT_PREFIX = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=|cd(?:[ \t]|$))")
 _RTK_DIAGNOSTIC_PREFIX = re.compile(r"^\s*(?:\[rtk\s*:|rtk(?:\s+error)?\s*:)", re.IGNORECASE)
+_RTK_UNSUPPORTED_JQ_REWRITE = re.compile(r"(?:^|\s)rtk\s+(?:\S*/)?jq(?:\s|$)")
 
 # One WARNING per unavailability episode; DEBUG until RTK resolves again.
 _rtk_unavailable_warned = False
@@ -39,6 +40,11 @@ def _has_shell_context_prefix(command: str) -> bool:
 def _is_plausible_rewrite(command: str) -> bool:
     """Reject RTK diagnostics and bytes that cannot form a safe shell command."""
     if not command or _RTK_DIAGNOSTIC_PREFIX.match(command):
+        return False
+    # RTK 0.48.0 can emit ``rtk jq`` (and ``rtk /usr/bin/jq``), but it has no
+    # jq subcommand. Preserve the original command instead of accepting a
+    # rewrite that is guaranteed to fail before the requested validation runs.
+    if _RTK_UNSUPPORTED_JQ_REWRITE.search(command):
         return False
     return not any(ord(char) < 32 and char not in "\t\n\r" for char in command)
 

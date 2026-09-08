@@ -37,15 +37,33 @@ OWNERSHIP_SCENARIO_PATH = (
 
 
 def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
-    """9c17a6466 replaced evidence receipts with the checklist close contract."""
+    """Close guidance mirrors the source-aware evidence contract."""
     content = SKILL_PATH.read_text()
 
-    assert "Shell validation must produce a definitive exit code" in content
-    assert "follow every yielded cell or PTY session until exit" in content
-    assert "derives validation evidence from the transcripts of the claiming" in content
-    assert "rerun the command through a supported shell tool" in content
+    guidance = content.split("### Close-Validation Command Patterns", maxsplit=1)[1].split(
+        "## Exact Interactive Close Sequence", maxsplit=1
+    )[0]
+    for expected in (
+        "Finish all edits and formatting before the final focused validation",
+        "task-attributed edit makes earlier validation stale",
+        "definitive exit",
+        "uv run pytest tests/tasks/test_validation.py -q",
+        "VAR=value <validation-command>",
+        "cd <dir> && <validation-command>",
+        "validation command on the next line",
+        "successful top-level `<validation-a> && <validation-b>`",
+        "Pipelines, including pipefail-enabled forms",
+        "<validation>; echo ...",
+        "<validation> && echo ...",
+        "<validation> || ...",
+        "<validation> & ...",
+        "Subshells",
+        "`js_repl` or node wrappers",
+        "Rerun the underlying validation directly after the final edit",
+    ):
+        assert expected in guidance
     for provider in ("Claude Code", "Qwen", "Droid", "Grok", "Codex"):
-        assert provider not in content, f"close guidance must stay provider-neutral: {provider}"
+        assert provider not in guidance, f"close guidance must stay provider-neutral: {provider}"
 
 
 def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
