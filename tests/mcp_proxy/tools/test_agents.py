@@ -151,6 +151,7 @@ class TestCreateAgentsRegistry:
             "stop_agent",
             "cancel_stale_helpers",
             "end_agent_run",
+            "checkpoint_agent_worktree",
             "kill_agent",
             "can_spawn_agent",
             "list_running_agents",
