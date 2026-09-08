@@ -642,18 +642,29 @@ fn return_clause(kind: GraphEdgeKind) -> &'static str {
              CASE WHEN target:ExternalSymbol THEN 'external' \
                   WHEN target:UnresolvedCallee THEN 'unresolved' ELSE 'symbol' END AS target_kind, \
              coalesce(r.file, source.file_path) AS owner_path, \
-             coalesce(r.content_hash, '') AS owner_hash"
+             coalesce(r.content_hash, '') AS owner_hash, \
+             coalesce(r.provenance, 'UNRESOLVED') AS provenance"
         }
         GraphEdgeKind::Inheritance => {
             "RETURN DISTINCT source.id AS source, target.id AS target, type(r) AS rel, \
-             source.file_path AS source_file, target.file_path AS target_file"
+             source.file_path AS source_file, target.file_path AS target_file, \
+             coalesce(source.name, source.id) AS source_name, \
+             coalesce(target.name, target.id) AS target_name, \
+             CASE WHEN source:ExternalSymbol THEN 'external' \
+                  WHEN source:UnresolvedCallee THEN 'unresolved' ELSE 'symbol' END AS source_kind, \
+             CASE WHEN target:ExternalSymbol THEN 'external' \
+                  WHEN target:UnresolvedCallee THEN 'unresolved' ELSE 'symbol' END AS target_kind, \
+             coalesce(r.file, source.file_path) AS owner_path, \
+             coalesce(r.content_hash, '') AS owner_hash, \
+             coalesce(r.provenance, 'UNRESOLVED') AS provenance"
         }
         GraphEdgeKind::Import => {
             "RETURN DISTINCT source.path AS source, target.name AS target, type(r) AS rel, \
              source.path AS source_file, target.name AS target_file, \
              source.path AS source_name, target.name AS target_name, \
              'file' AS source_kind, 'module' AS target_kind, \
-             source.path AS owner_path, coalesce(r.content_hash, '') AS owner_hash"
+             source.path AS owner_path, coalesce(r.content_hash, '') AS owner_hash, \
+             coalesce(r.provenance, 'UNRESOLVED') AS provenance"
         }
     }
 }
