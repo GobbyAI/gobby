@@ -61,10 +61,10 @@ def _record_review(
         max_items=_MAX_REVIEW_RECORDS,
     )
     variables = state.get_variables(session_id)
-    reviews_complete = pending_memory_reviews_complete(variables)
-    if reviews_complete:
+    if pending_memory_reviews_complete(variables):
         state.set_variable(session_id, REVIEW_DELIVERED_VARIABLE, True)
-    return reviews_complete, pending_memory_reviews(variables)
+    pending_reviews = pending_memory_reviews(variables)
+    return not pending_reviews, pending_reviews
 
 
 def _enum_value(value: Any) -> Any:

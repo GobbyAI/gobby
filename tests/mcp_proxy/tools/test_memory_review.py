@@ -134,7 +134,7 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
     assert search_kwargs["include_global"] is True
     state_manager_cls.assert_called_once_with(session_manager.db)
     state_manager.upsert_bounded_list_variable.assert_called_once()
-    assert result["pending_reviews_complete"] is False
+    assert result["pending_reviews_complete"] is True
     assert result["pending_reviews"] == []
     state_manager.set_variable.assert_not_called()
 
