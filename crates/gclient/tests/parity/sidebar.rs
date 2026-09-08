@@ -11,10 +11,12 @@
 //! roster and each adapted assertion carries the herdr original in a comment.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use gobby_client::app::sidebar_model::{AgentEntry, SidebarModel};
 use gobby_client::app::{
     route_mouse, MouseGesture, MouseOutcome, Pane, PaneId, Workspace, MOUSE_SCROLL_LINES,
     ROSTER_DRAG_THRESHOLD,
 };
+use gobby_client::daemon::Attention;
 use gobby_client::persist::load_snapshot;
 use gobby_client::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use gobby_client::ui::chrome_render::render_workspace;
@@ -50,6 +52,7 @@ struct Board {
     roster: Vec<String>,
     attention: Vec<String>,
     panes: Vec<Pane>,
+    sidebar: SidebarModel,
 }
 
 impl Board {
@@ -58,6 +61,7 @@ impl Board {
             roster: Vec::new(),
             attention: Vec::new(),
             panes: Vec::new(),
+            sidebar: SidebarModel::default(),
         };
         for name in names {
             board.add(name, DEFAULT_BACKEND);
@@ -83,7 +87,21 @@ impl Board {
     /// herdr `terminal.state = ...` for the pane behind `name`.
     fn set_state(&mut self, name: &str, state: RowState) {
         match state {
-            RowState::Attention => self.attention.push(format!("blocked:{name}")),
+            RowState::Attention => {
+                let entry_id = format!("blocked:{name}");
+                self.attention.push(entry_id.clone());
+                // The chrome reads blockedness from the agent row, as the
+                // typed roster carries it; the entry id alone no longer does.
+                self.sidebar.agents.push(AgentEntry {
+                    entry_id,
+                    terminal_id: name.to_string(),
+                    backend: DEFAULT_BACKEND.to_string(),
+                    name: name.to_string(),
+                    state: RowState::Attention,
+                    attention: Some(Attention::default()),
+                    ..Default::default()
+                });
+            }
             RowState::Working | RowState::Unseen => {
                 let pane = self
                     .panes
@@ -106,6 +124,14 @@ impl WorkspaceView for Board {
 
     fn project_id(&self) -> Option<&str> {
         None
+    }
+
+    fn focused_project(&self) -> Option<&str> {
+        None
+    }
+
+    fn sidebar(&self) -> &SidebarModel {
+        &self.sidebar
     }
 
     fn roster_terminal_ids(&self) -> Vec<String> {

@@ -1,4 +1,6 @@
+use super::sidebar_model::GIT_REFRESH_INTERVAL;
 use super::*;
+use crate::daemon::message_kind;
 use crate::persist::load_snapshot;
 
 impl Workspace<LiveDaemon> {
@@ -12,12 +14,12 @@ impl Workspace<LiveDaemon> {
             next_pane: 1,
             roster_ids: Vec::new(),
             saved_tab_order: Vec::new(),
-            attention: AttentionState {
-                epoch: String::new(),
-                seq: 0,
-                entries: Vec::new(),
-                applied_seqs: Vec::new(),
-            },
+            attention: AttentionState::empty(),
+            local_machine: String::new(),
+            sidebar_rows: SidebarRows::default(),
+            sidebar: SidebarModel::default(),
+            git_refreshed_at: Instant::now(),
+            pending_sidebar: PendingSidebar::default(),
             pending_attention: None,
             gobby_home: None,
             frame_delivery: FrameDelivery::Auto,
@@ -62,14 +64,6 @@ impl Workspace<LiveDaemon> {
 
     pub fn project_id(&self) -> Option<&str> {
         self.project_id.as_deref()
-    }
-
-    pub fn roster_terminal_ids(&self) -> Vec<String> {
-        self.roster_ids.clone()
-    }
-
-    pub fn attention_entry_ids(&self) -> Vec<String> {
-        self.attention.entries.clone()
     }
 
     pub fn daemon_ready(&self) -> bool {
@@ -197,13 +191,106 @@ impl Workspace<LiveDaemon> {
         })
     }
 
+    /// Replace the roster wholesale: an entry the daemon no longer returns is
+    /// gone, whatever an event said about it.
     async fn fetch_attention(&mut self) -> Result<(), DaemonError> {
         let (epoch, seq, entries) = self.daemon.attention_roster().await?;
         self.attention.epoch = epoch;
         self.attention.seq = seq;
-        self.attention.entries = entries.into_iter().map(|entry| entry.entry_id).collect();
+        self.attention.entries = entries;
         self.attention.applied_seqs = vec![seq];
+        self.rebuild_sidebar();
         Ok(())
+    }
+
+    /// Fetch every sidebar row: projects, then status and worktrees for each
+    /// project checked out here, then the focused project's sessions and runs.
+    pub async fn fetch_sidebar_rows(&mut self) -> Result<(), DaemonError> {
+        self.sidebar_rows.projects = self.daemon.projects().await?;
+        let checked_out: Vec<String> = self.checked_out_projects();
+        self.sidebar_rows.statuses.clear();
+        self.sidebar_rows.worktrees.clear();
+        for project in checked_out {
+            self.fetch_project_rows(&project).await?;
+        }
+        self.fetch_focused_sessions().await?;
+        self.pending_sidebar = PendingSidebar::default();
+        self.rebuild_sidebar();
+        Ok(())
+    }
+
+    fn checked_out_projects(&self) -> Vec<String> {
+        self.sidebar_rows
+            .projects
+            .iter()
+            .filter(|project| project.checkout.is_some())
+            .map(|project| project.id.clone())
+            .collect()
+    }
+
+    /// Refresh one project's source status and worktrees. A project with no
+    /// checkout here has neither, so it is skipped rather than asked.
+    async fn fetch_project_rows(&mut self, project: &str) -> Result<(), DaemonError> {
+        let checked_out = self
+            .sidebar_rows
+            .projects
+            .iter()
+            .any(|row| row.id == project && row.checkout.is_some());
+        if !checked_out {
+            return Ok(());
+        }
+        let status = self.daemon.source_status(project).await?;
+        let worktrees = self.daemon.worktrees(project).await?;
+        self.sidebar_rows
+            .statuses
+            .insert(project.to_string(), status);
+        self.sidebar_rows
+            .worktrees
+            .retain(|row| row.project_id != project);
+        self.sidebar_rows.worktrees.extend(worktrees);
+        self.git_refreshed_at = Instant::now();
+        Ok(())
+    }
+
+    async fn fetch_focused_sessions(&mut self) -> Result<(), DaemonError> {
+        let Some(project) = self.project_id.clone() else {
+            return Ok(());
+        };
+        let sessions = self.daemon.sessions(&project).await?;
+        let runs = self.daemon.agent_runs(&project).await?;
+        self.sidebar_rows.sessions.insert(project.clone(), sessions);
+        self.sidebar_rows.runs.insert(project, runs);
+        Ok(())
+    }
+
+    /// Run the refetches live events queued since the last flush, at most
+    /// one per route and project however many events asked for it.
+    pub async fn flush_sidebar_refetches(&mut self) -> Result<(), DaemonError> {
+        let pending = std::mem::take(&mut self.pending_sidebar);
+        if pending.projects {
+            self.sidebar_rows.projects = self.daemon.projects().await?;
+        }
+        for project in &pending.project_rows {
+            self.fetch_project_rows(project).await?;
+        }
+        if pending.sessions {
+            self.fetch_focused_sessions().await?;
+        }
+        if pending.projects || pending.sessions || !pending.project_rows.is_empty() {
+            self.rebuild_sidebar();
+        }
+        Ok(())
+    }
+
+    /// Queue a status refresh for every checked-out project once the last
+    /// one is older than `GIT_REFRESH_INTERVAL`; the caller flushes it.
+    pub fn request_git_refresh_if_due(&mut self) {
+        if self.git_refreshed_at.elapsed() < GIT_REFRESH_INTERVAL {
+            return;
+        }
+        self.pending_sidebar
+            .project_rows
+            .extend(self.checked_out_projects());
     }
 
     pub async fn reconcile_subscribe_first(&mut self) -> Result<(), DaemonError> {
@@ -218,6 +305,7 @@ impl Workspace<LiveDaemon> {
         }
         self.fetch_roster().await?;
         self.fetch_attention().await?;
+        self.fetch_sidebar_rows().await?;
         let result = self.drain_receiver(&mut receiver).await;
         self.event_rx = Some(receiver);
         result
@@ -257,11 +345,14 @@ impl Workspace<LiveDaemon> {
                 }
                 self.fetch_roster().await?;
                 self.fetch_attention().await?;
+                self.fetch_sidebar_rows().await?;
                 continue;
             }
             for event in buffered {
                 self.apply_live_event(event).await?;
             }
+            self.flush_sidebar_refetches().await?;
+            self.rebuild_sidebar();
             let current = self.daemon.subscribe().0;
             self.daemon_ready = current.ready;
             self.daemon_error = current.last_error;
@@ -377,19 +468,7 @@ impl Workspace<LiveDaemon> {
                 if epoch == self.attention.epoch && seq <= self.attention.seq {
                     return Ok(());
                 }
-                let entry_id = payload
-                    .get("entry_id")
-                    .or_else(|| {
-                        payload
-                            .get("metadata")
-                            .and_then(|value| value.get("entry_id"))
-                    })
-                    .and_then(Value::as_str);
-                if let Some(entry_id) = entry_id {
-                    if !self.attention.entries.iter().any(|known| known == entry_id) {
-                        self.attention.entries.push(entry_id.to_string());
-                    }
-                }
+                self.note_attention_event(&payload);
                 self.attention.epoch = epoch;
                 self.attention.seq = seq;
                 self.attention.applied_seqs.push(seq);
@@ -400,14 +479,45 @@ impl Workspace<LiveDaemon> {
             DaemonEvent::Lagged => {
                 self.fetch_roster().await?;
                 self.fetch_attention().await?;
+                self.fetch_sidebar_rows().await?;
             }
+            DaemonEvent::Message(message) => self.note_sidebar_message(&message),
             DaemonEvent::Output(_)
             | DaemonEvent::Frame(_)
             | DaemonEvent::AttachHistory(_)
-            | DaemonEvent::ScrollOffsetApplied(_)
-            | DaemonEvent::Message(_) => {}
+            | DaemonEvent::ScrollOffsetApplied(_) => {}
         }
         Ok(())
+    }
+
+    /// Queue the refetch a project, worktree, or session event calls for;
+    /// `flush_sidebar_refetches` runs each at most once per drain.
+    fn note_sidebar_message(&mut self, message: &Value) {
+        let project_id = message
+            .get("project_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        match message_kind(message) {
+            Some("project_event") => {
+                self.pending_sidebar.projects = true;
+                if let Some(project_id) = project_id {
+                    self.pending_sidebar.project_rows.insert(project_id);
+                }
+            }
+            Some("worktree_event") => match project_id {
+                Some(project_id) => {
+                    self.pending_sidebar.project_rows.insert(project_id);
+                }
+                // A worktree event without its project refreshes every
+                // checkout rather than guessing which one moved.
+                None => self
+                    .pending_sidebar
+                    .project_rows
+                    .extend(self.checked_out_projects()),
+            },
+            Some("session_event") => self.pending_sidebar.sessions = true,
+            _ => {}
+        }
     }
 
     fn accept_lifecycle(&self, epoch: &str, seq: u64) -> bool {

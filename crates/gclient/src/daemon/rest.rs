@@ -1,4 +1,7 @@
-use super::{Answer, DaemonError, Page, RosterEntry, TerminalRow, REQUEST_DEADLINE};
+use super::{
+    Answer, DaemonError, Page, ProjectRow, RosterEntry, RunRow, SessionRow, SourceStatus,
+    TerminalRow, WorktreeRow, REQUEST_DEADLINE,
+};
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -51,6 +54,51 @@ impl RestClient {
     pub(super) async fn roster_snapshot(&self) -> Result<AttentionRoster, DaemonError> {
         let url = self.url(&["api", "attention", "roster"])?;
         self.json(Method::GET, url, None).await
+    }
+
+    pub(super) async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError> {
+        let url = self.url(&["api", "projects"])?;
+        self.json(Method::GET, url, None).await
+    }
+
+    pub(super) async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError> {
+        let mut url = self.url(&["api", "source-control", "status"])?;
+        url.query_pairs_mut().append_pair("project_id", project);
+        self.json(Method::GET, url, None).await
+    }
+
+    pub(super) async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError> {
+        let mut url = self.url(&["api", "source-control", "worktrees"])?;
+        url.query_pairs_mut().append_pair("project_id", project);
+        let envelope: Worktrees = self.json(Method::GET, url, None).await?;
+        Ok(envelope.worktrees)
+    }
+
+    /// Live sessions only: the sidebar shows what is running, and the route
+    /// caps a page at 1000, which covers a project's live set many times over.
+    pub(super) async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
+        let mut url = self.url(&["api", "sessions"])?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("project_id", project);
+            query.append_pair("limit", "1000");
+            for status in LIVE_SESSION_STATUSES {
+                query.append_pair("status_in", status);
+            }
+        }
+        let envelope: Sessions = self.json(Method::GET, url, None).await?;
+        Ok(envelope.sessions)
+    }
+
+    pub(super) async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError> {
+        let mut url = self.url(&["api", "agents", "runs"])?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("project_id", project);
+            query.append_pair("limit", "200");
+        }
+        let envelope: Runs = self.json(Method::GET, url, None).await?;
+        Ok(envelope.runs)
     }
 
     pub(super) async fn respond(
@@ -133,6 +181,34 @@ impl RestClient {
         self.send(method, url, body).await?;
         Ok(())
     }
+}
+
+/// `LIVE_SESSION_STATUS_ORDER` in the daemon's session constants.
+const LIVE_SESSION_STATUSES: [&str; 6] = [
+    "active",
+    "paused",
+    "interrupted",
+    "awaiting_input",
+    "awaiting_approval",
+    "awaiting_handoff",
+];
+
+#[derive(Debug, Deserialize)]
+struct Worktrees {
+    #[serde(default)]
+    worktrees: Vec<WorktreeRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Sessions {
+    #[serde(default)]
+    sessions: Vec<SessionRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Runs {
+    #[serde(default)]
+    runs: Vec<RunRow>,
 }
 
 #[derive(Debug, Deserialize)]
