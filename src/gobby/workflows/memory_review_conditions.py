@@ -122,6 +122,43 @@ def queue_memory_review_close(
     return [*pending, candidate]
 
 
+def pending_memory_reviews(variables: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Return unique unreviewed task references in queue order."""
+    pending = variables.get("_memory_pending_task_reviews")
+    if not isinstance(pending, list):
+        return []
+    reviewed = variables.get("_memory_task_review_records")
+    reviewed_ids = (
+        {
+            item.get("closure_id")
+            for item in reviewed
+            if isinstance(item, Mapping) and isinstance(item.get("closure_id"), str)
+        }
+        if isinstance(reviewed, list)
+        else set()
+    )
+    remaining: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in pending:
+        if not isinstance(item, Mapping) or item.get("closure_id") in reviewed_ids:
+            continue
+        task_id = item.get("task_id")
+        task_ref = item.get("task_ref")
+        if (
+            not isinstance(task_id, str)
+            or not task_id
+            or not isinstance(task_ref, str)
+            or not task_ref
+        ):
+            continue
+        identity = (task_id, task_ref)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        remaining.append({"task_id": task_id, "task_ref": task_ref})
+    return remaining
+
+
 def pending_memory_reviews_complete(variables: Mapping[str, Any]) -> bool:
     """Return whether every queued closure already has a review record.
 

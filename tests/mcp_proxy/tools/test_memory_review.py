@@ -134,7 +134,8 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
     assert search_kwargs["include_global"] is True
     state_manager_cls.assert_called_once_with(session_manager.db)
     state_manager.upsert_bounded_list_variable.assert_called_once()
-    assert result["pending_reviews_complete"] is False
+    assert result["pending_reviews_complete"] is True
+    assert result["pending_reviews"] == []
     state_manager.set_variable.assert_not_called()
 
 
@@ -152,7 +153,9 @@ async def test_reviewing_every_queued_closure_releases_the_stop_gate() -> None:
     registry = _registry(task=_task())[0]
     state_manager, state_manager_cls = _state_manager(
         {
-            "_memory_pending_task_reviews": [{"closure_id": CLOSURE_ID, "task_ref": "#42"}],
+            "_memory_pending_task_reviews": [
+                {"closure_id": CLOSURE_ID, "task_id": TASK_ID, "task_ref": "#42"}
+            ],
             "_memory_task_review_records": [{"closure_id": CLOSURE_ID}],
         }
     )
@@ -165,6 +168,7 @@ async def test_reviewing_every_queued_closure_releases_the_stop_gate() -> None:
 
     assert result["success"] is True
     assert result["pending_reviews_complete"] is True
+    assert result["pending_reviews"] == []
     state_manager.upsert_bounded_list_variable.assert_called_once()
     state_manager.get_variables.assert_called_once_with(SESSION_ID)
     state_manager.set_variable.assert_called_once_with(
@@ -178,8 +182,22 @@ async def test_partial_review_leaves_the_stop_gate_armed() -> None:
     state_manager, state_manager_cls = _state_manager(
         {
             "_memory_pending_task_reviews": [
-                {"closure_id": CLOSURE_ID, "task_ref": "#42"},
-                {"closure_id": "other-task:2026-08-25T00:00:00+00:00", "task_ref": "#43"},
+                {"closure_id": CLOSURE_ID, "task_id": TASK_ID, "task_ref": "#42"},
+                {
+                    "closure_id": "other-task:first-close",
+                    "task_id": "33333333-3333-4333-8333-333333330043",
+                    "task_ref": "#43",
+                },
+                {
+                    "closure_id": "other-task:duplicate-close",
+                    "task_id": "33333333-3333-4333-8333-333333330043",
+                    "task_ref": "#43",
+                },
+                {
+                    "closure_id": "third-task:closed",
+                    "task_id": "44444444-4444-4444-8444-444444440044",
+                    "task_ref": "#44",
+                },
             ],
             "_memory_task_review_records": [{"closure_id": CLOSURE_ID}],
         }
@@ -193,6 +211,10 @@ async def test_partial_review_leaves_the_stop_gate_armed() -> None:
 
     assert result["success"] is True
     assert result["pending_reviews_complete"] is False
+    assert result["pending_reviews"] == [
+        {"task_id": "33333333-3333-4333-8333-333333330043", "task_ref": "#43"},
+        {"task_id": "44444444-4444-4444-8444-444444440044", "task_ref": "#44"},
+    ]
     state_manager.set_variable.assert_not_called()
 
 
