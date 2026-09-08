@@ -2,10 +2,16 @@
 
 mod live;
 mod live_reader;
+mod projects;
 mod rest;
 mod ws;
 
-pub use live::{LiveDaemon, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE};
+pub use live::{
+    LiveDaemon, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE, SUBSCRIBED_EVENTS,
+};
+pub use projects::{
+    Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
+};
 pub use ws::{
     decode_message, encode_message, message_kind, route_key, RouteKey, WsCodecError, GOLDEN_NAMES,
     TERMINAL_WS_SAFE_INTEGER_MAX,
@@ -126,11 +132,62 @@ impl TerminalRow {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct RosterEntry {
     pub entry_id: String,
-    #[serde(flatten)]
-    pub fields: BTreeMap<String, Value>,
+    pub run_id: Option<String>,
+    pub session_id: Option<String>,
+    pub lifecycle_status: Option<String>,
+    /// Set only while the subject is blocked; the daemon sends `null` otherwise.
+    pub attention: Option<Attention>,
+    pub task: Option<TaskRef>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub terminal: Option<TerminalRef>,
+    #[serde(default, rename = "tmux", deserialize_with = "tmux_session_name")]
+    pub tmux_session_name: Option<String>,
+    pub last_activity_at: Option<String>,
+}
+
+/// The blocked half of a roster entry (`_serialize_attention`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Attention {
+    pub attention_id: Option<String>,
+    pub kind: Option<String>,
+    pub reason: Option<String>,
+    pub fingerprint: Option<String>,
+    #[serde(alias = "prompt")]
+    pub payload: Option<Value>,
+    pub seen_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskRef {
+    pub id: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalRef {
+    pub terminal_id: String,
+    pub backend: String,
+}
+
+/// The daemon nests the tmux name as `tmux: {session_name}`; a `null` block
+/// means the terminal is not tmux.
+fn tmux_session_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct Tmux {
+        session_name: Option<String>,
+    }
+    Ok(Option::<Tmux>::deserialize(deserializer)?.and_then(|tmux| tmux.session_name))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,6 +371,11 @@ pub trait Daemon: Send + Sync {
         cursor: Option<&str>,
     ) -> Result<Page<TerminalRow>, DaemonError>;
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError>;
+    async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError>;
+    async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError>;
+    async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError>;
+    async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError>;
+    async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError>;
     async fn respond(
         &self,
         entry: &str,
@@ -336,6 +398,7 @@ struct ScriptedState {
     ws_out: Vec<Value>,
     attention_inbox: VecDeque<Value>,
     roster: Value,
+    sidebar_rows: SidebarRows,
     terminal_pages: VecDeque<Value>,
     live_terminals: Vec<String>,
     spawn_response: Value,
@@ -373,6 +436,7 @@ impl ScriptedDaemon {
                 ws_out: Vec::new(),
                 attention_inbox: VecDeque::new(),
                 roster: json!({"epoch": "e0", "seq": 0, "entries": []}),
+                sidebar_rows: SidebarRows::default(),
                 terminal_pages: VecDeque::new(),
                 live_terminals: Vec::new(),
                 spawn_response: json!({"success": true}),
@@ -431,6 +495,28 @@ impl ScriptedDaemon {
 
     pub fn roster_value(&self) -> Value {
         self.state().roster.clone()
+    }
+
+    pub fn set_sidebar_rows(&self, rows: SidebarRows) {
+        self.state().sidebar_rows = rows;
+    }
+
+    pub fn sidebar_rows(&self) -> SidebarRows {
+        self.state().sidebar_rows.clone()
+    }
+
+    /// Record `GET <path>` and answer it from the scripted sidebar rows.
+    fn scripted_rows<T>(
+        &self,
+        path: String,
+        pick: impl FnOnce(&SidebarRows) -> T,
+    ) -> Result<T, DaemonError> {
+        let mut state = self.state();
+        state.rest.push(format!("GET {path}"));
+        if !state.reachable {
+            return Err(DaemonError::unavailable());
+        }
+        Ok(pick(&state.sidebar_rows))
     }
 
     pub fn set_terminal_pages(&self, pages: Vec<Value>) {
@@ -608,6 +694,42 @@ impl Daemon for ScriptedDaemon {
                 detail: error.to_string(),
             },
         )
+    }
+
+    async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError> {
+        self.scripted_rows("/api/projects".into(), |rows| rows.projects.clone())
+    }
+
+    async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError> {
+        self.scripted_rows(
+            format!("/api/source-control/status?project_id={project}"),
+            |rows| rows.statuses.get(project).cloned().unwrap_or_default(),
+        )
+    }
+
+    async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError> {
+        self.scripted_rows(
+            format!("/api/source-control/worktrees?project_id={project}"),
+            |rows| {
+                rows.worktrees
+                    .iter()
+                    .filter(|row| row.project_id == project)
+                    .cloned()
+                    .collect()
+            },
+        )
+    }
+
+    async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
+        self.scripted_rows(format!("/api/sessions?project_id={project}"), |rows| {
+            rows.sessions.get(project).cloned().unwrap_or_default()
+        })
+    }
+
+    async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError> {
+        self.scripted_rows(format!("/api/agents/runs?project_id={project}"), |rows| {
+            rows.runs.get(project).cloned().unwrap_or_default()
+        })
     }
 
     async fn respond(

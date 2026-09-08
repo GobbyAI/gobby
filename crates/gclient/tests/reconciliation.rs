@@ -447,7 +447,17 @@ async fn reconnect_reattaches_once_per_pane() {
     })
     .await
     .expect("disconnect observed");
-    let requests_before_reconnect = mock.requests().len();
+    // The event subscription is part of the transport handshake, so it is
+    // the one request a reconnect is allowed to send.
+    let requests_without_subscribe = || {
+        mock.requests()
+            .iter()
+            .filter(|request| {
+                request.body.as_ref().and_then(|body| body.get("type")) != Some(&json!("subscribe"))
+            })
+            .count()
+    };
+    let requests_before_reconnect = requests_without_subscribe();
     let replacement = daemon
         .reconnect(observed)
         .await
@@ -459,7 +469,7 @@ async fn reconnect_reattaches_once_per_pane() {
         "late subscribers read generation-ready as a value"
     );
     assert_eq!(
-        mock.requests().len(),
+        requests_without_subscribe(),
         requests_before_reconnect,
         "LiveDaemon reconnect performs neither listing nor attachment"
     );

@@ -4,7 +4,8 @@ use super::live_reader::{
 use super::rest::RestClient;
 use super::{
     route_key, Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome,
-    Page, RosterEntry, RouteKey, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
+    Page, ProjectRow, RosterEntry, RouteKey, RunRow, SessionRow, SourceStatus, SpawnOutcome,
+    SpawnRequest, SubscribeSnapshot, TerminalRow, WorktreeRow,
 };
 use futures_util::future::{AbortHandle, Abortable};
 use reqwest::Url;
@@ -21,6 +22,15 @@ use uuid::Uuid;
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 pub const CONTROL_REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 pub const BROADCAST_CAPACITY: usize = 256;
+/// Gated event kinds the daemon delivers only to a socket that subscribed to
+/// them; everything the workspace reduces over is on this list.
+pub const SUBSCRIBED_EVENTS: [&str; 5] = [
+    "terminal_event",
+    "agent_event",
+    "project_event",
+    "worktree_event",
+    "session_event",
+];
 
 type ReplySender = oneshot::Sender<Result<Value, DaemonError>>;
 
@@ -229,32 +239,66 @@ impl LiveDaemon {
             self.inner.closed_tx.subscribe(),
         )
         .await?;
-        let mut reader = self
-            .inner
-            .reader
-            .lock()
-            .expect("live daemon reader mutex poisoned");
-        let (outbound, receiver) = mpsc::channel(256);
+        // The reader guard lives in this block: it must not be held across
+        // the subscribe await below.
         let generation = {
-            let mut state = self.inner.state();
-            if state.closed {
-                return Err(DaemonError::Unavailable { retry_after: None });
-            }
-            if state.generation != observed {
-                return Ok(state.generation);
-            }
-            state.generation.0 += 1;
-            state.ready = true;
-            state.last_error = None;
-            state.outbound = Some(outbound);
-            state.generation
+            let mut reader = self
+                .inner
+                .reader
+                .lock()
+                .expect("live daemon reader mutex poisoned");
+            let (outbound, receiver) = mpsc::channel(256);
+            let generation = {
+                let mut state = self.inner.state();
+                if state.closed {
+                    return Err(DaemonError::Unavailable { retry_after: None });
+                }
+                if state.generation != observed {
+                    return Ok(state.generation);
+                }
+                state.generation.0 += 1;
+                state.ready = true;
+                state.last_error = None;
+                state.outbound = Some(outbound);
+                state.generation
+            };
+            let inner = Arc::clone(&self.inner);
+            let handle = tokio::spawn(async move {
+                run_connection(inner, generation, socket, receiver).await;
+            });
+            *reader = Some(handle);
+            generation
         };
-        let inner = Arc::clone(&self.inner);
-        let handle = tokio::spawn(async move {
-            run_connection(inner, generation, socket, receiver).await;
-        });
-        *reader = Some(handle);
+        self.subscribe_events().await?;
         Ok(generation)
+    }
+
+    /// Ask for the gated event kinds and wait for the daemon's confirmation.
+    /// The daemon delivers those kinds only to a socket that subscribed, so
+    /// a connection that skipped this would reduce over silence; waiting for
+    /// `subscribe_success` keeps the subscription ahead of the first fetch.
+    async fn subscribe_events(&self) -> Result<(), DaemonError> {
+        let mut events = self.inner.events.subscribe();
+        self.notification(json!({"type": "subscribe", "events": SUBSCRIBED_EVENTS}))
+            .await?;
+        let deadline = Instant::now() + REQUEST_DEADLINE;
+        loop {
+            let event = timeout_at(deadline, events.recv())
+                .await
+                .map_err(|_| DaemonError::Timeout)?;
+            match event {
+                Ok(DaemonEvent::Message(message))
+                    if super::message_kind(&message) == Some("subscribe_success") =>
+                {
+                    return Ok(());
+                }
+                Ok(DaemonEvent::Disconnected { error, .. }) => return Err(error),
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(DaemonError::Unavailable { retry_after: None });
+                }
+            }
+        }
     }
 
     fn register_waiter(
@@ -492,6 +536,26 @@ impl Daemon for LiveDaemon {
 
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {
         self.inner.rest.roster().await
+    }
+
+    async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError> {
+        self.inner.rest.projects().await
+    }
+
+    async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError> {
+        self.inner.rest.source_status(project).await
+    }
+
+    async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError> {
+        self.inner.rest.worktrees(project).await
+    }
+
+    async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
+        self.inner.rest.sessions(project).await
+    }
+
+    async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError> {
+        self.inner.rest.agent_runs(project).await
     }
 
     async fn respond(

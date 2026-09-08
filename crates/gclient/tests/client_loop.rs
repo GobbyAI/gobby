@@ -16,8 +16,9 @@ use gobby_client::app::run_loop::{
 use gobby_client::app::{run_live_loop, AttachState};
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
-    Page, RosterEntry, ScriptedDaemon, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow,
-    WsMessage, WsReply, CONTROL_REQUEST_DEADLINE,
+    Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow, SourceStatus, SpawnOutcome,
+    SpawnRequest, SubscribeSnapshot, TerminalRow, WorktreeRow, WsMessage, WsReply,
+    CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
@@ -392,6 +393,26 @@ impl Daemon for ReconnectDaemon {
 
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {
         Daemon::roster(&self.inner).await
+    }
+
+    async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError> {
+        Daemon::projects(&self.inner).await
+    }
+
+    async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError> {
+        Daemon::source_status(&self.inner, project).await
+    }
+
+    async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError> {
+        Daemon::worktrees(&self.inner, project).await
+    }
+
+    async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
+        Daemon::sessions(&self.inner, project).await
+    }
+
+    async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError> {
+        Daemon::agent_runs(&self.inner, project).await
     }
 
     async fn respond(
@@ -4560,5 +4581,213 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         spawned.x > other_rect.x && spawned.y == other_rect.y,
         "split right lands beside the menu's pane: {spawned:?} vs {other_rect:?}"
     );
+    mock.shutdown().await;
+}
+
+/// Deliver one daemon event over the mock socket and wait until the live
+/// daemon has broadcast it, so a following drain sees it.
+async fn send_daemon_event(mock: &MockDaemon, daemon: &LiveDaemon, event: Value) {
+    let (_, mut observed) = daemon.subscribe();
+    mock.send_event_and_wait(event).await;
+    timeout(Duration::from_secs(1), observed.recv())
+        .await
+        .expect("daemon event delivery")
+        .expect("daemon event");
+}
+
+fn sidebar_project_row() -> Value {
+    json!([{
+        "id": "project-1",
+        "name": "gobby",
+        "display_name": "gobby",
+        "checkout": {"machine_id": "m-local", "root_path": "/repo"},
+        "session_count": 1,
+        "last_activity_at": null,
+    }])
+}
+
+fn sidebar_roster_entry(entry_id: &str, run_id: &str, terminal_id: &str) -> Value {
+    json!({
+        "entry_id": entry_id,
+        "run_id": run_id,
+        "session_id": null,
+        "lifecycle_status": "running",
+        "attention": null,
+        "task": null,
+        "provider": "codex",
+        "model": null,
+        "terminal": {"terminal_id": terminal_id, "backend": "native"},
+        "tmux": null,
+        "last_activity_at": null,
+    })
+}
+
+/// 2.1.3: a `worktree_event` or `project_event` on the live socket refetches
+/// the affected project's status and worktrees once per drain however many
+/// events asked, and an attention refetch drops the roster entries the
+/// daemon no longer returns.
+#[tokio::test]
+async fn sidebar_model_follows_daemon_events() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    let worktrees_path = "/api/source-control/worktrees?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "GET",
+        status_path,
+        200,
+        json!({"current_branch": "0.5.0", "ahead": 1, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+    );
+    mock.enqueue(
+        "GET",
+        status_path,
+        200,
+        json!({"current_branch": "gobby-21986-sidebar", "ahead": 2, "behind": 1, "repo_path": "/repo", "worktree_count": 1}),
+    );
+    mock.enqueue("GET", worktrees_path, 200, json!({"worktrees": []}));
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [{
+            "id": "wt-1",
+            "project_id": "project-1",
+            "branch_name": "gobby-21986-sidebar",
+            "worktree_path": "/w/1",
+            "status": "active",
+            "workspace_role": "task",
+        }]}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1",
+            "seq": 1,
+            "entries": [
+                sidebar_roster_entry("run:a", "run-a", "terminal-a"),
+                sidebar_roster_entry("run:b", "run-b", "terminal-b"),
+            ],
+        }),
+    );
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let gets = |path: &str| {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target.starts_with(path))
+            .count()
+    };
+    assert_eq!(gets(status_path), 1, "reconcile fetched the status once");
+    assert_eq!(
+        gets(worktrees_path),
+        1,
+        "reconcile fetched the worktrees once"
+    );
+    let project = &workspace.sidebar().projects[0];
+    assert_eq!(project.branch.as_deref(), Some("0.5.0"));
+    assert!(project.worktrees.is_empty(), "no worktree before the event");
+
+    for event in [
+        json!({"type": "worktree_event", "event": "worktree_created", "project_id": "project-1", "worktree_id": "wt-1"}),
+        json!({"type": "worktree_event", "event": "worktree_updated", "project_id": "project-1", "worktree_id": "wt-1"}),
+        json!({"type": "project_event", "event": "project_updated", "project_id": "project-1"}),
+    ] {
+        send_daemon_event(&mock, &daemon, event).await;
+    }
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain sidebar events");
+    assert_eq!(
+        gets(status_path),
+        2,
+        "three events coalesce into one status refetch"
+    );
+    assert_eq!(
+        gets(worktrees_path),
+        2,
+        "three events coalesce into one worktrees refetch"
+    );
+    assert_eq!(
+        gets("/api/projects"),
+        2,
+        "the project event refetched the projects"
+    );
+    let project = &workspace.sidebar().projects[0];
+    assert_eq!(project.branch.as_deref(), Some("gobby-21986-sidebar"));
+    assert_eq!((project.ahead, project.behind), (Some(2), Some(1)));
+    let worktrees: Vec<&str> = project
+        .worktrees
+        .iter()
+        .map(|worktree| worktree.worktree_id.as_str())
+        .collect();
+    assert_eq!(
+        worktrees,
+        ["wt-1"],
+        "the refetched worktree joined the project"
+    );
+
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-2",
+            "seq": 1,
+            "entries": [sidebar_roster_entry("run:a", "run-a", "terminal-a")],
+        }),
+    );
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({
+            "type": "agent_event",
+            "event": "attention_changed",
+            "epoch": "attention-2",
+            "seq": 1,
+            "entry_id": "run:a",
+            "state": "blocked",
+            "attention_id": "att-1",
+            "kind": "actionable",
+        }),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain attention event");
+    assert_eq!(
+        workspace.attention_entry_ids(),
+        ["run:a"],
+        "the attention refetch dropped the entry the daemon no longer returns"
+    );
+    let agents: Vec<&str> = workspace
+        .sidebar()
+        .agents
+        .iter()
+        .map(|agent| agent.terminal_id.as_str())
+        .collect();
+    assert_eq!(
+        agents,
+        ["terminal-a"],
+        "the sidebar model followed the roster"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
     mock.shutdown().await;
 }

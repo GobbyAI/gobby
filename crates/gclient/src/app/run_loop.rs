@@ -326,9 +326,11 @@ async fn recv_scripted_frame(
 
 fn render_workspace<B: Backend>(
     terminal: &mut Terminal<B>,
-    workspace: &Workspace,
+    workspace: &mut Workspace,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
+    workspace.rebuild_sidebar();
+    let workspace = &*workspace;
     terminal
         .draw(|frame| {
             chrome.compute_view(workspace, frame.area());

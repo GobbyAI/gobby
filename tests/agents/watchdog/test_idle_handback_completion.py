@@ -82,7 +82,7 @@ def _task_bound_run(
         pytest.param(_keep_claimed, "error", _EXHAUSTED_ERROR, id="still-claimed"),
     ],
 )
-async def test_exhausted_completed_turn_recovery_follows_task_state(
+async def test_completed_turn_recovery_follows_task_state_before_reprompt(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -108,14 +108,16 @@ async def test_exhausted_completed_turn_recovery_follows_task_state(
     caplog.set_level(logging.INFO)
 
     with _pane_text(monitor, "❯\n"):
-        for attempt in range(3):
+        attempts = 1 if expected_status == "success" else 3
+        for attempt in range(attempts):
             _write_codex_lifecycle_transcript(transcript_path, age_seconds=120 + attempt)
             monitor._idle_detector.reset_idle(run.id)
             assert await monitor.check_idle_agents() == 1
 
-        _write_codex_lifecycle_transcript(transcript_path, age_seconds=123)
-        monitor._idle_detector.reset_idle(run.id)
-        assert await monitor.check_idle_agents() == 1
+        if expected_status == "error":
+            _write_codex_lifecycle_transcript(transcript_path, age_seconds=123)
+            monitor._idle_detector.reset_idle(run.id)
+            assert await monitor.check_idle_agents() == 1
 
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
@@ -197,4 +199,55 @@ async def test_watchdog_completion_persists_final_closed_task_details(
     assert completed.result == (
         f"Agent completed by watchdog: task {run.task_id} was closed "
         f"but the agent never called end_agent_run\n\n{suffix}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchdog_blocker_completion_uses_structured_terminalizer(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    monitor, run, _task_manager = _task_bound_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1519",
+        transcript_path=None,
+    )
+    assert run.child_session_id is not None
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    SessionVariableManager(temp_db).merge_variables(
+        run.child_session_id,
+        {"blocker_handed_off": True},
+    )
+    recovery = monitor._idle_check_handler._recovery
+
+    with (
+        patch(
+            "gobby.agents.watchdog.recovery.agent_run_task_dirty_paths",
+            return_value=["src/dirty.py"],
+        ),
+        patch.object(
+            monitor._cleanup_handler,
+            "terminalize_successful_run",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as terminalize,
+    ):
+        await recovery._complete_idle_agent(run, "workflow reached terminate")
+
+    terminalize.assert_awaited_once_with(
+        run.id,
+        notify_result={
+            "status": "blocked",
+            "run_id": run.id,
+            "dirty_paths": ["src/dirty.py"],
+            "terminal_reason": "task_blocker",
+        },
+        message=f'Agent {run.id} completed; dirty_paths=["src/dirty.py"]',
+        terminal_reason="task_blocker",
     )
