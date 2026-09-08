@@ -105,6 +105,7 @@ def _local_merge_side_effect(
     status_stdout: str = "",
     staged_stdout: str = "",
     incoming_stdout: str = "feature.txt\n",
+    identity_changed: bool = False,
     source_already_merged: bool = False,
     preexisting_ancestor_pairs: set[tuple[str, str]] | None = None,
 ):
@@ -123,6 +124,11 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout=staged_stdout)
         if args == ["diff", "--name-only", "HEAD", f"refs/heads/{source}"]:
             return _make_git_result(0, stdout=incoming_stdout)
+        if args[:2] == ["diff", "--quiet"] and args[-2:] == [
+            "--",
+            "src/gobby/storage/schema_expected_identity.json",
+        ]:
+            return _make_git_result(1 if identity_changed else 0)
         if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
             return _make_git_result(0, stdout=target)
         if args == ["rev-parse", "HEAD"]:
@@ -183,12 +189,51 @@ async def test_merge_worktree_success_returns_worktree_path_and_merge_sha():
     assert result["merge_sha"] == "abc123def456"
     assert result["target_head_sha"] == "abc123def456"
     assert result["commit_sha"] == "abc123def456"
+    assert result["cutover_required"] is False
+    assert "changed_schema_identity_path" not in result
+    assert "cutover_command" not in result
     merge_call = next(
         call
         for call in ctx.git_manager.run_git_command.call_args_list
         if call.args[0][:1] == ["merge"]
     )
     assert merge_call.kwargs["env"] == {"GOBBY_MERGE": "1"}
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_reports_schema_identity_cutover_advisory():
+    """A source identity-pin change returns the exact operator cutover action."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    ctx.worktree_storage.get.return_value.status = "merged"
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(identity_changed=True)
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["cutover_required"] is True
+    assert (
+        result["changed_schema_identity_path"] == "src/gobby/storage/schema_expected_identity.json"
+    )
+    assert result["cutover_command"] == "uv run gobby cutover --path ."
+    assert [
+        "diff",
+        "--quiet",
+        "refs/heads/main...refs/heads/feat",
+        "--",
+        "src/gobby/storage/schema_expected_identity.json",
+    ] in [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
+    assert not any(
+        "cutover" in arg for call in ctx.git_manager._run_git.call_args_list for arg in call.args[0]
+    )
 
 
 @pytest.mark.asyncio
@@ -705,6 +750,9 @@ async def test_merge_worktree_retry_reconciles_completed_merge_without_duplicate
     assert result["merged"] is True
     assert result["reconciled"] is True
     assert result["merge_sha"] == "abc123def456"
+    assert result["cutover_required"] is False
+    assert "changed_schema_identity_path" not in result
+    assert "cutover_command" not in result
     assert "already merged" in result["message"]
     assert [
         "merge-base",
@@ -719,6 +767,50 @@ async def test_merge_worktree_retry_reconciles_completed_merge_without_duplicate
         call.args[0] for call in ctx.git_manager._run_git.call_args_list
     ]
     ctx.worktree_storage.mark_merged.assert_called_once_with("wt-123")
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_retry_retains_proven_schema_cutover_advisory():
+    """A retry uses the managed task's captured base as source provenance."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    worktree = ctx.worktree_storage.get.return_value
+    worktree.status = "merged"
+    worktree.task_id = "task-123"
+    ctx.task_manager.artifacts.get_artifacts.return_value.base_commit_sha = "base123"
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        identity_changed=True,
+        source_already_merged=True,
+    )
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["reconciled"] is True
+    assert result["cutover_required"] is True
+    assert (
+        result["changed_schema_identity_path"] == "src/gobby/storage/schema_expected_identity.json"
+    )
+    assert result["cutover_command"] == "uv run gobby cutover --path ."
+    assert [
+        "diff",
+        "--quiet",
+        "base123",
+        "refs/heads/feat",
+        "--",
+        "src/gobby/storage/schema_expected_identity.json",
+    ] in [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
+    assert ["merge", "refs/heads/feat", "--no-ff", "--no-edit"] not in [
+        call.args[0] for call in ctx.git_manager._run_git.call_args_list
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1172,6 +1264,7 @@ async def test_merge_worktree_stash_push_failure_aborts_before_merge():
 
     ctx.git_manager._run_git.side_effect = failing_stash
     merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    assert merge_tool is not None
 
     result = await merge_tool("wt-123")
 
@@ -1188,15 +1281,21 @@ async def test_merge_worktree_stash_identity_lookup_failure_aborts_before_merge(
     ctx = _make_registry_context()
     regular_git = _local_merge_side_effect()
 
-    def failing_identity_lookup(args, cwd=None, timeout=30, check=False):
+    def failing_identity_lookup(
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 30,
+        check: bool = False,
+    ) -> MagicMock:
         if args == ["stash", "list", "-1", "--format=%H"]:
             return _make_git_result(0, stdout="")
         if args == ["stash", "list", "--format=%H%x00%gs"]:
             return _make_git_result(0, stdout="other\x00On main: other-operation")
-        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+        return cast(MagicMock, regular_git(args, cwd=cwd, timeout=timeout, check=check))
 
     ctx.git_manager._run_git.side_effect = failing_identity_lookup
     merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    assert merge_tool is not None
 
     result = await merge_tool("wt-123")
 
@@ -1206,7 +1305,7 @@ async def test_merge_worktree_stash_identity_lookup_failure_aborts_before_merge(
     assert not any(call.args[0][0] == "merge" for call in ctx.git_manager._run_git.call_args_list)
 
 
-async def test_merge_worktree_stash_restore_failure_is_surfaced():
+async def test_merge_worktree_stash_restore_failure_is_surfaced() -> None:
     """An exact-stash restore failure cannot be logged as merge success."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 

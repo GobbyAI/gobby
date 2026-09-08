@@ -30,6 +30,16 @@ from gobby.utils.git import (
 logger = logging.getLogger(__name__)
 
 MERGE_COMMAND_TIMEOUT_SECONDS = 240
+SCHEMA_IDENTITY_PATH = "src/gobby/storage/schema_expected_identity.json"
+CUTOVER_COMMAND = "uv run gobby cutover --path ."
+
+
+def _with_cutover_advisory(result: dict[str, Any], *, cutover_required: bool) -> dict[str, Any]:
+    result["cutover_required"] = cutover_required
+    if cutover_required:
+        result["changed_schema_identity_path"] = SCHEMA_IDENTITY_PATH
+        result["cutover_command"] = CUTOVER_COMMAND
+    return result
 
 
 def _worktree_path_for_branch(git_manager: Any, branch_name: str) -> str | None:
@@ -364,7 +374,40 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
             return ancestor_result.returncode == 0
 
-        if worktree.status == "merged" and await _source_is_merged_into_target():
+        source_is_reconciled = worktree.status == "merged" and await _source_is_merged_into_target()
+
+        async def _source_changed_schema_identity() -> bool:
+            if not source_is_reconciled:
+                revisions = [f"{target_ref}...{source_ref}"]
+            else:
+                task_id = worktree.task_id
+                if (
+                    effective_source != worktree.branch_name
+                    or not isinstance(task_id, str)
+                    or not task_id
+                    or ctx.task_manager is None
+                ):
+                    return False
+                artifacts = ctx.task_manager.artifacts.get_artifacts(task_id)
+                if not isinstance(artifacts.base_commit_sha, str) or not artifacts.base_commit_sha:
+                    return False
+                revisions = [artifacts.base_commit_sha, source_ref]
+
+            diff_result = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["diff", "--quiet", *revisions, "--", SCHEMA_IDENTITY_PATH],
+                cwd=repo_path,
+                timeout=10,
+            )
+            if diff_result.returncode not in (0, 1):
+                detail = diff_result.stderr or diff_result.stdout or "git diff failed"
+                logger.warning("Failed to inspect schema identity provenance: %s", detail)
+                return False
+            return diff_result.returncode == 1
+
+        cutover_required = await _source_changed_schema_identity()
+
+        if source_is_reconciled:
             target_sha_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
                 ["rev-parse", target_ref],
@@ -389,24 +432,27 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             reconciled_target_sha = target_sha_result.stdout.strip()
             if await _worktree_branch_is_merged_into_base(True):
                 ctx.worktree_storage.mark_merged(worktree_id)
-            return {
-                "success": True,
-                "message": (
-                    f"{effective_source} is already merged into local {merge_target}; "
-                    "reconciled completed merge"
-                ),
-                "worktree_path": wt_path,
-                "project_path": repo_path,
-                "target_worktree_path": target_worktree_path,
-                "source_branch": effective_source,
-                "target_branch": merge_target,
-                "merged": True,
-                "reconciled": True,
-                "pushed": False,
-                "merge_sha": reconciled_target_sha,
-                "target_head_sha": reconciled_target_sha,
-                "commit_sha": reconciled_target_sha,
-            }
+            return _with_cutover_advisory(
+                {
+                    "success": True,
+                    "message": (
+                        f"{effective_source} is already merged into local {merge_target}; "
+                        "reconciled completed merge"
+                    ),
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                    "merged": True,
+                    "reconciled": True,
+                    "pushed": False,
+                    "merge_sha": reconciled_target_sha,
+                    "target_head_sha": reconciled_target_sha,
+                    "commit_sha": reconciled_target_sha,
+                },
+                cutover_required=cutover_required,
+            )
 
         mutation_lock = get_checkout_mutation_lock(merge_cwd)
         await mutation_lock.acquire()
@@ -788,7 +834,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["merge_sha"] = target_head_sha
                 result["target_head_sha"] = target_head_sha
                 result["commit_sha"] = target_head_sha
-            return result
+            return _with_cutover_advisory(result, cutover_required=cutover_required)
         finally:
             cleanup_errors: list[RuntimeError] = []
             try:
@@ -829,7 +875,10 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     @registry.tool(
         name="merge_worktree",
-        description="Merge a worktree's branch into its base branch (or a specified target).",
+        description=(
+            "Merge a worktree's branch into its base branch (or a specified target), "
+            "reporting any required schema cutover without executing it."
+        ),
     )
     async def merge_worktree(
         worktree_id: str,
