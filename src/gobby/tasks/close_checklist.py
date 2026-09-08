@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import shlex
 from collections.abc import Iterable, Mapping
@@ -110,7 +111,8 @@ def evaluate_validation_commands(
     them as the authoritative account of what ran.
     """
     category = (task_category or "").strip().casefold()
-    test_types_audit_required = _changed_python_tests(changed_paths)
+    changed_python_test_paths = _changed_python_test_paths(changed_paths)
+    test_types_audit_required = bool(changed_python_test_paths)
     details = _validation_details(evidence)
 
     fresh_runs = _fresh_runs(evidence)
@@ -122,12 +124,32 @@ def evaluate_validation_commands(
         if run.outcome == "failure" and run.wrapper_reason == "command sequence"
     ]
     attributed = _attribute_compound_failures((*credited, *sequence_failures))
-    canonical_audits = [run for run in credited if _is_canonical_test_types_audit(run)]
-    latest_audit = max(
-        canonical_audits,
-        key=lambda run: (run.order, run.completed_at),
+    audit_coverage: list[tuple[TranscriptValidationRun, tuple[str, ...], tuple[str, ...]]] = []
+    for run in credited:
+        targets = _test_types_audit_targets(run)
+        if targets is None:
+            continue
+        uncovered = _uncovered_test_paths(changed_python_test_paths, targets)
+        audit_coverage.append((run, targets, uncovered))
+    latest_audit_entry = max(
+        (entry for entry in audit_coverage if not entry[2]),
+        key=lambda entry: (entry[0].order, entry[0].completed_at),
         default=None,
     )
+    latest_partial_entry = max(
+        (entry for entry in audit_coverage if entry[2]),
+        key=lambda entry: (entry[0].order, entry[0].completed_at),
+        default=None,
+    )
+    latest_audit = latest_audit_entry[0] if latest_audit_entry is not None else None
+    audit_targets: tuple[str, ...] = ()
+    uncovered_test_paths = changed_python_test_paths
+    if latest_partial_entry is not None:
+        audit_targets = latest_partial_entry[1]
+        uncovered_test_paths = latest_partial_entry[2]
+    if latest_audit_entry is not None:
+        audit_targets = latest_audit_entry[1]
+        uncovered_test_paths = ()
     latest_by_category = _latest_definitive_by_category(attributed)
     latest_by_command: dict[str, TranscriptValidationRun] = {}
     command_evidence = _expand_successful_and_segments(definitive)
@@ -171,6 +193,9 @@ def evaluate_validation_commands(
         "unresolved_failure_categories": sorted(unresolved),
         "unresolved_failures": unresolved_failures,
         "test_types_audit_required": test_types_audit_required,
+        "changed_python_test_paths": list(changed_python_test_paths),
+        "test_types_audit_targets": list(audit_targets),
+        "test_types_audit_uncovered_paths": list(uncovered_test_paths),
         "canonical_test_types_audit_command": (
             _TEST_TYPES_AUDIT_COMMAND if test_types_audit_required else None
         ),
@@ -206,16 +231,39 @@ def evaluate_validation_commands(
             details={**details, "skip_reason": "category"},
         )
 
-    if test_types_audit_required and (latest_audit is None or latest_audit.outcome != "success"):
-        reason = "is missing"
-        if latest_audit is not None:
-            reason = f"last failed at {latest_audit.completed_at.isoformat()}"
+    if test_types_audit_required and latest_audit is None:
+        if latest_partial_entry is not None:
+            uncovered_display = ", ".join(f"`{path}`" for path in uncovered_test_paths)
+            return CloseGateResult(
+                item=9,
+                name="validation_commands",
+                status="failed",
+                message=(
+                    "The latest Python test type audit did not cover every changed Python test. "
+                    f"Uncovered paths: {uncovered_display}. Run `{_TEST_TYPES_AUDIT_COMMAND}` clean "
+                    "after the final task edit, or audit explicit targets covering every listed path."
+                ),
+                details=details,
+            )
         return CloseGateResult(
             item=9,
             name="validation_commands",
             status="failed",
             message=(
-                f"The required whole-tree Python test type audit {reason}. "
+                "The required Python test type audit is missing. "
+                f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit."
+            ),
+            details=details,
+        )
+
+    if test_types_audit_required and latest_audit is not None and latest_audit.outcome != "success":
+        reason = f"last failed at {latest_audit.completed_at.isoformat()}"
+        return CloseGateResult(
+            item=9,
+            name="validation_commands",
+            status="failed",
+            message=(
+                f"The required Python test type audit {reason}. "
                 f"Run `{_TEST_TYPES_AUDIT_COMMAND}` clean after the final task edit."
             ),
             details=details,
@@ -252,7 +300,9 @@ def evaluate_validation_commands(
         if required_category:
             message = "A clean test-category validation command ran after the final task edit."
         elif test_types_audit_required:
-            message = "The required whole-tree Python test type audit ran clean."
+            message = (
+                "The required Python test type audit covered every changed test and ran clean."
+            )
         return CloseGateResult(
             item=9,
             name="validation_commands",
@@ -282,29 +332,36 @@ def evaluate_validation_commands(
     )
 
 
-def _changed_python_tests(changed_paths: Iterable[str]) -> bool:
+def _changed_python_test_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
+    python_tests: set[str] = set()
     for path in changed_paths:
-        normalized = path.replace("\\", "/")
-        while normalized.startswith("./"):
-            normalized = normalized[2:]
-        if normalized.startswith("tests/") and normalized.endswith(".py"):
-            return True
-    return False
+        normalized = _normalize_repo_path(path)
+        if (
+            normalized is not None
+            and normalized.startswith("tests/")
+            and normalized.endswith(".py")
+        ):
+            python_tests.add(normalized)
+    return tuple(sorted(python_tests))
 
 
-def _is_canonical_test_types_audit(run: TranscriptValidationRun) -> bool:
+def _test_types_audit_targets(run: TranscriptValidationRun) -> tuple[str, ...] | None:
     if run.matcher_id != _TEST_TYPES_AUDIT_MATCHER:
-        return False
+        return None
     core_command = run.core_command or run.command
     if len(parse_shell_command(core_command).segments) != 1:
-        return False
+        return None
     commands = [segment.command for segment in run.validation_segments]
     if not commands:
         commands = [core_command]
-    return any(_is_canonical_test_types_command(command) for command in commands)
+    for command in commands:
+        targets = _test_types_command_targets(command)
+        if targets is not None:
+            return targets
+    return None
 
 
-def _is_canonical_test_types_command(command: str) -> bool:
+def _test_types_command_targets(command: str) -> tuple[str, ...] | None:
     tokens = safe_split(command)
     prefix = ["gobby", "test-types", "audit"]
     try:
@@ -314,7 +371,7 @@ def _is_canonical_test_types_command(command: str) -> bool:
             if tokens[index : index + len(prefix)] == prefix
         )
     except StopIteration:
-        return False
+        return None
 
     arguments = tokens[start + len(prefix) :]
     targets: list[str] = []
@@ -326,19 +383,47 @@ def _is_canonical_test_types_command(command: str) -> bool:
         if argument == "--baseline":
             index += 1
             if index >= len(arguments):
-                return False
+                return None
             baselines.append(arguments[index])
         elif argument.startswith("--baseline="):
             baselines.append(argument.partition("=")[2])
         elif argument == "--fail-on-new":
             fail_on_new += 1
+        elif argument.startswith("-"):
+            return None
         else:
             targets.append(argument)
         index += 1
-    return (
-        targets in (["tests"], ["tests/"])
-        and baselines == [_TEST_TYPES_BASELINE]
-        and fail_on_new == 1
+    if baselines != [_TEST_TYPES_BASELINE] or fail_on_new != 1 or not targets:
+        return None
+    normalized_targets: list[str] = []
+    for target in targets:
+        normalized = _normalize_repo_path(target)
+        if normalized is None:
+            return None
+        normalized_targets.append(normalized)
+    return tuple(normalized_targets)
+
+
+def _normalize_repo_path(path: str) -> str | None:
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    if normalized.startswith("/") or normalized == ".." or normalized.startswith("../"):
+        return None
+    return normalized
+
+
+def _uncovered_test_paths(
+    changed_python_tests: tuple[str, ...],
+    audit_targets: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return changed tests outside every lexical target, including missing paths."""
+    return tuple(
+        path
+        for path in changed_python_tests
+        if not any(
+            target == "." or path == target or path.startswith(f"{target}/")
+            for target in audit_targets
+        )
     )
 
 

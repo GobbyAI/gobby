@@ -71,6 +71,18 @@ def _audit_run(
     )
 
 
+def _scoped_audit_run(order: int, *targets: str) -> TranscriptValidationRun:
+    normalized_command = (
+        f"gobby test-types audit {' '.join(targets)} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    return _audit_run(
+        order,
+        command=f"uv run {normalized_command}",
+        normalized_command=normalized_command,
+    )
+
+
 def _edit(order: int) -> TranscriptEdit:
     return TranscriptEdit(
         session_id="session-1",
@@ -116,7 +128,7 @@ def test_no_edit_task_skips_validation_for_any_category() -> None:
     assert gate.details["skip_reason"] == "no-edit"
 
 
-def test_python_test_change_requires_whole_tree_test_types_audit() -> None:
+def test_python_test_change_requires_covering_test_types_audit() -> None:
     gate = evaluate_validation_commands(
         task_category="code",
         evidence=TranscriptEvidence(
@@ -131,10 +143,78 @@ def test_python_test_change_requires_whole_tree_test_types_audit() -> None:
 
     assert gate.status == "failed"
     assert gate.details["test_types_audit_required"] is True
+    assert gate.details["test_types_audit_uncovered_paths"] == [
+        "tests/tasks/test_close_checklist.py"
+    ]
     assert (
         "uv run gobby test-types audit tests/ "
         "--baseline .gobby/test-types-baseline.json --fail-on-new"
     ) in gate.message
+
+
+@pytest.mark.parametrize(
+    ("target", "normalized_target"),
+    [
+        ("tests/tasks/test_close_checklist.py", "tests/tasks/test_close_checklist.py"),
+        ("tests/tasks/", "tests/tasks"),
+        ("./tests/tasks/../tasks", "tests/tasks"),
+    ],
+)
+def test_scoped_test_types_audit_covering_changed_test_passes(
+    target: str,
+    normalized_target: str,
+) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_scoped_audit_run(1, target), _run(2))),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["test_types_audit_targets"] == [normalized_target]
+    assert gate.details["test_types_audit_uncovered_paths"] == []
+
+
+def test_partial_test_types_audit_names_exact_uncovered_paths() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/test_close_checklist.py"),
+                _run(2),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(
+            "tests/tasks/test_close_checklist.py",
+            "tests/tasks/test_transcript_evidence.py",
+        ),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["test_types_audit_uncovered_paths"] == [
+        "tests/tasks/test_transcript_evidence.py"
+    ]
+    assert "`tests/tasks/test_transcript_evidence.py`" in gate.message
+
+
+def test_multiple_explicit_test_types_targets_cover_changed_tests() -> None:
+    changed_paths = (
+        "tests/tasks/test_close_checklist.py",
+        "tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py",
+    )
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, *changed_paths), _run(2))
+        ),
+        has_attributed_edits=True,
+        changed_paths=changed_paths,
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["test_types_audit_targets"] == list(changed_paths)
 
 
 def test_canonical_test_types_audit_and_test_run_pass() -> None:
@@ -200,12 +280,6 @@ def test_stale_test_types_audit_does_not_satisfy_guard() -> None:
 @pytest.mark.parametrize(
     ("command", "normalized_command"),
     [
-        (
-            "uv run gobby test-types audit tests/tasks/ "
-            "--baseline .gobby/test-types-baseline.json --fail-on-new",
-            "gobby test-types audit tests/tasks/ "
-            "--baseline .gobby/test-types-baseline.json --fail-on-new",
-        ),
         (
             "uv run gobby test-types audit tests/ --baseline other.json --fail-on-new",
             "gobby test-types audit tests/ --baseline other.json --fail-on-new",
@@ -285,24 +359,42 @@ def test_compound_test_types_audit_does_not_satisfy_guard() -> None:
     assert gate.details["latest_test_types_audit"] is None
 
 
-@pytest.mark.parametrize("changed_path", ["tests/deleted.py", "tests/renamed.py"])
-def test_deleted_or_renamed_python_test_paths_trigger_guard(changed_path: str) -> None:
+def test_parent_directory_audit_covers_deleted_python_test() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_scoped_audit_run(1, "tests/tasks/"), _run(2))
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_deleted.py",),
+    )
+
+    assert gate.status == "passed"
+
+
+def test_rename_requires_audit_to_cover_source_and_destination() -> None:
+    destination = "tests/tasks/test_new_name.py"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_scoped_audit_run(1, destination), _run(2))),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_old_name.py", destination),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["test_types_audit_uncovered_paths"] == ["tests/tasks/test_old_name.py"]
+
+
+@pytest.mark.parametrize(
+    "changed_path",
+    ["src/gobby/tasks/close_checklist.py", "tests/test_close_checklist.ts"],
+)
+def test_non_python_test_changes_keep_existing_validation_behavior(changed_path: str) -> None:
     gate = evaluate_validation_commands(
         task_category="code",
         evidence=TranscriptEvidence(validation_runs=(_run(1),)),
         has_attributed_edits=True,
         changed_paths=(changed_path,),
-    )
-
-    assert gate.status == "failed"
-
-
-def test_non_test_changes_keep_existing_validation_behavior() -> None:
-    gate = evaluate_validation_commands(
-        task_category="code",
-        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
-        has_attributed_edits=True,
-        changed_paths=("src/gobby/tasks/close_checklist.py",),
     )
 
     assert gate.status == "passed"
