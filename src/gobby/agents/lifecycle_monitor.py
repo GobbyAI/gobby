@@ -772,6 +772,14 @@ class AgentLifecycleMonitor:
             if not is_task_closed(task):
                 continue
 
+            if await self._cooperative_close_handoff_pending(run):
+                logger.debug(
+                    "Deferring closed-task completion for agent %s until its "
+                    "cooperative close-review handoff or stagnation fallback",
+                    run.id,
+                )
+                continue
+
             task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
             completed = await self.terminalize_successful_run(
                 run.id,
@@ -793,6 +801,29 @@ class AgentLifecycleMonitor:
                 )
 
         return handled
+
+    async def _cooperative_close_handoff_pending(self, run: AgentRun) -> bool:
+        """Keep a close-review caller alive while it can cooperatively report."""
+        if run.task_id is None or run.child_session_id is None:
+            return False
+
+        from gobby.autonomous.progress_tracker import ProgressTracker
+        from gobby.storage.task_close_reviews import TaskCloseReviewStore
+
+        review = await self._run_db(
+            TaskCloseReviewStore(self._db).get_latest_agentic_for_task_caller,
+            task_id=run.task_id,
+            caller_session_id=run.child_session_id,
+        )
+        if review is None or (not review.active and review.status != "closed"):
+            return False
+        if review.active or review.delivered_at is None:
+            return True
+
+        return not await self._run_db(
+            ProgressTracker(self._db).is_stagnant,
+            run.child_session_id,
+        )
 
     @staticmethod
     def _stuck_intervention_fingerprint(

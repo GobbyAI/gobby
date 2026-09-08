@@ -913,6 +913,7 @@ def _make_terminal_run(
     child_session_id: str | None = None,
     clone_id: str | None = None,
     requested_reasoning_effort: str | None = None,
+    task_id: str | None = None,
 ) -> AgentRun:
     """Helper to create a running terminal-mode agent in the DB."""
     run = agent_run_manager.create(
@@ -923,6 +924,7 @@ def _make_terminal_run(
         child_session_id=child_session_id,
         timeout_seconds=timeout_seconds,
         requested_reasoning_effort=requested_reasoning_effort,
+        task_id=task_id,
     )
     _link_child_session_to_run(
         agent_run_manager,
