@@ -126,12 +126,17 @@ def _wrapper_reason(command: str) -> str | None:
     parsed = parse_shell_command(stripped)
     if any(operator in {"|", "|&"} for operator in parsed.operators):
         return "pipeline"
-    if _has_trailing_echo(parsed):
-        return "trailing echo"
+    trailing_output = _trailing_output_command(parsed)
+    if trailing_output is not None:
+        return f"trailing {trailing_output}"
     if "||" in parsed.operators:
         return "fallback"
     if "&" in parsed.operators:
         return "backgrounding"
+    if any(operator in {";", "\n"} for operator in parsed.operators):
+        return "command sequence"
+    if not parsed.segments or len(parsed.segments) != len(parsed.operators) + 1:
+        return "unsupported shell structure"
     if stripped.startswith("(") and stripped.endswith(")"):
         return "subshell wrapper"
     if stripped.startswith("js_repl("):
@@ -151,12 +156,21 @@ def _wrapper_reason(command: str) -> str | None:
     return None
 
 
-def _has_trailing_echo(parsed: ParsedShellCommand) -> bool:
+def _trailing_output_command(parsed: ParsedShellCommand) -> str | None:
     if not parsed.operators or parsed.operators[-1] not in {";", "&&"}:
-        return False
+        return None
     if not parsed.segments or not parsed.segments[-1]:
-        return False
-    return os.path.basename(parsed.segments[-1][0]) == "echo"
+        return None
+    segment = parsed.segments[-1]
+    executable_index = 0
+    while executable_index < len(segment) and _ENV_ASSIGNMENT_PREFIX.match(
+        segment[executable_index]
+    ):
+        executable_index += 1
+    if executable_index >= len(segment):
+        return None
+    executable = os.path.basename(segment[executable_index])
+    return executable if executable in {"echo", "printf"} else None
 
 
 def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]:

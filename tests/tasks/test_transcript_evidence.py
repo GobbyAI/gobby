@@ -2586,6 +2586,9 @@ async def test_compound_run_records_only_its_validation_segments(tmp_path: Path)
             ),
         )
     ]
+    assert [
+        segment.segment_index for segment in evidence.validation_runs[0].validation_segments
+    ] == [1]
 
 
 async def test_compound_run_records_every_segment_with_its_categories(tmp_path: Path) -> None:
@@ -2627,6 +2630,7 @@ async def test_compound_run_records_every_segment_with_its_categories(tmp_path: 
         ),
         TranscriptValidationSegment(command="pytest tests/unit -q", categories=("test",)),
     )
+    assert [segment.segment_index for segment in run.validation_segments] == [0, 1]
 
 
 @pytest.mark.asyncio

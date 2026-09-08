@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
@@ -100,12 +101,13 @@ def evaluate_validation_commands(
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
-    Unknown and wrapped outcomes are diagnostic only. A task-attributed edit
-    makes every earlier run stale. Among credited fresh runs, the latest
-    definitive outcome for each validation category wins, so a later clean run
-    cures an earlier failure in the same category. ``latest_runs`` records the
-    latest definitive run for each distinct core command so the criteria
-    reviewer can treat them as the authoritative account of what ran.
+    Unknown outcomes and wrapped successes are diagnostic only. Failed command
+    sequences retain conservative per-segment failure attribution. A task-attributed
+    edit makes every earlier run stale. Among credited fresh runs, the latest
+    definitive outcome for each validation category wins, so a later clean run cures
+    an earlier failure in the same category. ``latest_runs`` records the latest
+    definitive run for each distinct core command so the criteria reviewer can treat
+    them as the authoritative account of what ran.
     """
     category = (task_category or "").strip().casefold()
     test_types_audit_required = _changed_python_tests(changed_paths)
@@ -114,7 +116,12 @@ def evaluate_validation_commands(
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
-    attributed = _attribute_compound_failures(credited)
+    sequence_failures = [
+        run
+        for run in definitive
+        if run.outcome == "failure" and run.wrapper_reason == "command sequence"
+    ]
+    attributed = _attribute_compound_failures((*credited, *sequence_failures))
     canonical_audits = [run for run in credited if _is_canonical_test_types_audit(run)]
     latest_audit = max(
         canonical_audits,
@@ -123,7 +130,8 @@ def evaluate_validation_commands(
     )
     latest_by_category = _latest_definitive_by_category(attributed)
     latest_by_command: dict[str, TranscriptValidationRun] = {}
-    for run in sorted(definitive, key=lambda item: (item.order, item.completed_at)):
+    command_evidence = _expand_successful_and_segments(definitive)
+    for run in sorted(command_evidence, key=lambda item: (item.order, item.completed_at)):
         command_key = run.core_command if run.core_command is not None else run.command
         latest_by_command[command_key] = run
     unresolved = {
@@ -469,6 +477,45 @@ def _latest_definitive_by_category(
         for category in run.categories:
             latest[category] = run
     return latest
+
+
+def _expand_successful_and_segments(
+    runs: Iterable[TranscriptValidationRun],
+) -> list[TranscriptValidationRun]:
+    """Expose each proven validation segment of a successful top-level ``&&`` chain."""
+    expanded: list[TranscriptValidationRun] = []
+    for run in runs:
+        segments = run.validation_segments
+        parsed = parse_shell_command(run.command)
+        segment_indexes = [segment.segment_index for segment in segments]
+        if (
+            run.outcome != "success"
+            or run.wrapped
+            or not parsed.operators
+            or set(parsed.operators) != {"&&"}
+            or not segments
+            or len(set(segment_indexes)) != len(segment_indexes)
+            or any(not 0 <= index < len(parsed.segments) for index in segment_indexes)
+            or len(parsed.segments) != len(parsed.operators) + 1
+        ):
+            expanded.append(run)
+            continue
+        segment_runs = [
+            replace(
+                run,
+                command=shlex.join(parsed.segments[segment.segment_index]),
+                categories=segment.categories,
+                validation_segments=(segment,),
+            )
+            for segment in segments
+        ]
+        if any(
+            segment_run.wrapped or segment_run.core_command is None for segment_run in segment_runs
+        ):
+            expanded.append(run)
+            continue
+        expanded.extend(segment_runs)
+    return expanded
 
 
 def _attribute_compound_failures(
