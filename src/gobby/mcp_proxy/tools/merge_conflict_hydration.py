@@ -10,6 +10,7 @@ from typing import Any
 import psycopg
 
 from gobby.storage.merge_resolutions import ConflictStatus
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.worktrees.merge import ConflictHunk
 from gobby.worktrees.merge.conflict_parser import extract_conflict_hunks
 
@@ -22,34 +23,16 @@ async def collect_git_conflicts(
     git_manager: Any | None,
 ) -> list[dict[str, Any]]:
     """Read Git's current unmerged files and parse conflict markers from disk."""
-    if git_manager is not None:
-        result = await asyncio.to_thread(
-            git_manager.run_git_command,
-            ["diff", "--name-only", "--diff-filter=U"],
-            cwd=worktree_path,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            return []
-        conflicted_files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    else:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "diff",
-            "--name-only",
-            "--diff-filter=U",
-            cwd=worktree_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode != 0:
-            return []
-        conflicted_files = [
-            line.strip()
-            for line in stdout.decode("utf-8", errors="replace").splitlines()
-            if line.strip()
-        ]
+    del git_manager
+    result = await daemon_git.run(
+        ["--no-optional-locks", "diff", "--name-only", "--diff-filter=U"],
+        cwd=worktree_path,
+        timeout=30.0,
+    )
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.status
+        raise RuntimeError(f"Git conflict status unavailable: {detail}")
+    conflicted_files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
     conflicts: list[dict[str, Any]] = []
     for file_rel_path in conflicted_files:

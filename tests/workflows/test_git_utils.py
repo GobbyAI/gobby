@@ -13,6 +13,7 @@ import pytest
 
 from gobby.workflows.git_utils import (
     DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+    GitStatusUnavailable,
     get_dirty_files_categorized,
     get_file_changes,
     get_git_diff_summary,
@@ -117,15 +118,7 @@ class TestGetDirtyFilesCategorized:
 
         assert mock_run.call_args.kwargs["timeout"] == 1.5
 
-    def test_timeout_reports_a_clean_tree_and_names_the_budget(
-        self,
-        tmp_path: Path,
-        enable_log_propagation: None,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """The empty result is indistinguishable from a clean tree, so the log must say."""
-        caplog.set_level(logging.WARNING, logger="gobby.workflows.git_utils")
-
+    def test_timeout_reports_status_unavailable(self, tmp_path: Path) -> None:
         with (
             patch(
                 "gobby.workflows.git_utils.resolve_git_worktree_root",
@@ -136,10 +129,8 @@ class TestGetDirtyFilesCategorized:
                 side_effect=subprocess.TimeoutExpired(cmd="git", timeout=1.5),
             ),
         ):
-            dirty = get_dirty_files_categorized(str(tmp_path), timeout=1.5)
-
-        assert dirty.all == set()
-        assert "git status timed out after 1.5s" in caplog.text
+            with pytest.raises(GitStatusUnavailable, match="Git dirty status unavailable"):
+                get_dirty_files_categorized(str(tmp_path), timeout=1.5)
 
 
 class TestGetGitStatus:

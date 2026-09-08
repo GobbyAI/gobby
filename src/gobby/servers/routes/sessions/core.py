@@ -5,7 +5,6 @@ Handles registration, listing, lookup, status updates, expiry, and renaming.
 
 import asyncio
 import logging
-import subprocess  # nosec B404 # subprocess needed for git commit counting
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -26,6 +25,7 @@ from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore
 from gobby.telemetry.instruments import inc_counter
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -98,25 +98,20 @@ async def _get_commit_count(db: "HubDatabase", session: Any) -> int:
         until_str = until_time.strftime("%Y-%m-%dT%H:%M:%S")
 
     try:
-        cmd = [
-            "git",
-            "rev-list",
-            "--count",
-            f"--since={since_str}",
-            f"--until={until_str}",
-            "HEAD",
-        ]
-        result = await asyncio.to_thread(
-            subprocess.run,  # nosec B603 # cmd built from hardcoded git arguments
-            cmd,
-            capture_output=True,
-            text=True,
+        result = await daemon_git.run(
+            [
+                "rev-list",
+                "--count",
+                f"--since={since_str}",
+                f"--until={until_str}",
+                "HEAD",
+            ],
             timeout=5,
             cwd=cwd,
         )
-        if result.returncode == 0:
+        if isinstance(result, GitOk):
             return int(result.stdout.strip())
-    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+    except ValueError:
         pass
 
     return 0

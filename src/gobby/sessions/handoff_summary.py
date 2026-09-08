@@ -17,12 +17,12 @@ from gobby.sessions.analyzer_turns import (
     analyzer_turns_from_transcript,
 )
 from gobby.sessions.handoff_records import DeliveredHandoff, handoff_summary_source_hash
-from gobby.sessions.summary_context import _git_status_paths
 from gobby.sessions.summary_formatting import format_unresolved_errors
 from gobby.sessions.summary_transcripts import _read_transcript_window
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.workspace_context import resolve_session_workspace
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.task_claim_state import normalize_task_edited_path
 
 _TERMINAL_TASK_ACTIONS = frozenset({"closed", "escalated", "needs_review", "review_approved"})
@@ -252,30 +252,15 @@ async def _load_file_statuses(
     if not paths:
         return ()
     cwd = resolve_session_workspace(session, getattr(session, "transcript_path", None))
-    process = await asyncio.create_subprocess_exec(
-        "git",
-        "status",
-        "--short",
-        "--untracked-files=all",
-        "--",
-        *paths,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5.0)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        raise
-    if process.returncode != 0:
-        raise RuntimeError(stderr.decode("utf-8", errors="replace").strip())
+    result = await daemon_git.status(cwd, paths, timeout=5.0)
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.status
+        raise RuntimeError(f"Git status unavailable: {detail}")
     statuses: dict[str, str] = {}
-    for line in stdout.decode("utf-8", errors="replace").splitlines():
-        status = line[:2].strip() or "changed"
-        for path in _git_status_paths(line):
-            if path in paths:
+    for entry in parse_porcelain_v1_z(result.stdout):
+        status = entry.code.strip() or "changed"
+        for path in (entry.path, entry.original_path):
+            if path is not None and path in paths:
                 statuses[path] = status
     return tuple((path, statuses.get(path, "clean")) for path in paths)
 

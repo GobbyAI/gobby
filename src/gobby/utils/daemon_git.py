@@ -48,6 +48,15 @@ class GitFailed:
     stderr: str
 
 
+@dataclass(frozen=True, slots=True)
+class GitStatusEntry:
+    """One porcelain-v1 status record with literal decoded paths."""
+
+    code: str
+    path: str
+    original_path: str | None = None
+
+
 type GitResult = GitOk | GitTimeout | GitFailed
 type _StatusKey = tuple[
     str,
@@ -55,6 +64,31 @@ type _StatusKey = tuple[
     float,
     tuple[tuple[str, str], ...] | None,
 ]
+
+
+def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
+    """Parse Git porcelain-v1 NUL records without interpreting path text."""
+    records = output.split("\0")
+    entries: list[GitStatusEntry] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            raise ValueError("invalid porcelain-v1 status record")
+
+        code = record[:2]
+        path = record[3:]
+        original_path = None
+        if "R" in code or "C" in code:
+            if index >= len(records) or not records[index]:
+                raise ValueError("rename status record is missing its original path")
+            original_path = records[index]
+            index += 1
+        entries.append(GitStatusEntry(code=code, path=path, original_path=original_path))
+    return tuple(entries)
 
 
 @dataclass(slots=True)

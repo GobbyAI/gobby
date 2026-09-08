@@ -10,27 +10,47 @@ from typing import Any
 
 import pytest
 
-from gobby.utils.daemon_git import DaemonGitService, GitFailed, GitOk, GitTimeout
+from gobby.utils.daemon_git import (
+    DaemonGitService,
+    GitFailed,
+    GitOk,
+    GitTimeout,
+    parse_porcelain_v1_z,
+)
+
+
+def test_parse_porcelain_v1_z_preserves_literal_and_rename_paths() -> None:
+    entries = parse_porcelain_v1_z(
+        " M line\nfeed.py\0R  new name.py\0old name.py\0?? [literal]*.py\0"
+    )
+
+    assert [(entry.code, entry.path, entry.original_path) for entry in entries] == [
+        (" M", "line\nfeed.py", None),
+        ("R ", "new name.py", "old name.py"),
+        ("??", "[literal]*.py", None),
+    ]
 
 
 def _write_fake_git(tmp_path: Path) -> None:
     executable = tmp_path / "git"
     executable.write_text(
-        "#!/usr/bin/env python3\n"
-        "import os, pathlib, subprocess, sys, time\n"
-        "count_path = os.environ.get('GIT_TEST_COUNT')\n"
-        "if count_path:\n"
-        "    with open(count_path, 'a', encoding='utf-8') as stream:\n"
-        "        stream.write('x')\n"
-        "pid_path = os.environ.get('GIT_TEST_PIDS')\n"
-        "if pid_path:\n"
-        "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
-        "    pathlib.Path(pid_path).write_text(f'{os.getpid()} {child.pid}')\n"
-        "time.sleep(float(os.environ.get('GIT_TEST_DELAY', '0')))\n"
-        "print('\\0'.join(sys.argv[1:]), end='')\n"
-        "if os.environ.get('GIT_TEST_FAIL'):\n"
-        "    print('failed', file=sys.stderr)\n"
-        "    raise SystemExit(7)\n",
+        "#!/bin/sh\n"
+        'if [ -n "$GIT_TEST_COUNT" ]; then printf x >> "$GIT_TEST_COUNT"; fi\n'
+        'if [ -n "$GIT_TEST_PIDS" ]; then\n'
+        "  /bin/sleep 30 &\n"
+        '  printf \'%s %s\' "$$" "$!" > "$GIT_TEST_PIDS"\n'
+        "fi\n"
+        '/bin/sleep "${GIT_TEST_DELAY:-0}"\n'
+        "first=1\n"
+        'for arg in "$@"; do\n'
+        "  if [ \"$first\" -eq 0 ]; then printf '\\0'; fi\n"
+        "  printf '%s' \"$arg\"\n"
+        "  first=0\n"
+        "done\n"
+        'if [ -n "$GIT_TEST_FAIL" ]; then\n'
+        "  printf 'failed\\n' >&2\n"
+        "  exit 7\n"
+        "fi\n",
         encoding="utf-8",
     )
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
@@ -64,10 +84,13 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     _write_fake_git(tmp_path)
     service = DaemonGitService()
 
-    success = await service.run(["rev-parse", "HEAD"], cwd=tmp_path, env=_git_env(tmp_path))
+    success = await service.run(
+        ["rev-parse", "HEAD"], cwd=tmp_path, timeout=60.0, env=_git_env(tmp_path)
+    )
     failure = await service.run(
         ["status"],
         cwd=tmp_path,
+        timeout=60.0,
         env=_git_env(tmp_path, GIT_TEST_FAIL="1"),
     )
 
@@ -90,8 +113,8 @@ async def test_status_coalesces_only_exact_requests(tmp_path: Path) -> None:
     )
 
     first, second = await asyncio.gather(
-        service.status(tmp_path, ["b.py", "a[1].py"], env=env),
-        service.status(tmp_path, ["a[1].py", "b.py"], env=env),
+        service.status(tmp_path, ["b.py", "a[1].py"], timeout=60.0, env=env),
+        service.status(tmp_path, ["a[1].py", "b.py"], timeout=60.0, env=env),
     )
 
     assert isinstance(first, GitOk)
@@ -111,8 +134,8 @@ async def test_status_coalesces_only_exact_requests(tmp_path: Path) -> None:
 
     count.unlink()
     await asyncio.gather(
-        service.status(tmp_path, ["a.py"], env=env),
-        service.status(tmp_path, ["b.py"], env=env),
+        service.status(tmp_path, ["a.py"], timeout=60.0, env=env),
+        service.status(tmp_path, ["b.py"], timeout=60.0, env=env),
     )
     assert count.read_text(encoding="utf-8") == "xx"
 
@@ -125,8 +148,8 @@ async def test_identical_generic_commands_do_not_coalesce(tmp_path: Path) -> Non
     env = _git_env(tmp_path, GIT_TEST_COUNT=str(count), GIT_TEST_DELAY="0.05")
 
     await asyncio.gather(
-        service.run(["update-ref", "refs/test/a", "HEAD"], cwd=tmp_path, env=env),
-        service.run(["update-ref", "refs/test/a", "HEAD"], cwd=tmp_path, env=env),
+        service.run(["update-ref", "refs/test/a", "HEAD"], cwd=tmp_path, timeout=60.0, env=env),
+        service.run(["update-ref", "refs/test/a", "HEAD"], cwd=tmp_path, timeout=60.0, env=env),
     )
 
     assert count.read_text(encoding="utf-8") == "xx"
@@ -171,8 +194,8 @@ async def test_cancelling_one_coalesced_waiter_preserves_the_other(tmp_path: Pat
     count = tmp_path / "count"
     service = DaemonGitService()
     env = _git_env(tmp_path, GIT_TEST_COUNT=str(count), GIT_TEST_DELAY="0.1")
-    first = asyncio.create_task(service.status(tmp_path, ["a.py"], env=env))
-    second = asyncio.create_task(service.status(tmp_path, ["a.py"], env=env))
+    first = asyncio.create_task(service.status(tmp_path, ["a.py"], timeout=60.0, env=env))
+    second = asyncio.create_task(service.status(tmp_path, ["a.py"], timeout=60.0, env=env))
 
     await asyncio.sleep(0.02)
     first.cancel()
@@ -271,6 +294,7 @@ async def test_run_does_not_use_shared_asyncio_worker_pool(
     result = await DaemonGitService().run(
         ["status"],
         cwd=tmp_path,
+        timeout=60.0,
         env=_git_env(tmp_path),
     )
 

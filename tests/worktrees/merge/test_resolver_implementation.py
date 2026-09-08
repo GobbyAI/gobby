@@ -1,10 +1,10 @@
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.features import MergeResolutionConfig
+from gobby.utils.daemon_git import GitFailed, GitOk
 from gobby.worktrees.merge.resolver import MergeResolver
 
 pytestmark = pytest.mark.unit
@@ -28,85 +28,93 @@ def resolver(mock_llm_service):
 @pytest.mark.asyncio
 async def test_git_merge_success(resolver):
     """Test git merge with no conflicts."""
-    # Mock subprocess execution
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_process = AsyncMock()
-        mock_process.returncode = 0
-        mock_process.communicate.return_value = (b"", b"")
-        mock_exec.return_value = mock_process
-
+    result_ok = GitOk(
+        status="ok",
+        argv=("git", "merge", "--no-commit", "--no-ff", "test-target"),
+        stdout="",
+        stderr="",
+    )
+    with patch(
+        "gobby.worktrees.merge.resolver.daemon_git.run",
+        new=AsyncMock(return_value=result_ok),
+    ) as mock_run:
         result = await resolver._git_merge("/tmp/test-repo", "feature", "test-target")
 
         assert result["success"] is True
         assert result["conflicts"] == []
 
-        # Verify git merge called with expected args
-        mock_exec.assert_called_with(
-            "git",
-            "merge",
-            "--no-commit",
-            "--no-ff",
-            "test-target",
+        mock_run.assert_awaited_once_with(
+            ["merge", "--no-commit", "--no-ff", "test-target"],
             cwd="/tmp/test-repo",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            timeout=120.0,
         )
 
 
 @pytest.mark.asyncio
 async def test_git_merge_conflict(resolver):
     """Test git merge with conflicts."""
-    # Mock git merge failing (conflict)
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        # 1. git merge fails
-        mock_process_merge = AsyncMock()
-        mock_process_merge.returncode = 1
-        mock_process_merge.communicate.return_value = (
-            b"CONFLICT (content): Merge conflict in file.txt",
-            b"",
-        )
-
-        # 2. git diff finds conflicted files
-        mock_process_diff = AsyncMock()
-        mock_process_diff.returncode = 0
-        mock_process_diff.communicate.return_value = (b"file.txt\n", b"")
-
-        mock_exec.side_effect = [mock_process_merge, mock_process_diff]
-
-        # Mock reading file content with conflicts
-        with patch.object(
+    merge_failed = GitFailed(
+        status="failed",
+        argv=("git", "merge"),
+        returncode=1,
+        stdout="",
+        stderr="merge conflict",
+    )
+    diff_ok = GitOk(
+        status="ok",
+        argv=("git", "diff"),
+        stdout="file.txt\n",
+        stderr="",
+    )
+    with (
+        patch(
+            "gobby.worktrees.merge.resolver.daemon_git.run",
+            new=AsyncMock(side_effect=[merge_failed, diff_ok]),
+        ),
+        patch.object(
             Path,
             "read_text",
             return_value="<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feature\n",
-        ):
-            result = await resolver._git_merge("/tmp/test-repo", "feature", "test-target")
+        ),
+    ):
+        result = await resolver._git_merge("/tmp/test-repo", "feature", "test-target")
 
-            assert result["success"] is False
-            assert len(result["conflicts"]) == 1
-            assert result["conflicts"][0]["file"] == "file.txt"
-            assert len(result["conflicts"][0]["hunks"]) == 1
+    assert result["success"] is False
+    assert len(result["conflicts"]) == 1
+    assert result["conflicts"][0]["file"] == "file.txt"
+    assert len(result["conflicts"][0]["hunks"]) == 1
 
 
 async def test_git_merge_preserves_all_unparseable_conflicted_paths(resolver):
     """Every unmerged path is reported even when parsing or reading fails."""
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_process_merge = AsyncMock()
-        mock_process_merge.returncode = 1
-        mock_process_merge.communicate.return_value = (b"", b"merge failed")
+    merge_failed = GitFailed(
+        status="failed",
+        argv=("git", "merge"),
+        returncode=1,
+        stdout="",
+        stderr="merge failed",
+    )
+    diff_ok = GitOk(
+        status="ok",
+        argv=("git", "diff"),
+        stdout="malformed.py\nbinary.dat\n",
+        stderr="",
+    )
 
-        mock_process_diff = AsyncMock()
-        mock_process_diff.returncode = 0
-        mock_process_diff.communicate.return_value = (b"malformed.py\nbinary.dat\n", b"")
-        mock_exec.side_effect = [mock_process_merge, mock_process_diff]
+    def read_conflict(path: Path, *, encoding: str) -> str:
+        assert encoding == "utf-8"
+        if path.name == "binary.dat":
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return "<<<<<<< HEAD\nours\n======= body\n=======\ntheirs\n>>>>>>> main\n"
 
-        def read_conflict(path: Path, *, encoding: str) -> str:
-            assert encoding == "utf-8"
-            if path.name == "binary.dat":
-                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-            return "<<<<<<< HEAD\nours\n======= body\n=======\ntheirs\n>>>>>>> main\n"
-
-        with patch.object(Path, "read_text", autospec=True, side_effect=read_conflict):
-            result = await resolver._git_merge("/tmp/test-repo", "feature", "main")
+    with (
+        patch(
+            "gobby.worktrees.merge.resolver.daemon_git.run",
+            new=AsyncMock(side_effect=[merge_failed, diff_ok]),
+        ),
+        patch.object(Path, "read_text", autospec=True, side_effect=read_conflict),
+    ):
+        result = await resolver._git_merge("/tmp/test-repo", "feature", "main")
 
     assert result["success"] is False
     assert [conflict["file"] for conflict in result["conflicts"]] == [
