@@ -210,6 +210,7 @@ fn pin_tabs(
                 .unwrap_or_default(),
             layout,
             focused: last.clone(),
+            worktree_id: None,
         }],
         active_tab: 0,
         focused_terminal_id: last,
@@ -1628,6 +1629,10 @@ async fn select_spawn_attach_terminate_loop() {
         let _home = pin_tabs(&mut workspace, "project-selected", &["terminal-survivor"]);
         let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
         let mut chrome = Chrome::dark();
+        // `new_terminal` ships without a chord (`prefix+shift+n` adds a
+        // project); the loop under test spawns through an override.
+        chrome.keymap =
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(32);
 
         let driver = async {
@@ -1647,7 +1652,7 @@ async fn select_spawn_attach_terminate_loop() {
             .await;
 
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-            send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+            send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
             wait_for_websocket_requests(&mock, "terminal_create", 1).await;
             // The survivor's viewport is claimed again as its slot shrinks,
             // so the spawned pane's claim is found by terminal, not by count.
@@ -1822,12 +1827,16 @@ async fn select_spawn_attach_terminate_loop() {
         workspace.select_project("project-selected");
         let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
         let mut chrome = Chrome::dark();
+        // `new_terminal` ships without a chord (`prefix+shift+n` adds a
+        // project); the loop under test spawns through an override.
+        chrome.keymap =
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(16);
 
         let driver = async {
             settle_live_event().await;
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-            send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+            send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
             wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
             assert_eq!(
                 websocket_requests(&mock, "terminal_attach")
@@ -1922,11 +1931,15 @@ async fn select_spawn_attach_terminate_loop() {
         workspace.select_project("project-selected");
         let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
         let mut chrome = Chrome::dark();
+        // `new_terminal` ships without a chord (`prefix+shift+n` adds a
+        // project); the loop under test spawns through an override.
+        chrome.keymap =
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
             settle_live_event().await;
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
-            send_key(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+            send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
             wait_for_websocket_requests(&mock, "terminal_create", 1).await;
             settle_live_event().await;
             drop(input_tx);

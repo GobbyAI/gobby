@@ -2,6 +2,7 @@
 
 use super::{hit_test, Hit, SidebarSection};
 use crate::app::Workspace;
+use crate::daemon::{Checkout, ProjectRow, SidebarRows, WorktreeRow};
 use crate::ui::chrome::{Chrome, Mode, ViewState};
 use crate::ui::render_workspace;
 use crate::ui::status::{Toast, ToastKind};
@@ -18,11 +19,34 @@ const HEIGHT: u16 = 40;
 /// focused pane (`term-beta`) given scrollback so its scrollbar lane is drawn.
 fn split_live() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_string(),
+            name: "alpha".to_string(),
+            display_name: "alpha".to_string(),
+            checkout: Some(Checkout {
+                machine_id: "local".to_string(),
+                root_path: "/repos/alpha".to_string(),
+            }),
+            ..ProjectRow::default()
+        }],
+        worktrees: vec![WorktreeRow {
+            id: "wt-1".to_string(),
+            project_id: "proj-alpha".to_string(),
+            branch_name: "worktree/feature".to_string(),
+            worktree_path: "/repos/alpha/.worktrees/feature".to_string(),
+            status: "active".to_string(),
+            workspace_role: "task".to_string(),
+            ..WorktreeRow::default()
+        }],
+        ..SidebarRows::default()
+    });
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
         "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
     }));
+    ws.select_project("proj-alpha");
     ws.reconcile_subscribe_first().expect("install roster");
     for terminal_id in ["term-alpha", "term-beta", "term-gamma"] {
         ws.open_terminal(terminal_id, "native", "epoch")
@@ -84,13 +108,22 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, sidebar.x, section_y), Hit::SidebarSectionDivider);
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
     assert_eq!(at(view, toggle.x, toggle.y), Hit::SidebarToggle);
-    assert_eq!(view.roster_hit_areas.len(), 3);
-    for (id, rect) in &view.roster_hit_areas {
-        assert_eq!(at(view, rect.x, rect.y), Hit::Roster(id.clone()));
-    }
-    let (entry, rect) = view.attention_hit_areas.first().expect("attention row");
+    let (id, rect) = view.project_hit_areas.first().expect("project card");
+    assert_eq!(id, "proj-alpha");
+    assert_eq!(at(view, rect.x, rect.y), Hit::Project(id.clone()));
+    assert_eq!(at(view, rect.x, rect.y + 1), Hit::Project(id.clone()));
+    let (id, rect) = view.group_toggle_hit_areas.first().expect("group toggle");
+    assert_eq!(at(view, rect.x, rect.y), Hit::GroupToggle(id.clone()));
+    let (id, rect) = view.worktree_hit_areas.first().expect("worktree row");
+    assert_eq!(id, "wt-1");
+    assert_eq!(at(view, rect.x, rect.y), Hit::Worktree(id.clone()));
+    let new = view.projects_new_hit_area.expect("new button");
+    assert_eq!(at(view, new.x, new.y), Hit::ProjectsNew);
+    let menu = view.projects_menu_hit_area.expect("menu button");
+    assert_eq!(at(view, menu.x, menu.y), Hit::ProjectsMenu);
+    let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
-    assert_eq!(at(view, rect.x, rect.y), Hit::Attention(entry.clone()));
+    assert_eq!(at(view, rect.x, rect.y), Hit::Agent(entry.clone()));
     assert_eq!(at(view, sidebar.x, sidebar.y), Hit::SidebarEmpty);
 
     // Panes: content offsets, the hidden gutter, the frame, the split, and the
@@ -156,16 +189,16 @@ fn hit_test_covers_split_live_layout() {
 fn sidebar_scrollbar_lane_hits_by_section() {
     let (ws, mut chrome) = split_live();
     rendered(&ws, &mut chrome);
-    // Three roster rows never overflow a 40-row sidebar, so no lane is drawn
+    // One project card never overflows a 40-row sidebar, so no lane is drawn
     // and the cells beside the rows stay plain sidebar.
-    assert_eq!(chrome.view.roster_scrollbar_hit_area, None);
-    assert_eq!(chrome.view.attention_scrollbar_hit_area, None);
+    assert_eq!(chrome.view.projects_scrollbar_hit_area, None);
+    assert_eq!(chrome.view.agents_scrollbar_hit_area, None);
 
     // A lane the renderer reports maps to its section, row by row.
     let lane = Rect::new(24, 2, 1, 3);
-    chrome.view.roster_scrollbar_hit_area = Some(lane);
+    chrome.view.projects_scrollbar_hit_area = Some(lane);
     let hit = Hit::SidebarScrollbar {
-        section: SidebarSection::Roster,
+        section: SidebarSection::Projects,
         row: lane.y + 2,
     };
     assert_eq!(hit_test(&chrome.view, lane.x, lane.y + 2), hit);

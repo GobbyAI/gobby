@@ -30,6 +30,7 @@ fn tab(layout: LayoutNode, focused: &str) -> TabSnapshot {
         title: String::new(),
         layout,
         focused: Some(focused.to_string()),
+        worktree_id: None,
     }
 }
 

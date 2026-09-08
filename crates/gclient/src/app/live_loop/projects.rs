@@ -10,7 +10,7 @@ use crate::ui::Chrome;
 use super::super::persistence::sidebar_snapshot;
 use super::super::project_tabs::TabSet;
 use super::super::Workspace;
-use super::actions::{spawn_live_terminal, sync_live_chrome};
+use super::actions::{activate_live_tab, spawn_live_shell, spawn_live_terminal, sync_live_chrome};
 use super::mouse::Placement;
 
 /// Make `project_id` the focused project: its roster replaces the current
@@ -36,6 +36,44 @@ pub async fn focus_project(
     sync_live_chrome(workspace, chrome);
     save_client_session(workspace, chrome)?;
     restore_focused(workspace, chrome).await
+}
+
+/// Open `worktree_id`: focus its project, then activate the tab that
+/// already shows the worktree or spawn a shell in it as a fresh tab, tagged
+/// so the next click finds it. An id the sidebar no longer lists is ignored.
+pub async fn open_worktree(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    worktree_id: &str,
+) -> Result<(), FrameError> {
+    let found = workspace.sidebar().projects.iter().find_map(|project| {
+        project
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.worktree_id == worktree_id)
+            .map(|worktree| (project.project_id.clone(), worktree.path.clone()))
+    });
+    let Some((project_id, path)) = found else {
+        return Ok(());
+    };
+    focus_project(workspace, chrome, &project_id).await?;
+    let shown = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .position(|tab| tab.worktree_id.as_deref() == Some(worktree_id));
+    if let Some(index) = shown {
+        return activate_live_tab(workspace, chrome, index).await;
+    }
+    let before = chrome.tabs().tabs.len();
+    let cwd = Some(path.to_string_lossy().into_owned());
+    spawn_live_shell(workspace, chrome, Placement::Tab, cwd).await?;
+    if chrome.tabs().tabs.len() > before {
+        if let Some(tab) = chrome.active_tab_mut() {
+            tab.worktree_id = Some(worktree_id.to_owned());
+        }
+    }
+    Ok(())
 }
 
 /// Fill the focused project's tab bar when it is empty: from its snapshot

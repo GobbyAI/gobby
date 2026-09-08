@@ -23,6 +23,7 @@ use crate::ui::navigator::{
     navigator_rows, NavigatorRow, NavigatorState, NavigatorStateFilter, NavigatorTarget,
 };
 use crate::ui::settings::{PassthroughModifier, SettingsRow};
+use crate::ui::sidebar_rows::{project_rows, RowKind};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::{PaneId, Workspace};
@@ -50,6 +51,10 @@ pub enum ModalOutcome {
     Close,
     /// Focus this pane.
     Focus(PaneId),
+    /// Navigate picked a project card: make it the focused project.
+    FocusProject(String),
+    /// Navigate picked a worktree row: open a shell there.
+    OpenWorktree(String),
     /// Run a keymap action.
     Action(Action),
     /// The confirm-close dialog was accepted for this target.
@@ -474,18 +479,21 @@ fn resize_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     ModalOutcome::Consumed
 }
 
+/// Navigate walks the projects section's rows: cards and their visible
+/// worktree rows; Enter takes the row under the cursor.
 fn navigate_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
-    let roster = ws.roster_terminal_ids();
-    let last = roster.len().saturating_sub(1);
+    let rows = project_rows(ws, chrome);
+    let last = rows.len().saturating_sub(1);
     match key.code {
         KeyCode::Up => chrome.sidebar.selected = step(chrome.sidebar.selected, -1, last),
         KeyCode::Down => chrome.sidebar.selected = step(chrome.sidebar.selected, 1, last),
         KeyCode::Enter => {
             chrome.mode = Mode::Terminal;
-            return roster
-                .get(chrome.sidebar.selected)
-                .and_then(|terminal_id| ws.pane_for_terminal(terminal_id))
-                .map_or(ModalOutcome::Consumed, ModalOutcome::Focus);
+            return match rows.into_iter().nth(chrome.sidebar.selected) {
+                Some(row) if row.kind == RowKind::Project => ModalOutcome::FocusProject(row.id),
+                Some(row) if row.kind == RowKind::Worktree => ModalOutcome::OpenWorktree(row.id),
+                _ => ModalOutcome::Consumed,
+            };
         }
         KeyCode::Esc => return close_modal(chrome),
         _ => return ModalOutcome::Passthrough,

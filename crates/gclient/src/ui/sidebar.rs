@@ -1,16 +1,18 @@
 // upstream: herdr v0.8.0 src/ui/sidebar.rs
-//! Sidebar: terminal roster on top, attention panel below, collapsed rail.
+//! Sidebar: project cards on top, agent rows below, collapsed rail.
 //!
 //! herdr geometry kept as is: a `│` separator column on the right, a
-//! two-row roster header with a footer row for the `«` toggle, a three-row
-//! attention header (rule + title), and the collapsed rail split in half
-//! around a `─` divider.
+//! two-row projects header with a footer row for the `«` toggle, a
+//! three-row agents header (rule + title), and the collapsed rail split in
+//! half around a `─` divider. The projects section itself is `projects`.
+
+pub mod projects;
 
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, SidebarState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
-use crate::ui::sidebar_rows::{attention_rows, roster_rows, row_line, SidebarRow};
+use crate::ui::sidebar_rows::{agent_rows, project_rows, row_line, RowKind, SidebarRow};
 use crate::ui::status::state_dot;
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
@@ -19,34 +21,44 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
-/// herdr `WORKSPACE_SECTION_HEADER_ROWS`.
-const ROSTER_HEADER_ROWS: u16 = 2;
+pub use projects::{project_list_metrics, projects_body_rect};
+
 /// herdr `AGENT_PANEL_HEADER_ROWS`.
-const ATTENTION_HEADER_ROWS: u16 = 3;
-/// Roster share of the sidebar when `SidebarState::section_split` is unset.
+const AGENTS_HEADER_ROWS: u16 = 3;
+/// Projects share of the sidebar when `SidebarState::section_split` is unset.
 const DEFAULT_SECTION_SPLIT: f32 = 0.5;
 
 #[derive(Debug, Clone, Default)]
 pub struct SidebarHits {
-    pub roster: Vec<(String, Rect)>,
-    pub attention: Vec<(String, Rect)>,
-    /// Scrollbar lane beside the roster, when one was drawn.
-    pub roster_scrollbar: Option<Rect>,
-    /// Scrollbar lane beside the attention list, when one was drawn.
-    pub attention_scrollbar: Option<Rect>,
+    /// Project cards, by project id (both lines of the card).
+    pub projects: Vec<(String, Rect)>,
+    /// Worktree rows, by worktree id.
+    pub worktrees: Vec<(String, Rect)>,
+    /// The `▸`/`▾` cell of each card that has worktrees, by project id.
+    pub group_toggles: Vec<(String, Rect)>,
+    pub projects_new: Option<Rect>,
+    pub projects_menu: Option<Rect>,
+    /// Scrollbar lane beside the projects, when one was drawn.
+    pub projects_scrollbar: Option<Rect>,
+    /// Agent rows, by attention entry id.
+    pub agents: Vec<(String, Rect)>,
+    /// Scrollbar lane beside the agents, when one was drawn.
+    pub agents_scrollbar: Option<Rect>,
+    /// The machine filter control (3.2 draws it).
+    pub machine_filter: Option<Rect>,
     /// The `«`/`»` collapse toggle cell.
     pub toggle: Option<Rect>,
 }
 
-/// Screen row of the `─` rule between the roster and attention sections, when
-/// the sidebar draws one (the collapsed rail's divider or the attention
+/// Screen row of the `─` rule between the projects and agents sections,
+/// when the sidebar draws one (the collapsed rail's divider or the agents
 /// header's rule).
 pub fn section_divider_y(area: Rect, sidebar: &SidebarState) -> Option<u16> {
     if sidebar.collapsed {
         return collapsed_sections(area).1;
     }
-    let (_, attention) = expanded_sections(area, sidebar.section_split);
-    (attention.width > 0 && attention.height >= ATTENTION_HEADER_ROWS).then_some(attention.y)
+    let (_, agents) = expanded_sections(area, sidebar.section_split);
+    (agents.width > 0 && agents.height >= AGENTS_HEADER_ROWS).then_some(agents.y)
 }
 
 /// Expanded sidebar; returns the row hit areas.
@@ -76,11 +88,9 @@ pub fn render_sidebar<W: WorkspaceView>(
         },
     );
 
-    let (roster_area, attention_area) = expanded_sections(area, chrome.sidebar.section_split);
-    (hits.roster, hits.roster_scrollbar) =
-        render_roster(frame, roster_area, ws, chrome, is_navigating);
-    (hits.attention, hits.attention_scrollbar) =
-        render_attention(frame, attention_area, ws, chrome);
+    let (projects_area, agents_area) = expanded_sections(area, chrome.sidebar.section_split);
+    projects::render_projects(frame, projects_area, ws, chrome, is_navigating, &mut hits);
+    (hits.agents, hits.agents_scrollbar) = render_agents(frame, agents_area, ws, chrome);
     hits.toggle = render_toggle(frame, expanded_toggle_rect(area), "«", p);
     hits
 }
@@ -112,15 +122,18 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         },
     );
 
-    let (roster_area, divider_y, attention_area) = collapsed_sections(area);
-    if roster_area == Rect::default() {
+    let (projects_area, divider_y, agents_area) = collapsed_sections(area);
+    if projects_area == Rect::default() {
         hits.toggle = render_toggle(frame, collapsed_toggle_rect(area), "»", p);
         return hits;
     }
 
-    for (index, row) in roster_rows(ws, chrome).iter().enumerate() {
-        let y = roster_area.y + index as u16;
-        if y >= roster_area.y + roster_area.height {
+    let cards = project_rows(ws, chrome)
+        .into_iter()
+        .filter(|row| row.kind == RowKind::Project);
+    for (index, row) in cards.enumerate() {
+        let y = projects_area.y + index as u16;
+        if y >= projects_area.y + projects_area.height {
             break;
         }
         let (icon, icon_color) = state_dot(row.state, p);
@@ -139,7 +152,7 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         } else {
             (Style::default(), Style::default().fg(p.overlay0))
         };
-        let rect = Rect::new(roster_area.x, y, roster_area.width, 1);
+        let rect = Rect::new(projects_area.x, y, projects_area.width, 1);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 // herdr pads single digits and keeps the dot at column 2 for
@@ -150,25 +163,25 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
             .style(row_style),
             rect,
         );
-        hits.roster.push((row.id.clone(), rect));
+        hits.projects.push((row.id, rect));
     }
 
     if let Some(divider_y) = divider_y {
         let buf = frame.buffer_mut();
-        for x in roster_area.x..roster_area.x + roster_area.width {
+        for x in projects_area.x..projects_area.x + projects_area.width {
             buf[(x, divider_y)].set_symbol("─");
             buf[(x, divider_y)].set_style(Style::default().fg(p.surface_dim));
         }
     }
 
     let content = Rect::new(
-        attention_area.x,
-        attention_area.y,
-        attention_area.width,
-        attention_area.height.saturating_sub(1),
+        agents_area.x,
+        agents_area.y,
+        agents_area.width,
+        agents_area.height.saturating_sub(1),
     );
     if content != Rect::default() {
-        for (index, row) in attention_rows(ws, chrome).iter().enumerate() {
+        for (index, row) in agent_rows(ws, chrome).iter().enumerate() {
             let y = content.y + index as u16;
             if y >= content.y + content.height {
                 break;
@@ -182,7 +195,7 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
                 ])),
                 rect,
             );
-            hits.attention.push((row.id.clone(), rect));
+            hits.agents.push((row.id.clone(), rect));
         }
     }
 
@@ -190,49 +203,14 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
     hits
 }
 
-fn render_roster<W: WorkspaceView>(
-    frame: &mut Frame,
-    area: Rect,
-    ws: &W,
-    chrome: &Chrome,
-    is_navigating: bool,
-) -> (Vec<(String, Rect)>, Option<Rect>) {
-    let p = &chrome.palette;
-    if area.width == 0 || area.height == 0 {
-        return (Vec::new(), None);
-    }
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            " terminals",
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        ))),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    let mut rows = roster_rows(ws, chrome);
-    if !is_navigating {
-        for row in &mut rows {
-            row.selected = false;
-        }
-    }
-    let viewport = roster_body_rect(area, false).height;
-    let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.scroll);
-    let body = roster_body_rect(area, should_show_scrollbar(metrics));
-    let hits = render_rows(frame, body, &rows, metrics, chrome);
-    let track = should_show_scrollbar(metrics).then(|| scrollbar_track(area, body));
-    if let Some(track) = track {
-        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
-    }
-    (hits, track)
-}
-
-fn render_attention<W: WorkspaceView>(
+fn render_agents<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
     ws: &W,
     chrome: &Chrome,
 ) -> (Vec<(String, Rect)>, Option<Rect>) {
     let p = &chrome.palette;
-    if area.width == 0 || area.height < ATTENTION_HEADER_ROWS {
+    if area.width == 0 || area.height < AGENTS_HEADER_ROWS {
         return (Vec::new(), None);
     }
     frame.render_widget(
@@ -244,15 +222,15 @@ fn render_attention<W: WorkspaceView>(
     );
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            " attention",
+            " agents",
             Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
         ))),
         Rect::new(area.x, area.y + 1, area.width, 1),
     );
-    let rows = attention_rows(ws, chrome);
-    let viewport = attention_body_rect(area, false).height;
-    let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.attention_scroll);
-    let body = attention_body_rect(area, should_show_scrollbar(metrics));
+    let rows = agent_rows(ws, chrome);
+    let viewport = agents_body_rect(area, false).height;
+    let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.agents_scroll);
+    let body = agents_body_rect(area, should_show_scrollbar(metrics));
     let hits = render_rows(frame, body, &rows, metrics, chrome);
     let track = should_show_scrollbar(metrics).then(|| scrollbar_track(area, body));
     if let Some(track) = track {
@@ -261,8 +239,8 @@ fn render_attention<W: WorkspaceView>(
     (hits, track)
 }
 
-/// One line per visible row; selected rows sit on `surface1`, the focused
-/// pane's row on `surface_dim` (herdr `render_workspace_list`).
+/// One line per visible agent row; selected rows sit on `surface1`, the
+/// focused pane's row on `surface_dim` (herdr `render_workspace_list`).
 fn render_rows(
     frame: &mut Frame,
     body: Rect,
@@ -321,18 +299,24 @@ pub fn section_metrics<W: WorkspaceView>(
     chrome: &Chrome,
     section: SidebarSection,
 ) -> ScrollMetrics {
-    let (roster, attention) =
+    let (projects, agents) =
         expanded_sections(chrome.view.sidebar_rect, chrome.sidebar.section_split);
     match section {
-        SidebarSection::Roster => list_metrics(
-            ws.roster_terminal_ids().len(),
-            roster_body_rect(roster, false).height,
-            chrome.sidebar.scroll,
-        ),
-        SidebarSection::Attention => list_metrics(
+        SidebarSection::Projects => {
+            let heights: Vec<u16> = project_rows(ws, chrome)
+                .iter()
+                .map(SidebarRow::height)
+                .collect();
+            project_list_metrics(
+                &heights,
+                projects_body_rect(projects, false).height,
+                chrome.sidebar.scroll,
+            )
+        }
+        SidebarSection::Agents => list_metrics(
             ws.attention_entry_ids().len(),
-            attention_body_rect(attention, false).height,
-            chrome.sidebar.attention_scroll,
+            agents_body_rect(agents, false).height,
+            chrome.sidebar.agents_scroll,
         ),
     }
 }
@@ -347,19 +331,19 @@ fn scrollbar_track(area: Rect, body: Rect) -> Rect {
 }
 
 /// herdr `sidebar_section_heights`; `split` overrides the ratio with an
-/// explicit roster row count, clamped the same way.
+/// explicit projects row count, clamped the same way.
 fn section_heights(total_h: u16, split: Option<u16>) -> (u16, u16) {
     if total_h == 0 {
         return (0, 0);
     }
     if total_h < 6 {
-        let roster_h = total_h.div_ceil(2);
-        return (roster_h, total_h.saturating_sub(roster_h));
+        let projects_h = total_h.div_ceil(2);
+        return (projects_h, total_h.saturating_sub(projects_h));
     }
-    let roster_h =
+    let projects_h =
         split.unwrap_or_else(|| (f32::from(total_h) * DEFAULT_SECTION_SPLIT).round() as u16);
-    let roster_h = roster_h.clamp(3, total_h.saturating_sub(3));
-    (roster_h, total_h.saturating_sub(roster_h))
+    let projects_h = projects_h.clamp(3, total_h.saturating_sub(3));
+    (projects_h, total_h.saturating_sub(projects_h))
 }
 
 /// herdr `expanded_sidebar_sections`: content excludes the separator column.
@@ -368,14 +352,14 @@ pub fn expanded_sections(area: Rect, split: Option<u16>) -> (Rect, Rect) {
     if content.width == 0 || content.height == 0 {
         return (Rect::default(), Rect::default());
     }
-    let (roster_h, attention_h) = section_heights(content.height, split);
+    let (projects_h, agents_h) = section_heights(content.height, split);
     (
-        Rect::new(content.x, content.y, content.width, roster_h),
-        Rect::new(content.x, content.y + roster_h, content.width, attention_h),
+        Rect::new(content.x, content.y, content.width, projects_h),
+        Rect::new(content.x, content.y + projects_h, content.width, agents_h),
     )
 }
 
-/// herdr `collapsed_sidebar_sections`: roster, divider row, attention.
+/// herdr `collapsed_sidebar_sections`: projects, divider row, agents.
 pub fn collapsed_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height == 0 {
@@ -384,40 +368,25 @@ pub fn collapsed_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
     if content.height < 7 {
         return (content, None, Rect::default());
     }
-    let roster_h = content.height.div_ceil(2);
-    let attention_h = content.height.saturating_sub(roster_h + 1);
-    if attention_h == 0 {
+    let projects_h = content.height.div_ceil(2);
+    let agents_h = content.height.saturating_sub(projects_h + 1);
+    if agents_h == 0 {
         return (content, None, Rect::default());
     }
-    let divider_y = content.y + roster_h;
+    let divider_y = content.y + projects_h;
     (
-        Rect::new(content.x, content.y, content.width, roster_h),
+        Rect::new(content.x, content.y, content.width, projects_h),
         Some(divider_y),
-        Rect::new(content.x, divider_y + 1, content.width, attention_h),
-    )
-}
-
-/// herdr `workspace_list_body_rect`: below the header, above the footer row.
-pub fn roster_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
-    if area.width == 0 || area.height <= ROSTER_HEADER_ROWS {
-        return Rect::default();
-    }
-    let body_y = area.y + ROSTER_HEADER_ROWS;
-    let footer_y = area.y + area.height.saturating_sub(1);
-    Rect::new(
-        area.x,
-        body_y,
-        area.width.saturating_sub(u16::from(has_scrollbar)),
-        footer_y.saturating_sub(body_y),
+        Rect::new(content.x, divider_y + 1, content.width, agents_h),
     )
 }
 
 /// herdr `agent_panel_body_rect`.
-pub fn attention_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
-    if area.width == 0 || area.height <= ATTENTION_HEADER_ROWS {
+pub fn agents_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
+    if area.width == 0 || area.height <= AGENTS_HEADER_ROWS {
         return Rect::default();
     }
-    let body_y = area.y + ATTENTION_HEADER_ROWS;
+    let body_y = area.y + AGENTS_HEADER_ROWS;
     Rect::new(
         area.x,
         body_y,
@@ -478,12 +447,49 @@ fn draw_separator_column(frame: &mut Frame, area: Rect, color: Color) {
 mod tests {
     use super::*;
     use crate::app::Workspace;
+    use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use serde_json::json;
 
+    /// Two projects, `alpha` (focused, on `main`, one worktree) and `beta`,
+    /// plus one attention entry on `term-alpha`.
     fn scripted_workspace() -> Workspace {
         let mut ws = Workspace::scripted();
+        let project = |id: &str, name: &str| ProjectRow {
+            id: id.to_string(),
+            name: name.to_string(),
+            display_name: name.to_string(),
+            checkout: Some(Checkout {
+                machine_id: "local".to_string(),
+                root_path: format!("/repos/{name}"),
+            }),
+            ..ProjectRow::default()
+        };
+        ws.daemon_mut().set_sidebar_rows(SidebarRows {
+            projects: vec![project("proj-alpha", "alpha"), project("proj-beta", "beta")],
+            statuses: [(
+                "proj-alpha".to_string(),
+                SourceStatus {
+                    current_branch: Some("main".to_string()),
+                    ahead: Some(2),
+                    ..SourceStatus::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            worktrees: vec![WorktreeRow {
+                id: "wt-1".to_string(),
+                project_id: "proj-alpha".to_string(),
+                task_id: Some("#123".to_string()),
+                branch_name: "worktree/feature".to_string(),
+                worktree_path: "/repos/alpha/.worktrees/feature".to_string(),
+                status: "active".to_string(),
+                workspace_role: "task".to_string(),
+                ..WorktreeRow::default()
+            }],
+            ..SidebarRows::default()
+        });
         ws.daemon_mut().set_roster(json!({
             "epoch": "e1",
             "seq": 1,
@@ -493,6 +499,7 @@ mod tests {
                 "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
             }]
         }));
+        ws.select_project("proj-alpha");
         ws.reconcile_subscribe_first().unwrap();
         ws.open_terminal("term-alpha", "native", "epoch").unwrap();
         ws.open_terminal("term-beta", "native", "epoch").unwrap();
@@ -525,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn expanded_sidebar_lists_roster_and_attention_with_hits() {
+    fn expanded_sidebar_lists_projects_and_agents_with_hits() {
         let ws = scripted_workspace();
         let mut chrome = Chrome::dark();
         chrome.mode = Mode::Navigate;
@@ -538,28 +545,44 @@ mod tests {
             .unwrap();
         let text = screen(&terminal);
         for needle in [
-            "terminals",
+            " projects",
+            "● alpha",
+            "   main ↑2",
+            "feature · #123",
+            "○ beta",
+            " agents",
             "term-alpha",
-            "term-beta",
-            "attention",
             "blocked",
-            "«",
+            " new",
+            "menu│",
         ] {
             assert!(text.contains(needle), "missing {needle:?}:\n{text}");
         }
         assert!(!text.contains('!'), "{text}");
-        assert_eq!(hits.roster.len(), 2);
-        assert_eq!(hits.roster[0].0, "term-alpha");
-        assert_eq!(hits.roster[0].1, Rect::new(0, 2, 25, 1));
         assert_eq!(
-            hits.attention,
+            hits.projects,
+            vec![
+                ("proj-alpha".to_string(), Rect::new(0, 2, 25, 2)),
+                ("proj-beta".to_string(), Rect::new(0, 5, 25, 2)),
+            ]
+        );
+        assert_eq!(
+            hits.worktrees,
+            vec![("wt-1".to_string(), Rect::new(0, 4, 25, 1))]
+        );
+        assert_eq!(
+            hits.group_toggles,
+            vec![("proj-alpha".to_string(), Rect::new(24, 2, 1, 1))]
+        );
+        assert_eq!(hits.projects_new, Some(Rect::new(0, 19, 4, 1)));
+        assert_eq!(hits.projects_menu, Some(Rect::new(21, 19, 4, 1)));
+        assert_eq!(
+            hits.agents,
             vec![("run:term-alpha".to_string(), Rect::new(0, 23, 25, 1))]
         );
-        let selected_line = text.lines().nth(3).unwrap_or_default();
-        assert!(
-            selected_line.starts_with("▸○ term-beta"),
-            "{selected_line:?}"
-        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[2].ends_with("▾│"), "{:?}", lines[2]);
+        assert!(lines[4].starts_with("▸  └─ ○ feature"), "{:?}", lines[4]);
     }
 
     #[test]
@@ -576,15 +599,17 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "1 ●│");
         assert_eq!(lines[1], "2 ○│");
+        assert_eq!(lines[2], "   │");
         assert_eq!(lines[6], "───│");
         assert_eq!(lines[7], "1 ●│");
         assert_eq!(lines[11], " » │");
-        assert_eq!(hits.roster.len(), 2);
-        assert_eq!(hits.attention.len(), 1);
+        assert_eq!(hits.projects.len(), 2);
+        assert!(hits.worktrees.is_empty());
+        assert_eq!(hits.agents.len(), 1);
     }
 
     #[test]
-    fn roster_scroll_clamps_to_the_last_page() {
+    fn agents_scroll_clamps_to_the_last_page() {
         let metrics = list_metrics(10, 4, 99);
         assert_eq!(metrics.max_offset_from_bottom, 6);
         assert_eq!(metrics.offset_from_bottom, 0);

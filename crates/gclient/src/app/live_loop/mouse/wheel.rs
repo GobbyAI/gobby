@@ -69,8 +69,13 @@ pub(super) fn wheel<W: WorkspaceView>(
             chrome.tab_scroll_follow_active = true;
             focus_active_tab(chrome, false)
         }
-        Hit::Roster(_)
-        | Hit::Attention(_)
+        Hit::Project(_)
+        | Hit::Worktree(_)
+        | Hit::GroupToggle(_)
+        | Hit::ProjectsNew
+        | Hit::ProjectsMenu
+        | Hit::Agent(_)
+        | Hit::MachineFilter
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarToggle
@@ -80,12 +85,16 @@ pub(super) fn wheel<W: WorkspaceView>(
                 return MouseOutcome::Handled;
             }
             let section = match hit {
-                Hit::Roster(_) => SidebarSection::Roster,
-                Hit::Attention(_) => SidebarSection::Attention,
+                Hit::Project(_)
+                | Hit::Worktree(_)
+                | Hit::GroupToggle(_)
+                | Hit::ProjectsNew
+                | Hit::ProjectsMenu => SidebarSection::Projects,
+                Hit::Agent(_) | Hit::MachineFilter => SidebarSection::Agents,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => match chrome.view.sidebar_section_divider_y {
-                    Some(rule) if row >= rule => SidebarSection::Attention,
-                    _ => SidebarSection::Roster,
+                    Some(rule) if row >= rule => SidebarSection::Agents,
+                    _ => SidebarSection::Projects,
                 },
             };
             let metrics = section_metrics(ws, chrome, section);

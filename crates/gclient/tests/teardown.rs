@@ -51,6 +51,7 @@ fn pin_tab(
                 terminal_id: terminal_id.to_string(),
             },
             focused: Some(terminal_id.to_string()),
+            worktree_id: None,
         }],
         active_tab: 0,
         focused_terminal_id: Some(terminal_id.to_string()),

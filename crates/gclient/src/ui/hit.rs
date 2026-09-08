@@ -12,8 +12,8 @@ use ratatui::layout::{Direction, Position, Rect};
 /// Which sidebar list a scrollbar lane belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarSection {
-    Roster,
-    Attention,
+    Projects,
+    Agents,
 }
 
 /// The chrome element under a cell.
@@ -25,14 +25,24 @@ pub enum Hit {
     NewTab,
     /// Tab bar row outside every tab and button.
     TabBarEmpty,
-    /// Roster row, by terminal id.
-    Roster(String),
-    /// Attention row, by entry id.
-    Attention(String),
+    /// Project card, by project id.
+    Project(String),
+    /// Worktree row under a project card, by worktree id.
+    Worktree(String),
+    /// Agent row, by entry id.
+    Agent(String),
+    /// The `▸`/`▾` cell at the right edge of a project card with worktrees.
+    GroupToggle(String),
+    /// The ` new` footer button of the projects section.
+    ProjectsNew,
+    /// The `menu` footer button of the projects section.
+    ProjectsMenu,
+    /// The machine filter of the agents section.
+    MachineFilter,
     SidebarToggle,
     /// The `│` column between sidebar and content.
     SidebarDivider,
-    /// The `─` row between the roster and attention sections.
+    /// The `─` row between the projects and agents sections.
     SidebarSectionDivider,
     SidebarEmpty,
     /// Scrollbar lane beside a sidebar list; `row` is the screen row.
@@ -162,8 +172,8 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
         return Hit::SidebarToggle;
     }
     let lanes = [
-        (SidebarSection::Roster, view.roster_scrollbar_hit_area),
-        (SidebarSection::Attention, view.attention_scrollbar_hit_area),
+        (SidebarSection::Projects, view.projects_scrollbar_hit_area),
+        (SidebarSection::Agents, view.agents_scrollbar_hit_area),
     ];
     if let Some((section, _)) = lanes
         .iter()
@@ -174,11 +184,36 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
             row: at.y,
         };
     }
-    if let Some((id, _)) = find_at(&view.roster_hit_areas, at) {
-        return Hit::Roster(id.clone());
+    // The toggle cell sits inside its card's rect, so it is tested first.
+    if let Some((id, _)) = find_at(&view.group_toggle_hit_areas, at) {
+        return Hit::GroupToggle(id.clone());
     }
-    if let Some((id, _)) = find_at(&view.attention_hit_areas, at) {
-        return Hit::Attention(id.clone());
+    if view
+        .projects_new_hit_area
+        .is_some_and(|rect| rect.contains(at))
+    {
+        return Hit::ProjectsNew;
+    }
+    if view
+        .projects_menu_hit_area
+        .is_some_and(|rect| rect.contains(at))
+    {
+        return Hit::ProjectsMenu;
+    }
+    if view
+        .machine_filter_hit_area
+        .is_some_and(|rect| rect.contains(at))
+    {
+        return Hit::MachineFilter;
+    }
+    if let Some((id, _)) = find_at(&view.worktree_hit_areas, at) {
+        return Hit::Worktree(id.clone());
+    }
+    if let Some((id, _)) = find_at(&view.project_hit_areas, at) {
+        return Hit::Project(id.clone());
+    }
+    if let Some((id, _)) = find_at(&view.agent_hit_areas, at) {
+        return Hit::Agent(id.clone());
     }
     Hit::SidebarEmpty
 }

@@ -41,6 +41,7 @@ impl TabSet {
                 title: tab.title.clone(),
                 layout: save_node(tab.layout.root(), &tab.slots, &terminal_of),
                 focused: tab.focused_pane().and_then(&terminal_of),
+                worktree_id: tab.worktree_id.clone(),
             })
             .collect();
         WorkspaceSnapshot {
@@ -77,11 +78,10 @@ impl TabSet {
                 .and_then(&resolve)
                 .and_then(|pane| slots.iter().find(|(_, app)| **app == pane))
                 .map_or_else(|| first_slot(&root), |(slot, _)| *slot);
-            set.tabs.push(Tab::with_layout(
-                &saved.title,
-                TileLayout::from_saved(root, focus),
-                slots,
-            ));
+            let mut tab =
+                Tab::with_layout(&saved.title, TileLayout::from_saved(root, focus), slots);
+            tab.worktree_id = saved.worktree_id.clone();
+            set.tabs.push(tab);
         }
         set.active_tab = set.active_tab.min(set.tabs.len().saturating_sub(1));
         set

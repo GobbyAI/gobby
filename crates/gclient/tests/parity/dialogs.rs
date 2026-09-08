@@ -304,20 +304,18 @@ fn modal_keys_drive_every_mode() {
     assert_eq!(press(&ws, &mut chrome, KeyCode::Enter), ModalOutcome::Close);
     assert_eq!(chrome.mode, Mode::Terminal);
 
-    // Navigate: down walks the roster and enter focuses the selected pane.
+    // Navigate: down walks the project rows (none here, so the cursor stays
+    // put) and enter leaves the mode; `parity::sidebar` covers the rows.
     chrome.mode = Mode::Navigate;
     chrome.sidebar.selected = 0;
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Down),
         ModalOutcome::Consumed
     );
-    assert_eq!(chrome.sidebar.selected, 1);
-    let second = ws
-        .pane_for_terminal(&ws.roster_terminal_ids()[1])
-        .expect("second roster pane");
+    assert_eq!(chrome.sidebar.selected, 0);
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Enter),
-        ModalOutcome::Focus(second)
+        ModalOutcome::Consumed
     );
     assert_eq!(chrome.mode, Mode::Terminal);
 

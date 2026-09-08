@@ -1,7 +1,7 @@
 # gclient screen golden: empty_workspace
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 | terminals               │                                                                                              |
-00 : overlay0/panel_bg+b*10 -/panel_bg*15 surface_dim/panel_bg*1 -/panel_bg*94
+00 | projects                │                                                                                              |
+00 : overlay0/panel_bg+b*9 -/panel_bg*16 surface_dim/panel_bg*1 -/panel_bg*94
 01 |                         │                                                                                              |
 01 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 02 |                         │                                                                                              |
@@ -38,12 +38,12 @@
 17 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 18 |                         │                                                                                              |
 18 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-19 |                         │                                         no pane open                                         |
-19 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*41 overlay1/panel_bg+b*12 -/panel_bg*41
+19 | new                 menu│                                         no pane open                                         |
+19 : overlay0/panel_bg*4 -/panel_bg*17 overlay0/panel_bg*4 surface_dim/panel_bg*1 -/panel_bg*41 overlay1/panel_bg+b*12 -/panel_bg*41
 20 |─────────────────────────│                          select a terminal in the sidebar to attach                          |
 20 : surface_dim/panel_bg*26 -/panel_bg*26 overlay0/panel_bg*42 -/panel_bg*26
-21 | attention               │                                                                                              |
-21 : overlay0/panel_bg+b*10 -/panel_bg*15 surface_dim/panel_bg*1 -/panel_bg*94
+21 | agents                  │                                                                                              |
+21 : overlay0/panel_bg+b*7 -/panel_bg*18 surface_dim/panel_bg*1 -/panel_bg*94
 22 |                         │                                                                                              |
 22 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 23 |                         │                                                                                              |

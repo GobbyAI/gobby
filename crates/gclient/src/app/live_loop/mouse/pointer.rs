@@ -12,12 +12,13 @@ use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
 use crate::ui::sidebar::section_metrics;
+use crate::ui::sidebar_rows::displayed_project_ids;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::super::menu::{open_menu, ContextMenuKind};
 use super::{
     focus_active_tab, forward, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
-    ROSTER_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
+    PROJECT_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
 };
 
 /// A button went down on `hit`. Outside a pane the right button opens the
@@ -41,10 +42,13 @@ use super::{
 /// scroll arrow moves the bar one tab and stops it following the active tab;
 /// the new-tab button asks for a spawn placed in a fresh tab.
 ///
-/// In the sidebar a roster row reveals and focuses its terminal (herdr
-/// `FocusWorkspace`) and starts the drag `up` may finish as a reorder; an
-/// attention row reveals its terminal and asks for that entry's prompt; the
-/// toggle collapses or expands the sidebar; the edge and the section rule
+/// In the sidebar a project card focuses its project (herdr
+/// `FocusWorkspace`) and starts the drag `up` may finish as a reorder; a
+/// worktree row asks for a shell in that worktree; a card's group toggle
+/// folds its worktree rows; the footer's `new` is the new-project chord and
+/// its `menu` opens the global menu; an agent row reveals its terminal and
+/// asks for that entry's prompt; the toggle collapses or expands the
+/// sidebar; the edge and the section rule
 /// start their resize drags and apply the press at once (herdr resizes on the
 /// press too), unless the sidebar is collapsed to its rail; a scrollbar thumb
 /// starts a thumb drag and the track beside it jumps the list there.
@@ -143,19 +147,35 @@ pub(super) fn down<W: WorkspaceView>(
         Hit::NewTab => MouseOutcome::Spawn {
             placement: Placement::Tab,
         },
-        Hit::Roster(terminal_id) => {
-            let Some(pane) = ws.pane_for_terminal(&terminal_id) else {
-                return MouseOutcome::Ignore;
-            };
-            chrome.gesture = Some(MouseGesture::RosterDrag {
-                terminal_id,
+        Hit::Project(project_id) => {
+            // The tab set swaps at once so the frame after the press shows
+            // the project's tabs; the live loop's focus swap is idempotent.
+            chrome.project_tabs.focus(&project_id);
+            chrome.gesture = Some(MouseGesture::ProjectDrag {
+                project_id: project_id.clone(),
                 origin_row: mouse.row,
                 moved: false,
             });
-            chrome.reveal_pane(pane, ws.pane(pane).display_name());
-            MouseOutcome::Focus { pane, observe_only }
+            MouseOutcome::FocusProject(project_id)
         }
-        Hit::Attention(entry_id) => {
+        Hit::Worktree(worktree_id) => MouseOutcome::OpenWorktree(worktree_id),
+        Hit::GroupToggle(project_id) => {
+            chrome.sidebar.toggle_group(&project_id);
+            MouseOutcome::Handled
+        }
+        Hit::ProjectsNew => MouseOutcome::Action(Action::NewProject),
+        Hit::ProjectsMenu => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::Global,
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
+        }
+        // The filter control lands with the agents section (plan 3.2).
+        Hit::MachineFilter => MouseOutcome::Handled,
+        Hit::Agent(entry_id) => {
             let pane = attention_pane(ws, &entry_id);
             if let Some(pane) = pane {
                 chrome.reveal_pane(pane, ws.pane(pane).display_name());
@@ -267,8 +287,8 @@ fn right_down<W: WorkspaceView>(
 }
 
 /// The pointer moved with a button held. A tab drag that has travelled
-/// `TAB_DRAG_THRESHOLD` columns from its press becomes a move, a roster drag
-/// `ROSTER_DRAG_THRESHOLD` rows; the sidebar edge and section rule follow
+/// `TAB_DRAG_THRESHOLD` columns from its press becomes a move, a project
+/// drag `PROJECT_DRAG_THRESHOLD` rows; the sidebar edge and section rule follow
 /// the pointer; a scrollbar thumb, sidebar or pane, keeps the row it was
 /// grabbed by under the pointer; a split border follows the pointer along
 /// its split, the first pane taking the share of the split's area the
@@ -290,10 +310,10 @@ pub(super) fn drag<W: WorkspaceView>(
             }
             MouseOutcome::Handled
         }
-        Some(MouseGesture::RosterDrag {
+        Some(MouseGesture::ProjectDrag {
             origin_row, moved, ..
         }) => {
-            if mouse.row.abs_diff(*origin_row) >= ROSTER_DRAG_THRESHOLD {
+            if mouse.row.abs_diff(*origin_row) >= PROJECT_DRAG_THRESHOLD {
                 *moved = true;
             }
             MouseOutcome::Handled
@@ -363,9 +383,9 @@ pub(super) fn drag<W: WorkspaceView>(
 
 /// A button came up; `released` is the gesture the press started, already
 /// taken off the chrome. A moved tab dropped on another tab takes that tab's
-/// place (herdr `MoveTab`) and stays active; a moved roster row dropped on
-/// another row takes its place in the roster, which the loop saves as the
-/// pane order; released anywhere else either stays put, and a release
+/// place (herdr `MoveTab`) and stays active; a moved project card dropped
+/// on another card takes its place in the sidebar's project order, which
+/// `session.json` keeps; released anywhere else either stays put, and a release
 /// without movement was the click the press handled. A sidebar edge release
 /// keeps the width it reached as the preferred width; a split border or
 /// scrollbar release keeps what the drag reached.
@@ -390,14 +410,14 @@ pub(super) fn up<W: WorkspaceView>(
             }
             MouseOutcome::Handled
         }
-        Some(MouseGesture::RosterDrag {
-            terminal_id,
+        Some(MouseGesture::ProjectDrag {
+            project_id,
             moved: true,
             ..
         }) => {
-            if let Hit::Roster(target) = hit {
-                if let Some(order) = reordered_roster(ws, &terminal_id, &target) {
-                    return MouseOutcome::Reorder { order };
+            if let Hit::Project(target) = hit {
+                if let Some(order) = reordered_projects(ws, chrome, &project_id, &target) {
+                    chrome.sidebar.project_order = order;
                 }
             }
             MouseOutcome::Handled
@@ -412,7 +432,7 @@ pub(super) fn up<W: WorkspaceView>(
         }
         Some(
             MouseGesture::TabDrag { .. }
-            | MouseGesture::RosterDrag { .. }
+            | MouseGesture::ProjectDrag { .. }
             | MouseGesture::SectionDrag
             | MouseGesture::SidebarScrollbarDrag { .. }
             | MouseGesture::SplitDrag { .. }
@@ -436,16 +456,17 @@ fn move_tab(tabs: &mut [Tab], from: usize, to: usize) {
     }
 }
 
-/// The roster's pane-backed rows with `moved` dropped where `target` sits,
-/// every row between them sliding one step (herdr's remove-and-insert
-/// workspace reorder). None when either row has left the roster or both are
-/// the same row.
-fn reordered_roster<W: WorkspaceView>(ws: &W, moved: &str, target: &str) -> Option<Vec<String>> {
-    let mut order: Vec<String> = ws
-        .roster_terminal_ids()
-        .into_iter()
-        .filter(|id| ws.pane_for_terminal(id).is_some())
-        .collect();
+/// The projects as displayed with `moved` dropped where `target` sits, every
+/// card between them sliding one step (herdr's remove-and-insert workspace
+/// reorder). None when either card has left the sidebar or both are the
+/// same card.
+fn reordered_projects<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    moved: &str,
+    target: &str,
+) -> Option<Vec<String>> {
+    let mut order = displayed_project_ids(ws, chrome);
     let from = order.iter().position(|id| id == moved)?;
     let to = order.iter().position(|id| id == target)?;
     if from == to {
@@ -459,8 +480,8 @@ fn reordered_roster<W: WorkspaceView>(ws: &W, moved: &str, target: &str) -> Opti
 /// The scrollbar lane the last frame drew beside `section`, if it showed one.
 fn scrollbar_track(chrome: &Chrome, section: SidebarSection) -> Option<Rect> {
     match section {
-        SidebarSection::Roster => chrome.view.roster_scrollbar_hit_area,
-        SidebarSection::Attention => chrome.view.attention_scrollbar_hit_area,
+        SidebarSection::Projects => chrome.view.projects_scrollbar_hit_area,
+        SidebarSection::Agents => chrome.view.agents_scrollbar_hit_area,
     }
 }
 

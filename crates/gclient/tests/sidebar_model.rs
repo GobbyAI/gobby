@@ -2,7 +2,7 @@
 //! and `build` joining projects, source status, worktrees, sessions, runs,
 //! and the roster into the tree the sidebar draws.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{agent_state, build, SidebarInputs, SidebarModel};
@@ -53,7 +53,6 @@ fn model(rows: &SidebarRows, roster: &[RosterEntry], panes: &[Pane]) -> SidebarM
         rows,
         roster,
         panes: &panes,
-        collapsed: &HashSet::new(),
         git_refreshed_at: Instant::now(),
     })
 }

@@ -19,7 +19,7 @@ pub use live_loop::menu::{
 pub use live_loop::modal_input::{route_modal_key, ModalOutcome};
 pub use live_loop::mouse::{
     anchor_selection, extend_selection, finish_selection, route_mouse, ClickRun, MouseGesture,
-    MouseOutcome, Placement, DOUBLE_CLICK_MS, MOUSE_SCROLL_LINES, ROSTER_DRAG_THRESHOLD,
+    MouseOutcome, Placement, DOUBLE_CLICK_MS, MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
     TAB_DRAG_THRESHOLD,
 };
 pub use live_loop::projects::focus_project;

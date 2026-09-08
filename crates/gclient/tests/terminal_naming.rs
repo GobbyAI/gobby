@@ -2,13 +2,14 @@
 //!
 //! Every roster row the daemon ships carries a `title` and, for tmux, the pane
 //! address the user already types (`%533`). These tests pin the naming ladder
-//! against a real daemon payload: title, then address, then a short id.
+//! against a real daemon payload: title, then address, then a short id. The
+//! sidebar names a terminal on the agent row of its attention-roster entry.
 
 mod mock_daemon;
 
 use gobby_client::daemon::{Daemon, LiveDaemon};
 use gobby_client::ui::chrome::{Chrome, RowState};
-use gobby_client::ui::sidebar_rows::{attention_rows, roster_rows, SidebarRow};
+use gobby_client::ui::sidebar_rows::{agent_rows, SidebarRow};
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
 use serde_json::{json, Value};
@@ -53,9 +54,17 @@ fn native_row(terminal_id: &str) -> Value {
     })
 }
 
-/// Reconcile a roster and an attention roster, then report the sidebar the
-/// chrome would draw from them.
-async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, Vec<SidebarRow>) {
+/// The attention-roster entry that lists `terminal_id` in the agents section.
+fn entry(terminal_id: &str, backend: &str) -> Value {
+    json!({
+        "entry_id": format!("run:{terminal_id}"),
+        "terminal": {"terminal_id": terminal_id, "backend": backend},
+    })
+}
+
+/// Reconcile a roster and an attention roster, then report the agent rows
+/// the chrome would draw from them.
+async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> Vec<SidebarRow> {
     let mock = MockDaemon::start("local-token").await;
     mock.enqueue(
         "GET",
@@ -86,10 +95,7 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
         .expect("roster reconcile");
 
     let chrome = Chrome::dark();
-    let drawn = (
-        roster_rows(&workspace, &chrome),
-        attention_rows(&workspace, &chrome),
-    );
+    let drawn = agent_rows(&workspace, &chrome);
 
     daemon
         .close(Instant::now() + Duration::from_secs(1))
@@ -103,18 +109,19 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
 /// terminal is which, and the sidebar truncates them all to the same prefix.
 #[tokio::test]
 async fn a_named_terminal_shows_its_title_and_tmux_address_rather_than_its_uuid() {
-    let (roster, _) = sidebar(
+    let roster = sidebar(
         vec![
             tmux_row(AGENT, json!("gobby-codex-d0"), "%533"),
             tmux_row(SHELL, json!("zsh"), "%0"),
         ],
-        Vec::new(),
+        vec![entry(AGENT, "tmux"), entry(SHELL, "tmux")],
     )
     .await;
 
+    // An agent row is address-qualified: `<title> <address>`.
     let labels: Vec<&str> = roster.iter().map(|row| row.label.as_str()).collect();
-    assert_eq!(labels, ["gobby-codex-d0", "zsh"]);
-    // The detail column reads `<backend> <address> <state>`; the mock decides
+    assert_eq!(labels, ["gobby-codex-d0 %533", "zsh %0"]);
+    // The detail column reads `<backend> <address> <control>`; the mock decides
     // the backend on the attach reply, so pin the address by its position.
     assert_eq!(
         roster[0].detail.split_whitespace().nth(1),
@@ -135,16 +142,17 @@ async fn a_named_terminal_shows_its_title_and_tmux_address_rather_than_its_uuid(
 /// The address is what keeps two of them apart.
 #[tokio::test]
 async fn two_terminals_sharing_a_title_stay_distinguishable_by_address() {
-    let (roster, _) = sidebar(
+    let roster = sidebar(
         vec![
             tmux_row(AGENT, json!("zsh"), "%0"),
             tmux_row(SHELL, json!("zsh"), "%7"),
         ],
-        Vec::new(),
+        vec![entry(AGENT, "tmux"), entry(SHELL, "tmux")],
     )
     .await;
 
-    assert_eq!(roster[0].label, roster[1].label);
+    assert!(roster.iter().all(|row| row.label.starts_with("zsh ")));
+    assert_ne!(roster[0].label, roster[1].label);
     assert_ne!(roster[0].detail, roster[1].detail);
     assert!(roster[0].detail.contains("%0"));
     assert!(roster[1].detail.contains("%7"));
@@ -154,9 +162,9 @@ async fn two_terminals_sharing_a_title_stay_distinguishable_by_address() {
 /// a native row has neither, so only a short id is left.
 #[tokio::test]
 async fn an_untitled_terminal_falls_back_to_its_address_and_then_to_a_short_id() {
-    let (roster, _) = sidebar(
+    let roster = sidebar(
         vec![tmux_row(AGENT, Value::Null, "%3"), native_row(SHELL)],
-        Vec::new(),
+        vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
     )
     .await;
 
@@ -167,12 +175,12 @@ async fn an_untitled_terminal_falls_back_to_its_address_and_then_to_a_short_id()
 /// Every live attention entry the daemon emits is keyed `session:<uuid>`, and
 /// only the roster row says which terminal hosts that session. Matching the two
 /// as strings resolves nothing, which left the entry showing a session UUID and
-/// left the terminal's own row unmarked while its session sat blocked.
+/// left its row unmarked while its session sat blocked.
 #[tokio::test]
 async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
     let mut row = tmux_row(AGENT, json!("gobby-codex-d0"), "%533");
     row["session_id"] = json!(SESSION);
-    let (roster, attention) = sidebar(
+    let rows = sidebar(
         vec![row],
         vec![json!({
             "entry_id": format!("session:{SESSION}"),
@@ -183,13 +191,13 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
     .await;
 
     assert_eq!(
-        attention[0].label, "gobby-codex-d0 %533",
-        "the attention label carries the same address-qualified name as the roster row"
+        rows[0].label, "gobby-codex-d0 %533",
+        "the agent row carries the address-qualified terminal name"
     );
     assert_eq!(
-        roster[0].state,
+        rows[0].state,
         RowState::Attention,
-        "a blocked session must mark the roster row the user can act on"
+        "a blocked session must mark the row the user can act on"
     );
 }
 
@@ -197,7 +205,7 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
 /// project, or a session whose terminal has already gone.
 #[tokio::test]
 async fn an_attention_row_for_an_unknown_terminal_shortens_its_id() {
-    let (_, attention) = sidebar(
+    let attention = sidebar(
         vec![tmux_row(AGENT, json!("gobby-codex-d0"), "%533")],
         vec![json!({"entry_id": format!("blocked:{ABSENT}"), "kind": "blocked"})],
     )

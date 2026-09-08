@@ -4,7 +4,8 @@
 use std::borrow::Cow;
 
 use gobby_client::app::{PaneId, Workspace};
-use gobby_client::ui::chrome::{terminal_label, Chrome, Mode};
+use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus};
+use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
 };
@@ -83,6 +84,47 @@ fn scripted(names: &[&str]) -> Workspace {
         ws.open_terminal(name, "native", "epoch")
             .expect("open scripted terminal");
     }
+    ws
+}
+
+/// herdr `Workspace::test_new(name)` carried a git checkout: one project per
+/// scripted terminal, named after it and checked out on `main`, the first
+/// one focused.
+fn with_projects(mut ws: Workspace) -> Workspace {
+    let names = ws.roster_terminal_ids();
+    let rows = SidebarRows {
+        projects: names
+            .iter()
+            .map(|name| ProjectRow {
+                id: format!("proj-{name}"),
+                name: name.clone(),
+                display_name: name.clone(),
+                checkout: Some(Checkout {
+                    machine_id: "local".to_string(),
+                    root_path: format!("/repos/{name}"),
+                }),
+                ..ProjectRow::default()
+            })
+            .collect(),
+        statuses: names
+            .iter()
+            .map(|name| {
+                (
+                    format!("proj-{name}"),
+                    SourceStatus {
+                        current_branch: Some("main".to_string()),
+                        ..SourceStatus::default()
+                    },
+                )
+            })
+            .collect(),
+        ..SidebarRows::default()
+    };
+    ws.daemon_mut().set_sidebar_rows(rows);
+    if let Some(first) = names.first() {
+        ws.select_project(format!("proj-{first}"));
+    }
+    ws.reconcile_subscribe_first().expect("install projects");
     ws
 }
 
@@ -242,7 +284,7 @@ fn herdr_help_label(name: &str) -> Option<&'static str> {
         "previous_attention" => "previous agent",
         "next_attention" => "next agent",
         "focus_attention" => "focus agent 1-9",
-        "switch_terminal" => "switch workspace 1-9",
+        "switch_project" => "switch workspace 1-9",
         "switch_tab" => "switch tab 1-9",
         "focus_pane_left" => "focus pane left",
         "focus_pane_down" => "focus pane down",
@@ -263,14 +305,18 @@ fn keybind_help_groups(chrome: &Chrome) -> Vec<(&'static str, Vec<HelpRow>)> {
             "workspaces / tabs",
             &[
                 "new_terminal",
+                "new_project",
                 "rename_terminal",
                 "close_terminal",
                 "previous_terminal",
                 "next_terminal",
+                "previous_project",
+                "next_project",
                 "previous_attention",
                 "next_attention",
                 "focus_attention",
-                "switch_terminal",
+                "switch_project",
+                "toggle_group",
                 "new_tab",
                 "rename_tab",
                 "previous_tab",
@@ -629,13 +675,16 @@ parity_tests! {
                 chrome.view.terminal_area,
                 Rect::new(0, 1, 80, 19 - STATUS_ROWS)
             );
-            assert!(chrome.view.roster_hit_areas.is_empty());
+            assert!(chrome.view.project_hit_areas.is_empty());
 
             render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
         }
 
         fn collapsed_sidebar_keeps_active_workspace_highlight_in_terminal_mode() {
-            let ws = scripted(&["one", "two"]);
+            // herdr's active workspace is gclient's focused project: the
+            // rail highlights the second project card.
+            let mut ws = with_projects(scripted(&["one", "two"]));
+            ws.select_project("proj-two");
             let mut chrome = chrome_for(&ws, "two");
             chrome.sidebar.collapsed = true;
             chrome.sidebar.selected = 0;
@@ -651,12 +700,10 @@ parity_tests! {
             assert_eq!(active_style.bg, Some(palette().surface_dim));
         }
 
-        // TODO(#21908): herdr's workspace carried a git checkout on `main` and
-        // rendered its git-space detail line under the row. gclient's roster
-        // row is bare until the client worktree/git-space plan lands.
-        #[deferred = "TODO(#21908): the sidebar git-space detail line does not exist yet"]
         fn expanded_sidebar_workspace_rows_show_state_before_name_without_numbers() {
-            let ws = scripted(&["one"]);
+            // herdr's workspace carried a git checkout on `main`; gclient's
+            // project card shows the branch on its second line.
+            let ws = with_projects(scripted(&["one"]));
             let mut chrome = chrome_for(&ws, "one");
             chrome.sidebar.selected = 0;
             chrome.mode = Mode::Navigate;
@@ -1014,7 +1061,7 @@ parity_tests! {
                 r#"
 [bindings]
 switch_tab = ["prefix+1..9", "alt+1..9"]
-switch_terminal = "ctrl+1..9"
+switch_project = "ctrl+1..9"
 "#,
             )
             .expect("config parses");
@@ -1167,12 +1214,13 @@ switch_terminal = "ctrl+1..9"
                     // Rehashed when the status line gained the transport
                     // field, again when the control indicator became a
                     // bracketed button, and again when a frameless pane began
-                    // naming its wait (2.3): 4.1.3 requires a glyph change to
-                    // fail here, so this digest moves only alongside a
-                    // deliberate render change.
+                    // naming its wait (2.3), and again when the sidebar
+                    // became project cards over agent rows (3.1): 4.1.3
+                    // requires a glyph change to fail here, so this digest
+                    // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "5eb01ddf563425949cc094f826c5affb3e0869c457e42239d6c04b7250584962"
+                        "8f85cb14d54b25517b3c1d9daa0f2b0a797adff0313326f99ccd9432bba835cf"
                     );
                 });
         }
@@ -1226,13 +1274,14 @@ fn rendered_hits_match_drawn_cells() {
         "seq": 1,
         "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
     }));
-    ws.reconcile_subscribe_first().expect("install roster");
     ws.open_terminal("term-alpha", "native", "epoch")
         .expect("open term-alpha");
     for n in 2..=20 {
         ws.open_terminal(&format!("t{n:02}"), "native", "epoch")
             .expect("open scripted terminal");
     }
+    // One project card per terminal: twenty cards overflow the section.
+    let ws = with_projects(ws);
     let mut chrome = chrome_for(&ws, "term-alpha");
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
@@ -1279,18 +1328,20 @@ fn rendered_hits_match_drawn_cells() {
     );
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
     assert_eq!(cell(&terminal, toggle.x, toggle.y).symbol(), "«");
-    assert!(!view.roster_hit_areas.is_empty());
-    assert!(view.roster_hit_areas.len() < 20, "roster overflows");
-    for (id, rect) in &view.roster_hit_areas {
-        let label = terminal_label(&ws, id);
+    assert!(!view.project_hit_areas.is_empty());
+    assert!(view.project_hit_areas.len() < 20, "projects overflow");
+    for (id, rect) in &view.project_hit_areas {
+        let name = id.strip_prefix("proj-").expect("project id");
         let text = hit_text(&terminal, *rect);
-        assert!(text.contains(&label), "roster {id} at {rect:?}: {text:?}");
+        assert!(text.contains(name), "project {id} at {rect:?}: {text:?}");
     }
-    let (entry, rect) = view.attention_hit_areas.first().expect("attention row");
+    let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     assert!(hit_text(&terminal, *rect).contains("term-alpha"));
-    let lane = view.roster_scrollbar_hit_area.expect("roster scrollbar");
-    assert_eq!(view.attention_scrollbar_hit_area, None);
+    let lane = view
+        .projects_scrollbar_hit_area
+        .expect("projects scrollbar");
+    assert_eq!(view.agents_scrollbar_hit_area, None);
     for y in lane.y..lane.bottom() {
         assert_eq!(cell(&terminal, lane.x, y).symbol(), "▕", "lane row {y}");
     }

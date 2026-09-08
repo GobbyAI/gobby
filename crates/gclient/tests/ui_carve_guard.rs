@@ -22,7 +22,6 @@ const FORBIDDEN: &[&str] = &[
     "onboarding",
     "release_notes",
     "release notes",
-    "worktree",
     "is_mobile",
     "mobile_header",
     "ToastHerdr",
@@ -79,7 +78,11 @@ fn scripted_workspace() -> Workspace {
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
-        "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
+        }]
     }));
     ws.reconcile_subscribe_first().unwrap();
     ws.open_terminal("term-alpha", "native", "epoch").unwrap();
@@ -200,7 +203,9 @@ fn carve_matches_upstream_map_and_renders_data() {
         })
         .unwrap();
     let side = screen(&terminal);
-    for needle in ["term-alpha", "term-beta", "blocked"] {
+    // The sidebar lists projects and agents; term-beta, a plain terminal
+    // with no entry, shows in the tab bar instead.
+    for needle in [" projects", " agents", "term-alpha", "blocked"] {
         assert!(side.contains(needle), "sidebar lacks {needle:?}:\n{side}");
     }
 

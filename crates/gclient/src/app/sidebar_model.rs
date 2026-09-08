@@ -4,7 +4,7 @@
 //! join; the `Workspace` methods below own the cached inputs and the refetch
 //! bookkeeping around it.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -55,7 +55,6 @@ pub struct ProjectEntry {
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub worktrees: Vec<WorktreeEntry>,
-    pub collapsed: bool,
     pub state: RowState,
 }
 
@@ -96,8 +95,6 @@ pub struct SidebarInputs<'a> {
     pub rows: &'a SidebarRows,
     pub roster: &'a [RosterEntry],
     pub panes: &'a [&'a Pane],
-    /// Project ids the user collapsed; `build` carries them over.
-    pub collapsed: &'a HashSet<String>,
     pub git_refreshed_at: Instant,
 }
 
@@ -246,7 +243,6 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
         ahead: status.and_then(|status| status.ahead),
         behind: status.and_then(|status| status.behind),
         worktrees,
-        collapsed: inputs.collapsed.contains(&row.id),
         state: most_urgent(own.iter().map(|agent| agent.state)),
     }
 }
@@ -346,20 +342,12 @@ impl<D: Daemon> Workspace<D> {
 
     pub(super) fn rebuild_sidebar(&mut self) {
         let panes: Vec<&Pane> = self.panes.values().collect();
-        let collapsed: HashSet<String> = self
-            .sidebar
-            .projects
-            .iter()
-            .filter(|project| project.collapsed)
-            .map(|project| project.project_id.clone())
-            .collect();
         self.sidebar = build(&SidebarInputs {
             local_machine: &self.local_machine,
             focused_project: self.project_id.as_deref(),
             rows: &self.sidebar_rows,
             roster: &self.attention.entries,
             panes: &panes,
-            collapsed: &collapsed,
             git_refreshed_at: self.git_refreshed_at,
         });
     }

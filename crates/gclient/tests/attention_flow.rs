@@ -8,7 +8,7 @@ use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::attention_label;
 use gobby_client::ui::dialogs::Dialog;
-use gobby_client::ui::sidebar::{attention_body_rect, expanded_sections};
+use gobby_client::ui::sidebar::{agents_body_rect, expanded_sections};
 use gobby_client::ui::{render_workspace, Chrome, Mode};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -265,7 +265,7 @@ async fn attention_click_jumps_and_labels_the_terminal() {
     let mut probe = Chrome::dark();
     probe.compute_view(&workspace, area);
     let (_, attention) = expanded_sections(probe.view.sidebar_rect, None);
-    let body = attention_body_rect(attention, false);
+    let body = agents_body_rect(attention, false);
     let (column, row) = (body.x + 1, body.y);
 
     let mut terminal =

@@ -40,9 +40,9 @@ pub enum MouseGesture {
         origin_col: u16,
         moved: bool,
     },
-    /// A roster row is being dragged to reorder.
-    RosterDrag {
-        terminal_id: String,
+    /// A project card is being dragged to reorder the projects.
+    ProjectDrag {
+        project_id: String,
         origin_row: u16,
         moved: bool,
     },
@@ -50,7 +50,7 @@ pub enum MouseGesture {
     SplitDrag { border: usize },
     /// The sidebar edge is being dragged to resize the sidebar.
     SidebarDrag,
-    /// The roster/attention divider is being dragged.
+    /// The projects/agents divider is being dragged.
     SectionDrag,
     /// A sidebar section's scrollbar thumb is being dragged.
     SidebarScrollbarDrag {
@@ -105,8 +105,11 @@ pub enum MouseOutcome {
         pane: Option<PaneId>,
         entry_id: String,
     },
-    /// A roster row was dropped on another: the roster in its new order.
-    Reorder { order: Vec<String> },
+    /// A project card was clicked: make it the focused project.
+    FocusProject(String),
+    /// A worktree row was clicked: focus its project and open a shell there,
+    /// or reveal the tab that already shows it.
+    OpenWorktree(String),
     /// A selection inside a pane was finalized: the loop copies it through
     /// OSC 52 and keeps the text for middle-click paste.
     Copy,
@@ -130,9 +133,9 @@ pub enum MouseOutcome {
 /// on 1; one more keeps a click with a hair of jitter a click.
 pub const TAB_DRAG_THRESHOLD: u16 = 2;
 
-/// Rows a pressed roster row travels before its drag becomes a reorder
+/// Rows a pressed project card travels before its drag becomes a reorder
 /// (herdr `WORKSPACE_DRAG_THRESHOLD`).
-pub const ROSTER_DRAG_THRESHOLD: u16 = 1;
+pub const PROJECT_DRAG_THRESHOLD: u16 = 1;
 
 /// Rows one wheel notch moves a sidebar list (herdr `scroll_workspace_list`).
 pub const MOUSE_SCROLL_LINES: usize = 3;

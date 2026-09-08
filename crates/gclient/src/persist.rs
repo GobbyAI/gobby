@@ -53,12 +53,15 @@ impl LayoutNode {
     }
 }
 
-/// One tab of the snapshot; `focused` names the terminal in its focused slot.
+/// One tab of the snapshot; `focused` names the terminal in its focused slot
+/// and `worktree_id` the worktree a worktree row opened it in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TabSnapshot {
     pub title: String,
     pub layout: LayoutNode,
     pub focused: Option<String>,
+    #[serde(default)]
+    pub worktree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,6 +99,9 @@ pub struct SidebarSnapshot {
     pub width: u16,
     pub section_split: Option<u16>,
     pub machine_filter: Option<String>,
+    /// Project ids in the order the user dragged them into.
+    #[serde(default)]
+    pub project_order: Vec<String>,
 }
 
 /// Client-wide state: `~/.gobby/client/session.json`.

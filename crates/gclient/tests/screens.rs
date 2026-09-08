@@ -17,6 +17,7 @@
 //! Regenerate with:
 //!   `GOBBY_UPDATE_SCREENS=1 cargo nextest run -p gobby-client --test screens`
 
+use gobby_client::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
 use gobby_client::theme::{Palette, Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::{render_workspace, Chrome};
@@ -42,7 +43,7 @@ type ScriptedState = fn() -> (Workspace, Chrome);
 /// The scripted states, in the order the plan names them.
 const STATES: [(&str, ScriptedState); 4] = [
     ("empty_workspace", empty_workspace),
-    ("roster_attention", roster_attention),
+    ("projects_agents", projects_agents),
     ("split_live", split_live),
     ("help_dialog", help_dialog),
 ];
@@ -54,10 +55,52 @@ fn empty_workspace() -> (Workspace, Chrome) {
     (Workspace::scripted(), Chrome::dark())
 }
 
-/// A three-terminal roster with one attention prompt waiting on `term-alpha`.
-/// No pane is open in chrome, which isolates the sidebar from the tab surface.
-fn roster_attention() -> (Workspace, Chrome) {
+/// The sidebar rows behind `projects_agents`: `alpha` on `main`, two ahead
+/// and one behind, with one worktree child bound to a task; `beta` bare.
+fn project_rows() -> SidebarRows {
+    let project = |id: &str, name: &str| ProjectRow {
+        id: id.to_string(),
+        name: name.to_string(),
+        display_name: name.to_string(),
+        checkout: Some(Checkout {
+            machine_id: "local".to_string(),
+            root_path: format!("/repos/{name}"),
+        }),
+        ..ProjectRow::default()
+    };
+    SidebarRows {
+        projects: vec![project("proj-alpha", "alpha"), project("proj-beta", "beta")],
+        statuses: [(
+            "proj-alpha".to_string(),
+            SourceStatus {
+                current_branch: Some("main".to_string()),
+                ahead: Some(2),
+                behind: Some(1),
+                ..SourceStatus::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+        worktrees: vec![WorktreeRow {
+            id: "wt-1".to_string(),
+            project_id: "proj-alpha".to_string(),
+            task_id: Some("#123".to_string()),
+            branch_name: "worktree/feature".to_string(),
+            worktree_path: "/repos/alpha/.worktrees/feature".to_string(),
+            status: "active".to_string(),
+            workspace_role: "task".to_string(),
+            ..WorktreeRow::default()
+        }],
+        ..SidebarRows::default()
+    }
+}
+
+/// Two projects with `alpha` focused, its worktree child listed under it,
+/// and one agent waiting for attention on `term-alpha`. No pane is open in
+/// chrome, which isolates the sidebar from the tab surface.
+fn projects_agents() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(project_rows());
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
@@ -67,6 +110,7 @@ fn roster_attention() -> (Workspace, Chrome) {
             "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
         }]
     }));
+    ws.select_project("proj-alpha");
     ws.reconcile_subscribe_first().expect("install roster");
     for terminal_id in ["term-alpha", "term-beta", "term-gamma"] {
         ws.open_terminal(terminal_id, "native", "epoch")
@@ -82,7 +126,7 @@ fn roster_attention() -> (Workspace, Chrome) {
 /// and focusing it puts that transport in the status line, which is the field
 /// that distinguishes the two attach paths.
 fn split_live() -> (Workspace, Chrome) {
-    let (mut ws, mut chrome) = roster_attention();
+    let (mut ws, mut chrome) = projects_agents();
     let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");
     ws.reattach_frames(beta).expect("reattach term-beta");
@@ -287,6 +331,69 @@ fn screens_match_committed_captures() {
             first_difference(&rendered, &committed)
         );
     }
+}
+
+/// 3.1.1: the projects section renders each project as a two-line card
+/// (state dot, name, then branch with the ahead/behind counts), lists its
+/// worktrees under it, and the agents section follows; the collapsed rail
+/// numbers the projects. The committed capture pins the exact layout.
+#[test]
+fn projects_agents_golden() {
+    let theme = Theme::new(ThemeKind::Dark);
+    let rendered = deterministic_capture("projects_agents", projects_agents, &theme);
+    let glyph_rows: Vec<&str> = rendered
+        .lines()
+        .filter_map(|line| line.split_once(" |"))
+        .map(|(_, glyphs)| glyphs)
+        .collect();
+    let row_containing = |needle: &str| {
+        glyph_rows
+            .iter()
+            .position(|row| row.contains(needle))
+            .unwrap_or_else(|| panic!("no row contains {needle:?}\n{rendered}"))
+    };
+
+    let header = row_containing(" projects");
+    // alpha carries the most urgent state of its bound agents: blocked.
+    let alpha = row_containing("● alpha");
+    assert_eq!(alpha, header + 2, "the card follows the two-row header");
+    assert!(
+        glyph_rows[alpha + 1].starts_with("   main ↑2 ↓1"),
+        "branch line: {:?}",
+        glyph_rows[alpha + 1]
+    );
+    assert!(
+        glyph_rows[alpha + 2].starts_with("   └─ ○ feature · #123"),
+        "worktree line: {:?}",
+        glyph_rows[alpha + 2]
+    );
+    let beta = row_containing("○ beta");
+    assert_eq!(beta, alpha + 3);
+    assert!(
+        row_containing(" agents") > beta,
+        "the agents section follows the projects"
+    );
+    assert!(
+        row_containing("term-alpha") > row_containing(" agents"),
+        "the attention entry lists under agents"
+    );
+
+    let (ws, mut chrome) = projects_agents();
+    chrome.sidebar.collapsed = true;
+    let rail = capture("projects_agents", &render(&ws, &mut chrome), &theme);
+    assert!(
+        rail.lines().any(|line| line.contains("|1 ●")),
+        "the rail numbers the first project\n{rail}"
+    );
+    assert!(rail.lines().any(|line| line.contains("|2 ○")));
+
+    let committed = fs::read_to_string(fixture_path("projects_agents"))
+        .unwrap_or_else(|error| panic!("projects_agents golden: {error}"));
+    assert!(
+        rendered == committed,
+        "projects_agents drifted from its capture\n{}",
+        first_difference(&rendered, &committed)
+    );
 }
 
 /// 4.2.1's second half. The tab bar is chrome and sits nowhere near a pane

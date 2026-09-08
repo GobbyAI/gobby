@@ -11,6 +11,7 @@ use crate::prefs::{load_prefs, prefs_path};
 use crate::ui::chrome::attention_pane;
 use crate::ui::dialogs::{CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
+use crate::ui::sidebar_rows::{displayed_project_ids, project_rows, RowKind};
 use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
@@ -25,6 +26,7 @@ use super::control::{
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
+use super::projects::{focus_project, open_worktree};
 
 /// Reap the slots whose pane left the workspace and the tabs that emptied.
 /// Panes are never opened here: the tab bar is restored from the snapshot or
@@ -114,9 +116,12 @@ pub(super) async fn apply_live_mouse_outcome(
                 });
             }
         }
-        MouseOutcome::Reorder { order } => workspace
-            .set_tab_order(&order)
-            .map_err(|error| FrameError::Other(error.to_string()))?,
+        MouseOutcome::FocusProject(project_id) => {
+            focus_project(workspace, chrome, &project_id).await?;
+        }
+        MouseOutcome::OpenWorktree(worktree_id) => {
+            open_worktree(workspace, chrome, &worktree_id).await?;
+        }
         MouseOutcome::Menu { kind, action } => {
             return apply_live_menu_action(workspace, chrome, kind, action).await;
         }
@@ -135,6 +140,12 @@ pub(super) async fn apply_live_modal_outcome(
         ModalOutcome::Focus(pane) => {
             chrome.focus_pane(pane);
             focus_live_pane(workspace, pane).await?;
+        }
+        ModalOutcome::FocusProject(project_id) => {
+            focus_project(workspace, chrome, &project_id).await?;
+        }
+        ModalOutcome::OpenWorktree(worktree_id) => {
+            open_worktree(workspace, chrome, &worktree_id).await?;
         }
         ModalOutcome::Action(Action::Quit) => return Ok(true),
         ModalOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
@@ -234,6 +245,9 @@ pub(super) async fn handle_live_action(
             spawn_live_terminal(workspace, chrome, Placement::SplitDown).await?;
         }
         Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
+        // The add-project dialog lands in plan 3.3; the chord and the footer
+        // button already route here.
+        Action::NewProject => {}
         Action::CloseTerminal | Action::ClosePane => {
             if let Some(pane_id) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane_id).await?;
@@ -286,14 +300,35 @@ pub(super) async fn handle_live_action(
         Action::NextTerminal | Action::CyclePaneNext => {
             focus_relative_live_pane(workspace, chrome, 1).await?;
         }
-        Action::SwitchTerminal(index) => {
-            let pane_id = usize::from(index).checked_sub(1).and_then(|index| {
-                let terminal_id = workspace.roster_terminal_ids().into_iter().nth(index)?;
-                workspace.pane_for_terminal(&terminal_id)
+        Action::SwitchProject(index) => {
+            let project_id = usize::from(index).checked_sub(1).and_then(|index| {
+                displayed_project_ids(workspace, chrome)
+                    .into_iter()
+                    .nth(index)
             });
-            if let Some(pane_id) = pane_id {
-                chrome.focus_pane(pane_id);
-                focus_live_pane(workspace, pane_id).await?;
+            if let Some(project_id) = project_id {
+                focus_project(workspace, chrome, &project_id).await?;
+            }
+        }
+        Action::PreviousProject | Action::NextProject => {
+            let ids = displayed_project_ids(workspace, chrome);
+            if !ids.is_empty() {
+                let current = workspace
+                    .project_id()
+                    .and_then(|id| ids.iter().position(|candidate| candidate == id))
+                    .unwrap_or(0);
+                let delta: isize = if action == Action::PreviousProject {
+                    -1
+                } else {
+                    1
+                };
+                let next = (current as isize + delta).rem_euclid(ids.len() as isize) as usize;
+                focus_project(workspace, chrome, &ids[next]).await?;
+            }
+        }
+        Action::ToggleGroup => {
+            if let Some(project_id) = group_target(workspace, chrome) {
+                chrome.sidebar.toggle_group(&project_id);
             }
         }
         Action::Zoom => {
@@ -357,13 +392,13 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::NavigateUp | Action::NavigateDown => {
-            let roster_len = workspace.roster_terminal_ids().len();
-            if roster_len > 0 {
-                let selected = chrome.sidebar.selected.min(roster_len - 1);
+            let rows_len = project_rows(workspace, chrome).len();
+            if rows_len > 0 {
+                let selected = chrome.sidebar.selected.min(rows_len - 1);
                 chrome.sidebar.selected = if action == Action::NavigateUp {
                     selected.saturating_sub(1)
                 } else {
-                    (selected + 1).min(roster_len - 1)
+                    (selected + 1).min(rows_len - 1)
                 };
             }
             chrome.mode = Mode::Navigate;
@@ -476,7 +511,7 @@ async fn activate_relative_live_tab(
 
 /// Make tab `index` active through its focused pane so the lease follows;
 /// out of range is ignored.
-async fn activate_live_tab(
+pub(super) async fn activate_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     index: usize,
@@ -604,23 +639,50 @@ pub(super) async fn focus_relative_live_pane(
     focus_live_pane(workspace, pane_ids[next]).await
 }
 
+/// The project whose group `ToggleGroup` folds: the one under the navigate
+/// cursor (a worktree row counts for its card), else the focused project.
+fn group_target(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Option<String> {
+    let rows = project_rows(workspace, chrome);
+    let under_cursor = (chrome.mode == Mode::Navigate)
+        .then(|| {
+            rows[..rows.len().min(chrome.sidebar.selected + 1)]
+                .iter()
+                .rev()
+                .find(|row| row.kind == RowKind::Project)
+                .map(|row| row.id.clone())
+        })
+        .flatten();
+    under_cursor.or_else(|| workspace.project_id().map(str::to_owned))
+}
+
 /// Spawn a terminal and show it where `placement` says: in a fresh tab, beside
-/// the focused slot, or under it. The chrome sync afterwards still covers a
-/// terminal the roster has not reported yet.
+/// the focused slot, or under it. A fresh tab opens in the focused checkout.
 pub(super) async fn spawn_live_terminal(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     placement: Placement,
+) -> Result<(), FrameError> {
+    let cwd = match placement {
+        Placement::Tab => workspace.focused_checkout_path(),
+        Placement::SplitRight | Placement::SplitDown => None,
+    };
+    spawn_live_shell(workspace, chrome, placement, cwd).await
+}
+
+/// `spawn_live_terminal` with an explicit working directory. The chrome sync
+/// afterwards still covers a terminal the roster has not reported yet.
+pub(super) async fn spawn_live_shell(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    placement: Placement,
+    cwd: Option<String>,
 ) -> Result<(), FrameError> {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return Ok(());
     }
     let request = SpawnRequest {
         project_id: workspace.project_id().map(str::to_owned),
-        cwd: match placement {
-            Placement::Tab => workspace.focused_checkout_path(),
-            Placement::SplitRight | Placement::SplitDown => None,
-        },
+        cwd,
         ..SpawnRequest::default()
     };
     match workspace.daemon().spawn(request).await? {

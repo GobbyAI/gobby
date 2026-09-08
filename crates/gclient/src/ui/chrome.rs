@@ -17,11 +17,12 @@ use crate::ui::navigator::NavigatorState;
 use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
 use crate::ui::sidebar;
+use crate::ui::sidebar_rows;
 use crate::ui::status::Toast;
 use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 /// Collapsed sidebar width (herdr `COLLAPSED_WIDTH`).
@@ -205,12 +206,17 @@ pub struct SidebarState {
     pub width: u16,
     pub min_width: u16,
     pub max_width: u16,
-    /// Rows given to the roster section before the attention panel.
+    /// Rows given to the projects section before the agents panel.
     pub section_split: Option<u16>,
     pub scroll: usize,
-    pub attention_scroll: usize,
-    /// Selected roster row (navigate mode).
+    pub agents_scroll: usize,
+    /// Selected project-section row, worktree rows included (navigate mode).
     pub selected: usize,
+    /// Project ids in the order the user dragged them into; projects the
+    /// order does not name follow in model order. `session.json` keeps it.
+    pub project_order: Vec<String>,
+    /// Projects whose worktree rows are folded under the card.
+    pub collapsed_projects: BTreeSet<String>,
     /// Machine whose agents the sidebar lists; none lists every machine.
     pub machine_filter: Option<String>,
 }
@@ -225,8 +231,10 @@ impl Default for SidebarState {
             max_width: 36,
             section_split: None,
             scroll: 0,
-            attention_scroll: 0,
+            agents_scroll: 0,
             selected: 0,
+            project_order: Vec::new(),
+            collapsed_projects: BTreeSet::new(),
             machine_filter: None,
         }
     }
@@ -236,8 +244,15 @@ impl SidebarState {
     /// The scroll position of one list section.
     pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
         match section {
-            SidebarSection::Roster => &mut self.scroll,
-            SidebarSection::Attention => &mut self.attention_scroll,
+            SidebarSection::Projects => &mut self.scroll,
+            SidebarSection::Agents => &mut self.agents_scroll,
+        }
+    }
+
+    /// Collapse `project_id`'s worktree rows, or expand them again.
+    pub fn toggle_group(&mut self, project_id: &str) {
+        if !self.collapsed_projects.remove(project_id) {
+            self.collapsed_projects.insert(project_id.to_owned());
         }
     }
 
@@ -249,7 +264,7 @@ impl SidebarState {
     }
 
     /// herdr `set_sidebar_section_split`: the pointer row becomes the first
-    /// attention row, so the roster keeps the rows above it and each section
+    /// agents row, so the projects keep the rows above it and each section
     /// keeps at least its header. A sidebar under six rows keeps its fixed
     /// halves.
     pub fn set_split_from_row(&mut self, area: Rect, row: u16) {
@@ -267,6 +282,9 @@ pub struct Tab {
     pub layout: TileLayout,
     pub slots: HashMap<layout::PaneId, PaneId>,
     pub zoomed: bool,
+    /// The worktree this tab's shell was opened in, when a worktree row
+    /// opened it; a second click on that row reveals this tab.
+    pub worktree_id: Option<String>,
 }
 
 impl Tab {
@@ -279,6 +297,7 @@ impl Tab {
             layout,
             slots,
             zoomed: false,
+            worktree_id: None,
         }
     }
 
@@ -293,6 +312,7 @@ impl Tab {
             layout,
             slots,
             zoomed: false,
+            worktree_id: None,
         }
     }
 
@@ -323,17 +343,24 @@ pub struct ViewState {
     pub toast_hit_area: Option<Rect>,
     pub pane_infos: Vec<PaneInfo>,
     pub split_borders: Vec<SplitBorder>,
-    /// Roster rows drawn in the sidebar, by terminal id.
-    pub roster_hit_areas: Vec<(String, Rect)>,
-    /// Attention rows drawn in the sidebar, by entry id.
-    pub attention_hit_areas: Vec<(String, Rect)>,
+    /// Project cards drawn in the sidebar, by project id.
+    pub project_hit_areas: Vec<(String, Rect)>,
+    /// Worktree rows drawn under their cards, by worktree id.
+    pub worktree_hit_areas: Vec<(String, Rect)>,
+    /// The `▸`/`▾` cell of each card that has worktrees, by project id.
+    pub group_toggle_hit_areas: Vec<(String, Rect)>,
+    pub projects_new_hit_area: Option<Rect>,
+    pub projects_menu_hit_area: Option<Rect>,
+    /// Agent rows drawn in the sidebar, by entry id.
+    pub agent_hit_areas: Vec<(String, Rect)>,
+    pub machine_filter_hit_area: Option<Rect>,
     /// The `│` column between the sidebar and the content column.
     pub sidebar_divider_x: Option<u16>,
-    /// The `─` row between the roster and attention sections.
+    /// The `─` row between the projects and agents sections.
     pub sidebar_section_divider_y: Option<u16>,
     pub sidebar_toggle_hit_area: Option<Rect>,
-    pub roster_scrollbar_hit_area: Option<Rect>,
-    pub attention_scrollbar_hit_area: Option<Rect>,
+    pub projects_scrollbar_hit_area: Option<Rect>,
+    pub agents_scrollbar_hit_area: Option<Rect>,
     /// Leading control-state span of the status line.
     pub control_indicator_hit_area: Option<Rect>,
     /// Settings popup including its border, while the overlay is drawn.
@@ -359,10 +386,15 @@ impl ViewState {
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
         self.tab_scroll_right_hit_area = tab_bar.scroll_right;
         self.new_tab_hit_area = tab_bar.new_tab;
-        self.roster_hit_areas = sidebar.roster;
-        self.attention_hit_areas = sidebar.attention;
-        self.roster_scrollbar_hit_area = sidebar.roster_scrollbar;
-        self.attention_scrollbar_hit_area = sidebar.attention_scrollbar;
+        self.project_hit_areas = sidebar.projects;
+        self.worktree_hit_areas = sidebar.worktrees;
+        self.group_toggle_hit_areas = sidebar.group_toggles;
+        self.projects_new_hit_area = sidebar.projects_new;
+        self.projects_menu_hit_area = sidebar.projects_menu;
+        self.agent_hit_areas = sidebar.agents;
+        self.machine_filter_hit_area = sidebar.machine_filter;
+        self.projects_scrollbar_hit_area = sidebar.projects_scrollbar;
+        self.agents_scrollbar_hit_area = sidebar.agents_scrollbar;
         self.sidebar_toggle_hit_area = sidebar.toggle;
         self.control_indicator_hit_area = control_indicator;
         self.toast_hit_area = toast;
@@ -654,9 +686,9 @@ impl Chrome {
                 );
             }
         }
-        let roster_len = ws.roster_terminal_ids().len();
-        if roster_len > 0 && self.sidebar.selected >= roster_len {
-            self.sidebar.selected = roster_len - 1;
+        let rows = sidebar_rows::project_rows(ws, self).len();
+        if rows > 0 && self.sidebar.selected >= rows {
+            self.sidebar.selected = rows - 1;
         }
         let sidebar_divider_x =
             (sidebar_rect.width > 0).then(|| sidebar_rect.x + sidebar_rect.width - 1);

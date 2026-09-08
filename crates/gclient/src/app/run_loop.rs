@@ -194,15 +194,24 @@ fn apply_scripted_mouse_outcome(
             .focus_pane(pane)
             .map_err(|error| FrameError::Other(error.to_string()))?,
         MouseOutcome::Attention { pane: None, .. } => {}
-        MouseOutcome::Reorder { order } => workspace
-            .set_tab_order(&order)
-            .map_err(|error| FrameError::Other(error.to_string()))?,
+        MouseOutcome::FocusProject(project_id) => {
+            scripted_focus_project(workspace, chrome, &project_id)
+        }
+        // The scripted daemon spawns nothing, so a worktree has no shell to open.
+        MouseOutcome::OpenWorktree(_) => {}
         // The scripted loop has no terminal to reach: keep the text, skip OSC 52.
         MouseOutcome::Copy => {
             copy_selection(workspace, chrome, &mut std::io::sink())?;
         }
     }
     Ok(false)
+}
+
+/// The scripted loop's project focus: the workspace follows the sidebar and
+/// the chrome swaps to the project's tab set.
+fn scripted_focus_project(workspace: &mut Workspace, chrome: &mut Chrome, project_id: &str) {
+    workspace.select_project(project_id);
+    chrome.project_tabs.focus(project_id);
 }
 
 /// The scripted loop's action effects are chrome-only. Returns true on `Quit`.
@@ -291,6 +300,10 @@ fn apply_scripted_modal_outcome(
                 .focus_pane(pane)
                 .map_err(|error| FrameError::Other(error.to_string()))?;
         }
+        ModalOutcome::FocusProject(project_id) => {
+            scripted_focus_project(workspace, chrome, &project_id);
+        }
+        ModalOutcome::OpenWorktree(_) => {}
         ModalOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
         ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
         ModalOutcome::Menu { kind, action } => {

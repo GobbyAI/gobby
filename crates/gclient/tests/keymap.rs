@@ -35,7 +35,7 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
     let prefix_map = [
         (ch('?'), Action::Help),
         (ch('s'), Action::Settings),
-        (shift('N'), Action::NewTerminal),
+        (shift('N'), Action::NewProject),
         (shift('W'), Action::RenameTerminal),
         (shift('D'), Action::CloseTerminal),
         (ch('w'), Action::TerminalPicker),
@@ -101,12 +101,16 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         assert_eq!(defaults.lookup_direct(&event), Some(action), "{event:?}");
     }
     for name in [
+        "new_terminal",
         "previous_terminal",
         "next_terminal",
+        "previous_project",
+        "next_project",
+        "toggle_group",
         "previous_attention",
         "next_attention",
         "focus_attention",
-        "switch_terminal",
+        "switch_project",
         "last_pane",
     ] {
         assert!(
