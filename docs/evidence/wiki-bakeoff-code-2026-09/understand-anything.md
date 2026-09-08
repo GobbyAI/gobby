@@ -81,7 +81,7 @@ presentation disposition. Domain graph SHA-256:
 
 ## C2 unchanged rerun
 
-`C2/.ua/` holds 62 native files. The exclusion-aware helper observed 141 files,
+`C2/.ua/` holds 63 native files. The exclusion-aware helper observed 141 files,
 50 import-bearing files, 186 recovered imports, zero reanalysis files, and the
 same four deliberately absent operational-plan files. Native merge, incremental
 symbol validation, and finalization passed. Graph SHA-256:
@@ -90,7 +90,7 @@ The hash change records finalization metadata, not a claimed source change.
 
 ## C7 supported interruption and recovery
 
-`C7/.ua/` holds 62 native files. The foreground native incremental preparation
+`C7/.ua/` holds 63 native files. The foreground native incremental preparation
 was interrupted once after its observed `scan-project:` progress marker. Its
 preserved raw record at `results/understand-anything/C7/interruption.json` has
 exit `-15` and `forced_kill: false`. Recovery reran the pinned helper once with
@@ -100,9 +100,9 @@ with 141 files, 186 recovered imports, zero reanalysis files, and graph SHA-256
 
 ## C8 retrieval/chat baseline and change
 
-`C8-baseline/.ua/` holds 63 files and graph SHA-256
+`C8-baseline/.ua/` holds 64 files and graph SHA-256
 `c4dbe92a90fa05668b8c4f949dbf824356404f56783fd846ea8523981eef8f72`;
-`C8-change/.ua/` holds 39 files and graph SHA-256
+`C8-change/.ua/` holds 40 files and graph SHA-256
 `289b7095534d2a88a502592f7c26927b736050e8be83153938a79a46b0c87bf7`.
 Their `chat-retrieval.json` receipts bind respectively to the baseline and
 changed commits. The pinned plugin has graph/dashboard artifacts but no native
@@ -113,7 +113,7 @@ evidence, not a claim of wiki-backed chat or fresh-source retrieval.
 
 ## C9 presentation baseline and change
 
-`C9-baseline/.ua/` holds 63 files and `C9-change/.ua/` 39. Both preserve complete
+`C9-baseline/.ua/` holds 64 files and `C9-change/.ua/` 40. Both preserve complete
 native state and `presentation.json`. The local dashboard is a supported graph
 viewer, while the pinned plugin has no native export or presentation generator;
 no fabricated presentation was produced. The bound graph hashes are the C8
