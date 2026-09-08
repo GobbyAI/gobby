@@ -12,7 +12,12 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
+from gobby.config.validation_detection import classify_validation_segments
+from gobby.tasks.transcript_evidence import (
+    TranscriptEdit,
+    TranscriptEvidence,
+    TranscriptValidationRun,
+)
 from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
     classify_validation_command_equivalence,
@@ -33,6 +38,30 @@ _TEST_TYPES_AUDIT_COMMAND = (
 _TEST_TYPES_BASELINE = ".gobby/test-types-baseline.json"
 _GENERIC_COMMAND_WORDS = frozenset(
     {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
+)
+_CRITERIA_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_CRITERION_COMMAND_PREFIXES = frozenset(
+    {
+        "bash",
+        "bun",
+        "bunx",
+        "cargo",
+        "gobby",
+        "git",
+        "go",
+        "just",
+        "make",
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "python",
+        "python3",
+        "sh",
+        "uv",
+        "yarn",
+        "zsh",
+    }
 )
 
 
@@ -169,6 +198,12 @@ def evaluate_validation_commands(
         }
         for run_category, run in sorted(unresolved.items())
     ]
+    criterion_commands = _criterion_command_records(
+        validation_criteria,
+        evidence,
+        last_edit_order=details["last_task_edit_order"],
+    )
+    criterion_command_gaps = [record for record in criterion_commands if not record["satisfied"]]
     details = {
         **details,
         "fresh_run_count": len(fresh_runs),
@@ -209,8 +244,19 @@ def evaluate_validation_commands(
             if latest_audit is not None
             else None
         ),
+        "criterion_commands": criterion_commands,
+        "criterion_command_gaps": criterion_command_gaps,
     }
     details = _bound_review_details(details, validation_criteria)
+
+    if criterion_command_gaps:
+        return CloseGateResult(
+            item=9,
+            name="validation_commands",
+            status="failed",
+            message=_criterion_command_gap_message(criterion_command_gaps),
+            details=details,
+        )
 
     # Exempt tasks still need the command record for their explicit criteria review.
     if not has_attributed_edits and not test_types_audit_required:
@@ -443,7 +489,11 @@ def _failure_command_description(command: str) -> str:
     return f"{command[:256]}… [command excerpt; sha256={digest}]"
 
 
-def _command_priority(record: Mapping[str, object], criteria: str) -> int:
+def _command_priority(
+    record: Mapping[str, object],
+    criteria: str,
+    criterion_cores: frozenset[str],
+) -> int:
     """Prefer exact raw/core commands, then invoked tools and explicit path arguments.
 
     Inline script contents and ordinary prose are never command-name evidence.
@@ -454,6 +504,8 @@ def _command_priority(record: Mapping[str, object], criteria: str) -> int:
     if not isinstance(core, str):
         core = classify_validation_command_equivalence(command).core_command
     criteria = criteria.casefold()
+    if core is not None and core.casefold() in criterion_cores:
+        return 3
     if any(value and value.casefold().strip() in criteria for value in (command, core)):
         return 3
     criterion_words = {word.rstrip(".") for word in re.findall(r"[\w./-]+", criteria)}
@@ -518,8 +570,15 @@ def _bound_review_details(details: dict[str, Any], criteria: str) -> dict[str, A
         "uncredited_runs": details["uncredited_runs"],
     }
     selected: dict[str, list[dict[str, object]]] = {key: [] for key in records}
+    criterion_cores = frozenset(
+        equivalence.core_command.casefold()
+        for match in _CRITERIA_CODE_SPAN_RE.finditer(criteria)
+        if (
+            equivalence := classify_validation_command_equivalence(match.group(1).strip())
+        ).core_command
+    )
     priorities = {
-        id(record): _command_priority(record, criteria)
+        id(record): _command_priority(record, criteria, criterion_cores)
         for entries in records.values()
         for record in entries
     }
@@ -678,12 +737,30 @@ def _uncredited_runs(
     last_edit_order: int | None,
 ) -> list[dict[str, object]]:
     uncredited: list[dict[str, object]] = []
-    for run in sorted(
+    runs = sorted(
         (*evidence.validation_runs, *evidence.command_runs),
         key=lambda item: (item.order, item.completed_at),
-    ):
+    )
+    fresh_success_cores = {
+        run.core_command
+        for run in runs
+        if (last_edit_order is None or run.order > last_edit_order)
+        and run.outcome == "success"
+        and not run.wrapped
+        and run.core_command is not None
+    }
+    for run in runs:
         if last_edit_order is not None and run.order <= last_edit_order:
-            uncredited.append({"command": run.command, "reason": "stale after a later task edit"})
+            if run.core_command in fresh_success_cores:
+                continue
+            record = {
+                **_execution_details(run),
+                "reason": "stale after a later task edit",
+            }
+            invalidating_edit = _first_invalidating_edit(evidence.edits, run.order)
+            if invalidating_edit is not None:
+                record["invalidating_edit"] = _edit_details(invalidating_edit)
+            uncredited.append(record)
         elif run.wrapped:
             uncredited.append(
                 {
@@ -695,6 +772,141 @@ def _uncredited_runs(
         elif run.outcome == "unknown":
             uncredited.append({"command": run.command, "reason": "unknown outcome"})
     return uncredited
+
+
+def _criterion_command_records(
+    criteria: str,
+    evidence: TranscriptEvidence,
+    *,
+    last_edit_order: int | None,
+) -> list[dict[str, object]]:
+    runs = sorted(
+        _expand_successful_and_segments((*evidence.validation_runs, *evidence.command_runs)),
+        key=lambda item: (item.order, item.completed_at),
+    )
+    observed_cores = {run.core_command for run in runs if run.core_command is not None}
+    records: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for match in _CRITERIA_CODE_SPAN_RE.finditer(criteria):
+        command = match.group(1).strip()
+        equivalence = classify_validation_command_equivalence(command)
+        core = equivalence.core_command
+        if not _looks_like_criterion_command(command, core, observed_cores):
+            continue
+        key = core or command
+        if key in seen:
+            continue
+        seen.add(key)
+        matching = [
+            run
+            for run in runs
+            if (core is not None and run.core_command == core)
+            or (core is None and run.command.strip() == command)
+        ]
+        fresh = [run for run in matching if last_edit_order is None or run.order > last_edit_order]
+        definitive = [
+            run
+            for run in fresh
+            if not run.wrapped and run.core_command is not None and run.outcome != "unknown"
+        ]
+        latest = definitive[-1] if definitive else None
+        if latest is not None:
+            status = "satisfied" if latest.outcome == "success" else "failed"
+            execution = _execution_details(latest)
+        elif fresh:
+            latest = fresh[-1]
+            status = "wrapped" if latest.wrapped else "unknown"
+            execution = _execution_details(latest)
+        elif matching:
+            latest = matching[-1]
+            status = "stale"
+            execution = _execution_details(latest)
+            invalidating_edit = _first_invalidating_edit(evidence.edits, latest.order)
+            if invalidating_edit is not None:
+                execution["invalidating_edit"] = _edit_details(invalidating_edit)
+        else:
+            status = "wrapped" if equivalence.wrapped else "missing"
+            execution = None
+        record: dict[str, object] = {
+            "command": command,
+            "core_command": core,
+            "status": status,
+            "satisfied": status == "satisfied",
+        }
+        if execution is not None:
+            record["execution"] = execution
+        if equivalence.wrapper_reason is not None:
+            record["wrapper_reason"] = equivalence.wrapper_reason
+        records.append(record)
+    return records
+
+
+def _looks_like_criterion_command(
+    command: str,
+    core_command: str | None,
+    observed_cores: set[str],
+) -> bool:
+    if core_command in observed_cores:
+        return True
+    if classify_validation_segments(command):
+        return True
+    tokens = safe_split(core_command or command)
+    if not tokens:
+        return False
+    return posixpath.basename(tokens[0]).casefold() in _CRITERION_COMMAND_PREFIXES
+
+
+def _execution_details(run: TranscriptValidationRun) -> dict[str, object]:
+    return {
+        "session_id": run.session_id,
+        "source": run.source,
+        "command": run.command,
+        "core_command": run.core_command,
+        "completed_at": run.completed_at.isoformat(),
+        "order": run.order,
+        "outcome": run.outcome,
+        "exit_code": run.exit_code,
+    }
+
+
+def _edit_details(edit: TranscriptEdit) -> dict[str, object]:
+    return {
+        "session_id": edit.session_id,
+        "source": edit.source,
+        "path": edit.path,
+        "timestamp": edit.timestamp.isoformat(),
+        "order": edit.order,
+        "tool_name": edit.tool_name,
+    }
+
+
+def _first_invalidating_edit(
+    edits: Iterable[TranscriptEdit], run_order: int
+) -> TranscriptEdit | None:
+    return min(
+        (edit for edit in edits if edit.order > run_order),
+        key=lambda edit: (edit.order, edit.timestamp, edit.path),
+        default=None,
+    )
+
+
+def _criterion_command_gap_message(gaps: list[dict[str, object]]) -> str:
+    actions: list[str] = []
+    for gap in gaps:
+        command = str(gap.get("core_command") or gap["command"])
+        status = str(gap["status"])
+        execution = gap.get("execution")
+        reason = status
+        if status == "stale" and isinstance(execution, Mapping):
+            invalidating_edit = execution.get("invalidating_edit")
+            if isinstance(invalidating_edit, Mapping):
+                reason = (
+                    f"execution order {execution['order']} at {execution['completed_at']} was "
+                    f"invalidated by {invalidating_edit['path']} at order "
+                    f"{invalidating_edit['order']} ({invalidating_edit['timestamp']})"
+                )
+        actions.append(f"Run `{command}` clean after the final task edit ({reason}).")
+    return "Required criterion commands are unsatisfied: " + " ".join(actions)
 
 
 def _degraded_message(evidence: TranscriptEvidence) -> str:

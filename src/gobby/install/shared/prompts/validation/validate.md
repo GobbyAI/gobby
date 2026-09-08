@@ -1,7 +1,7 @@
 ---
 name: validation-validate
 description: Bounded task-close criteria review
-version: "3.5"
+version: "3.6"
 variables:
   title:
     type: str
@@ -49,13 +49,15 @@ placebos, TDD sequencing, cumulative guards, and validation-command outcomes.
 Do not invent requirements, request receipt IDs, or demand fresh command output.
 
 The `validation_commands` checklist fact is gate 10's transcript-derived
-record of the validation commands the task sessions ran after the final task
-edit. Its `latest_runs` entries name the winning run per category with the
-command, `completed_at` timestamp, outcome, and exit code, and that record is
-authoritative: a criterion naming a validation command is satisfied on the
-command side by a `success` run of that exact command there. Never require a
-log, receipt, or other file committed to the repository as proof of a command
-run, and never ask for a run to be repeated or reproduced.
+record of the validation commands the task sessions ran. Its
+`criterion_commands` normalizes both the criterion and transcript commands
+through the same contract, including approved environment and directory
+prefixes. A satisfied entry is authoritative. `latest_runs` retains the
+verbatim execution, while `uncredited_runs` identifies unknown, wrapped, or
+stale executions and the edit that invalidated stale evidence. Review every
+command requirement and report every command gap in one verdict. Never require
+a log, receipt, or other file committed to the repository as proof of a
+command run, and never ask for a run to be repeated or reproduced.
 
 Operational acceptance actions demanded by the numbered criteria, such as
 install, restart, deploy, publish, cutover, and live smoke checks, require

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,6 +24,7 @@ from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
+    TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
@@ -375,6 +376,59 @@ async def test_close_preview_surfaces_uncredited_validation_runs() -> None:
     assert response["validation_commands"]["uncredited_runs"] == [
         {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_close_preview_returns_all_explicit_command_gaps_before_review() -> None:
+    stale_command = "uv run pytest tests/memory/test_recall.py -q"
+    missing_command = "uv run ruff check src/gobby/tasks/close_checklist.py"
+    transcript = TranscriptEvidence(
+        validation_runs=(
+            TranscriptValidationRun(
+                session_id=SESSION_ID,
+                source="claude",
+                command=f"GOBBY_TEST_PROTECT=1 {stale_command}",
+                categories=("test",),
+                matcher_id="pytest",
+                label="pytest",
+                outcome="success",
+                started_at=NOW,
+                completed_at=NOW,
+                order=1,
+                exit_code=0,
+            ),
+        ),
+        edits=(
+            TranscriptEdit(
+                session_id=SESSION_ID,
+                source="claude",
+                path="src/a.py",
+                timestamp=NOW + timedelta(seconds=1),
+                order=2,
+                tool_name="apply_patch",
+            ),
+        ),
+        sessions=(SESSION_ID,),
+    )
+    review = AsyncMock()
+
+    evaluation = await _evaluate(
+        _task(
+            escalated=False,
+            validation_criteria=f"`{stale_command}` passes. `{missing_command}` passes.",
+        ),
+        override_justification=None,
+        transcript=transcript,
+        review=review,
+        response_detail="concise",
+    )
+
+    response = evaluation.response(preview=True)
+    assert response["error"] == "validation_command_required"
+    assert response["message"].count("Run `") == 2
+    assert stale_command in response["message"]
+    assert missing_command in response["message"]
+    review.assert_not_awaited()
 
 
 @pytest.mark.asyncio
