@@ -962,6 +962,7 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["review_id"] == "review-id"
+    assert result["validator_run_id"] == "validator-run"
     assert result["criteria_review_duration_ms"] == 4.25
     assert pending_result["error"] == "agentic_review_pending"
     assert pending_result["review_id"] == "review-id"
@@ -1071,6 +1072,7 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
     assert result["closed"] is False
     assert result["can_close"] is False
     assert result["review_id"]
+    assert result["validator_run_id"] == "00000000-0000-4000-8000-000000000777"
     assert result["prompt_chars"] < result["prompt_limit"]
     assert 0 <= result["criteria_review_duration_ms"] < 50
     provider_call.assert_not_awaited()

@@ -67,8 +67,11 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         "6. Call `close_task` once"
     )
     assert content.index("6. Call `close_task` once") < content.index(
-        "7. Call `review_task_memories`"
+        '7. If `close_task` returns `error="agentic_review_required"`'
     )
+    assert content.index(
+        '7. If `close_task` returns `error="agentic_review_required"`'
+    ) < content.index("8. Call `review_task_memories`")
     assert "review_task_memories" not in content[: content.index("6. Call `close_task` once")]
     assert "Call `close_task` once with" in content
     assert "A ready call links the commit and closes atomically." in content
@@ -78,6 +81,16 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     assert "references/creation.md" in content
     assert "references/no-work-closures.md" in content
     assert "references/review-flows.md" in content
+
+
+def test_agentic_close_review_waits_once_and_parks_the_caller() -> None:
+    content = SKILL_PATH.read_text()
+    normalized = " ".join(content.split())
+
+    assert "`wait_for_agent(run_id=validator_run_id)` once" in normalized
+    assert "end the turn" in normalized
+    assert "Do not poll status or re-call `close_task` while the review runs" in normalized
+    assert "automatic durable completion subscription" in normalized
 
 
 def test_creation_guidance_uses_structured_named_test_references() -> None:

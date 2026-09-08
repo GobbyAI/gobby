@@ -195,6 +195,7 @@ async def launch_close_review(
         "blocking_reasons": [],
         "required_actions": [],
         "review_id": running.id,
+        "validator_run_id": run_id,
         "review_fingerprint": running.review_fingerprint,
         "deterministic_evidence_fingerprint": running.evidence_fingerprint,
         "review_status": running.status,
