@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
-import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +19,7 @@ from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.integrations.rtk import RTK_RULE_NAME, RtkProbe, clear_probe_cache, resolve_rtk
+from gobby.integrations.rtk import RTK_RULE_NAME, RtkProbe, clear_probe_cache
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -56,63 +56,81 @@ def _reset_rtk_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def fake_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Mimic ``rtk rewrite``: 0/3 print the rewrite, 1/2 print nothing."""
+    """Mimic RTK resolution and subprocess behavior without cold script execution."""
     executable = tmp_path / "rtk"
-    executable.write_text(
-        f"""#!{sys.executable}
-import json
-import os
-import sys
-import time
-
-args = sys.argv[1:]
-argv_log = os.environ.get("FAKE_RTK_ARGV_LOG")
-if argv_log:
-    with open(argv_log, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(args) + "\\n")
-if args == ["--version"]:
-    print("rtk 0.45.0")
-    raise SystemExit(0)
-if args == ["rewrite", "--help"]:
-    print("Arguments:\\n  [ARGS]...  Raw command to rewrite (e.g. \\"git status\\")")
-    raise SystemExit(0)
-
-command = args[args.index("--") + 1] if "--" in args else args[-1]
-mode = os.environ.get("FAKE_RTK_MODE", "rewrite")
-if mode == "pass":
-    raise SystemExit(1)
-if mode == "deny":
-    raise SystemExit(2)
-if mode == "ask":
-    sys.stdout.write(f"rtk {{command}}")
-    raise SystemExit(3)
-if mode == "runtime_error":
-    sys.stdout.write("[rtk: No such file or directory (os error 2)]")
-    raise SystemExit(0)
-if mode == "stderr_error":
-    sys.stdout.write(f"rtk {{command}}")
-    sys.stderr.write("rtk: rewrite failed")
-    raise SystemExit(0)
-if mode == "sleep":
-    time.sleep(2)
-    raise SystemExit(1)
-if mode == "invalid":
-    os.write(1, b"\\xff")
-    raise SystemExit(0)
-if mode == "oversized":
-    os.write(1, b"x" * (70 * 1024))
-    raise SystemExit(0)
-if mode == "unexpected":
-    raise SystemExit(7)
-sys.stdout.write(f"rtk {{command}}")
-""",
-        encoding="utf-8",
-    )
-    executable.chmod(0o755)
+    executable.touch()
     monkeypatch.setenv("GOBBY_RTK_BIN", str(executable))
-    # Keep the fake the only candidate: a host-installed rtk on PATH would
-    # otherwise absorb a failed probe and silently rewrite for real.
     monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+
+    probe = RtkProbe(path=executable, version="0.45.0", compatible=True)
+
+    def resolve_fake_rtk(*, timeout: float) -> RtkProbe | None:
+        del timeout
+        if os.environ.get("GOBBY_RTK_BIN") != str(executable):
+            return None
+        return probe
+
+    class FakeProcess:
+        def __init__(self, *, code: int, stdout: bytes = b"", stderr: bytes = b"") -> None:
+            self._code = code
+            self._delay = 2.0 if os.environ.get("FAKE_RTK_MODE") == "sleep" else 0.0
+            self.returncode: int | None = None
+            self.stdout = asyncio.StreamReader()
+            self.stdout.feed_data(stdout)
+            self.stdout.feed_eof()
+            self.stderr = asyncio.StreamReader()
+            self.stderr.feed_data(stderr)
+            self.stderr.feed_eof()
+
+        async def wait(self) -> int:
+            if self.returncode is not None:
+                return self.returncode
+            if self._delay:
+                await asyncio.sleep(self._delay)
+            self.returncode = self._code
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    async def create_fake_subprocess(*args: str, **kwargs: object) -> FakeProcess:
+        del kwargs
+        assert args[:3] == (str(executable), "rewrite", "--")
+        command = args[3]
+        argv_log = os.environ.get("FAKE_RTK_ARGV_LOG")
+        if argv_log:
+            Path(argv_log).write_text(
+                json.dumps(list(args[1:])) + "\n",
+                encoding="utf-8",
+            )
+
+        mode = os.environ.get("FAKE_RTK_MODE", "rewrite")
+        if mode == "pass":
+            return FakeProcess(code=1)
+        if mode == "deny":
+            return FakeProcess(code=2)
+        if mode == "ask":
+            return FakeProcess(code=3, stdout=f"rtk {command}".encode())
+        if mode == "runtime_error":
+            return FakeProcess(code=0, stdout=b"[rtk: No such file or directory (os error 2)]")
+        if mode == "stderr_error":
+            return FakeProcess(
+                code=0,
+                stdout=f"rtk {command}".encode(),
+                stderr=b"rtk: rewrite failed",
+            )
+        if mode == "unsupported_jq":
+            return FakeProcess(code=3, stdout=os.environ["FAKE_RTK_REWRITE"].encode())
+        if mode == "invalid":
+            return FakeProcess(code=0, stdout=b"\xff")
+        if mode == "oversized":
+            return FakeProcess(code=0, stdout=b"x" * (70 * 1024))
+        if mode == "unexpected":
+            return FakeProcess(code=7)
+        return FakeProcess(code=0, stdout=f"rtk {command}".encode())
+
+    monkeypatch.setattr(proxy_hooks, "resolve_rtk", resolve_fake_rtk)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_fake_subprocess)
     return executable
 
 
@@ -270,6 +288,39 @@ async def test_rtk_rewrite_is_permission_neutral(
     response = await RuleEngine(db).evaluate(_event(), SESSION_ID, {})
 
     assert response.modified_input == {"command": "rtk git status"}
+    assert response.permission_decision is None
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        "rtk jq empty manifest.json",
+        "uv run rtk jq empty manifest.json && rtk ruff check script.py",
+        "command rtk jq empty manifest.json",
+        "rtk /usr/bin/jq empty manifest.json",
+        "X=1 rtk jq empty manifest.json",
+        "env X=1 rtk jq empty manifest.json",
+        "sudo rtk jq empty manifest.json",
+    ],
+)
+async def test_unsupported_rtk_jq_rewrite_falls_back_to_original_command(
+    rewrite: str,
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_RTK_MODE", "unsupported_jq")
+    monkeypatch.setenv("FAKE_RTK_REWRITE", rewrite)
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    response = await RuleEngine(db).evaluate(
+        _event("jq empty manifest.json"),
+        SESSION_ID,
+        {},
+    )
+
+    assert response.modified_input is None
     assert response.permission_decision is None
 
 
@@ -726,15 +777,14 @@ async def test_deadline_exhausted_after_the_probe_names_that_site(
     Both sites used to emit one indistinguishable message, so a log full of them
     said nothing about where the budget went.
     """
-    del fake_rtk
     _create_rule(manager, "proxy-late-deadline", [_proxy_effect()], priority=10)
     deadline = BlockingEffectDeadline(time.monotonic() + BLOCKING_EFFECT_BUDGET_SECONDS)
 
     def _resolve_then_exhaust(*, timeout: float) -> RtkProbe | None:
         """Spend the rest of the budget inside the probe, as a slow probe would."""
-        probe = resolve_rtk(timeout=timeout)
+        del timeout
         deadline.expires_at = time.monotonic() - 1.0
-        return probe
+        return RtkProbe(path=fake_rtk, version="0.45.0", compatible=True)
 
     monkeypatch.setattr(proxy_hooks, "resolve_rtk", _resolve_then_exhaust)
     outcomes = _record_rtk_outcomes(monkeypatch)
