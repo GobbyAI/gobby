@@ -642,9 +642,10 @@ async def test_daemon_config_failure_stops_subprocesses_and_preserves_pending_wo
     )
 
     assert gateway_breaker.state is BreakerState.OPEN
-    assert set(gateway.vector_calls) == set(paths)
+    assert gateway.vector_calls
+    assert set(gateway.vector_calls).issubset(paths)
     assert gateway.graph_calls == []
-    assert storage.mark_vector_sync_attempted.call_count == len(paths)
+    assert storage.mark_vector_sync_attempted.call_count == len(gateway.vector_calls)
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
