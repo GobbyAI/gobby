@@ -2,7 +2,9 @@
 //! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
 //! the run loop and read by every render module.
 
-use crate::app::{short_terminal_id, ClickRun, MouseGesture, Pane, PaneId, Workspace};
+use crate::app::{
+    short_terminal_id, ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace,
+};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
@@ -185,6 +187,8 @@ pub enum Mode {
     Settings,
     KeybindHelp,
     Navigator,
+    /// A right-click menu is open; `Chrome::menu` holds it.
+    ContextMenu,
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +387,8 @@ pub struct Chrome {
     /// Mouse-capture state the settings toggle asked for; the live loop
     /// applies it to the terminal guard after the current event.
     pub pending_mouse_capture: Option<bool>,
+    /// The open right-click menu while `mode` is `ContextMenu`.
+    pub menu: Option<ContextMenuState>,
 }
 
 impl Chrome {
@@ -414,6 +420,7 @@ impl Chrome {
             link_opener: DEFAULT_LINK_OPENER.to_owned(),
             last_focused: None,
             pending_mouse_capture: None,
+            menu: None,
         }
     }
 

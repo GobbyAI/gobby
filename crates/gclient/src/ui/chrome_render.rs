@@ -75,7 +75,14 @@ pub fn render_workspace_with<W: WorkspaceView>(
             dim_background(frame, area);
             navigator::render_navigator(frame, area, ws, chrome);
         }
-        Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
+        // The menu popup draws with plan 5.2; until then the workspace
+        // stays as it was under the open menu.
+        Mode::Terminal
+        | Mode::Navigate
+        | Mode::Prefix
+        | Mode::Copy
+        | Mode::Resize
+        | Mode::ContextMenu => {}
     }
     hits
 }

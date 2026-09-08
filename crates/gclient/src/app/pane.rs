@@ -37,6 +37,9 @@ pub struct Pane {
     /// (`zsh`, `15`) or a spawned agent's session name (`gobby-codex-d0`).
     /// Empty until a roster page arrives, which is what `display_name` covers.
     pub title: String,
+    /// The name the user gave this pane in the rename dialog. Roster pages
+    /// refresh `title` and leave this alone; `display_name` shows it first.
+    pub label: Option<String>,
     /// The terminal's address on its backend — the tmux pane id, `%15`. Unique
     /// and stable where `title` is neither, and it is what the user types into
     /// tmux, so the chrome shows it wherever two terminals could be confused.
@@ -94,6 +97,7 @@ impl Pane {
             terminal_id: terminal_id.into(),
             backend: backend.into(),
             title: String::new(),
+            label: None,
             address: None,
             session_id: None,
             expected_host_epoch: epoch,
@@ -144,11 +148,14 @@ impl Pane {
         pane
     }
 
-    /// What every chrome surface calls this terminal. The daemon's title first,
-    /// then the backend address for a row that has not reported one, then a
-    /// short id — never the raw UUID, which says nothing and crowds out the
-    /// state and backend tokens that share the row.
+    /// What every chrome surface calls this terminal. The user's label first,
+    /// then the daemon's title, then the backend address for a row that has
+    /// not reported one, then a short id — never the raw UUID, which says
+    /// nothing and crowds out the state and backend tokens that share the row.
     pub fn display_name(&self) -> &str {
+        if let Some(label) = self.label.as_deref() {
+            return label;
+        }
         if !self.title.is_empty() {
             return &self.title;
         }

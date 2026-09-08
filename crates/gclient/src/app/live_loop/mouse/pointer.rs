@@ -14,13 +14,16 @@ use crate::ui::scrollbar::{
 use crate::ui::sidebar::section_metrics;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
+use super::super::menu::{open_menu, ContextMenuKind};
 use super::{
     focus_active_tab, forward, links, on_roster, select, MouseGesture, MouseOutcome, Placement,
     ROSTER_DRAG_THRESHOLD, TAB_DRAG_THRESHOLD,
 };
 
-/// A button went down on `hit`. Outside a pane only the left button means
-/// anything.
+/// A button went down on `hit`. Outside a pane the right button opens the
+/// tab menu on a tab and the global menu on empty chrome (the bare tab bar,
+/// the sidebar's empty rows, the empty state); only the left button means
+/// anything else.
 ///
 /// Inside a pane the right button is `right_down`'s. A ctrl+left press first
 /// asks `links::resolve` for a URL under the pointer and opens that instead,
@@ -97,6 +100,24 @@ pub(super) fn down<W: WorkspaceView>(
                 return select::down(ws, chrome, pane, slot, col, row, mouse);
             }
             MouseOutcome::Focus { pane, observe_only }
+        }
+        Hit::Tab(index) if button == MouseButton::Right => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::Tab(index),
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
+        }
+        Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty if button == MouseButton::Right => {
+            open_menu(
+                ws,
+                chrome,
+                ContextMenuKind::Global,
+                (mouse.column, mouse.row),
+            );
+            MouseOutcome::Handled
         }
         _ if button != MouseButton::Left => MouseOutcome::Ignore,
         Hit::Tab(index) => {
@@ -218,7 +239,7 @@ pub(super) fn down<W: WorkspaceView>(
 /// held, exactly, or the pane's own flag is set and no modifier is held
 /// (herdr `handle_right_click_passthrough`); the modifier is hidden from the
 /// app, and a pane whose app does not track the mouse gets nothing. Any other
-/// right-click is the pane menu's, which lands with its section.
+/// right-click opens the pane's context menu at the pointer.
 fn right_down<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -234,6 +255,12 @@ fn right_down<W: WorkspaceView>(
         .filter(|held| mouse.modifiers == *held);
     let flagged = mouse.modifiers.is_empty() && ws.pane(pane).right_click_passthrough;
     let Some(strip) = configured.or_else(|| flagged.then(KeyModifiers::empty)) else {
+        open_menu(
+            ws,
+            chrome,
+            ContextMenuKind::Pane(pane),
+            (mouse.column, mouse.row),
+        );
         return MouseOutcome::Handled;
     };
     forward::press(ws, chrome, pane, slot, mouse, strip, cell).unwrap_or(MouseOutcome::Handled)

@@ -21,6 +21,7 @@ use crate::frame_source::{FrameError, FrameSource};
 use gobby_terminal::protocol::ClientMessage;
 use serde_json::json;
 
+use super::live_loop::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::live_loop::modal_input::apply_rename;
 use super::{route_modal_key, route_mouse, ModalOutcome, MouseOutcome};
 use super::{PaneId, Workspace};
@@ -168,21 +169,12 @@ fn apply_scripted_mouse_outcome(
         | MouseOutcome::Spawn { .. }
         | MouseOutcome::OpenLink(_) => {}
         MouseOutcome::Focus { pane, observe_only } => {
-            chrome.focus_pane(pane);
-            if observe_only {
-                if let Some(previous) = workspace.focus.filter(|previous| *previous != pane) {
-                    workspace
-                        .release_control(previous)
-                        .map_err(|error| FrameError::Other(error.to_string()))?;
-                }
-                workspace.focus = Some(pane);
-            } else {
-                workspace
-                    .focus_pane(pane)
-                    .map_err(|error| FrameError::Other(error.to_string()))?;
-            }
+            scripted_focus(workspace, chrome, pane, observe_only)?;
         }
         MouseOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
+        MouseOutcome::Menu { kind, action } => {
+            return apply_scripted_menu_action(workspace, chrome, kind, action);
+        }
         MouseOutcome::Write { pane, bytes } => workspace
             .send_input(pane, &bytes)
             .map_err(|error| FrameError::Other(error.to_string()))?,
@@ -223,6 +215,58 @@ fn apply_scripted_action(chrome: &mut Chrome, action: Action) -> bool {
     false
 }
 
+/// Focus `pane` on the chrome and the workspace; `observe_only` moves focus
+/// without taking control, releasing the previous pane's lease instead.
+fn scripted_focus(
+    workspace: &mut Workspace,
+    chrome: &mut Chrome,
+    pane: PaneId,
+    observe_only: bool,
+) -> Result<(), FrameError> {
+    chrome.focus_pane(pane);
+    if observe_only {
+        if let Some(previous) = workspace.focus.filter(|previous| *previous != pane) {
+            workspace
+                .release_control(previous)
+                .map_err(|error| FrameError::Other(error.to_string()))?;
+        }
+        workspace.focus = Some(pane);
+    } else {
+        workspace
+            .focus_pane(pane)
+            .map_err(|error| FrameError::Other(error.to_string()))?;
+    }
+    Ok(())
+}
+
+/// A context menu item in the scripted loop: a keymap action runs as its
+/// chord would once the menu's pane (observed) or tab is the active one, the
+/// chrome-only items apply directly, and `respond` and the sidebar rows have
+/// nothing to reach here.
+fn apply_scripted_menu_action(
+    workspace: &mut Workspace,
+    chrome: &mut Chrome,
+    kind: ContextMenuKind,
+    action: MenuAction,
+) -> Result<bool, FrameError> {
+    let MenuAction::Act(action) = action else {
+        apply_local_menu_action(workspace, chrome, &action);
+        return Ok(false);
+    };
+    match kind {
+        ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(pane) => {
+            scripted_focus(workspace, chrome, pane, true)?;
+        }
+        ContextMenuKind::Tab(index) if index != chrome.active_tab => {
+            if let Some(pane) = chrome.tabs.get(index).and_then(|tab| tab.focused_pane()) {
+                scripted_focus(workspace, chrome, pane, false)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(apply_scripted_action(chrome, action))
+}
+
 /// Apply a modal outcome on the scripted carrier: focus and renames land on
 /// the workspace, actions go through `apply_scripted_action`, and a confirmed
 /// close is a no-op like the other terminal-reaching actions here.
@@ -244,6 +288,9 @@ fn apply_scripted_modal_outcome(
         }
         ModalOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
         ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
+        ModalOutcome::Menu { kind, action } => {
+            return apply_scripted_menu_action(workspace, chrome, kind, action);
+        }
     }
     Ok(false)
 }

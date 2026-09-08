@@ -22,17 +22,20 @@ use gobby_client::daemon::{
 use gobby_client::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
 };
-use gobby_client::prefs::prefs_path;
+use gobby_client::prefs::{prefs_path, save_prefs};
 use gobby_client::startup::Ready;
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
+use gobby_client::ui::chrome::Mode;
+use gobby_client::ui::dialogs::{CloseTarget, Dialog};
+use gobby_client::ui::hit::{hit_test, Hit};
 use gobby_client::ui::keymap::Keymap;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
-use gobby_client::ui::settings::PassthroughModifier;
+use gobby_client::ui::settings::{ClientPrefs, PassthroughModifier};
 use gobby_client::ui::status::{Toast, ToastKind};
-use gobby_client::ui::{Chrome, WorkspaceView};
+use gobby_client::ui::{render_workspace, Chrome, WorkspaceView};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
 use gobby_terminal::protocol::{
@@ -3340,9 +3343,11 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         mouse(right_up, cell_of(&other), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 8).await;
 
-        // ctrl is not the configured modifier; shift keeps the press for a
-        // selection.
+        // ctrl is not the configured modifier, so the press opens gclient's
+        // context menu instead of reporting; Esc dismisses it and shift keeps
+        // the next press for a selection.
         mouse(right_down, cell_of(&other), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Esc, KeyModifiers::NONE).await;
         let (column, row) = cell_of(&other);
         mouse(left_down, (column, row), KeyModifiers::SHIFT).await;
         mouse(
@@ -4279,5 +4284,281 @@ async fn settings_toggle_switches_mouse_capture_and_saves_prefs() {
     assert!(chrome.prefs.mouse_capture);
     let saved = std::fs::read_to_string(&prefs_file).expect("prefs written on toggle back");
     assert!(saved.contains("mouse_capture = true"), "{saved}");
+    mock.shutdown().await;
+}
+
+/// 5.1.2: right-clicks open the pane, tab and empty-chrome menus; hover and
+/// keys move the selection; enter and a left click activate; a press outside
+/// closes the menu without reaching what it landed on.
+#[tokio::test]
+async fn context_menu_dispatches_items_and_closes_outside() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let roster_page = |ids: &[&str]| {
+        let items: Vec<Value> = ids
+            .iter()
+            .map(|id| json!({"terminal_id": id, "backend": "native", "state": "live"}))
+            .collect();
+        json!({
+            "items": items,
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        })
+    };
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_page(&["terminal-a", "terminal-b"]),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("install initial attachments");
+    let home = tempfile::tempdir().expect("gobby home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    let light = ClientPrefs {
+        theme: "light".to_string(),
+        ..ClientPrefs::default()
+    };
+    save_prefs(home.path(), &light).expect("prefs for reload");
+
+    // Mirror the loop's roster split on a probe chrome to learn where each
+    // pane, the first tab and the bare tab bar are drawn.
+    let area = Rect::new(0, 0, 120, 40);
+    let mut probe = Chrome::dark();
+    for terminal_id in WorkspaceView::roster_terminal_ids(&workspace) {
+        let pane = workspace
+            .pane_for_terminal(&terminal_id)
+            .expect("roster pane");
+        probe.open_pane(pane, workspace.pane(pane).display_name());
+    }
+    probe.compute_view(&workspace, area);
+    // The tab bar's hit areas come from the draw, as in the loop.
+    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
+    let mut hits = None;
+    probe_terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+        .expect("draw probe frame");
+    probe.view.apply_hits(hits.expect("probe frame drawn"));
+    let cells: Vec<(String, (u16, u16))> = probe
+        .view
+        .pane_infos
+        .iter()
+        .map(|info| {
+            let pane = probe.pane_for_slot(info.id).expect("slot pane");
+            let inner = info.inner_rect;
+            (
+                workspace.pane(pane).terminal_id.clone(),
+                (inner.x + 1, inner.y + 1),
+            )
+        })
+        .collect();
+    let cell_of = |terminal_id: &str| {
+        cells
+            .iter()
+            .find(|(id, _)| id == terminal_id)
+            .map(|(_, cell)| *cell)
+            .expect("pane cell")
+    };
+    let tab_cell = probe
+        .view
+        .tab_hit_areas
+        .iter()
+        .find(|(index, _)| *index == 0)
+        .map(|(_, rect)| (rect.x, rect.y))
+        .expect("first tab drawn");
+    let bar = probe.view.tab_bar_rect.expect("tab bar drawn");
+    // The middle of the bare stretch stays bare as tab titles change.
+    let bare_columns: Vec<u16> = (bar.x..bar.right())
+        .filter(|column| hit_test(&probe.view, *column, bar.y) == Hit::TabBarEmpty)
+        .collect();
+    let bare_column = bare_columns
+        .get(bare_columns.len() / 2)
+        .copied()
+        .expect("bare tab bar space");
+    let bare_cell = (bare_column, bar.y);
+    // Menu rows start one cell inside the popup at the click.
+    let item_cell = |anchor: (u16, u16), index: u16| (anchor.0 + 2, anchor.1 + 1 + index);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let initial = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("terminal_id")
+            .and_then(Value::as_str)
+            .expect("initial focused terminal")
+            .to_string();
+        let other = if initial == "terminal-a" {
+            "terminal-b"
+        } else {
+            "terminal-a"
+        };
+        let press = |button, (column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Down(button),
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        let hover = |(column, row): (u16, u16)| {
+            send_mouse(
+                &input_tx,
+                MouseEventKind::Moved,
+                column,
+                row,
+                KeyModifiers::NONE,
+            )
+        };
+        let key = |code| send_key(&input_tx, code, KeyModifiers::NONE);
+        let terminal_of = |request: &Value| {
+            request
+                .get("terminal_id")
+                .and_then(Value::as_str)
+                .expect("request terminal")
+                .to_string()
+        };
+
+        // A press outside the open menu closes it and goes no further: the
+        // pane under it is not focused, so the next key still reaches the
+        // pane that had focus.
+        press(MouseButton::Right, cell_of(&initial)).await;
+        press(MouseButton::Left, cell_of(other)).await;
+        key(KeyCode::Char('x')).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        assert_eq!(
+            terminal_of(&websocket_requests(&mock, "terminal_input")[0]),
+            initial,
+            "the press that closed the menu must not reach the pane under it"
+        );
+        assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 1);
+        press(MouseButton::Left, cell_of(other)).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+
+        // Hover picks `split right` on the focused pane's menu and enter
+        // activates it: the spawn lands beside that pane.
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_page(&["terminal-a", "terminal-b", SPAWNED]),
+        );
+        press(MouseButton::Right, cell_of(other)).await;
+        hover(item_cell(cell_of(other), 1)).await;
+        key(KeyCode::Enter).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let attached = websocket_requests(&mock, "terminal_set_viewport")
+                    .iter()
+                    .any(|request| request.get("terminal_id") == Some(&json!(SPAWNED)));
+                if attached {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the spawned terminal attaches");
+        settle_live_event().await;
+
+        // Keys walk the unfocused pane's menu down to `close pane`, its last
+        // row, past the clamp: that terminal dies and its slot is reaped.
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_page(&[other, SPAWNED]),
+        );
+        press(MouseButton::Right, cell_of(&initial)).await;
+        for _ in 0..10 {
+            key(KeyCode::Down).await;
+        }
+        key(KeyCode::Enter).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        assert_eq!(
+            terminal_of(&websocket_requests(&mock, "terminal_kill")[0]),
+            initial,
+            "close pane acts on the pane under the menu, not the focused one"
+        );
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 4).await;
+        settle_live_event().await;
+
+        // Bare tab-bar space opens the global menu; clicking `reload config`
+        // re-reads the prefs file.
+        press(MouseButton::Right, bare_cell).await;
+        hover(item_cell(bare_cell, 4)).await;
+        press(MouseButton::Left, item_cell(bare_cell, 4)).await;
+        settle_live_event().await;
+
+        // The tab's menu: `close tab` runs the confirm-close path.
+        press(MouseButton::Right, tab_cell).await;
+        hover(item_cell(tab_cell, 2)).await;
+        press(MouseButton::Left, item_cell(tab_cell, 2)).await;
+        settle_live_event().await;
+        drop(input_tx);
+        (initial, other)
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, (initial, other)) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(chrome.menu.is_none(), "activation closes the menu");
+    assert_eq!(chrome.mode, Mode::ConfirmClose, "close tab asks first");
+    assert!(
+        matches!(
+            chrome.dialog,
+            Some(Dialog::ConfirmClose {
+                target: CloseTarget::Tab,
+                ..
+            })
+        ),
+        "the confirm-close dialog targets the tab: {:?}",
+        chrome.dialog
+    );
+    assert_eq!(chrome.prefs.theme, "light", "reload config re-read prefs");
+    assert!(
+        workspace.pane_for_terminal(&initial).is_none(),
+        "close pane retired the terminal"
+    );
+    let tab = &chrome.tabs[0];
+    assert_eq!(tab.slots.len(), 2, "the closed pane's slot was reaped");
+    let rect_of = |pane| {
+        let slot = tab.slot_for(pane).expect("pane shown in the tab");
+        tab.layout
+            .panes(area)
+            .into_iter()
+            .find(|info| info.id == slot)
+            .expect("slot geometry")
+            .rect
+    };
+    let other_rect = rect_of(workspace.pane_for_terminal(other).expect("other pane"));
+    let spawned = rect_of(workspace.pane_for_terminal(SPAWNED).expect("spawned pane"));
+    assert!(
+        spawned.x > other_rect.x && spawned.y == other_rect.y,
+        "split right lands beside the menu's pane: {spawned:?} vs {other_rect:?}"
+    );
     mock.shutdown().await;
 }
