@@ -621,6 +621,44 @@ fn assert_audited_hybrid_contract(
     assert_eq!(daemon_body["model"], MODEL);
     assert_eq!(daemon_body["is_query"], true);
 
+    // A saturated backend page can contain only symbols invisible to this snapshot.
+    // That is a bounded search, not proof that no visible semantic matches exist.
+    let hidden_hits = (0..8)
+        .map(|index| {
+            serde_json::json!({
+                "id": format!("00000000-0000-4000-8000-{index:012}"),
+                "score": 0.9,
+                "payload": {}
+            })
+        })
+        .collect::<Vec<_>>();
+    let (qdrant_url, qdrant) = spawn_http_responses(vec![
+        (200, collection_schema.clone()),
+        (200, serde_json::json!({"result": hidden_hits})),
+    ]);
+    let (daemon_url, daemon) = spawn_http_responses_after_probes(vec![(
+        200,
+        serde_json::json!({
+            "embeddings": [[0.1, 0.2, 0.3]],
+            "model": MODEL,
+            "dim": DIMENSION
+        }),
+    )]);
+    let connections =
+        gobby_core::grant::DirectConnections::postgres(database_url).with_qdrant(&qdrant_url, None);
+    let bounded = run_with_audited_services(project, home, &connections, &daemon_url, &request)?;
+    qdrant.join().expect("bounded Qdrant fixture thread")?;
+    daemon.join().expect("bounded embedding fixture thread")?;
+    assert!(bounded.items.is_empty());
+    assert!(
+        !bounded.complete,
+        "filtered saturated vector page is not complete"
+    );
+    assert_eq!(
+        bounded.completeness,
+        gobby_code::evidence::Completeness::TruncatedIndex
+    );
+
     let (qdrant_url, qdrant) = spawn_http_responses(vec![(200, collection_schema.clone())]);
     let connections =
         gobby_core::grant::DirectConnections::postgres(database_url).with_qdrant(&qdrant_url, None);
