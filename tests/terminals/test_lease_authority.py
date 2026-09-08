@@ -30,6 +30,27 @@ def test_single_grant_point_across_all_paths() -> None:
     assert _lease_replicas() == [], f"lease replicas exist: {_lease_replicas()}"
 
 
+def test_sizing_owner_follows_viewer_precedence() -> None:
+    registry = TerminalLeaseRegistry()
+    web = registry.attach("term-1", viewer="web")
+    gclient = registry.attach("term-1", viewer="gclient")
+
+    web_resize = registry.resize_pty(web.attachment_id, rows=24, cols=80)
+    gclient_resize = registry.resize_pty(gclient.attachment_id, rows=40, cols=120)
+
+    assert web_resize.ok is True
+    assert web_resize.applied is True
+    assert gclient_resize.ok is True
+    assert gclient_resize.applied is False
+    assert gclient_resize.owner_viewer == "web"
+
+    finalized = registry.finalize(web.attachment_id, reason="detach")
+    assert finalized is not None
+    assert finalized.sizing is not None
+    assert finalized.sizing.owner_viewer == "gclient"
+    assert (finalized.sizing.rows, finalized.sizing.cols) == (40, 120)
+
+
 def test_lifecycle_sequence_rotates_epoch_before_overflow() -> None:
     registry = TerminalLeaseRegistry()
     previous_epoch = registry.daemon_epoch

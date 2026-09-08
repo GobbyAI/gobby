@@ -7,6 +7,10 @@ export {
   TERMINAL_WS_SAFE_INTEGER_MAX,
 } from "./terminalWsFragments";
 import { createTerminalWsReducer } from "./terminalWsFragments";
+import {
+  terminalAttachMessage,
+  terminalResizeMessage,
+} from "./tmuxSessionMessages";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
 export const TMUX_RECONNECT_BASE_MS = 2_000;
@@ -264,14 +268,7 @@ export function useTmuxSessions(
       setIsLoading(true);
       setSessionEnded(false);
       setAttachError(null);
-      ws.send(
-        JSON.stringify({
-          type: "terminal_attach",
-          request_id: requestId,
-          terminal_id: target.terminal_id,
-          frame_delivery: "proxy",
-        }),
-      );
+      ws.send(terminalAttachMessage(requestId, target.terminal_id));
       schedulePendingRequestTimeout(request);
       return true;
     },
@@ -790,13 +787,12 @@ export function useTmuxSessions(
     )
       return;
     wsRef.current.send(
-      JSON.stringify({
-        type: "terminal_resize",
-        terminal_id: attachedTargetRef.current?.terminal_id,
-        attachment_id: currentStreamingId,
+      terminalResizeMessage(
+        attachedTargetRef.current?.terminal_id,
+        currentStreamingId,
         rows,
         cols,
-      }),
+      ),
     );
   }, []);
 
