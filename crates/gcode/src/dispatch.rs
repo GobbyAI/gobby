@@ -6,6 +6,8 @@ use crate::cli::{
     self, Cli, Command, EmbeddingsCommand, GraphCommand, GraphViewSeed, VectorCommand,
 };
 
+#[path = "dispatch_navigation.rs"]
+mod navigation;
 mod usage;
 
 static STDERR_LOGGER: StderrLogger = StderrLogger;
@@ -41,7 +43,7 @@ fn stderr_log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
         .unwrap_or(log::LevelFilter::Warn)
 }
 
-fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
+pub(super) fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     warn_if_freshness_skipped(ctx, disabled);
     if !disabled {
         warn_if_busy(
@@ -67,11 +69,19 @@ fn ensure_files_fresh(
     Ok(())
 }
 
-fn ensure_file_fresh(ctx: &config::Context, disabled: bool, file: &str) -> anyhow::Result<()> {
+pub(super) fn ensure_file_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+    file: &str,
+) -> anyhow::Result<()> {
     ensure_files_fresh(ctx, disabled, vec![std::path::PathBuf::from(file)])
 }
 
-fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
+pub(super) fn ensure_symbol_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+    id: &str,
+) -> anyhow::Result<()> {
     warn_if_freshness_skipped(ctx, disabled);
     if !disabled {
         warn_if_busy(ctx, freshness::ensure_symbol_fresh(ctx, id)?);
@@ -79,46 +89,16 @@ fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyho
     Ok(())
 }
 
-fn resolve_exact_file(ctx: &config::Context, cwd: &Path, file: &str) -> anyhow::Result<String> {
+pub(super) fn resolve_exact_file(
+    ctx: &config::Context,
+    cwd: &Path,
+    file: &str,
+) -> anyhow::Result<String> {
     Ok(commands::scope::resolve_path_input(
         ctx,
         cwd,
         commands::scope::ScopedPathInput::ExactFile(file),
     )?)
-}
-
-fn resolve_filters(
-    ctx: &config::Context,
-    cwd: &Path,
-    paths: &[String],
-) -> anyhow::Result<Vec<String>> {
-    Ok(paths
-        .iter()
-        .map(|path| {
-            commands::scope::resolve_path_input(
-                ctx,
-                cwd,
-                commands::scope::ScopedPathInput::Filter(path),
-            )
-        })
-        .collect::<Result<_, _>>()?)
-}
-
-fn resolve_globs(
-    ctx: &config::Context,
-    cwd: &Path,
-    globs: &[String],
-) -> anyhow::Result<Vec<String>> {
-    Ok(globs
-        .iter()
-        .map(|glob| {
-            commands::scope::resolve_path_input(
-                ctx,
-                cwd,
-                commands::scope::ScopedPathInput::Glob(glob),
-            )
-        })
-        .collect::<Result<_, _>>()?)
 }
 
 fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
@@ -151,7 +131,10 @@ fn warn_if_freshness_skipped(ctx: &config::Context, allow_stale: bool) {
     }
 }
 
-fn service_config_selection(command: &Command) -> config::ServiceConfigSelection {
+fn service_config_selection(
+    command: &Command,
+    evidence_request: Option<&crate::evidence::EvidenceRequest>,
+) -> config::ServiceConfigSelection {
     use config::ServiceConfigSelection;
 
     match command {
@@ -171,6 +154,9 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         } => ServiceConfigSelection::qdrant_only(),
         Command::Vector { .. } | Command::Embeddings { .. } => ServiceConfigSelection::vectors(),
         Command::Search { .. } => ServiceConfigSelection::hybrid_search(),
+        Command::Evidence { .. } => commands::evidence::service_config_selection(
+            evidence_request.expect("evidence request preflighted before service resolution"),
+        ),
         Command::SearchSymbol { with_graph, .. } => {
             if *with_graph {
                 ServiceConfigSelection::falkordb_only()
@@ -358,6 +344,14 @@ fn run() -> anyhow::Result<()> {
     init_logger(cli.quiet);
     let format = cli::effective_format(cli.format, &cli.command);
     let effective_token_budget = cli::effective_token_budget(format, &cli.command);
+    let evidence_request = match &cli.command {
+        Command::Evidence { request_json } => Some(commands::evidence::preflight(
+            request_json,
+            format,
+            cli.allow_stale,
+        )?),
+        _ => None,
+    };
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, format)? {
@@ -367,9 +361,28 @@ fn run() -> anyhow::Result<()> {
     let ctx = config::Context::resolve_with_services(
         cli.project.as_deref(),
         cli.quiet,
-        service_config_selection(&cli.command),
-    )?;
+        service_config_selection(&cli.command, evidence_request.as_ref()),
+    )
+    .map_err(|error| {
+        if evidence_request.is_some() {
+            commands::evidence::classify_context_error(error)
+        } else {
+            error
+        }
+    })?;
     let cwd = std::env::current_dir()?;
+
+    if navigation::dispatch(
+        &ctx,
+        &cwd,
+        &cli.command,
+        format,
+        effective_token_budget,
+        cli.allow_stale,
+        cli.verbose,
+    )? {
+        return Ok(());
+    }
 
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
@@ -379,6 +392,10 @@ fn run() -> anyhow::Result<()> {
         | Command::Init
         | Command::Projects
         | Command::Prune { .. } => Ok(()),
+        Command::Evidence { .. } => commands::evidence::run(
+            &ctx,
+            evidence_request.expect("evidence request preflighted before dispatch"),
+        ),
         Command::RetireFiles {
             manifest,
             apply,
@@ -547,300 +564,24 @@ fn run() -> anyhow::Result<()> {
             commands::graph::view(&ctx, &args, format)
         }
 
-        Command::Search {
-            query,
-            paths,
-            limit,
-            offset,
-            kind,
-            language,
-            token_budget: _,
-        } => {
-            let paths = resolve_filters(&ctx, &cwd, &paths)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::search::search(
-                &ctx,
-                &query,
-                commands::search::SearchOptions {
-                    limit,
-                    offset,
-                    kind: kind.as_deref(),
-                    language: language.as_deref(),
-                    paths: &paths,
-                    format,
-                    with_graph: true,
-                    token_budget: effective_token_budget,
-                    verbose: cli.verbose,
-                },
-            )
-        }
-        Command::SearchSymbol {
-            query,
-            paths,
-            limit,
-            offset,
-            kind,
-            language,
-            with_graph,
-            token_budget: _,
-        } => {
-            let paths = resolve_filters(&ctx, &cwd, &paths)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::search::search_symbol(
-                &ctx,
-                &query,
-                commands::search::SearchOptions {
-                    limit,
-                    offset,
-                    kind: kind.as_deref(),
-                    language: language.as_deref(),
-                    paths: &paths,
-                    format,
-                    with_graph,
-                    token_budget: effective_token_budget,
-                    verbose: cli.verbose,
-                },
-            )
-        }
-        Command::SearchText {
-            query,
-            paths,
-            limit,
-            offset,
-            language,
-            token_budget: _,
-        } => {
-            let paths = resolve_filters(&ctx, &cwd, &paths)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::search::search_text(
-                &ctx,
-                &query,
-                commands::search::TextSearchOptions {
-                    limit,
-                    offset,
-                    language: language.as_deref(),
-                    paths: &paths,
-                    format,
-                    token_budget: effective_token_budget,
-                    verbose: cli.verbose,
-                },
-            )
-        }
-        Command::SearchContent {
-            query,
-            paths,
-            limit,
-            offset,
-            language,
-            token_budget: _,
-        } => {
-            let paths = resolve_filters(&ctx, &cwd, &paths)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::search::search_content(
-                &ctx,
-                &query,
-                commands::search::TextSearchOptions {
-                    limit,
-                    offset,
-                    language: language.as_deref(),
-                    paths: &paths,
-                    format,
-                    token_budget: effective_token_budget,
-                    verbose: cli.verbose,
-                },
-            )
-        }
-        Command::Grep {
-            pattern,
-            paths,
-            fixed_strings,
-            ignore_case,
-            word,
-            files_with_matches,
-            extended_regexp: _,
-            line_number: _,
-            recursive: _,
-            recursive_dereference: _,
-            before_context,
-            after_context,
-            context,
-            glob,
-            max_count,
-            offset,
-            token_budget: _,
-        } => {
-            let paths = resolve_filters(&ctx, &cwd, &paths)?;
-            let glob = resolve_globs(&ctx, &cwd, &glob)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::grep::run(
-                &ctx,
-                commands::grep::GrepOptions {
-                    pattern: &pattern,
-                    paths: &paths,
-                    globs: &glob,
-                    fixed_strings,
-                    ignore_case,
-                    word,
-                    context,
-                    before_context,
-                    after_context,
-                    max_count,
-                    offset,
-                    token_budget: effective_token_budget,
-                    files_with_matches,
-                    format,
-                },
-            )
-        }
-
-        Command::Outline {
-            file,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            let file = resolve_exact_file(&ctx, &cwd, &file)?;
-            ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
-            commands::symbols::outline(
-                &ctx,
-                &file,
-                limit,
-                offset,
-                effective_token_budget,
-                format,
-                cli.verbose,
-            )
-        }
-        Command::Symbol { id } => {
-            ensure_symbol_fresh(&ctx, cli.allow_stale, &id)?;
-            commands::symbols::symbol(&ctx, &id, format)
-        }
-        Command::SymbolAt { location, line } => {
-            let file =
-                commands::symbol_at::requested_file_for_freshness(&ctx, &cwd, &location, line)?;
-            ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
-            commands::symbol_at::run(&ctx, &cwd, &location, line, format)
-        }
-        Command::Symbols {
-            ids,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::symbols(&ctx, &ids, limit, offset, effective_token_budget, format)
-        }
-        Command::Kinds {
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::kinds(&ctx, limit, offset, effective_token_budget, format)
-        }
-        Command::Tree {
-            paths,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            let paths = resolve_filters(&ctx, &cwd, &paths)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::tree(&ctx, &paths, limit, offset, effective_token_budget, format)
-        }
-        Command::Callers {
-            symbol_name,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::callers(
-                &ctx,
-                &symbol_name,
-                limit,
-                offset,
-                effective_token_budget,
-                format,
-            )
-        }
-        Command::Callees {
-            symbol_name,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::callees(
-                &ctx,
-                &symbol_name,
-                limit,
-                offset,
-                effective_token_budget,
-                format,
-            )
-        }
-        Command::Usages {
-            symbol_name,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::usages(
-                &ctx,
-                &symbol_name,
-                limit,
-                offset,
-                effective_token_budget,
-                format,
-            )
-        }
-        Command::Imports {
-            file,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            let file = resolve_exact_file(&ctx, &cwd, &file)?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::imports(&ctx, &file, limit, offset, effective_token_budget, format)
-        }
-        Command::Path {
-            symbol_a,
-            symbol_b,
-            max_depth,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::path(&ctx, &symbol_a, &symbol_b, max_depth, format)
-        }
-        Command::BlastRadius {
-            target,
-            depth,
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::blast_radius(
-                &ctx,
-                &target,
-                depth,
-                limit,
-                offset,
-                effective_token_budget,
-                format,
-            )
-        }
-
-        Command::RepoOutline {
-            limit,
-            offset,
-            token_budget: _,
-        } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::status::repo_outline(&ctx, limit, offset, effective_token_budget, format)
-        }
+        Command::Search { .. }
+        | Command::SearchSymbol { .. }
+        | Command::SearchText { .. }
+        | Command::SearchContent { .. }
+        | Command::Grep { .. }
+        | Command::Outline { .. }
+        | Command::Symbol { .. }
+        | Command::SymbolAt { .. }
+        | Command::Symbols { .. }
+        | Command::Kinds { .. }
+        | Command::Tree { .. }
+        | Command::Callers { .. }
+        | Command::Callees { .. }
+        | Command::Usages { .. }
+        | Command::Imports { .. }
+        | Command::Path { .. }
+        | Command::BlastRadius { .. }
+        | Command::RepoOutline { .. } => unreachable!("navigation command dispatched earlier"),
     }
 }
 

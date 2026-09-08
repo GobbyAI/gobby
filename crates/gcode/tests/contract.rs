@@ -73,9 +73,9 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_eight_without_codewiki() {
+fn contract_is_version_nine_with_evidence_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(8));
+    assert_eq!(contract["contract_version"], serde_json::json!(9));
     assert!(
         contract["error_codes"]
             .as_array()
@@ -108,7 +108,7 @@ fn contract_is_version_eight_without_codewiki() {
             },
             {
                 "code": 2,
-                "meaning": "usage error or typed error (grant, project_required, invalid_path_scope, capability_unavailable, graph sync contract); one JSON line on stderr"
+                "meaning": "usage error or typed error (grant, project, path, evidence, capability, graph sync contract); one JSON line on stderr"
             },
             {
                 "code": 3,
@@ -144,6 +144,60 @@ fn contract_is_version_eight_without_codewiki() {
             .all(|command| command["name"] != "setup"),
         "standalone setup command must be absent"
     );
+}
+
+#[test]
+fn evidence_command_contract_is_complete() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    let evidence = command(&contract, "evidence");
+    assert_eq!(evidence["daemon_consumed"], serde_json::json!(true));
+    assert_eq!(evidence["positionals"], serde_json::json!([]));
+    assert_eq!(
+        evidence["flags"],
+        serde_json::json!([{
+            "name": "--request-json",
+            "takes_value": true,
+            "value_name": "JSON",
+            "allowed_values": [],
+            "required": true,
+            "repeatable": false
+        }])
+    );
+    let keys = output_keys(&contract, "evidence");
+    for required in [
+        "request",
+        "request_fingerprint",
+        "binding",
+        "contract",
+        "items",
+        "complete",
+        "completeness",
+        "bounds",
+        "exclusions",
+        "warnings",
+        "continuation",
+        "evidence_id",
+        "excerpt_hash",
+        "record_hash",
+    ] {
+        assert!(keys.contains(&required.to_string()), "missing {required}");
+    }
+    for code in [
+        "invalid_evidence_request",
+        "snapshot_binding_mismatch",
+        "fact_snapshot_mismatch",
+        "narrowing_required",
+        "semantic_failure",
+        "unsafe_path",
+    ] {
+        assert!(
+            contract["error_codes"]
+                .as_array()
+                .expect("error codes")
+                .contains(&serde_json::json!(code)),
+            "missing {code}"
+        );
+    }
 }
 
 #[test]

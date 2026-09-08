@@ -1,4 +1,5 @@
 pub(crate) mod embeddings_doctor;
+pub(crate) mod evidence;
 pub(crate) mod graph;
 pub(crate) mod grep;
 pub(crate) mod index;
