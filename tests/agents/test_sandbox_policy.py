@@ -419,3 +419,24 @@ def test_prepare_sandbox_run_paths_skips_missing_operator_pre_commit_store(
     _paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
 
     assert not destination.exists()
+
+
+def test_ghostty_dependency_host_grant() -> None:
+    ghostty_host = "deps.files.ghostty.org"
+    control_host = "example.com"
+
+    enabled_domains = sandbox_policy.allowed_domains(
+        SandboxConfig(enabled=True, backend="srt", allow_package_registries=True),
+        provider=None,
+        api_base=None,
+    )
+    disabled_domains = sandbox_policy.allowed_domains(
+        SandboxConfig(enabled=True, backend="srt", allow_package_registries=False),
+        provider=None,
+        api_base=None,
+    )
+
+    assert ghostty_host in enabled_domains
+    assert control_host not in enabled_domains
+    assert ghostty_host not in disabled_domains
+    assert control_host not in disabled_domains

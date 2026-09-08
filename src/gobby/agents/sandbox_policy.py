@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from gobby.agents.credential_inventory import denied_ambient_keys
+from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
 from gobby.config.tmux import socket_root
 from gobby.paths import get_gobby_home
 
@@ -132,36 +133,6 @@ class SandboxRunPaths:
         values["GOBBY_LOG_DIR"] = str(self.logs)
         return values
 
-
-_GIT_DOMAINS = (
-    "github.com",
-    "*.github.com",
-    "gitlab.com",
-    "*.gitlab.com",
-    "bitbucket.org",
-    "*.bitbucket.org",
-)
-
-_PACKAGE_REGISTRY_DOMAINS = (
-    "registry.npmjs.org",
-    "*.npmjs.org",
-    "pypi.org",
-    "files.pythonhosted.org",
-    "crates.io",
-    "static.crates.io",
-    "index.crates.io",
-    "static.rust-lang.org",
-    "proxy.golang.org",
-    "sum.golang.org",
-    "repo1.maven.org",
-    "plugins.gradle.org",
-    "rubygems.org",
-    "api.nuget.org",
-    "repo.packagist.org",
-    "pub.dev",
-    "repo.hex.pm",
-    "luarocks.org",
-)
 
 # Toolchains installed under $HOME. sensitive_roots() denies five specific
 # Gobby-owned paths; these tables separately grant the compiler, SDK, package,
@@ -562,9 +533,9 @@ def allowed_domains(
         if parsed.hostname:
             domains.append(parsed.hostname)
     if config.allow_git_network:
-        domains.extend(_GIT_DOMAINS)
+        domains.extend(GIT_DOMAINS)
     if config.allow_package_registries:
-        domains.extend(_PACKAGE_REGISTRY_DOMAINS)
+        domains.extend(PACKAGE_REGISTRY_DOMAINS)
     domains.extend(("localhost", "127.0.0.1"))
     return list(dict.fromkeys(domain.lower() for domain in domains if domain))
 
