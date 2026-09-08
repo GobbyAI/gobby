@@ -301,7 +301,7 @@ fn hybrid_search(
         ("semantic", semantic.items),
     ]);
     let mut symbols = Vec::new();
-    for (id, _, _) in merged.into_iter().take(selector.limit) {
+    for (id, _, _) in merged {
         let symbol = match lexical_by_id.get(&id) {
             Some(symbol) => Some(symbol.clone()),
             None => library.facts.symbol_by_id(&id).map_err(|error| {
@@ -330,9 +330,11 @@ fn hybrid_search(
             symbols.push(symbol);
         }
     }
+    let union_truncated = symbols.len() > selector.limit;
+    symbols.truncate(selector.limit);
     Ok((
         symbols_to_items(library, symbols)?,
-        lexical.truncated || semantic.truncated,
+        lexical.truncated || semantic.truncated || union_truncated,
         Some(expected.clone()),
     ))
 }

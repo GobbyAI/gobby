@@ -1050,7 +1050,10 @@ fn snapshot_ignores_commit_and_blob_replacement_refs() -> anyhow::Result<()> {
     git(repo, &["add", "source.txt"])?;
     let original_commit = commit(repo, "original")?;
     let original_tree = git(repo, &["rev-parse", &format!("{original_commit}^{{tree}}")])?;
-    let original_blob = git(repo, &["rev-parse", &format!("{original_commit}:source.txt")])?;
+    let original_blob = git(
+        repo,
+        &["rev-parse", &format!("{original_commit}:source.txt")],
+    )?;
 
     std::fs::write(repo.join("source.txt"), "replacement source\n")?;
     git(repo, &["add", "source.txt"])?;
@@ -1072,7 +1075,9 @@ fn snapshot_ignores_commit_and_blob_replacement_refs() -> anyhow::Result<()> {
     );
     assert_eq!(snapshot.binding().commit.changed_paths.len(), 1);
     assert_eq!(
-        snapshot.binding().commit.changed_paths[0].new_blob_oid.as_deref(),
+        snapshot.binding().commit.changed_paths[0]
+            .new_blob_oid
+            .as_deref(),
         Some(original_blob.as_str())
     );
     assert_eq!(
@@ -1114,7 +1119,10 @@ fn snapshot_ignores_ambient_git_repository_and_config_overrides() -> anyhow::Res
             ("GIT_WORK_TREE", Some(work_tree.as_str())),
             ("GIT_INDEX_FILE", Some(index_file.as_str())),
             ("GIT_OBJECT_DIRECTORY", Some(object_dir.as_str())),
-            ("GIT_ALTERNATE_OBJECT_DIRECTORIES", Some(object_dir.as_str())),
+            (
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                Some(object_dir.as_str()),
+            ),
             ("GIT_CONFIG_COUNT", Some("2")),
             ("GIT_CONFIG_KEY_0", Some("diff.external")),
             ("GIT_CONFIG_VALUE_0", Some(marker_command.as_str())),
@@ -1145,6 +1153,10 @@ fn snapshot_preserves_unsafe_raw_changed_paths_as_exclusions() -> anyhow::Result
     let mut index_record = format!("100644 {unsafe_blob}\t").into_bytes();
     index_record.extend_from_slice(b"unsafe-\xff\\name");
     index_record.push(0);
+    let collision_blob = git_input(repo, &["hash-object", "-w", "--stdin"], b"collision\n")?;
+    index_record.extend_from_slice(format!("100644 {collision_blob}\t").as_bytes());
+    index_record.extend_from_slice(b"unsafe-\\xff\\x5cname");
+    index_record.push(0);
     git_input(repo, &["update-index", "-z", "--index-info"], &index_record)?;
     let commit_oid = commit(repo, "unsafe tracked path")?;
 
@@ -1157,10 +1169,35 @@ fn snapshot_preserves_unsafe_raw_changed_paths_as_exclusions() -> anyhow::Result
         .find(|entry| entry.path == escaped_path)
         .expect("escaped unsafe path remains in inventory");
     assert_eq!(excluded.exclusion, Some(ExclusionReason::UnsafePath));
-    assert!(snapshot.binding().commit.changed_paths.iter().any(|change| {
-        change.new_path.as_deref() == Some(escaped_path)
-            && change.new_blob_oid.as_deref() == Some(unsafe_blob.as_str())
+    assert!(
+        snapshot
+            .binding()
+            .commit
+            .changed_paths
+            .iter()
+            .any(|change| {
+                change.new_path.as_deref() == Some(escaped_path)
+                    && change.new_blob_oid.as_deref() == Some(unsafe_blob.as_str())
+                    && change.new_exclusion == Some(ExclusionReason::UnsafePath)
+            })
+    );
+    let escaped_collision = "unsafe-\\x5cxff\\x5cx5cname";
+    assert_ne!(escaped_path, escaped_collision);
+    assert!(snapshot.inventory().entries.iter().any(|entry| {
+        entry.path == escaped_collision && entry.exclusion == Some(ExclusionReason::UnsafePath)
     }));
+    assert!(
+        snapshot
+            .binding()
+            .commit
+            .changed_paths
+            .iter()
+            .any(|change| {
+                change.new_path.as_deref() == Some(escaped_collision)
+                    && change.new_blob_oid.as_deref() == Some(collision_blob.as_str())
+                    && change.new_exclusion == Some(ExclusionReason::UnsafePath)
+            })
+    );
     assert_eq!(snapshot.read_blob("src/lib.rs")?, b"pub fn visible() {}\n");
     assert_eq!(
         snapshot

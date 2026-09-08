@@ -51,6 +51,8 @@ pub struct ChangedPath {
     pub similarity: Option<u8>,
     pub old_path: Option<String>,
     pub new_path: Option<String>,
+    pub old_exclusion: Option<ExclusionReason>,
+    pub new_exclusion: Option<ExclusionReason>,
     pub old_mode: Option<String>,
     pub new_mode: Option<String>,
     pub old_blob_oid: Option<String>,
