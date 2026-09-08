@@ -11,6 +11,7 @@ mod persistence;
 pub mod run_loop;
 
 pub use attach::AttachState;
+pub use live_loop::menu::{ContextMenuKind, ContextMenuState, MenuAction, MenuItem};
 pub use live_loop::modal_input::{route_modal_key, ModalOutcome};
 pub use live_loop::mouse::{
     anchor_selection, extend_selection, finish_selection, route_mouse, ClickRun, MouseGesture,

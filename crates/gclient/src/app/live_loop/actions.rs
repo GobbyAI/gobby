@@ -22,6 +22,7 @@ use super::control::{
     focus_live_pane, observe_live_pane, release_live_control, send_live_write,
     set_live_scroll_offset, take_live_control,
 };
+use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 
@@ -126,6 +127,9 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::Reorder { order } => workspace
             .set_tab_order(&order)
             .map_err(|error| FrameError::Other(error.to_string()))?,
+        MouseOutcome::Menu { kind, action } => {
+            return apply_live_menu_action(workspace, chrome, kind, action).await;
+        }
     }
     Ok(false)
 }
@@ -152,8 +156,63 @@ pub(super) async fn apply_live_modal_outcome(
             }
         }
         ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
+        ModalOutcome::Menu { kind, action } => {
+            return apply_live_menu_action(workspace, chrome, kind, action).await;
+        }
     }
     Ok(false)
+}
+
+/// A context menu item. A keymap action runs as its chord would once the
+/// menu's pane or tab is the focused one (the pane is observed, so the lease
+/// stays the action's decision); `respond` focuses the entry's pane and opens
+/// its dialog; the chrome-only items go through `apply_local_menu_action`.
+/// Sidebar row items arrive with the projects sidebar (plan 5.3).
+async fn apply_live_menu_action(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    kind: ContextMenuKind,
+    action: MenuAction,
+) -> Result<bool, FrameError> {
+    match action {
+        MenuAction::Act(action) => {
+            focus_menu_target(workspace, chrome, &kind).await?;
+            if action == Action::Quit {
+                return Ok(true);
+            }
+            handle_live_action(workspace, chrome, action).await?;
+        }
+        MenuAction::Respond(entry_id) => {
+            if let Some(pane) = attention_pane(workspace, &entry_id) {
+                chrome.focus_pane(pane);
+                focus_live_pane(workspace, pane).await?;
+            }
+            open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
+        }
+        _ => {
+            apply_local_menu_action(workspace, chrome, &action);
+        }
+    }
+    Ok(false)
+}
+
+/// Make the menu's pane or tab the one keymap actions act on.
+async fn focus_menu_target(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    kind: &ContextMenuKind,
+) -> Result<(), FrameError> {
+    match *kind {
+        ContextMenuKind::Pane(pane) if chrome.focused_pane() != Some(pane) => {
+            chrome.focus_pane(pane);
+            observe_live_pane(workspace, pane).await?;
+        }
+        ContextMenuKind::Tab(index) if index != chrome.active_tab => {
+            activate_live_tab(workspace, chrome, index).await?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Hand `url` to `opener` detached: null stdio, and a thread reaps it so a
