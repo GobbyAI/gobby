@@ -637,6 +637,10 @@ fn project_stats_preserve_and_replace_indexer_version() {
 
 #[test]
 #[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
     let (mut conn, database_url) = connect_test_db();
     let project_id = unique_test_project_id("gcode-primary-mode");
@@ -833,6 +837,10 @@ fn project_seed_modes_require_primary_checkout_and_allow_overlay() {
 
 #[test]
 #[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 fn primary_writes_without_registered_checkout_fail_before_writing_project_rows() {
     let (mut conn, database_url) = connect_test_db();
     let project_id = unique_test_project_id("gcode-unregistered-checkout");
@@ -921,6 +929,10 @@ fn primary_writes_without_registered_checkout_fail_before_writing_project_rows()
 
 #[test]
 #[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 fn file_state_modes_require_primary_checkout_and_allow_overlay() {
     let (mut conn, database_url) = connect_test_db();
     let project_id = unique_test_project_id("gcode-primary-file-mode");
@@ -1145,6 +1157,10 @@ fn file_state_modes_require_primary_checkout_and_allow_overlay() {
 
 #[test]
 #[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 fn primary_writer_blocks_rebind_and_stale_writer_cannot_repopulate() {
     let (mut writer_conn, database_url) = connect_test_db();
     let project_id = unique_test_project_id("gcode-primary-rebind-race");

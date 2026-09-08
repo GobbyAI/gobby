@@ -6,7 +6,12 @@ from psycopg.errors import RaiseException
 
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
-from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, TaskIDCollisionError
+from gobby.storage.tasks import (
+    AgentTaskClaimConflictError,
+    LocalTaskManager,
+    StageManifestSpec,
+    TaskIDCollisionError,
+)
 from gobby.tasks.state_semantics import (
     current_stage_state,
     is_task_closed,
@@ -1385,6 +1390,133 @@ class TestLocalTaskManager:
         _assert_stage_state(released, "ready")
         assert released.claimed_by_session_id is None
         assert released.claimed_by_session_id is None
+
+    def test_agent_claim_is_idempotent_and_close_releases_capacity(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        session = session_manager.register(
+            external_id="exclusive-claim-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        first = task_manager.create_task(
+            project_id, "First agent task", validation_criteria=VALIDATION_CRITERIA
+        )
+        second = task_manager.create_task(
+            project_id, "Second agent task", validation_criteria=VALIDATION_CRITERIA
+        )
+
+        claimed = task_manager.claim_task_for_agent(first.id, session.id)
+        reclaimed = task_manager.claim_task_for_agent(first.id, session.id)
+
+        assert claimed.claimed_by_session_id == session.id
+        assert reclaimed.claimed_by_session_id == session.id
+        with pytest.raises(AgentTaskClaimConflictError) as exc_info:
+            task_manager.claim_task_for_agent(second.id, session.id)
+        assert exc_info.value.claimed_task_id == first.id
+        assert exc_info.value.claimed_task_ref == f"#{first.seq_num}"
+        assert task_manager.get_task(second.id).claimed_by_session_id is None
+
+        task_manager.close_task(first.id)
+        assert task_manager.claim_task_for_agent(second.id, session.id).claimed_by_session_id == (
+            session.id
+        )
+
+    def test_agent_create_and_claim_refusal_does_not_create_task(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        session = session_manager.register(
+            external_id="exclusive-create-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        existing = task_manager.create_task_for_agent(
+            session.id,
+            project_id=project_id,
+            title="Existing claim",
+            validation_criteria=VALIDATION_CRITERIA,
+        )
+        assert existing.claimed_by_session_id == session.id
+        task_count = task_manager.count_tasks(project_id=project_id)
+
+        with pytest.raises(AgentTaskClaimConflictError):
+            task_manager.create_task_for_agent(
+                session.id,
+                project_id=project_id,
+                title="Must not exist",
+                validation_criteria=VALIDATION_CRITERIA,
+            )
+
+        assert task_manager.count_tasks(project_id=project_id) == task_count
+
+    def test_internal_claim_path_remains_unrestricted(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        session = session_manager.register(
+            external_id="internal-claim-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        tasks = [
+            task_manager.create_task(
+                project_id, f"Internal task {index}", validation_criteria=VALIDATION_CRITERIA
+            )
+            for index in range(2)
+        ]
+
+        claimed = [task_manager.claim_task(task.id, session.id) for task in tasks]
+
+        assert [task.claimed_by_session_id for task in claimed] == [session.id, session.id]
+
+    def test_concurrent_agent_claims_allow_only_one_task(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+    ) -> None:
+        import concurrent.futures
+        import threading
+
+        session = session_manager.register(
+            external_id="concurrent-exclusive-claim-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+        tasks = [
+            task_manager.create_task(
+                project_id, f"Concurrent claim {index}", validation_criteria=VALIDATION_CRITERIA
+            )
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(2)
+
+        def _claim(task_id: str) -> str:
+            barrier.wait()
+            try:
+                task_manager.claim_task_for_agent(task_id, session.id)
+            except AgentTaskClaimConflictError:
+                return "conflict"
+            return "claimed"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(_claim, [task.id for task in tasks]))
+
+        assert sorted(outcomes) == ["claimed", "conflict"]
+        open_claims = task_manager.list_tasks(claimed_by_session_id=session.id)
+        assert len(open_claims) == 1
 
     def test_submit_for_review_clears_canonical_owner(
         self, task_manager, project_id, session_manager

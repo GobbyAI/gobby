@@ -13,7 +13,12 @@ from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.tasks import TaskAlreadyClaimedError, TaskClosedError, TaskNotFoundError
+from gobby.storage.tasks import (
+    AgentTaskClaimConflictError,
+    TaskAlreadyClaimedError,
+    TaskClosedError,
+    TaskNotFoundError,
+)
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 
@@ -133,17 +138,27 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         try:
             if delegated_claim:
-                updated = ctx.task_manager.claim_task(
+                updated = ctx.task_manager.claim_task_for_agent(
                     resolved_id,
                     session_id=resolved_session_id,
                     expected_owner=current_owner,
                 )
             else:
-                updated = ctx.task_manager.claim_task(
+                updated = ctx.task_manager.claim_task_for_agent(
                     resolved_id,
                     session_id=resolved_session_id,
                     force=force,
                 )
+        except AgentTaskClaimConflictError as e:
+            return task_error(
+                str(e),
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                claimed_task_id=e.claimed_task_id,
+                claimed_task_ref=e.claimed_task_ref,
+                message=(
+                    f"Finish and close task {e.claimed_task_ref} before claiming another task."
+                ),
+            )
         except TaskClosedError as e:
             return task_error(str(e), TaskToolErrorCode.TASK_CLOSED)
         except TaskAlreadyClaimedError as e:

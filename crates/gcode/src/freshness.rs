@@ -59,17 +59,40 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
+    let lock_policy = match &scope {
+        FreshnessScope::Project => IndexLockPolicy::brief_freshness_try(),
+        FreshnessScope::Files(_) => IndexLockPolicy::wait(),
+    };
     let _guard = FreshnessGuard::enter();
-    let result =
-        index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
-            let refresh = || -> anyhow::Result<()> {
-                match &scope {
-                    FreshnessScope::Project => {
+    let result = index_lock::with_project_lock(ctx, lock_policy, || {
+        let refresh = || -> anyhow::Result<()> {
+            match &scope {
+                FreshnessScope::Project => {
+                    api::index_files(
+                        api::IndexRequest {
+                            project_root: ctx.project_root.clone(),
+                            path_filter: None,
+                            explicit_files: Vec::new(),
+                            full: false,
+                            require_cpp_semantics: false,
+                            sync_projections: false,
+                        },
+                        ctx,
+                        api::IndexOptions::default(),
+                    )?;
+                }
+                FreshnessScope::Files(paths) => {
+                    let files: Vec<PathBuf> = paths
+                        .iter()
+                        .map(|path| normalize_file_path(&ctx.project_root, path))
+                        .map(PathBuf::from)
+                        .collect();
+                    if !files.is_empty() {
                         api::index_files(
                             api::IndexRequest {
                                 project_root: ctx.project_root.clone(),
                                 path_filter: None,
-                                explicit_files: Vec::new(),
+                                explicit_files: files,
                                 full: false,
                                 require_cpp_semantics: false,
                                 sync_projections: false,
@@ -78,32 +101,12 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
                             api::IndexOptions::default(),
                         )?;
                     }
-                    FreshnessScope::Files(paths) => {
-                        let files: Vec<PathBuf> = paths
-                            .iter()
-                            .map(|path| normalize_file_path(&ctx.project_root, path))
-                            .map(PathBuf::from)
-                            .collect();
-                        if !files.is_empty() {
-                            api::index_files(
-                                api::IndexRequest {
-                                    project_root: ctx.project_root.clone(),
-                                    path_filter: None,
-                                    explicit_files: files,
-                                    full: false,
-                                    require_cpp_semantics: false,
-                                    sync_projections: false,
-                                },
-                                ctx,
-                                api::IndexOptions::default(),
-                            )?;
-                        }
-                    }
                 }
-                Ok(())
-            };
-            Ok(refresh().map_err(|error| error.to_string()))
-        })?;
+            }
+            Ok(())
+        };
+        Ok(refresh().map_err(|error| error.to_string()))
+    })?;
 
     Ok(freshness_from_lock(result))
 }
@@ -409,6 +412,16 @@ mod tests {
         visibility::tombstone_count(&mut conn, ctx)
     }
 
+    fn visible_symbol_names(ctx: &Context, file_path: &str) -> Vec<String> {
+        let mut conn =
+            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
+        visibility::visible_symbols_for_file(&mut conn, ctx, file_path)
+            .expect("read visible symbols")
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect()
+    }
+
     #[test]
     fn busy_warning_names_the_holder_when_one_was_identified() {
         let named = FreshnessStatus::SkippedBusy(Some("holder: backend pid 4242".to_string()))
@@ -462,6 +475,163 @@ mod tests {
                 matches!(status, FreshnessStatus::SkippedBusy(_)),
                 "a held project lock must skip the refresh, got {status:?}"
             );
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn file_scope_waits_for_lock_then_refreshes_dirty_file() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let root = tmp.path();
+            std::fs::create_dir_all(root.join("src")).expect("create src");
+            let lib = root.join("src/lib.rs");
+            std::fs::write(&lib, b"pub fn stale_name() {}\n").expect("write initial source");
+            let ctx =
+                postgres_context_with_root(&test_project_id("gcode-freshness-file-lock"), root);
+            invalidate_test_project(&ctx);
+            full_index(&ctx);
+            assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["stale_name"]);
+
+            std::fs::write(&lib, b"pub fn fresh_name() {}\n").expect("write dirty source");
+            let holder = hold_project_lock(&ctx);
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let handle = std::thread::spawn(move || {
+                let status = ensure_fresh(
+                    &ctx,
+                    FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
+                );
+                done_tx.send(()).expect("send freshness completion");
+                (status, ctx)
+            });
+
+            let completed_while_locked = done_rx
+                .recv_timeout(std::time::Duration::from_millis(400))
+                .is_ok();
+            drop(holder);
+            let (status, ctx) = handle.join().expect("freshness thread joins");
+            assert_eq!(
+                status.expect("file freshness status"),
+                FreshnessStatus::Checked
+            );
+            assert!(
+                !completed_while_locked,
+                "file-scoped freshness must wait while the project lock is held"
+            );
+            assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["fresh_name"]);
+            invalidate_test_project(&ctx);
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn file_scope_indexes_untracked_path_and_removes_deleted_path() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let root = tmp.path();
+            std::fs::create_dir_all(root.join("src")).expect("create src");
+            let lib = root.join("src/lib.rs");
+            std::fs::write(&lib, b"pub fn indexed_name() {}\n").expect("write indexed source");
+            let ctx = postgres_context_with_root(
+                &test_project_id("gcode-freshness-file-lifecycle"),
+                root,
+            );
+            invalidate_test_project(&ctx);
+            full_index(&ctx);
+
+            let untracked = root.join("src/untracked.rs");
+            std::fs::write(&untracked, b"pub fn newly_requested() {}\n")
+                .expect("write untracked source");
+            let status = ensure_fresh(
+                &ctx,
+                FreshnessScope::Files(vec![PathBuf::from("src/untracked.rs")]),
+            )
+            .expect("untracked file freshness status");
+            assert_eq!(status, FreshnessStatus::Checked);
+            assert_eq!(
+                visible_symbol_names(&ctx, "src/untracked.rs"),
+                ["newly_requested"]
+            );
+
+            std::fs::remove_file(&lib).expect("delete indexed source");
+            let status = ensure_fresh(
+                &ctx,
+                FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
+            )
+            .expect("deleted file freshness status");
+            assert_eq!(status, FreshnessStatus::Checked);
+            assert!(visible_symbol_names(&ctx, "src/lib.rs").is_empty());
+            invalidate_test_project(&ctx);
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn file_scope_refreshes_and_tombstones_worktree_overlay_path() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let parent_root = tmp.path().join("parent");
+            let overlay_root = tmp.path().join("overlay");
+            for root in [&parent_root, &overlay_root] {
+                std::fs::create_dir_all(root.join("src")).expect("create src");
+                std::fs::write(root.join("src/lib.rs"), b"pub fn parent_name() {}\n")
+                    .expect("write source");
+            }
+            let parent_ctx = postgres_context_with_root(
+                &test_project_id("gcode-freshness-file-overlay-parent"),
+                &parent_root,
+            );
+            let mut overlay_ctx = postgres_context_with_root(
+                &test_project_id("gcode-freshness-file-overlay"),
+                &overlay_root,
+            );
+            overlay_ctx.index_scope = ProjectIndexScope::Overlay {
+                overlay_project_id: overlay_ctx.project_id.clone(),
+                overlay_root: overlay_root.clone(),
+                parent_project_id: parent_ctx.project_id.clone(),
+                parent_root: parent_root.clone(),
+            };
+            invalidate_test_project(&parent_ctx);
+            invalidate_test_project(&overlay_ctx);
+            full_index(&parent_ctx);
+            full_index(&overlay_ctx);
+            assert_eq!(
+                visible_symbol_names(&overlay_ctx, "src/lib.rs"),
+                ["parent_name"]
+            );
+
+            let overlay_lib = overlay_root.join("src/lib.rs");
+            std::fs::write(&overlay_lib, b"pub fn overlay_name() {}\n")
+                .expect("write overlay source");
+            let status = ensure_fresh(
+                &overlay_ctx,
+                FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
+            )
+            .expect("overlay file freshness status");
+            assert_eq!(status, FreshnessStatus::Checked);
+            assert_eq!(
+                visible_symbol_names(&overlay_ctx, "src/lib.rs"),
+                ["overlay_name"]
+            );
+
+            std::fs::remove_file(&overlay_lib).expect("delete overlay source");
+            let status = ensure_fresh(
+                &overlay_ctx,
+                FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
+            )
+            .expect("deleted overlay freshness status");
+            assert_eq!(status, FreshnessStatus::Checked);
+            assert!(visible_symbol_names(&overlay_ctx, "src/lib.rs").is_empty());
+            assert_eq!(tombstone_count(&overlay_ctx), 1);
+
+            invalidate_test_project(&overlay_ctx);
+            invalidate_test_project(&parent_ctx);
         }
 
         #[test]

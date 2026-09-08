@@ -29,6 +29,13 @@ from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_live_activity,
     overlay_runs_live_activity,
 )
+from gobby.mcp_proxy.tools.agent_live_output import (
+    LIVE_OUTPUT_MAX_CHARS,
+    LIVE_OUTPUT_MAX_LINES,
+    TerminalSnapshotReader,
+    live_output_reference,
+    read_live_output,
+)
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_payloads import (
     _AGENT_CAPTURE_PAGE_DEFAULT_CHARS,
@@ -192,14 +199,17 @@ def register_agent_query_tools(
         }
         if dirty_paths is not _DIRTY_PATHS_UNSET:
             kwargs["dirty_paths"] = dirty_paths
-        return _agent_result_payload(run, **kwargs)
+        payload = _agent_result_payload(run, **kwargs)
+        payload["live_output"] = live_output_reference(run)
+        return payload
 
     @registry.tool(
         name="get_agent_result",
         description=(
             "Look up an agent run's current status and result. Safe for explicit polling; "
             "creates no completion subscription. The run's prompt is static metadata the "
-            "caller already holds, so it is omitted unless include_prompt=true."
+            "caller already holds, so it is omitted unless include_prompt=true. Active "
+            "terminal-backed runs advertise the separate bounded get_agent_live_output path."
         ),
     )
     async def get_agent_result(run_id: str, include_prompt: bool = False) -> dict[str, Any]:
@@ -313,11 +323,50 @@ def register_agent_query_tools(
     )
 
     @registry.tool(
+        name="get_agent_live_output",
+        description=(
+            f"Read up to {LIVE_OUTPUT_MAX_LINES} lines and {LIVE_OUTPUT_MAX_CHARS:,} Unicode "
+            "characters from an active agent's terminal snapshot in oldest-to-newest order. "
+            "This diagnostic tail is separate from the authoritative final report and from "
+            "persisted get_agent_capture output."
+        ),
+    )
+    async def get_agent_live_output(run_id: str) -> dict[str, Any]:
+        run, error = _lookup_run(run_id)
+        if error is not None:
+            return error
+        if run is None:
+            return {"success": False, "error": f"Agent run {run_id} not found"}
+        try:
+            run, recovery_pending = _follow_daemon_resume_chain(
+                run,
+                get_run=ctx.runner.get_run,
+            )
+        except ValueError as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "error_code": "daemon_resume_chain_corrupt",
+            }
+        terminal_services = cast(
+            "TerminalSnapshotReader | None",
+            getattr(ctx.runner, "terminal_services", None),
+        )
+        return {
+            "success": True,
+            "run_id": run.id,
+            "status": run.status,
+            "recovery_pending": recovery_pending,
+            "live_output": await read_live_output(run, terminal_services),
+        }
+
+    @registry.tool(
         name="wait_for_agent",
         description=(
             "Create a one-shot durable subscription to an agent run, then end the turn. "
             "The daemon wakes this session with the result when the run completes. "
-            "Repeated calls are idempotent recovery behavior."
+            "Repeated calls are idempotent recovery behavior. Active terminal-backed runs "
+            "advertise the separate bounded get_agent_live_output path."
         ),
     )
     async def wait_for_agent(run_id: str) -> dict[str, Any]:

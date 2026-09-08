@@ -194,6 +194,15 @@ class TaskAlreadyClaimedError(ValueError):
         super().__init__(f"Task {task_id} is already claimed by session '{claimed_by}'")
 
 
+class AgentTaskClaimConflictError(ValueError):
+    """Raised when an agent session already owns a different open task."""
+
+    def __init__(self, claimed_task_id: str, claimed_task_ref: str) -> None:
+        self.claimed_task_id = claimed_task_id
+        self.claimed_task_ref = claimed_task_ref
+        super().__init__(f"Session already owns open claimed task {claimed_task_ref}")
+
+
 class TaskHasChildrenError(ValueError):
     """Raised when deleting a task that has children without cascade."""
 

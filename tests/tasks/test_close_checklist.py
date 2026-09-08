@@ -484,6 +484,60 @@ def test_prefixed_success_is_credited_by_core_command() -> None:
     ]
 
 
+def test_successful_top_level_and_segments_are_credited_individually() -> None:
+    test_command = "uv run pytest tests/tasks/test_close_checklist.py -q"
+    lint_command = "uv run ruff check src/gobby/tasks/close_checklist.py"
+    command = f"GOBBY_TEST_PROTECT=1 {test_command} && {lint_command}"
+    compound = replace(
+        _run(1, categories=("test", "lint", "type_check"), command=command),
+        validation_segments=(
+            TranscriptValidationSegment(
+                command="pytest tests/tasks/test_close_checklist.py -q",
+                categories=("test",),
+                segment_index=0,
+            ),
+            TranscriptValidationSegment(
+                command="ruff check src/gobby/tasks/close_checklist.py",
+                categories=("lint", "type_check"),
+                segment_index=1,
+            ),
+        ),
+    )
+
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(compound,)),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "passed"
+    assert gate.details["latest_outcomes"] == {
+        "lint": "success",
+        "test": "success",
+        "type_check": "success",
+    }
+    assert gate.details["latest_runs"] == [
+        {
+            "category": "test",
+            "command": f"GOBBY_TEST_PROTECT=1 {test_command}",
+            "core_command": test_command,
+            "wrapped": False,
+            "completed_at": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        },
+        {
+            "category": "lint",
+            "command": lint_command,
+            "core_command": lint_command,
+            "wrapped": False,
+            "completed_at": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+            "outcome": "success",
+            "exit_code": 0,
+        },
+    ]
+
+
 def test_wrapped_success_does_not_satisfy_validation_gate() -> None:
     command = "uv run pytest tests/tasks/test_close_checklist.py -q | tail -1"
 
@@ -508,6 +562,32 @@ def test_wrapped_success_does_not_satisfy_validation_gate() -> None:
     ]
     assert gate.details["uncredited_runs"] == [
         {"command": command, "reason": "wrapped", "wrapper_reason": "pipeline"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("command", "wrapper_reason"),
+    [
+        ("pytest tests/x.py || true", "fallback"),
+        ("pytest tests/x.py & wait", "backgrounding"),
+        ("pytest tests/x.py && printf done", "trailing printf"),
+        ("pytest tests/x.py; true", "command sequence"),
+    ],
+)
+def test_uncredited_compound_success_reports_specific_wrapper_reason(
+    command: str,
+    wrapper_reason: str,
+) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=command),)),
+        has_attributed_edits=True,
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["latest_outcomes"] == {}
+    assert gate.details["uncredited_runs"] == [
+        {"command": command, "reason": "wrapped", "wrapper_reason": wrapper_reason}
     ]
 
 

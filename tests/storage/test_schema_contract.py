@@ -216,6 +216,39 @@ def test_apply_reports_failed_identity_handshake_without_leaking_database_url(
     assert database_url not in str(exc.value)
 
 
+def test_apply_reports_identity_versions_and_exact_cutover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = schema_contract.expected_schema_identity()
+    expected_version = expected["latest_version"]
+    assert isinstance(expected_version, int)
+    embedded = {**expected, "latest_version": expected_version - 1}
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(schema_contract, "probe_identity", lambda binary: embedded)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        Mock(
+            return_value=subprocess.CompletedProcess(
+                [],
+                2,
+                stdout="",
+                stderr="expected schema identity does not match embedded identity\n",
+            )
+        ),
+    )
+
+    with pytest.raises(schema_contract.SchemaContractError) as exc:
+        schema_contract.apply_schema("postgresql://gobby:secret@database.example/gobby")
+
+    message = str(exc.value)
+    assert f"installed/embedded schema v{expected_version - 1}" in message
+    assert f"checkout-expected schema v{expected_version}" in message
+    assert "uv run gobby cutover --path ." in message
+    assert "gobby install" not in message
+    assert "grant" not in message
+
+
 def test_apply_reports_timeout_as_actionable_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
 

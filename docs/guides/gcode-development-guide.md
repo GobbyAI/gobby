@@ -332,12 +332,14 @@ Symbol IDs are deterministic UUID5 using namespace `c0de1de0-0000-4000-8000-0000
 **Files:** `src/search/{fts,graph_boost,rrf}.rs`, `src/vector/code_symbols.rs`,
 `src/commands/search.rs`, `src/commands/grep.rs`
 
-### Hybrid Search (`gcode search`)
+### Hybrid Symbol Search (`gcode search`)
 
-Four sources are queried and merged via Reciprocal Rank Fusion:
+Four symbol sources are queried and merged via Reciprocal Rank Fusion. The
+content-chunk search is a separate pipeline and never participates in this
+ranking or pagination:
 
 ```
-Source 1: pg_search BM25 (PostgreSQL full-text relevance)
+Source 1: Symbol BM25 (PostgreSQL pg_search relevance)
   → search_symbols_fts (BM25 query on code_symbols)
   → required pg_search query; invalid BM25 input returns no BM25 source results
 
@@ -410,13 +412,36 @@ The `total` for hybrid search is a best-effort estimate bounded by `fetch_limit`
 per source — exact counts aren't feasible because RRF merges results from
 multiple systems with deduplication.
 
-### BM25 Search (`search-text`, `search-content`)
+### BM25 Symbol And Content Search
 
-These use dedicated `count_text`/`count_content` functions backed by pg_search BM25 counts for accurate totals when no positional path filters are present. With path filters, handlers fetch up to `FILTERED_FETCH_CAP`, apply glob filtering before pagination, and surface a hint if the cap is hit or a glob required post-query filtering.
+`search-text` runs BM25 over symbol names, qualified names, signatures, and
+docstrings. `search-content` runs a different BM25 index over
+`code_content_chunks`. They use dedicated `count_text`/`count_content`
+functions for accurate totals when no positional path filters are present.
+With path filters, handlers fetch up to `FILTERED_FETCH_CAP`, apply glob
+filtering before pagination, and surface a hint if the cap is hit or a glob
+required post-query filtering.
 
 Use `gcode search-content "query" [PATH ...]` for ranked content search. Use
 `gcode grep "pattern" [PATH ...]` or `gcode grep "pattern" src -m 50` for exact
 line-oriented indexed matches.
+
+### Search Diagnostic Contract
+
+Diagnostic redirects are advisory only: they do not add content hits to symbol
+ranking or change pagination and exit codes. Snake_case inputs produce
+shell-safe `search-symbol` and `grep -w` commands; literal-like inputs produce
+`grep -F`; empty symbol results and content-only path filters produce
+`search-content`. Accepted query and path filters are retained, along with
+`--kind` or `--language` when the recommended command supports them. JSON uses
+the existing `hint` field. Text writes the same guidance to stderr unless
+`--quiet` suppresses it.
+
+Outline diagnostics follow the same non-breaking model. `outline` is AST-only;
+Markdown and other content-only files return exit `0` with no symbols. Markdown
+recovery includes `gcode grep '^#{1,6} ' <FILE> -m 200` plus
+`search-content`; other content-only files receive general grep and
+`search-content` guidance.
 
 ### Pagination
 
@@ -446,7 +471,8 @@ All collection commands return a page envelope:
 - outline pages use top-level subtrees, grep pages use match/context blocks,
   symbols remain complete, tree/repo-outline use directory groups, and graph
   commands use relationship rows
-- `hint` is populated when FalkorDB is unavailable (graph commands only)
+- `hint` carries graph availability notes, path-filter warnings, and actionable
+  search-lane redirects without changing the envelope
 - text mode prints an exact shell-safe continuation command
 
 ## Database Schema
@@ -641,8 +667,9 @@ prints an exact shell-safe continuation command. Compact text gets an automatic
 ### File Survey
 
 1. `gcode outline src/config.rs` → slim symbol list (name, kind, lines, signature)
-2. If you already have a file and line, use `gcode symbol-at src/config.rs:42`
-3. If an ID is required, rerun with `--verbose` or `--format json`, then use `gcode symbol <id>`
+2. Outlines are AST-only. For Markdown headings, use `gcode grep '^#{1,6} ' docs/guide.md -m 200`; for broader content use `gcode search-content`.
+3. If you already have a file and line, use `gcode symbol-at src/config.rs:42`
+4. If an ID is required, rerun with `--verbose` or `--format json`, then use `gcode symbol <id>`
 
 ### Impact Analysis
 

@@ -1,0 +1,118 @@
+name: feedback-reviewer
+description: |
+  Taskless nightly reviewer that clusters session feedback and returns a
+  validated proposal to the deterministic feedback service.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn]
+provider: claude
+model: fable
+reasoning_effort: high
+isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:spawn_agent"
+  - "gobby-agents:kill_agent"
+  - "gobby-tasks:create_task"
+  - "gobby-tasks:claim_task"
+  - "gobby-tasks:update_task"
+  - "gobby-tasks:close_task"
+
+prompts:
+  agent: |
+    You are the taskless reviewer for Gobby's nightly session-feedback loop.
+    The spawn prompt contains the complete review instructions and observation
+    batch. You propose findings only; deterministic daemon code validates the
+    proposal, suppresses resolved or recently fixed findings, files tasks, and
+    marks observations reviewed.
+
+    Your step workflow requires you to load `restraint` and `proportionality`
+    through gobby-skills before reviewing. Apply restraint at max level. Use
+    proportionality to reject speculative or needless follow-up machinery while
+    preserving fixes justified by concrete evidence.
+
+    In REVIEW, produce the exact JSON object requested by the spawn prompt. Do
+    not wrap it in Markdown and do not add commentary. Call `end_agent_run` with
+    that exact compact JSON string as `current_state` and one nonblank
+    coordinator-facing `next_steps` item stating that deterministic feedback
+    intake should validate and apply the proposal. Agent termination is separate
+    from turn completion and always requires this call.
+
+    Lifecycle model:
+    - Rules are authored against semantic workflow events such as `turn_start`
+      and `turn_end`.
+    - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details,
+      not the main authoring API.
+    - This run is taskless. Never create, claim, update, close, or escalate tasks.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:task-skill-gates"
+
+step_workflow:
+  variables:
+    restraint_loaded: false
+    proportionality_loaded: false
+    review_complete: false
+
+  exit_condition: "vars.review_complete"
+  steps:
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load restraint and proportionality before reviewing feedback"
+      status_message: |
+        Load both required methodology skills through the Gobby proxy:
+        1. get_skill(name="restraint") on gobby-skills
+        2. get_skill(name="proportionality") on gobby-skills
+        Use only mcp__gobby__call_tool in this step. Native skill tools bypass
+        Gobby's observable skill tracking.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'restraint'"
+          action: set_variable
+          variable: restraint_loaded
+          value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'proportionality'"
+          action: set_variable
+          variable: proportionality_loaded
+          value: true
+      transitions:
+        - to: review
+          when: "vars.restraint_loaded and vars.proportionality_loaded"
+
+    - name: review
+      mcp_error_policy: stay
+      description: "Return the structured feedback proposal and terminate"
+      status_message: |
+        Review the supplied observations using the prompt contract. Call
+        end_agent_run with the exact proposal JSON string in current_state and
+        a nonblank next_steps item. Do not mutate tasks or repository state.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: end_agent_run
+          action: set_variable
+          variable: review_complete
+          value: true

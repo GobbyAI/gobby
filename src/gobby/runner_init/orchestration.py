@@ -754,37 +754,44 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 mark_service_degraded(runner, "memory_dream_cron")
                 logger.exception("Failed to register memory dream cron handler")
 
-        if runner.llm_service is None:
-            mark_service_degraded(runner, "feedback_review_cron")
-            logger.warning("Skipping feedback review cron registration; LLM service unavailable")
-        else:
-            try:
-                from gobby.feedback.cron import register_feedback_review_cron
-                from gobby.feedback.service import FeedbackReviewService
+        try:
+            from gobby.feedback.agent import FeedbackReviewerAgent
+            from gobby.feedback.cron import register_feedback_review_cron
+            from gobby.feedback.service import FeedbackReviewService
 
-                feedback_review_config = config.session_feedback.review
-                runner.feedback_review_service = FeedbackReviewService(
-                    runner.database,
-                    runner.llm_service,
-                    feedback_review_config,
-                    runner.task_manager,
-                )
-                interrupted = runner.feedback_review_service.store.mark_running_interrupted()
-                if interrupted:
-                    logger.info(
-                        "Marked %d orphaned feedback review run(s) interrupted", interrupted
-                    )
-                registered = register_feedback_review_cron(
-                    cron_storage=runner.cron_storage,
-                    cron_executor=cron_executor,
-                    service=runner.feedback_review_service,
-                    config=feedback_review_config,
-                    project_id=runner.project_id,
-                )
-                logger.debug("Feedback review cron handlers registered: %s", registered)
-            except Exception:
-                mark_service_degraded(runner, "feedback_review_cron")
-                logger.exception("Failed to register feedback review cron handler")
+            feedback_review_config = config.session_feedback.review
+            feedback_reviewer = FeedbackReviewerAgent(
+                db=runner.database,
+                runner=runner.agent_runner,
+                session_manager=runner.session_manager,
+                completion_registry=runner.completion_registry,
+                project_id=runner.project_id,
+                project_path=(
+                    str(runner.git_manager.repo_path) if runner.git_manager is not None else None
+                ),
+                git_manager=runner.git_manager,
+                daemon_config=config,
+            )
+            runner.feedback_review_service = FeedbackReviewService(
+                runner.database,
+                feedback_reviewer,
+                feedback_review_config,
+                runner.task_manager,
+            )
+            interrupted = runner.feedback_review_service.store.mark_running_interrupted()
+            if interrupted:
+                logger.info("Marked %d orphaned feedback review run(s) interrupted", interrupted)
+            registered = register_feedback_review_cron(
+                cron_storage=runner.cron_storage,
+                cron_executor=cron_executor,
+                service=runner.feedback_review_service,
+                config=feedback_review_config,
+                project_id=runner.project_id,
+            )
+            logger.debug("Feedback review cron handlers registered: %s", registered)
+        except Exception:
+            mark_service_degraded(runner, "feedback_review_cron")
+            logger.exception("Failed to register feedback review cron handler")
 
         runner.code_index_pruner = None
         runner.code_index_nightly_repairer = None

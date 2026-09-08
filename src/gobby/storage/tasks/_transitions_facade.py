@@ -32,6 +32,9 @@ from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
 )
 from gobby.storage.tasks._transitions import (
+    claim_task_for_agent as _claim_task_for_agent,
+)
+from gobby.storage.tasks._transitions import (
     escalate_task as _escalate_task,
 )
 from gobby.storage.tasks._transitions import (
@@ -99,6 +102,25 @@ class TaskTransitionsMixin:
     ) -> Task:
         """Claim a task for a session, preserving non-open lifecycle states."""
         task = _claim_task(
+            self.db,
+            task_id=task_id,
+            session_id=session_id,
+            force=force,
+            expected_owner=expected_owner,
+        )
+        self._notify_listeners()
+        return task
+
+    def claim_task_for_agent(
+        self,
+        task_id: str,
+        session_id: str,
+        force: bool = False,
+        *,
+        expected_owner: str | None = None,
+    ) -> Task:
+        """Claim a task through the agent-facing single-claim guard."""
+        task = _claim_task_for_agent(
             self.db,
             task_id=task_id,
             session_id=session_id,

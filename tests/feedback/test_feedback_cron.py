@@ -206,6 +206,7 @@ async def test_feedback_review_cron_handler_formats_completed_run() -> None:
         {
             "status": "completed",
             "run_id": "run-1",
+            "reviewer_agent_run_id": "agent-run-1",
             "rows_considered": 5,
             "tasks_filed": 2,
             "deduplicated": 1,
@@ -223,7 +224,10 @@ async def test_feedback_review_cron_handler_formats_completed_run() -> None:
     handler = cron_executor.handlers[FEEDBACK_REVIEW_CRON_HANDLER]
     message = await handler(SimpleNamespace(id="job-1"))
 
-    assert message == "feedback review: run run-1, 5 row(s), 2 task(s) filed, 1 deduplicated"
+    assert message == (
+        "feedback review: run run-1, reviewer agent-run-1, "
+        "5 row(s), 2 task(s) filed, 1 deduplicated"
+    )
     # The scheduled path always runs for real.
     assert service.dry_runs == [False]
 

@@ -31,6 +31,7 @@ from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
+    AgentTaskClaimMutation,
     BuildDryRunMutation,
     ChatAttachmentMutation,
     CronRunAdmission,
@@ -644,6 +645,8 @@ def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
         return ("cron_run_admission",)
     if isinstance(lock, AgentCapAdmission):
         return (f"agent_cap_admission:{lock.project_id or '*'}",)
+    if isinstance(lock, AgentTaskClaimMutation):
+        return (f"agent_task_claim:{lock.session_id}",)
     if isinstance(lock, DispatchMutexRow):
         return (f"dispatch_mutex:{lock.task_id}",)
     if isinstance(lock, GitHubIssueTriageMutation):

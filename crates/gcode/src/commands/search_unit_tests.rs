@@ -127,22 +127,76 @@ fn combines_fetch_cap_and_path_post_filter_hints() {
 }
 
 #[test]
-fn literal_query_hint_detects_literal_like_queries() {
+fn snake_case_query_hint_routes_to_symbol_and_word_grep_with_shell_safe_paths() {
+    let paths = vec!["src/user guides".to_string(), "docs/owner's.md".to_string()];
+    let hint = search_lane_hint(
+        "context_handoff",
+        &paths,
+        Some("function"),
+        Some("rust"),
+        false,
+        true,
+    )
+    .expect("identifier hint");
+
+    assert!(hint.contains(
+        "`gcode search-symbol context_handoff 'src/user guides' 'docs/owner'\"'\"'s.md' \
+         --kind function --language rust`"
+    ));
+    assert!(hint.contains(
+        "`gcode grep -w context_handoff 'src/user guides' 'docs/owner'\"'\"'s.md' -m 50`"
+    ));
+
+    let constant_hint = search_lane_hint("RUNTIME_CONFIG", &[], None, None, false, true)
+        .expect("constant-style identifier hint");
+    assert!(constant_hint.contains("gcode grep -w RUNTIME_CONFIG"));
+}
+
+#[test]
+fn literal_query_hint_routes_to_fixed_string_grep() {
     for query in [
         "spawn_ui_server(",
         "config.ui.mode",
         "\"quoted string\"",
         "src/foo.rs",
     ] {
-        let hint = literal_query_hint(query).expect("literal hint");
-        assert!(hint.contains("gcode grep"));
-        assert!(hint.contains("search-content"));
+        let hint = search_lane_hint(query, &[], None, None, false, true).expect("literal hint");
+        assert!(hint.contains("gcode grep -F"));
+        assert!(!hint.contains("gcode grep \"pattern\""));
     }
 }
 
 #[test]
-fn literal_query_hint_skips_natural_language_queries() {
-    assert!(literal_query_hint("database connection pool").is_none());
+fn empty_or_content_only_symbol_search_redirects_to_search_content() {
+    let markdown_paths = vec!["src/lib.rs".to_string(), "docs/user guide.md".to_string()];
+    let path_hint = search_lane_hint(
+        "Context pressure",
+        &markdown_paths,
+        None,
+        Some("markdown"),
+        false,
+        true,
+    )
+    .expect("content-only path hint");
+    assert!(path_hint.contains(
+        "`gcode search-content 'Context pressure' src/lib.rs 'docs/user guide.md' --language markdown`"
+    ));
+
+    let empty_hint = search_lane_hint(
+        "natural language concept",
+        &["docs".to_string()],
+        None,
+        None,
+        true,
+        true,
+    )
+    .expect("empty symbol-search hint");
+    assert!(empty_hint.contains("`gcode search-content 'natural language concept' docs`"));
+}
+
+#[test]
+fn natural_language_symbol_query_stays_in_hybrid_lane_when_results_exist() {
+    assert!(search_lane_hint("database connection pool", &[], None, None, false, true,).is_none());
 }
 
 #[test]

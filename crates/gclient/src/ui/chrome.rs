@@ -330,6 +330,8 @@ impl ViewState {
             control_indicator,
             toast,
             settings,
+            // The open menu owns its rows; `Chrome::apply_hits` places them.
+            menu_rows: _,
         } = hits;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
@@ -554,6 +556,15 @@ impl Chrome {
 
     pub fn show_tab_bar(&self) -> bool {
         !(self.tabs.len() <= 1 && self.prefs.hide_tab_bar_when_single_tab)
+    }
+
+    /// Write the rects the renderers drew back where the hit tests read
+    /// them: the chrome map into `view`, the menu rows into the open menu.
+    pub fn apply_hits(&mut self, mut hits: ChromeHits) {
+        if let (Some(menu), Some(rows)) = (self.menu.as_mut(), hits.menu_rows.take()) {
+            menu.item_rects = rows;
+        }
+        self.view.apply_hits(hits);
     }
 
     /// Recompute `view` for `area` (herdr `compute_view`): sidebar column,

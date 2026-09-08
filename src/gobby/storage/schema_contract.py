@@ -7,8 +7,9 @@ import json
 import logging
 import os
 import subprocess
+from pathlib import Path
 
-from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
+from gobby.storage.schema_identity_pin import SchemaIdentityError, probe_identity, validate_identity
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 EXPECTED_IDENTITY_ENV = "GOBBY_EXPECTED_SCHEMA_IDENTITY"
 DATABASE_URL_ENV = "GOBBY_DATABASE_URL"
 _IDENTITY_FILE = "schema_expected_identity.json"
+_IDENTITY_MISMATCH = "expected schema identity does not match embedded identity"
+_CUTOVER_RECOVERY = "run `uv run gobby cutover --path .` from this source checkout"
 
 
 class SchemaContractError(RuntimeError):
@@ -43,6 +46,21 @@ def latest_schema_version() -> int:
     if not isinstance(value, int):
         raise SchemaContractError("Packaged latest schema version must be an integer")
     return value
+
+
+def _identity_mismatch_detail(binary: str) -> str:
+    """Describe checkout-versus-binary schema identity drift."""
+    expected = expected_schema_identity()
+    expected_version = expected["latest_version"]
+    try:
+        embedded = probe_identity(Path(binary))
+    except SchemaIdentityError:
+        logger.debug("Could not probe mismatched gdaemon identity", exc_info=True)
+        return f"{_IDENTITY_MISMATCH}; checkout-expected schema v{expected_version}"
+    return (
+        f"installed/embedded schema v{embedded['latest_version']} does not match "
+        f"checkout-expected schema v{expected_version}"
+    )
 
 
 def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
@@ -76,6 +94,9 @@ def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
         detail = (
             result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         )
+        if _IDENTITY_MISMATCH in detail:
+            mismatch = _identity_mismatch_detail(binary)
+            raise SchemaContractError(f"gdaemon {action} failed: {mismatch}; {_CUTOVER_RECOVERY}")
         raise SchemaContractError(
             f"gdaemon {action} failed: {detail}. Run `gobby install` to refresh gdaemon"
         )

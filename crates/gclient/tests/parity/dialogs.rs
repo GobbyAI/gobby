@@ -1,7 +1,10 @@
 //! herdr `src/ui/dialogs.rs` (4) keep-set render tests.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use gobby_client::app::{route_modal_key, route_mouse, ModalOutcome, MouseOutcome};
+use gobby_client::app::{
+    route_modal_key, route_mouse, ContextMenuKind, ContextMenuState, MenuAction, MenuItem,
+    ModalOutcome, MouseOutcome,
+};
 use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::dialogs::{render_dialog, CloseTarget, Dialog, RenameKind};
@@ -10,9 +13,10 @@ use gobby_client::ui::widgets::centered_popup_rect;
 use gobby_client::ui::{render_workspace, Action};
 use gobby_client::Workspace;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use serde_json::json;
 
-use super::fixtures::{rect_rows, render};
+use super::fixtures::{cell, rect_rows, render};
 use super::token_map::theme;
 
 /// Frame the dialog tests render into.
@@ -396,4 +400,127 @@ fn settings_rows_respond_to_clicks() {
         MouseOutcome::Handled
     );
     assert_eq!(chrome.mode, Mode::Terminal);
+}
+
+/// 5.2.1: the context menu popup sits at its anchor, flips left and up when
+/// the anchor is too near the frame's right and bottom edges, carries the
+/// selected and disabled rows by weight and reversal over an undimmed
+/// workspace, and hands the rows it drew back for `menu_hit`.
+#[test]
+fn context_menu_renders_anchored_and_clamped() {
+    let ws = modal_workspace();
+    let alpha = ws.pane_for_terminal("term-alpha").expect("alpha pane");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(alpha, "");
+    chrome.compute_view(&ws, AREA);
+    let (accent, text, overlay0) = (
+        chrome.palette.accent,
+        chrome.palette.text,
+        chrome.palette.overlay0,
+    );
+    let item = |label: &'static str, enabled: bool| MenuItem {
+        label,
+        action: MenuAction::Act(Action::NewTab),
+        enabled,
+    };
+    let items = vec![
+        item("rename pane", true),
+        item("swap with focused pane", false),
+        item("close pane", true),
+    ];
+    // `longest label + 4` wide and `items + 2` tall.
+    let (width, height) = (26, 5);
+    let open_at = |chrome: &mut Chrome, anchor: (u16, u16)| {
+        chrome.mode = Mode::ContextMenu;
+        chrome.menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Global,
+            anchor,
+            items: items.clone(),
+            selected: 0,
+            item_rects: Vec::new(),
+        });
+    };
+    let draw = |chrome: &mut Chrome| {
+        let mut hits = None;
+        let terminal = render(AREA.width, AREA.height, |frame| {
+            hits = Some(render_workspace(frame, &ws, chrome));
+        });
+        chrome.apply_hits(hits.expect("frame drawn"));
+        terminal
+    };
+    let drawn_rows = |popup: Rect| -> Vec<Rect> {
+        (0..3)
+            .map(|index| Rect::new(popup.x + 1, popup.y + 1 + index, width - 2, 1))
+            .collect()
+    };
+    let popup_rows = vec![
+        format!("┌{}┐", "─".repeat(24)),
+        format!("│{:<24}│", " rename pane"),
+        format!("│{:<24}│", " swap with focused pane"),
+        format!("│{:<24}│", " close pane"),
+        format!("└{}┘", "─".repeat(24)),
+    ];
+
+    // At the anchor: the popup's top-left corner is the click cell.
+    let anchor = (20, 6);
+    open_at(&mut chrome, anchor);
+    let terminal = draw(&mut chrome);
+    let popup = Rect::new(anchor.0, anchor.1, width, height);
+    assert_eq!(
+        rect_rows(&terminal, popup),
+        popup_rows,
+        "popup at the anchor"
+    );
+    let menu = chrome.menu.as_ref().expect("menu stays open");
+    assert_eq!(
+        menu.item_rects,
+        drawn_rows(popup),
+        "item rects follow the drawn rows"
+    );
+    let selected = cell(&terminal, popup.x + 2, popup.y + 1);
+    assert_eq!(selected.fg, accent);
+    assert!(
+        selected
+            .modifier
+            .contains(Modifier::REVERSED | Modifier::BOLD),
+        "selected row is reversed and bold: {:?}",
+        selected.modifier
+    );
+    let disabled = cell(&terminal, popup.x + 2, popup.y + 2);
+    assert_eq!(disabled.fg, overlay0);
+    assert!(disabled.modifier.contains(Modifier::DIM));
+    assert!(!disabled.modifier.contains(Modifier::REVERSED));
+    let plain = cell(&terminal, popup.x + 2, popup.y + 3);
+    assert_eq!(plain.fg, text);
+    assert_eq!(plain.modifier, Modifier::empty());
+    let far = chrome.view.terminal_area;
+    assert!(
+        !cell(&terminal, far.right() - 2, far.bottom() - 2)
+            .modifier
+            .contains(Modifier::DIM),
+        "the workspace under a menu is not dimmed"
+    );
+
+    // Near the far edges the popup flips so the click cell is its
+    // bottom-right corner.
+    let anchor = (AREA.width - 3, AREA.height - 2);
+    open_at(&mut chrome, anchor);
+    let terminal = draw(&mut chrome);
+    let popup = Rect::new(anchor.0 + 1 - width, anchor.1 + 1 - height, width, height);
+    assert_eq!(
+        rect_rows(&terminal, popup),
+        popup_rows,
+        "popup flipped from the anchor"
+    );
+    assert_eq!(
+        cell(&terminal, anchor.0, anchor.1).symbol(),
+        "┘",
+        "the click cell is the flipped popup's corner"
+    );
+    let menu = chrome.menu.as_ref().expect("menu stays open");
+    assert_eq!(
+        menu.item_rects,
+        drawn_rows(popup),
+        "item rects follow the flipped rows"
+    );
 }
