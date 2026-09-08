@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 import gobby.runner_lifecycle_agents as lifecycle_agents
-from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStatus
+import gobby.tasks.close_review_delivery as close_review_delivery
+from gobby.storage.task_close_reviews import (
+    TaskCloseReview,
+    TaskCloseReviewStatus,
+    TaskCloseReviewStore,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -201,6 +206,7 @@ def _install(
         "gobby.storage.task_close_reviews.TaskCloseReviewStore",
         lambda _db: store,
     )
+    monkeypatch.setattr(close_review_delivery, "TaskCloseReviewStore", TaskCloseReviewStore)
     monkeypatch.setattr(lifecycle_agents, "LocalAgentRunManager", lambda _db: _Runs(run))
     monkeypatch.setattr(
         lifecycle_agents,

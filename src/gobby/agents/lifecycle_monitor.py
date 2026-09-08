@@ -32,6 +32,7 @@ from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.config.tmux import TmuxConfig
+from gobby.storage import pipeline_subscribers as completion_subscribers
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.machine_id import require_machine_id
@@ -618,7 +619,7 @@ class AgentLifecycleMonitor:
             except Exception as e:
                 logger.warning("Autonomous stuck detection failed for %s: %s", session_id, e)
                 continue
-            if not result.is_stuck or self._parked_on_completion(session_id, result):
+            if not result.is_stuck or await self._parked_on_completion(session_id, result):
                 self._stuck_interventions.pop(run.id, None)
                 self._draft_grace_observations.pop(run.id, None)
                 continue
@@ -664,13 +665,22 @@ class AgentLifecycleMonitor:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)
         return handled
 
-    def _parked_on_completion(self, session_id: str, result: StuckDetectionResult) -> bool:
+    async def _parked_on_completion(self, session_id: str, result: StuckDetectionResult) -> bool:
         """Quiet by design: the session awaits a subscribed completion (wait_for_agent)."""
-        return (
-            result.layer == "progress_stagnation"
-            and self._completion_registry is not None
-            and self._completion_registry.is_awaiting(session_id)
-        )
+        if result.layer == "progress_stagnation":
+            return self._completion_registry is not None and self._completion_registry.is_awaiting(
+                session_id
+            )
+        if result.layer != "tool_loop" or not (
+            result.details and result.details.get("passive_wait") is True
+        ):
+            return False
+        manager = completion_subscribers.CompletionSubscriberManager(self._db)
+        try:
+            return bool(await self._run_db(manager.has_active_agent_wait, session_id))
+        except completion_subscribers.PipelineSubscriberStorageError:
+            logger.warning("Failed to verify a live completion wait for session %s", session_id)
+            return False
 
     @staticmethod
     def _idle_after_delivered_result(run: AgentRun, result: StuckDetectionResult) -> bool:

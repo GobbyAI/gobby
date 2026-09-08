@@ -17,9 +17,12 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.config.tmux import TmuxConfig
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.runtime import TerminalWriteError
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
@@ -367,6 +370,7 @@ def _make_idle_monitor_run(
     task_manager: LocalTaskManager | None = None,
     max_reprompt_attempts: int = 2,
     task_id: str | None = None,
+    completion_registry: CompletionEventRegistry | None = None,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
     config = TmuxConfig(
         idle_check_enabled=True,
@@ -381,6 +385,7 @@ def _make_idle_monitor_run(
         db=temp_db,
         session_manager=session_manager,
         task_manager=task_manager,
+        completion_registry=completion_registry,
         check_interval_seconds=1.0,
         tmux_config=config,
         terminal_services=_fake_terminal_services(temp_db),
@@ -1050,6 +1055,68 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
 
 
 @pytest.mark.asyncio
+async def test_exhausted_capacity_recovery_terminalizes_close_review_and_wakes_subscriber(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-close-validator-capacity.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    registry = CompletionEventRegistry(wake_callback=wake)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1024",
+        transcript_path=transcript_path,
+        session_age_seconds=1,
+        completion_registry=registry,
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Close validator capacity recovery",
+        validation_criteria="Terminal recovery wakes the close caller.",
+    )
+    store = TaskCloseReviewStore(temp_db)
+    review, created = store.create_or_get_active(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=cast(str, run.parent_session_id),
+        close_arguments={"preview": True},
+        expected_task_updated_at=task.updated_at,
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+        diff_sha="d" * 64,
+        test_bodies_sha="e" * 64,
+        stable_facts={},
+    )
+    assert created is True
+    store.bind_run(review.id, run.id)
+    subscribers = CompletionSubscriberManager(temp_db)
+    subscribers.add_completion_subscriber(run.id, cast(str, run.parent_session_id))
+    registry.register(run.id, subscribers=[cast(str, run.parent_session_id)])
+
+    with _pane_text(monitor, _CAPACITY_PANE):
+        await monitor.check_idle_agents()
+        _append_codex_capacity_turn(transcript_path)
+        await monitor.check_idle_agents()
+        _append_codex_capacity_turn(transcript_path)
+        await monitor.check_idle_agents()
+
+    terminal_review = store.get(review.id)
+    assert terminal_review is not None
+    assert terminal_review.status == "error"
+    assert terminal_review.delivered_at is not None
+    wake.assert_awaited_once()
+    assert subscribers.get_completion_subscribers(run.id) == []
+
+
+@pytest.mark.asyncio
 async def test_capacity_retry_budget_resets_after_model_output(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -1694,7 +1761,7 @@ async def test_completed_turn_recovery_completes_run_parked_on_satisfied_exit_co
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Exhausting completed-turn recovery on a finished workflow completes the run.
+    """Completed-turn recovery on a finished workflow completes the run immediately.
 
     This is the incident path: the agent kept completing turns at the
     terminate step but could not call end_agent_run because its MCP proxy
@@ -1731,12 +1798,6 @@ async def test_completed_turn_recovery_completes_run_parked_on_satisfied_exit_co
             return_value=None,
         ),
     ):
-        for attempt in range(3):
-            _write_codex_lifecycle_transcript(transcript_path, age_seconds=120 + attempt)
-            monitor._idle_detector.reset_idle(run.id)
-            assert await monitor.check_idle_agents() == 1
-
-        _write_codex_lifecycle_transcript(transcript_path, age_seconds=123)
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 1
 
@@ -1788,6 +1849,11 @@ async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances
 
     with (
         _pane_text(monitor, "❯\n"),
+        patch.object(
+            monitor._idle_check_handler._recovery,
+            "_complete_if_work_finished",
+            AsyncMock(return_value=False),
+        ),
         patch(
             "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             return_value=plan_context,
