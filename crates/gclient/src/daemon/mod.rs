@@ -374,6 +374,18 @@ pub trait Daemon: Send + Sync {
     async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError>;
     async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError>;
     async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError>;
+    /// `POST /api/projects/init`: register the checkout at `path`.
+    async fn init_project(&self, path: &str) -> Result<ProjectRow, DaemonError>;
+    /// `POST /api/source-control/worktrees`: a client worktree of `project`
+    /// on `branch`, cut from `base` when given.
+    async fn create_worktree(
+        &self,
+        project: &str,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<WorktreeRow, DaemonError>;
+    /// `DELETE /api/source-control/worktrees/{id}`.
+    async fn delete_worktree(&self, worktree_id: &str) -> Result<(), DaemonError>;
     async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError>;
     async fn agent_runs(&self, project: &str) -> Result<Vec<RunRow>, DaemonError>;
     async fn respond(
@@ -718,6 +730,39 @@ impl Daemon for ScriptedDaemon {
                     .collect()
             },
         )
+    }
+
+    async fn init_project(&self, path: &str) -> Result<ProjectRow, DaemonError> {
+        self.state()
+            .rest
+            .push(format!("POST /api/projects/init:{path}"));
+        Err(DaemonError::Protocol {
+            detail: "scripted daemon registers no projects".into(),
+        })
+    }
+
+    async fn create_worktree(
+        &self,
+        project: &str,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<WorktreeRow, DaemonError> {
+        self.state().rest.push(format!(
+            "POST /api/source-control/worktrees:{project}:{branch}:{}",
+            base.unwrap_or("")
+        ));
+        Err(DaemonError::Protocol {
+            detail: "scripted daemon creates no worktrees".into(),
+        })
+    }
+
+    async fn delete_worktree(&self, worktree_id: &str) -> Result<(), DaemonError> {
+        self.state().rest.push(format!(
+            "DELETE /api/source-control/worktrees/{worktree_id}"
+        ));
+        Err(DaemonError::Protocol {
+            detail: "scripted daemon deletes no worktrees".into(),
+        })
     }
 
     async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {

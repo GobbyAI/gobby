@@ -14,9 +14,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::sidebar_model::{AgentEntry, ProjectEntry, SidebarModel, WorktreeEntry};
 use gobby_client::app::{
-    apply_sidebar_snapshot, route_modal_key, route_mouse, sidebar_snapshot, ModalOutcome,
-    MouseGesture, MouseOutcome, Pane, PaneId, Workspace, MOUSE_SCROLL_LINES,
-    PROJECT_DRAG_THRESHOLD,
+    apply_rename, apply_sidebar_snapshot, rename_project, route_modal_key, route_mouse,
+    sidebar_snapshot, ModalOutcome, MouseGesture, MouseOutcome, Pane, PaneId, Workspace,
+    MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{
     Attention, Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow,
@@ -25,6 +25,7 @@ use gobby_client::key_input::KeyInput;
 use gobby_client::persist::ClientSession;
 use gobby_client::ui::chrome::{Chrome, Mode, RowState, SidebarState, WorkspaceView};
 use gobby_client::ui::chrome_render::render_workspace;
+use gobby_client::ui::dialogs::{Dialog, RenameKind};
 use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::scrollbar::scrollbar_thumb_grab_offset;
 use gobby_client::ui::settings::AgentSort;
@@ -1783,6 +1784,73 @@ mod project_rows_focus_toggle_and_reorder {
         let mut restored = SidebarState::default();
         apply_sidebar_snapshot(&mut restored, &loaded.sidebar);
         assert_eq!(restored.project_order, ["proj-beta", "proj-alpha"]);
+    }
+
+    /// 3.3: renaming a project labels its card for this client only; the
+    /// label rides `session.json` with the rest of the sidebar state, and an
+    /// empty commit clears it back to the daemon's name.
+    #[test]
+    fn project_rename_labels_the_card_and_survives_the_session() {
+        let (ws, mut chrome, _) = project_board();
+        rename_project(&mut chrome, "proj-alpha", "alpha");
+        assert_eq!(chrome.mode, Mode::Rename);
+        assert_eq!(
+            chrome.dialog,
+            Some(Dialog::Rename {
+                kind: RenameKind::Project("proj-alpha".to_string()),
+                value: "alpha".to_string(),
+                cursor: "alpha".len(),
+            })
+        );
+        for ch in " prime".chars() {
+            assert_eq!(
+                route_modal_key(&ws, &mut chrome, &key(KeyCode::Char(ch))),
+                ModalOutcome::Consumed
+            );
+        }
+        let outcome = route_modal_key(&ws, &mut chrome, &key(KeyCode::Enter));
+        assert_eq!(
+            outcome,
+            ModalOutcome::Commit(
+                RenameKind::Project("proj-alpha".to_string()),
+                "alpha prime".to_string()
+            )
+        );
+        let ModalOutcome::Commit(kind, value) = outcome else {
+            unreachable!()
+        };
+        let mut ws = ws;
+        apply_rename(&mut ws, &mut chrome, kind, value);
+        assert_eq!(
+            chrome
+                .sidebar
+                .project_labels
+                .get("proj-alpha")
+                .map(String::as_str),
+            Some("alpha prime")
+        );
+        let rows = project_rows(&ws, &chrome);
+        assert_eq!(rows[0].label, "alpha prime");
+        assert_eq!(rows[2].label, "beta", "other cards keep the daemon name");
+
+        let session = ClientSession {
+            focused_project: Some("proj-alpha".to_string()),
+            sidebar: sidebar_snapshot(&chrome.sidebar),
+        };
+        let saved = serde_json::to_string(&session).expect("serialise session");
+        let loaded: ClientSession = serde_json::from_str(&saved).expect("parse session");
+        let mut restored = SidebarState::default();
+        apply_sidebar_snapshot(&mut restored, &loaded.sidebar);
+        assert_eq!(restored.project_labels, chrome.sidebar.project_labels);
+
+        apply_rename(
+            &mut ws,
+            &mut chrome,
+            RenameKind::Project("proj-alpha".to_string()),
+            String::new(),
+        );
+        assert!(chrome.sidebar.project_labels.is_empty());
+        assert_eq!(project_rows(&ws, &chrome)[0].label, "alpha");
     }
 
     #[test]

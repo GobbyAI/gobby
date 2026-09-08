@@ -74,6 +74,35 @@ impl RestClient {
         Ok(envelope.worktrees)
     }
 
+    pub(super) async fn init_project(&self, path: &str) -> Result<ProjectRow, DaemonError> {
+        let url = self.url(&["api", "projects", "init"])?;
+        self.json(Method::POST, url, Some(serde_json::json!({"path": path})))
+            .await
+    }
+
+    pub(super) async fn create_worktree(
+        &self,
+        project: &str,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<WorktreeRow, DaemonError> {
+        let url = self.url(&["api", "source-control", "worktrees"])?;
+        let mut body = serde_json::json!({
+            "project_id": project,
+            "branch_name": branch,
+            "workspace_role": "client",
+        });
+        if let Some(base) = base {
+            body["base_branch"] = Value::String(base.to_owned());
+        }
+        self.json(Method::POST, url, Some(body)).await
+    }
+
+    pub(super) async fn delete_worktree(&self, worktree_id: &str) -> Result<(), DaemonError> {
+        let url = self.url(&["api", "source-control", "worktrees", worktree_id])?;
+        self.empty(Method::DELETE, url, None).await
+    }
+
     /// Live sessions only: the sidebar shows what is running, and the route
     /// caps a page at 1000, which covers a project's live set many times over.
     pub(super) async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {

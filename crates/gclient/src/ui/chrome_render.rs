@@ -67,7 +67,9 @@ pub fn render_workspace_with<W: WorkspaceView>(
     };
     match chrome.mode {
         Mode::ConfirmClose => render_dialog_overlay(frame, close_area, chrome),
-        Mode::Rename | Mode::Respond => render_dialog_overlay(frame, area, chrome),
+        Mode::Rename | Mode::Respond | Mode::ProjectDialog => {
+            render_dialog_overlay(frame, area, chrome)
+        }
         Mode::Settings => {
             dim_background(frame, area);
             hits.settings = settings::render_settings(frame, area, chrome);

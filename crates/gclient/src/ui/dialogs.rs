@@ -14,6 +14,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
+pub mod project;
+
 const CONFIRM_CLOSE_POPUP_WIDTH: u16 = 64;
 const CONFIRM_CLOSE_POPUP_HEIGHT: u16 = 6;
 const RENAME_POPUP_WIDTH: u16 = 56;
@@ -23,43 +25,83 @@ const RESPOND_POPUP_WIDTH: u16 = 64;
 /// gap, buttons, plus the two border rows.
 const RESPOND_POPUP_BASE_HEIGHT: u16 = 10;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenameKind {
     Tab,
     Pane,
     Terminal,
+    /// A project card's label; the id names the project.
+    Project(String),
 }
 
 impl RenameKind {
-    fn title(self) -> &'static str {
+    fn title(&self) -> &'static str {
         match self {
             RenameKind::Tab => "rename tab",
             RenameKind::Pane => "rename pane",
             RenameKind::Terminal => "rename terminal",
+            RenameKind::Project(_) => "rename project",
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseTarget {
     Pane,
     Tab,
     Terminal,
+    /// A project without worktree children; the id names it.
+    Project(String),
+    /// A project and its worktree children; the id names the project.
+    WorktreeGroup(String),
 }
 
 impl CloseTarget {
-    fn noun(self) -> &'static str {
+    fn noun(&self) -> &'static str {
         match self {
             CloseTarget::Pane => "pane",
             CloseTarget::Tab => "tab",
             CloseTarget::Terminal => "terminal",
+            CloseTarget::Project(_) => "project",
+            CloseTarget::WorktreeGroup(_) => "worktree group",
         }
     }
 }
 
 /// herdr's confirm-close scope line: how much the close destroys.
-fn pane_scope(panes: usize) -> String {
-    format!("{panes} pane{}", if panes == 1 { "" } else { "s" })
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloseScope {
+    Panes(usize),
+    Tabs { tabs: usize, panes: usize },
+    Group { workspaces: usize, panes: usize },
+}
+
+impl std::fmt::Display for CloseScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CloseScope::Panes(panes) => f.write_str(&project::plural(*panes, "pane")),
+            CloseScope::Tabs { tabs, panes } => write!(
+                f,
+                "{}, {}",
+                project::plural(*tabs, "tab"),
+                project::plural(*panes, "pane")
+            ),
+            CloseScope::Group { workspaces, panes } => write!(
+                f,
+                "{}, {}",
+                project::plural(*workspaces, "workspace"),
+                project::plural(*panes, "pane")
+            ),
+        }
+    }
+}
+
+/// One row of the open-worktree picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeChoice {
+    pub worktree_id: String,
+    pub branch: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,8 +109,37 @@ pub enum Dialog {
     ConfirmClose {
         target: CloseTarget,
         title: String,
-        /// Panes the close destroys, shown as herdr's scope line.
+        scope: CloseScope,
+    },
+    /// Register a checkout as a project; the daemon's refusal shows inline.
+    NewProject {
+        path: String,
+        cursor: usize,
+        error: Option<String>,
+    },
+    /// Create a client worktree of `project_id` from `base`.
+    NewWorktree {
+        project_id: String,
+        branch: String,
+        base: String,
+        cursor: usize,
+        base_focused: bool,
+        error: Option<String>,
+    },
+    /// Pick one of the project's worktrees no tab shows.
+    OpenWorktree {
+        project_id: String,
+        choices: Vec<WorktreeChoice>,
+        selected: usize,
+    },
+    /// Delete a worktree checkout after its `tabs` and `panes` are closed.
+    RemoveWorktree {
+        worktree_id: String,
+        branch: String,
+        path: String,
+        tabs: usize,
         panes: usize,
+        error: Option<String>,
     },
     Rename {
         kind: RenameKind,
@@ -91,15 +162,59 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) {
         Some(Dialog::ConfirmClose {
             target,
             title,
-            panes,
+            scope,
         }) => {
-            render_confirm_close(frame, area, chrome, *target, title, *panes);
+            render_confirm_close(frame, area, chrome, target, title, scope);
         }
         Some(Dialog::Rename {
             kind,
             value,
             cursor,
-        }) => render_rename(frame, area, chrome, *kind, value, *cursor),
+        }) => render_rename(frame, area, chrome, kind, value, *cursor),
+        Some(Dialog::NewProject {
+            path,
+            cursor,
+            error,
+        }) => {
+            project::render_new_project(frame, area, chrome, path, *cursor, error.as_deref());
+        }
+        Some(Dialog::NewWorktree {
+            branch,
+            base,
+            cursor,
+            base_focused,
+            error,
+            ..
+        }) => project::render_new_worktree(
+            frame,
+            area,
+            chrome,
+            branch,
+            base,
+            *cursor,
+            *base_focused,
+            error.as_deref(),
+        ),
+        Some(Dialog::OpenWorktree {
+            choices, selected, ..
+        }) => project::render_open_worktree(frame, area, chrome, choices, *selected),
+        Some(Dialog::RemoveWorktree {
+            branch,
+            path,
+            tabs,
+            panes,
+            error,
+            ..
+        }) => project::render_remove_worktree(
+            frame,
+            area,
+            chrome,
+            branch,
+            path,
+            *tabs,
+            *panes,
+            error.as_deref(),
+        ),
         Some(Dialog::Respond {
             prompt,
             options,
@@ -129,9 +244,9 @@ pub fn render_confirm_close(
     frame: &mut Frame,
     area: Rect,
     chrome: &Chrome,
-    target: CloseTarget,
+    target: &CloseTarget,
     title: &str,
-    panes: usize,
+    scope: &CloseScope,
 ) {
     let p = &chrome.palette;
     let Some(popup) =
@@ -169,7 +284,7 @@ pub fn render_confirm_close(
                 format!(" {title}"),
                 Style::default().fg(p.text).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" — {}", pane_scope(panes)), dim),
+            Span::styled(format!(" — {scope}"), dim),
         ])),
         rows[1],
     );
@@ -211,7 +326,7 @@ pub fn render_rename(
     frame: &mut Frame,
     area: Rect,
     chrome: &Chrome,
-    kind: RenameKind,
+    kind: &RenameKind,
     value: &str,
     cursor: usize,
 ) {

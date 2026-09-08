@@ -67,6 +67,28 @@ impl SidebarRow {
 
 /// Project cards in the user's order, each followed by its worktree rows
 /// unless the card is collapsed; `selected` indexes this flat list.
+/// The card label of `project_id`: the user's label when one is set, else
+/// the daemon's name; `None` for a project the sidebar does not list.
+pub fn project_label<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    project_id: &str,
+) -> Option<String> {
+    let project = ws
+        .sidebar()
+        .projects
+        .iter()
+        .find(|project| project.project_id == project_id)?;
+    Some(
+        chrome
+            .sidebar
+            .project_labels
+            .get(project_id)
+            .cloned()
+            .unwrap_or_else(|| project.name.clone()),
+    )
+}
+
 pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
     let focused = ws.focused_project();
     let mut rows = Vec::new();
@@ -77,7 +99,12 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
             .contains(&project.project_id);
         rows.push(SidebarRow {
             id: project.project_id.clone(),
-            label: project.name.clone(),
+            label: chrome
+                .sidebar
+                .project_labels
+                .get(&project.project_id)
+                .cloned()
+                .unwrap_or_else(|| project.name.clone()),
             kind: RowKind::Project,
             state: project.state,
             branch: Some(project.branch.clone().unwrap_or_else(|| "~".to_string())),

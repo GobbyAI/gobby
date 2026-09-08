@@ -9,7 +9,7 @@ use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
 };
-use gobby_client::ui::dialogs::{Dialog, RenameKind};
+use gobby_client::ui::dialogs::Dialog;
 use gobby_client::ui::keybind_help::{filter_help_entries, help_lines};
 use gobby_client::ui::keymap::{HelpEntry, Keymap};
 use gobby_client::ui::pane_layout;
@@ -429,19 +429,17 @@ parity_tests! {
             );
         }
 
-        // TODO(#21908): herdr's `RenameWorkspace` with a pending create cwd is
-        // the workspace-creation dialog. gclient has no workspace creation
-        // flow; its nearest dialog is the terminal rename, so the herdr title
-        // below waits on the client workspace-lifecycle plan.
-        #[deferred = "TODO(#21908): gclient has no workspace creation dialog yet"]
+        // herdr's `RenameWorkspace` with a pending create cwd is the
+        // workspace-creation dialog; gclient's `Dialog::NewProject` (plan
+        // 3.3) renders the same `new workspace` title over the path typed.
         fn workspace_creation_dialog_renders_new_workspace_title() {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
-            chrome.mode = Mode::Rename;
-            chrome.dialog = Some(Dialog::Rename {
-                kind: RenameKind::Terminal,
-                value: "project".into(),
+            chrome.mode = Mode::ProjectDialog;
+            chrome.dialog = Some(Dialog::NewProject {
+                path: "project".into(),
                 cursor: "project".len(),
+                error: None,
             });
 
             let area = Rect::new(0, 0, 80, 20);

@@ -59,6 +59,8 @@ struct MockState {
     next_attachment_id: u64,
     take_control_replies: VecDeque<(bool, u64, Option<String>)>,
     write_outcomes: VecDeque<(String, Option<String>)>,
+    /// Reasons the next `terminal_kill` replies refuse with, in order.
+    kill_refusals: VecDeque<String>,
     detach_replies: VecDeque<(bool, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
     proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
@@ -97,6 +99,7 @@ impl MockDaemon {
             next_attachment_id: 0,
             take_control_replies: VecDeque::new(),
             write_outcomes: VecDeque::new(),
+            kill_refusals: VecDeque::new(),
             detach_replies: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
             proxy_finalizations_before_reply: VecDeque::new(),
@@ -268,6 +271,15 @@ impl MockDaemon {
             .expect("mock state")
             .write_outcomes
             .push_back((outcome.to_string(), reason.map(ToString::to_string)));
+    }
+
+    /// The next `terminal_kill` replies `success: false` with `reason`.
+    pub fn enqueue_kill_refusal(&self, reason: &str) {
+        self.state
+            .lock()
+            .expect("mock state")
+            .kill_refusals
+            .push_back(reason.to_string());
     }
 
     pub fn enqueue_detach_reply(&self, success: bool, reason: Option<&str>) {
@@ -695,12 +707,16 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 }))
             }
         }
-        "terminal_kill" => Some(json!({
-            "type": "terminal_kill_result",
-            "request_id": request.get("request_id"),
-            "terminal_id": request.get("terminal_id"),
-            "success": true,
-        })),
+        "terminal_kill" => {
+            let refusal = state.lock().expect("mock state").kill_refusals.pop_front();
+            Some(json!({
+                "type": "terminal_kill_result",
+                "request_id": request.get("request_id"),
+                "terminal_id": request.get("terminal_id"),
+                "success": refusal.is_none(),
+                "reason": refusal,
+            }))
+        }
         "terminal_detach" => {
             let (success, reason) = state
                 .lock()

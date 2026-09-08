@@ -2,7 +2,7 @@
 
 use gobby_client::theme::{Theme, ThemeKind};
 use gobby_client::ui::chrome::Mode;
-use gobby_client::ui::dialogs::{CloseTarget, Dialog};
+use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog};
 use gobby_client::ui::{keybind_help, navigator, render_workspace, sidebar, status, Chrome};
 use gobby_client::Workspace;
 use ratatui::backend::TestBackend;
@@ -242,7 +242,7 @@ fn render_workspace_composes_imported_chrome() {
         chrome.dialog = Some(Dialog::ConfirmClose {
             target: CloseTarget::Pane,
             title: "term-beta".to_string(),
-            panes: 1,
+            scope: CloseScope::Panes(1),
         });
         let area = Rect::new(0, 0, 120, 40);
         chrome.compute_view(&ws, area);

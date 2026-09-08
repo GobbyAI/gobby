@@ -148,6 +148,7 @@ fn mode_name(mode: Mode) -> Option<&'static str> {
         Mode::KeybindHelp => "keys",
         Mode::Navigator => "navigator",
         Mode::ContextMenu => "menu",
+        Mode::ProjectDialog => "project",
     })
 }
 

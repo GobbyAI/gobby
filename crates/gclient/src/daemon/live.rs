@@ -550,6 +550,23 @@ impl Daemon for LiveDaemon {
         self.inner.rest.worktrees(project).await
     }
 
+    async fn init_project(&self, path: &str) -> Result<ProjectRow, DaemonError> {
+        self.inner.rest.init_project(path).await
+    }
+
+    async fn create_worktree(
+        &self,
+        project: &str,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<WorktreeRow, DaemonError> {
+        self.inner.rest.create_worktree(project, branch, base).await
+    }
+
+    async fn delete_worktree(&self, worktree_id: &str) -> Result<(), DaemonError> {
+        self.inner.rest.delete_worktree(worktree_id).await
+    }
+
     async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
         self.inner.rest.sessions(project).await
     }

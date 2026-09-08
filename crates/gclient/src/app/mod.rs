@@ -16,13 +16,18 @@ pub use attach::AttachState;
 pub use live_loop::menu::{
     item_rects, menu_rect, ContextMenuKind, ContextMenuState, MenuAction, MenuItem,
 };
-pub use live_loop::modal_input::{route_modal_key, ModalOutcome};
+pub use live_loop::modal_input::{apply_rename, route_modal_key, ModalOutcome};
 pub use live_loop::mouse::{
     anchor_selection, extend_selection, finish_selection, route_mouse, ClickRun, MouseGesture,
     MouseOutcome, Placement, DOUBLE_CLICK_MS, MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
     TAB_DRAG_THRESHOLD,
 };
-pub use live_loop::projects::focus_project;
+pub use live_loop::projects::{
+    close_project, close_project_confirmed, create_worktree, focus_project,
+    open_new_project_dialog, open_new_worktree_dialog, open_open_worktree_dialog,
+    open_remove_worktree_dialog, open_worktree, remove_worktree, rename_project,
+    submit_new_project,
+};
 pub use live_loop::run_live_loop;
 pub use pane::{short_terminal_id, ControlState, Pane, PaneId};
 pub use persistence::{apply_sidebar_snapshot, sidebar_snapshot};

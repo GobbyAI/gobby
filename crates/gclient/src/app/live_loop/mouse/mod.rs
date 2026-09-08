@@ -166,9 +166,12 @@ pub fn route_mouse<W: WorkspaceView>(
     match chrome.mode {
         Mode::Copy => return MouseOutcome::Ignore,
         Mode::Settings => return settings_mouse(ws, chrome, mouse),
-        Mode::ConfirmClose | Mode::Rename | Mode::Respond | Mode::KeybindHelp | Mode::Navigator => {
-            return MouseOutcome::Handled
-        }
+        Mode::ConfirmClose
+        | Mode::Rename
+        | Mode::Respond
+        | Mode::ProjectDialog
+        | Mode::KeybindHelp
+        | Mode::Navigator => return MouseOutcome::Handled,
         Mode::ContextMenu => return menu_mouse(chrome, mouse),
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Resize => {}
     }

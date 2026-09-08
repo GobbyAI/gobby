@@ -47,6 +47,7 @@ pub fn sidebar_snapshot(sidebar: &SidebarState) -> SidebarSnapshot {
         section_split: sidebar.section_split,
         machine_filter: sidebar.machine_filter.clone(),
         project_order: sidebar.project_order.clone(),
+        project_labels: sidebar.project_labels.clone(),
     }
 }
 
@@ -58,6 +59,7 @@ pub fn apply_sidebar_snapshot(sidebar: &mut SidebarState, saved: &SidebarSnapsho
     sidebar.section_split = saved.section_split;
     sidebar.machine_filter = saved.machine_filter.clone();
     sidebar.project_order = saved.project_order.clone();
+    sidebar.project_labels = saved.project_labels.clone();
 }
 
 /// The saved snapshot, or an empty one when none was written yet.

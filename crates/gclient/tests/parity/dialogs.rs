@@ -7,7 +7,7 @@ use gobby_client::app::{
 };
 use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
-use gobby_client::ui::dialogs::{render_dialog, CloseTarget, Dialog, RenameKind};
+use gobby_client::ui::dialogs::{render_dialog, CloseScope, CloseTarget, Dialog, RenameKind};
 use gobby_client::ui::navigator::NavigatorState;
 use gobby_client::ui::widgets::centered_popup_rect;
 use gobby_client::ui::{render_workspace, Action};
@@ -44,11 +44,21 @@ const CLOSE_TARGET: CloseTarget = CloseTarget::Terminal;
 /// terminal cwd, then identity cwd) therefore maps onto the name passed
 /// here, and both rows are read back from the rendered popup.
 fn confirm_close_overlay_text(name: &str, panes: usize) -> (String, String) {
+    confirm_close_overlay_text_for(CLOSE_TARGET, name, CloseScope::Panes(panes))
+}
+
+/// `confirm_close_overlay_text` for any target and scope: a project closes
+/// with its tab count, a project with worktree children as a group.
+fn confirm_close_overlay_text_for(
+    target: CloseTarget,
+    name: &str,
+    scope: CloseScope,
+) -> (String, String) {
     let mut chrome = Chrome::new(theme());
     chrome.dialog = Some(Dialog::ConfirmClose {
-        target: CLOSE_TARGET,
+        target,
         title: name.to_string(),
-        panes,
+        scope,
     });
     let terminal = render(AREA.width, AREA.height, |frame| {
         render_dialog(frame, AREA, &chrome)
@@ -103,13 +113,20 @@ parity_tests! {
             assert_eq!(detail, "selected — 1 pane");
         }
 
-        // TODO(#21908): herdr's `main` is the repo checkout of a worktree space
-        // whose linked worktree `issue` is also open, so closing the parent
-        // closes the group and the dialog reports the group's scope. gclient
-        // carries no worktree spaces until that plan lands.
-        #[deferred = "TODO(#21908): worktree groups do not exist in gclient yet"]
+        // herdr's `main` is the repo checkout of a worktree space whose linked
+        // worktree `issue` is also open, so closing the parent closes the
+        // group and the dialog reports the group's scope. gclient: a project
+        // with a worktree child closes as `CloseTarget::WorktreeGroup` (plan
+        // 3.3, decision 10) and the scope counts the group's workspaces.
         fn confirm_close_text_reports_parent_group_scope() {
-            let (title, detail) = confirm_close_overlay_text("main", 2);
+            let (title, detail) = confirm_close_overlay_text_for(
+                CloseTarget::WorktreeGroup("project-main".into()),
+                "main",
+                CloseScope::Group {
+                    workspaces: 2,
+                    panes: 2,
+                },
+            );
 
             assert_eq!(title, "Close worktree group?");
             assert_eq!(detail, "main — 2 workspaces, 2 panes");
@@ -179,7 +196,7 @@ fn confirm_close_terminal() -> Dialog {
     Dialog::ConfirmClose {
         target: CloseTarget::Terminal,
         title: "term-alpha".to_string(),
-        panes: 1,
+        scope: CloseScope::Panes(1),
     }
 }
 

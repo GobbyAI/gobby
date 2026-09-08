@@ -293,7 +293,10 @@ fn apply_scripted_modal_outcome(
         ModalOutcome::Consumed
         | ModalOutcome::Close
         | ModalOutcome::Passthrough
-        | ModalOutcome::Confirm(_) => {}
+        | ModalOutcome::Confirm(_)
+        | ModalOutcome::InitProject(_)
+        | ModalOutcome::CreateWorktree { .. }
+        | ModalOutcome::RemoveWorktree(_) => {}
         ModalOutcome::Focus(pane) => {
             chrome.focus_pane(pane);
             workspace

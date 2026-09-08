@@ -102,6 +102,9 @@ pub struct SidebarSnapshot {
     /// Project ids in the order the user dragged them into.
     #[serde(default)]
     pub project_order: Vec<String>,
+    /// Labels the user gave project cards, by project id.
+    #[serde(default)]
+    pub project_labels: std::collections::BTreeMap<String, String>,
 }
 
 /// Client-wide state: `~/.gobby/client/session.json`.

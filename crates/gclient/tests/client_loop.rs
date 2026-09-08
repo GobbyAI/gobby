@@ -13,7 +13,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use gobby_client::app::run_loop::{
     run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
 };
-use gobby_client::app::{focus_project, run_live_loop, AttachState};
+use gobby_client::app::{
+    close_project, close_project_confirmed, create_worktree, focus_project,
+    open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
+    remove_worktree, route_modal_key, run_live_loop, AttachState, ModalOutcome,
+};
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
     Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow, SourceStatus, SpawnOutcome,
@@ -23,6 +27,7 @@ use gobby_client::daemon::{
 use gobby_client::frame_source::{
     AttachLocator, PaneFrameSource, ScriptedFrameSource, Transport, UnixSocketFrameSource,
 };
+use gobby_client::key_input::KeyInput;
 use gobby_client::persist::{
     load_snapshot, save_snapshot, LayoutNode, SplitAxis, TabSnapshot, WorkspaceSnapshot,
 };
@@ -30,7 +35,7 @@ use gobby_client::prefs::{prefs_path, save_prefs};
 use gobby_client::startup::Ready;
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
 use gobby_client::ui::chrome::{Mode, Tab};
-use gobby_client::ui::dialogs::{CloseTarget, Dialog};
+use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
 use gobby_client::ui::keymap::Keymap;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
@@ -467,6 +472,23 @@ impl Daemon for ReconnectDaemon {
 
     async fn worktrees(&self, project: &str) -> Result<Vec<WorktreeRow>, DaemonError> {
         Daemon::worktrees(&self.inner, project).await
+    }
+
+    async fn init_project(&self, path: &str) -> Result<ProjectRow, DaemonError> {
+        Daemon::init_project(&self.inner, path).await
+    }
+
+    async fn create_worktree(
+        &self,
+        project: &str,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<WorktreeRow, DaemonError> {
+        Daemon::create_worktree(&self.inner, project, branch, base).await
+    }
+
+    async fn delete_worktree(&self, worktree_id: &str) -> Result<(), DaemonError> {
+        Daemon::delete_worktree(&self.inner, worktree_id).await
     }
 
     async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
@@ -5526,4 +5548,501 @@ async fn stale_cells_are_cleared_on_shrink_and_move() {
             );
         }
     }
+}
+
+/// 3.3.1: `prefix+shift+n` opens the new-project dialog; enter posts the
+/// typed path to `/api/projects/init`, a refusal keeps the dialog (and its
+/// path) open with the daemon's reason, and the created project is focused
+/// with one shell tab in its checkout.
+#[tokio::test]
+async fn new_project_dialog_inits_and_focuses() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    let new_root = tempfile::tempdir().expect("new project dir");
+    let new_path = new_root.path().to_string_lossy().into_owned();
+    let created = json!({
+        "id": "project-2", "name": "two", "display_name": "two",
+        "checkout": {"machine_id": "m-local", "root_path": new_path},
+    });
+    let both = json!([
+        {"id": "project-1", "name": "one", "display_name": "one",
+         "checkout": {"machine_id": "m-local", "root_path": "/repo"}},
+        created.clone(),
+    ]);
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "POST",
+        "/api/projects/init",
+        400,
+        json!({"detail": {"error_code": "invalid_checkout_root", "message": "path is not a directory"}}),
+    );
+    mock.enqueue("POST", "/api/projects/init", 200, created);
+    for _ in 0..3 {
+        mock.enqueue("GET", "/api/projects", 200, both.clone());
+    }
+    for page in [
+        terminal_page(&[]),
+        terminal_page(&[SPAWNED]),
+        terminal_page(&[]),
+        terminal_page(&[SPAWNED]),
+    ] {
+        mock.enqueue("GET", "/api/terminals?", 200, page);
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let home = tempfile::tempdir().expect("gobby home");
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace
+        .restore_project("project-1")
+        .expect("no snapshot yet");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(64);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        send_chord(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
+        // The dialog opens on `~/`; replace it with the absolute path.
+        send_key(&input_tx, KeyCode::Backspace, KeyModifiers::NONE).await;
+        send_key(&input_tx, KeyCode::Backspace, KeyModifiers::NONE).await;
+        for ch in new_path.chars() {
+            send_key(&input_tx, KeyCode::Char(ch), KeyModifiers::NONE).await;
+        }
+        send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+        wait_for_http_requests(&mock, "POST", "/api/projects/init", 1).await;
+        // The refusal left the dialog open with the path still typed.
+        send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+        wait_for_http_requests(&mock, "POST", "/api/projects/init", 2).await;
+        wait_for_websocket_requests(&mock, "terminal_create", 2).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("new project live loop");
+
+    let inits: Vec<Value> = mock
+        .requests()
+        .into_iter()
+        .filter(|request| request.method == "POST" && request.target == "/api/projects/init")
+        .filter_map(|request| request.body)
+        .collect();
+    assert_eq!(
+        inits,
+        [json!({"path": new_path}), json!({"path": new_path})]
+    );
+    assert_eq!(chrome.mode, Mode::Terminal, "the dialog closed on success");
+    assert!(chrome.dialog.is_none(), "{:?}", chrome.dialog);
+    assert_eq!(workspace.project_id(), Some("project-2"));
+    assert_eq!(chrome.project_tabs.focused.as_deref(), Some("project-2"));
+    assert_eq!(
+        chrome.tabs().tabs.len(),
+        1,
+        "one shell tab in the new project"
+    );
+    assert_eq!(chrome.tabs().tabs[0].slots.len(), 1);
+    let creates = websocket_requests(&mock, "terminal_create");
+    assert_eq!(creates.len(), 2);
+    assert_eq!(creates[1].get("cwd"), Some(&json!(new_path)));
+    assert_eq!(creates[1].get("project_id"), Some(&json!("project-2")));
+    mock.shutdown().await;
+}
+
+/// 3.3.2 and 3.3.3: the worktree flows post to the daemon's routes and
+/// update the child rows; the open dialog lists only rows no tab shows;
+/// closing a project with children asks with the group text; remove kills
+/// the tagged tab's terminals first and refuses to delete while one
+/// survives; close project terminates only the terminals the daemon lets
+/// it and keeps the pane of a refused kill (decision 10).
+#[tokio::test]
+async fn worktree_flows_round_trip_the_daemon() {
+    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let mock = MockDaemon::start("local-token").await;
+    let worktrees_path = "/api/source-control/worktrees?";
+    let worktree = |id: &str, branch: &str| {
+        json!({
+            "id": id, "project_id": "project-1", "branch_name": branch,
+            "worktree_path": format!("/repo-wt/{branch}"), "status": "active",
+            "workspace_role": "client",
+        })
+    };
+    for _ in 0..3 {
+        mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+        mock.enqueue(
+            "GET",
+            "/api/source-control/status?",
+            200,
+            json!({"current_branch": "0.5.0", "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+        );
+    }
+    mock.enqueue("GET", worktrees_path, 200, json!({"worktrees": []}));
+    mock.enqueue(
+        "POST",
+        "/api/source-control/worktrees",
+        200,
+        worktree("wt-1", "feature"),
+    );
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [worktree("wt-1", "feature"), worktree("wt-2", "spare")]}),
+    );
+    mock.enqueue(
+        "DELETE",
+        "/api/source-control/worktrees/wt-1",
+        200,
+        json!({"ok": true}),
+    );
+    mock.enqueue(
+        "GET",
+        worktrees_path,
+        200,
+        json!({"worktrees": [worktree("wt-2", "spare")]}),
+    );
+    for page in [
+        terminal_page(&[]),
+        terminal_page(&[SPAWNED]),
+        terminal_page(&[]),
+        terminal_page(&["term-x", "term-y"]),
+        terminal_page(&["term-x"]),
+    ] {
+        mock.enqueue("GET", "/api/terminals?", 200, page);
+    }
+
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let home = tempfile::tempdir().expect("gobby home");
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace
+        .restore_project("project-1")
+        .expect("no snapshot yet");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let mut chrome = Chrome::dark();
+    chrome.project_tabs.focus("project-1");
+
+    // New worktree: the dialog defaults the base to the project's branch;
+    // the submit posts the client role and opens a shell tab tagged with
+    // the new row.
+    open_new_worktree_dialog(&workspace, &mut chrome, "project-1");
+    assert_eq!(chrome.mode, Mode::ProjectDialog);
+    assert!(
+        matches!(
+            &chrome.dialog,
+            Some(Dialog::NewWorktree { project_id, branch, base, error: None, .. })
+                if project_id == "project-1" && branch.is_empty() && base == "0.5.0"
+        ),
+        "{:?}",
+        chrome.dialog
+    );
+    create_worktree(
+        &mut workspace,
+        &mut chrome,
+        "project-1",
+        "feature",
+        Some("0.5.0"),
+    )
+    .await
+    .expect("create worktree");
+    let posts: Vec<Value> = mock
+        .requests()
+        .into_iter()
+        .filter(|request| {
+            request.method == "POST" && request.target == "/api/source-control/worktrees"
+        })
+        .filter_map(|request| request.body)
+        .collect();
+    assert_eq!(
+        posts,
+        [json!({
+            "project_id": "project-1", "branch_name": "feature",
+            "base_branch": "0.5.0", "workspace_role": "client",
+        })]
+    );
+    assert!(chrome.dialog.is_none(), "{:?}", chrome.dialog);
+    assert_eq!(chrome.mode, Mode::Terminal);
+    let children = |workspace: &Workspace<LiveDaemon>| -> Vec<String> {
+        workspace.sidebar().projects[0]
+            .worktrees
+            .iter()
+            .map(|worktree| worktree.worktree_id.clone())
+            .collect()
+    };
+    assert_eq!(children(&workspace), ["wt-1", "wt-2"]);
+    let creates = websocket_requests(&mock, "terminal_create");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0].get("cwd"), Some(&json!("/repo-wt/feature")));
+    assert_eq!(chrome.tabs().tabs.len(), 1);
+    assert_eq!(chrome.tabs().tabs[0].worktree_id.as_deref(), Some("wt-1"));
+
+    // Open worktree lists only the rows no tab shows.
+    open_open_worktree_dialog(&workspace, &mut chrome, "project-1");
+    assert_eq!(
+        chrome.dialog,
+        Some(Dialog::OpenWorktree {
+            project_id: "project-1".into(),
+            choices: vec![WorktreeChoice {
+                worktree_id: "wt-2".into(),
+                branch: "spare".into(),
+                path: "/repo-wt/spare".into(),
+            }],
+            selected: 0,
+        })
+    );
+    chrome.dialog = None;
+    chrome.mode = Mode::Terminal;
+
+    // Close project with children asks with the group text.
+    close_project(&mut workspace, &mut chrome, "project-1")
+        .await
+        .expect("close project asks first");
+    assert_eq!(chrome.mode, Mode::ConfirmClose);
+    assert_eq!(
+        chrome.dialog,
+        Some(Dialog::ConfirmClose {
+            target: CloseTarget::WorktreeGroup("project-1".into()),
+            title: "gobby".into(),
+            scope: CloseScope::Group {
+                workspaces: 3,
+                panes: 1,
+            },
+        })
+    );
+    chrome.dialog = None;
+    chrome.mode = Mode::Terminal;
+
+    // Remove: the dialog counts the tagged tab; a refused kill keeps the
+    // pane, the tab, and the checkout, and says so inline.
+    open_remove_worktree_dialog(&workspace, &mut chrome, "wt-1");
+    assert_eq!(chrome.mode, Mode::ProjectDialog);
+    assert_eq!(
+        chrome.dialog,
+        Some(Dialog::RemoveWorktree {
+            worktree_id: "wt-1".into(),
+            branch: "feature".into(),
+            path: "/repo-wt/feature".into(),
+            tabs: 1,
+            panes: 1,
+            error: None,
+        })
+    );
+    mock.enqueue_kill_refusal("held by another viewer");
+    remove_worktree(&mut workspace, &mut chrome, "wt-1")
+        .await
+        .expect("refused remove");
+    assert!(
+        matches!(
+            &chrome.dialog,
+            Some(Dialog::RemoveWorktree { error: Some(error), .. }) if error.contains("1 terminal")
+        ),
+        "{:?}",
+        chrome.dialog
+    );
+    assert_eq!(chrome.tabs().tabs.len(), 1, "a refused kill keeps the tab");
+    assert!(
+        mock.requests()
+            .iter()
+            .all(|request| request.method != "DELETE"),
+        "no delete while a terminal survives"
+    );
+    remove_worktree(&mut workspace, &mut chrome, "wt-1")
+        .await
+        .expect("remove worktree");
+    let deletes: Vec<String> = mock
+        .requests()
+        .into_iter()
+        .filter(|request| request.method == "DELETE")
+        .map(|request| request.target)
+        .collect();
+    assert_eq!(deletes, ["/api/source-control/worktrees/wt-1"]);
+    assert!(chrome.dialog.is_none(), "{:?}", chrome.dialog);
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert!(
+        chrome.tabs().tabs.is_empty(),
+        "the worktree's tab went with its terminal"
+    );
+    assert_eq!(children(&workspace), ["wt-2"]);
+
+    // Close project terminates every tab's terminals but keeps the pane
+    // whose kill the daemon refuses.
+    workspace.fetch_roster().await.expect("roster with x and y");
+    let x = workspace.pane_for_terminal("term-x").expect("x pane");
+    let y = workspace.pane_for_terminal("term-y").expect("y pane");
+    chrome.open_tab(x, "x");
+    chrome.open_tab(y, "y");
+    mock.enqueue_kill_refusal("external owner");
+    close_project_confirmed(&mut workspace, &mut chrome, "project-1")
+        .await
+        .expect("close project");
+    let kills: Vec<Value> = websocket_requests(&mock, "terminal_kill")
+        .into_iter()
+        .map(|request| request["terminal_id"].clone())
+        .collect();
+    assert_eq!(
+        kills,
+        [
+            json!(SPAWNED),
+            json!(SPAWNED),
+            json!("term-x"),
+            json!("term-y")
+        ]
+    );
+    assert_eq!(shown_terminals(&workspace, &chrome), ["term-x"]);
+    assert!(workspace.pane_for_terminal("term-y").is_none());
+    mock.shutdown().await;
+}
+
+/// 3.3.2: the project dialogs' keys. New project: typing edits the path,
+/// tab completes a directory, enter hands the path to the loop and keeps
+/// the dialog for the daemon's answer, esc cancels. New worktree: tab moves
+/// between branch and base, enter submits both. Open worktree: down moves
+/// the choice, enter opens it. Remove worktree: enter asks the loop to
+/// remove, esc cancels.
+#[test]
+fn project_dialog_keys_produce_daemon_requests() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    let root = tempfile::tempdir().expect("completion root");
+    std::fs::create_dir(root.path().join("alpha-one")).expect("alpha-one");
+    std::fs::write(root.path().join("alpha.txt"), b"").expect("alpha.txt");
+    let root = root.path().to_string_lossy().into_owned();
+    let press = |chrome: &mut Chrome, code: KeyCode| {
+        route_modal_key(
+            &ws,
+            chrome,
+            &KeyInput {
+                key: KeyEvent::new(code, KeyModifiers::NONE),
+                bytes: Vec::new(),
+            },
+        )
+    };
+
+    chrome.mode = Mode::ProjectDialog;
+    let typed = format!("{root}/al");
+    chrome.dialog = Some(Dialog::NewProject {
+        path: typed.clone(),
+        cursor: typed.chars().count(),
+        error: None,
+    });
+    assert_eq!(press(&mut chrome, KeyCode::Tab), ModalOutcome::Consumed);
+    let completed = format!("{root}/alpha-one/");
+    assert!(
+        matches!(&chrome.dialog, Some(Dialog::NewProject { path, cursor, .. })
+            if *path == completed && *cursor == completed.chars().count()),
+        "{:?}",
+        chrome.dialog
+    );
+    assert_eq!(
+        press(&mut chrome, KeyCode::Enter),
+        ModalOutcome::InitProject(completed.clone())
+    );
+    assert_eq!(
+        chrome.mode,
+        Mode::ProjectDialog,
+        "enter waits for the daemon"
+    );
+    assert_eq!(press(&mut chrome, KeyCode::Esc), ModalOutcome::Close);
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    chrome.mode = Mode::ProjectDialog;
+    chrome.dialog = Some(Dialog::NewWorktree {
+        project_id: "project-1".into(),
+        branch: String::new(),
+        base: "0.5.0".into(),
+        cursor: 0,
+        base_focused: false,
+        error: None,
+    });
+    for ch in "feat".chars() {
+        assert_eq!(
+            press(&mut chrome, KeyCode::Char(ch)),
+            ModalOutcome::Consumed
+        );
+    }
+    assert_eq!(press(&mut chrome, KeyCode::Tab), ModalOutcome::Consumed);
+    assert_eq!(
+        press(&mut chrome, KeyCode::Char('x')),
+        ModalOutcome::Consumed
+    );
+    assert!(
+        matches!(&chrome.dialog, Some(Dialog::NewWorktree { branch, base, base_focused: true, .. })
+            if branch == "feat" && base == "0.5.0x"),
+        "{:?}",
+        chrome.dialog
+    );
+    assert_eq!(
+        press(&mut chrome, KeyCode::Backspace),
+        ModalOutcome::Consumed
+    );
+    assert_eq!(
+        press(&mut chrome, KeyCode::Enter),
+        ModalOutcome::CreateWorktree {
+            project_id: "project-1".into(),
+            branch: "feat".into(),
+            base: Some("0.5.0".into()),
+        }
+    );
+    assert_eq!(chrome.mode, Mode::ProjectDialog);
+    assert_eq!(press(&mut chrome, KeyCode::Esc), ModalOutcome::Close);
+
+    chrome.mode = Mode::ProjectDialog;
+    chrome.dialog = Some(Dialog::OpenWorktree {
+        project_id: "project-1".into(),
+        choices: vec![
+            WorktreeChoice {
+                worktree_id: "wt-1".into(),
+                branch: "feature".into(),
+                path: "/repo-wt/feature".into(),
+            },
+            WorktreeChoice {
+                worktree_id: "wt-2".into(),
+                branch: "spare".into(),
+                path: "/repo-wt/spare".into(),
+            },
+        ],
+        selected: 0,
+    });
+    assert_eq!(press(&mut chrome, KeyCode::Down), ModalOutcome::Consumed);
+    assert_eq!(
+        press(&mut chrome, KeyCode::Enter),
+        ModalOutcome::OpenWorktree("wt-2".into())
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert!(chrome.dialog.is_none());
+
+    chrome.mode = Mode::ProjectDialog;
+    chrome.dialog = Some(Dialog::RemoveWorktree {
+        worktree_id: "wt-1".into(),
+        branch: "feature".into(),
+        path: "/repo-wt/feature".into(),
+        tabs: 1,
+        panes: 2,
+        error: None,
+    });
+    assert_eq!(
+        press(&mut chrome, KeyCode::Enter),
+        ModalOutcome::RemoveWorktree("wt-1".into())
+    );
+    assert_eq!(
+        chrome.mode,
+        Mode::ProjectDialog,
+        "enter waits for the daemon"
+    );
+    assert_eq!(press(&mut chrome, KeyCode::Esc), ModalOutcome::Close);
+    assert!(chrome.dialog.is_none());
 }

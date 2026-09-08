@@ -22,7 +22,7 @@ use crate::ui::status::Toast;
 use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
 use gobby_terminal::selection::Selection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 /// Collapsed sidebar width (herdr `COLLAPSED_WIDTH`).
@@ -211,6 +211,8 @@ pub enum Mode {
     Navigator,
     /// A right-click menu is open; `Chrome::menu` holds it.
     ContextMenu,
+    /// One of the project dialogs (`ui::dialogs::project`) is open.
+    ProjectDialog,
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +235,9 @@ pub struct SidebarState {
     pub project_order: Vec<String>,
     /// Projects whose worktree rows are folded under the card.
     pub collapsed_projects: BTreeSet<String>,
+    /// Labels the user gave project cards, by project id; a card without
+    /// one shows the daemon's name. `session.json` keeps them.
+    pub project_labels: BTreeMap<String, String>,
     /// Machine filter of the agents section, kept by `session.json`: `None`
     /// lists the focused project's agents on the local machine,
     /// `Some(ALL_MACHINES)` every agent of every project and machine, and
@@ -254,6 +259,7 @@ impl Default for SidebarState {
             selected: 0,
             project_order: Vec::new(),
             collapsed_projects: BTreeSet::new(),
+            project_labels: BTreeMap::new(),
             machine_filter: None,
         }
     }

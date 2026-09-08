@@ -174,6 +174,12 @@ pub fn apply_local_menu_action<D: Daemon>(
                 pane.right_click_passthrough = !pane.right_click_passthrough;
             }
         }
+        MenuAction::ToggleGroup(project_id) => {
+            let folded = &mut chrome.sidebar.collapsed_projects;
+            if !folded.remove(project_id) {
+                folded.insert(project_id.clone());
+            }
+        }
         _ => return false,
     }
     true

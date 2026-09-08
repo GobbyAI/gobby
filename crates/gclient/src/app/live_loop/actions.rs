@@ -9,10 +9,10 @@ use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest}
 use crate::frame_source::FrameError;
 use crate::prefs::{load_prefs, prefs_path};
 use crate::ui::chrome::attention_pane;
-use crate::ui::dialogs::{CloseTarget, Dialog, RenameKind};
+use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::{agent_blocked, attention_order, next_machine_filter};
-use crate::ui::sidebar_rows::{displayed_project_ids, project_rows, RowKind};
+use crate::ui::sidebar_rows::{displayed_project_ids, project_label, project_rows, RowKind};
 use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
@@ -27,7 +27,12 @@ use super::control::{
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
-use super::projects::{focus_project, open_worktree, save_client_session};
+use super::projects::{
+    close_project, close_project_confirmed, create_worktree, focus_project,
+    open_new_project_dialog, open_new_worktree_dialog, open_open_worktree_dialog,
+    open_remove_worktree_dialog, open_worktree, remove_worktree, rename_project,
+    save_client_session, submit_new_project,
+};
 
 /// Reap the slots whose pane left the workspace and the tabs that emptied.
 /// Panes are never opened here: the tab bar is restored from the snapshot or
@@ -157,7 +162,19 @@ pub(super) async fn apply_live_modal_outcome(
                 sync_live_chrome(workspace, chrome);
             }
         }
+        ModalOutcome::Confirm(
+            CloseTarget::Project(project_id) | CloseTarget::WorktreeGroup(project_id),
+        ) => close_project_confirmed(workspace, chrome, &project_id).await?,
         ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
+        ModalOutcome::InitProject(path) => submit_new_project(workspace, chrome, &path).await?,
+        ModalOutcome::CreateWorktree {
+            project_id,
+            branch,
+            base,
+        } => create_worktree(workspace, chrome, &project_id, &branch, base.as_deref()).await?,
+        ModalOutcome::RemoveWorktree(worktree_id) => {
+            remove_worktree(workspace, chrome, &worktree_id).await?;
+        }
         ModalOutcome::Menu { kind, action } => {
             return apply_live_menu_action(workspace, chrome, kind, action).await;
         }
@@ -190,6 +207,28 @@ async fn apply_live_menu_action(
                 focus_live_pane(workspace, pane).await?;
             }
             open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
+        }
+        MenuAction::FocusProject(project_id) => {
+            focus_project(workspace, chrome, &project_id).await?;
+        }
+        MenuAction::OpenWorktreeTab(worktree_id) => {
+            open_worktree(workspace, chrome, &worktree_id).await?;
+        }
+        MenuAction::NewWorktree(project_id) => {
+            open_new_worktree_dialog(workspace, chrome, &project_id);
+        }
+        MenuAction::OpenWorktree(project_id) => {
+            open_open_worktree_dialog(workspace, chrome, &project_id);
+        }
+        MenuAction::RemoveWorktree(worktree_id) => {
+            open_remove_worktree_dialog(workspace, chrome, &worktree_id);
+        }
+        MenuAction::CloseProject(project_id) => {
+            close_project(workspace, chrome, &project_id).await?;
+        }
+        MenuAction::RenameProject(project_id) => {
+            let current = project_label(workspace, chrome, &project_id).unwrap_or_default();
+            rename_project(chrome, &project_id, &current);
         }
         _ => {
             apply_local_menu_action(workspace, chrome, &action);
@@ -246,9 +285,7 @@ pub(super) async fn handle_live_action(
             spawn_live_terminal(workspace, chrome, Placement::SplitDown).await?;
         }
         Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
-        // The add-project dialog lands in plan 3.3; the chord and the footer
-        // button already route here.
-        Action::NewProject => {}
+        Action::NewProject => open_new_project_dialog(chrome),
         Action::CloseTerminal | Action::ClosePane => {
             if let Some(pane_id) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane_id).await?;
@@ -266,7 +303,7 @@ pub(super) async fn handle_live_action(
                 chrome.dialog = Some(Dialog::ConfirmClose {
                     target: CloseTarget::Tab,
                     title,
-                    panes,
+                    scope: CloseScope::Panes(panes),
                 });
                 chrome.mode = Mode::ConfirmClose;
             } else {
@@ -539,7 +576,7 @@ pub(super) async fn activate_live_tab(
     Ok(())
 }
 
-fn open_live_rename(chrome: &mut Chrome, kind: RenameKind, value: String) {
+pub(super) fn open_live_rename(chrome: &mut Chrome, kind: RenameKind, value: String) {
     chrome.dialog = Some(Dialog::Rename {
         kind,
         cursor: value.chars().count(),

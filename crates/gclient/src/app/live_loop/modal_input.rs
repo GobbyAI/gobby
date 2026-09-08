@@ -30,6 +30,7 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 use super::super::{PaneId, Workspace};
 use super::actions::live_layout_area;
 use super::menu::{activate_menu, close_menu, ContextMenuKind, MenuAction};
+use super::projects::project_dialog_key;
 
 /// Lines one page key scrolls the keybind help by.
 const HELP_PAGE_LINES: usize = 10;
@@ -62,6 +63,18 @@ pub enum ModalOutcome {
     Confirm(CloseTarget),
     /// The rename dialog was accepted with this value.
     Commit(RenameKind, String),
+    /// The new-project dialog asked the daemon to register this path; the
+    /// dialog stays open for the answer.
+    InitProject(String),
+    /// The new-worktree dialog asked for a checkout of `project_id`; the
+    /// dialog stays open for the answer.
+    CreateWorktree {
+        project_id: String,
+        branch: String,
+        base: Option<String>,
+    },
+    /// The remove-worktree dialog confirmed; the dialog stays open.
+    RemoveWorktree(String),
     /// A context menu item was activated for the target it was opened on.
     Menu {
         kind: ContextMenuKind,
@@ -88,6 +101,7 @@ pub fn route_modal_key<W: WorkspaceView>(
         Mode::Rename => rename_key(chrome, key),
         Mode::Resize => resize_key(chrome, key),
         Mode::Navigate => navigate_key(ws, chrome, key),
+        Mode::ProjectDialog => project_dialog_key(chrome, key),
     }
 }
 
@@ -101,7 +115,7 @@ pub(super) fn close_modal(chrome: &mut Chrome) -> ModalOutcome {
 /// Apply a committed rename: the active tab's title, or the focused pane's
 /// label (the daemon has no rename call, and roster pages refresh the
 /// pane's own title); an empty value clears the label.
-pub(crate) fn apply_rename<D: Daemon>(
+pub fn apply_rename<D: Daemon>(
     workspace: &mut Workspace<D>,
     chrome: &mut Chrome,
     kind: RenameKind,
@@ -116,6 +130,13 @@ pub(crate) fn apply_rename<D: Daemon>(
         RenameKind::Pane | RenameKind::Terminal => {
             if let Some(pane) = chrome.focused_pane() {
                 workspace.pane_mut(pane).label = (!value.is_empty()).then_some(value);
+            }
+        }
+        RenameKind::Project(project_id) => {
+            if value.is_empty() {
+                chrome.sidebar.project_labels.remove(&project_id);
+            } else {
+                chrome.sidebar.project_labels.insert(project_id, value);
             }
         }
     }
@@ -401,7 +422,7 @@ pub(super) fn persist_prefs(home: Option<&Path>, chrome: &mut Chrome) {
 fn confirm_close_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     match key.code {
         KeyCode::Char('y') | KeyCode::Enter => {
-            let Some(Dialog::ConfirmClose { target, .. }) = chrome.dialog else {
+            let Some(Dialog::ConfirmClose { target, .. }) = chrome.dialog.take() else {
                 return close_modal(chrome);
             };
             close_modal(chrome);
@@ -423,11 +444,20 @@ fn rename_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     };
     match key.code {
         KeyCode::Enter => {
-            let committed = (*kind, std::mem::take(value));
+            let committed = (kind.clone(), std::mem::take(value));
             close_modal(chrome);
             return ModalOutcome::Commit(committed.0, committed.1);
         }
         KeyCode::Esc => return close_modal(chrome),
+        _ => edit_text(value, cursor, key),
+    }
+    ModalOutcome::Consumed
+}
+
+/// One line-editing key on `value` at the char index `cursor`: arrows,
+/// home/end, backspace/delete, and printable characters.
+pub(super) fn edit_text(value: &mut String, cursor: &mut usize, key: &KeyEvent) {
+    match key.code {
         KeyCode::Left => *cursor = cursor.saturating_sub(1),
         KeyCode::Right => *cursor = (*cursor + 1).min(value.chars().count()),
         KeyCode::Home => *cursor = 0,
@@ -447,7 +477,6 @@ fn rename_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
             }
         }
     }
-    ModalOutcome::Consumed
 }
 
 /// Byte offset of the `cursor`th character, or the end of `value`.

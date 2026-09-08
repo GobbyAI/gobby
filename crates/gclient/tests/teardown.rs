@@ -440,6 +440,23 @@ impl Daemon for TraceDaemon {
         Daemon::worktrees(&self.inner, project).await
     }
 
+    async fn init_project(&self, path: &str) -> Result<ProjectRow, DaemonError> {
+        Daemon::init_project(&self.inner, path).await
+    }
+
+    async fn create_worktree(
+        &self,
+        project: &str,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<WorktreeRow, DaemonError> {
+        Daemon::create_worktree(&self.inner, project, branch, base).await
+    }
+
+    async fn delete_worktree(&self, worktree_id: &str) -> Result<(), DaemonError> {
+        Daemon::delete_worktree(&self.inner, worktree_id).await
+    }
+
     async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
         Daemon::sessions(&self.inner, project).await
     }
