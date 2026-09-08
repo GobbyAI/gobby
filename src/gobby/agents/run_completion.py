@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -26,7 +27,7 @@ from gobby.workflows.task_claim_state import (
     task_edited_file_set,
     task_edited_file_set_for_checkout,
 )
-from gobby.workflows.task_dirty_state import task_dirty_paths
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -81,17 +82,17 @@ def _agent_run_checkout_root(
         return None
 
 
-def agent_run_task_dirty_paths(
+def _agent_run_task_dirty_scope(
     db: HubDatabase,
     session_manager: SessionManager | None,
     run: Any,
     *,
     variables: dict[str, Any] | None = None,
-) -> list[str] | None:
-    """Return dirty paths attributed to the task assigned to an agent run."""
+) -> tuple[set[str], str] | None:
+    """Resolve attributed paths and checkout root without running Git."""
     task_id = getattr(run, "task_id", None)
     if not isinstance(task_id, str) or not task_id:
-        return []
+        return None
 
     child_session_id = getattr(run, "child_session_id", None)
     if variables is None:
@@ -108,7 +109,7 @@ def agent_run_task_dirty_paths(
 
     checkout_root = _agent_run_checkout_root(db, session_manager, run)
     if checkout_root is None:
-        return []
+        return None
     attributed = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
     if not attributed:
         attributed = task_edited_file_set(variables, task_id)
@@ -118,7 +119,28 @@ def agent_run_task_dirty_paths(
     )
     if not attributed and isolated:
         attributed = {"."}
-    dirty = task_dirty_paths(attributed, checkout_root)
+    return attributed, checkout_root
+
+
+async def agent_run_task_dirty_paths(
+    db: HubDatabase,
+    session_manager: SessionManager | None,
+    run: Any,
+    *,
+    variables: dict[str, Any] | None = None,
+) -> list[str] | None:
+    """Return dirty task paths without running Git or DB work on the event loop."""
+    scope = await asyncio.to_thread(
+        _agent_run_task_dirty_scope,
+        db,
+        session_manager,
+        run,
+        variables=variables,
+    )
+    if scope is None:
+        return []
+    attributed, checkout_root = scope
+    dirty = await task_dirty_paths_async(attributed, checkout_root)
     return None if dirty is None else sorted(dirty)
 
 
