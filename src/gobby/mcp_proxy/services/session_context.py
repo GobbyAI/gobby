@@ -1,6 +1,7 @@
 """Session and discovery-state helpers for the tool proxy service."""
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -125,7 +126,29 @@ def resolve_tool_event_context(
                             session_source,
                             effective_session_id,
                         )
-                project_id = project_id or getattr(session, "project_id", None)
+                session_project_id = getattr(session, "project_id", None)
+                project_id = project_id or session_project_id
+                machine_id = getattr(session, "machine_id", None)
+                workspace_path = getattr(session, "workspace_path", None)
+                if session_project_id and machine_id:
+                    from gobby.storage.project_checkouts import resolve_operation_root
+
+                    primary_root = resolve_operation_root(
+                        session_storage.db,
+                        session_project_id,
+                        machine_id,
+                    )
+                    cwd = primary_root
+                    if (
+                        workspace_path
+                        and Path(workspace_path).resolve() != Path(primary_root).resolve()
+                    ):
+                        cwd = resolve_operation_root(
+                            session_storage.db,
+                            session_project_id,
+                            machine_id,
+                            overlay_path=workspace_path,
+                        )
                 external_id = getattr(session, "external_id", None)
                 if external_id:
                     metadata["external_id"] = external_id
