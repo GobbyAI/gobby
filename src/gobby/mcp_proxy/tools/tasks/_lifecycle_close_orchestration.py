@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.task_close_reviews import (
     TaskCloseReview,
+    TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
     TerminalTaskCloseReviewStatus,
 )
@@ -77,17 +78,28 @@ async def launch_close_review(
     task = evaluation.task
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id
     store = TaskCloseReviewStore(ctx.task_manager.db)
-    review, created = store.create_or_get_active(
-        task_id=task.id,
-        task_ref=task_ref,
-        caller_session_id=evaluation.resolved_session_id,
-        close_arguments=close_arguments,
-        review_fingerprint=review_fingerprint,
-        evidence_fingerprint=evidence_fingerprint,
-        diff_sha=diff_sha,
-        test_bodies_sha=test_bodies_sha,
-        stable_facts=stable_facts,
-    )
+    try:
+        review, created = store.create_or_get_active(
+            task_id=task.id,
+            task_ref=task_ref,
+            caller_session_id=evaluation.resolved_session_id,
+            close_arguments=close_arguments,
+            expected_task_updated_at=task.updated_at,
+            review_fingerprint=review_fingerprint,
+            evidence_fingerprint=evidence_fingerprint,
+            diff_sha=diff_sha,
+            test_bodies_sha=test_bodies_sha,
+            stable_facts=stable_facts,
+        )
+    except TaskCloseReviewStaleTaskError:
+        evaluation.error = "stale_task_state"
+        evaluation.message = (
+            "The task changed after close_task evaluated it and before review launch. "
+            "No validator was launched."
+        )
+        evaluation.action = "Retry close_task; the existing evaluation will not be reused."
+        evaluation.extra["stale_state"] = True
+        return evaluation.response(preview=bool(close_arguments.get("preview")))
     if not created:
         return pending_review_response(review)
 

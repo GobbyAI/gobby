@@ -2,13 +2,39 @@
 
 from __future__ import annotations
 
+import threading
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import (
     VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
+    TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
 )
+
+
+@pytest.fixture(autouse=True)
+def _task_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
+    with temp_db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO tasks (
+                id, project_id, title, validation_criteria, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                _TASK_ID,
+                sample_project["id"],
+                "Close review task",
+                "The close review lifecycle is covered.",
+                _TASK_UPDATED_AT,
+                _TASK_UPDATED_AT,
+            ),
+        )
 
 
 def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) -> None:
@@ -30,6 +56,46 @@ def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) ->
     fresh, fresh_created = store.create_or_get_active(**_intent())
     assert fresh_created is True
     assert fresh.id != first.id
+
+
+def test_concurrent_update_before_review_creation_returns_stale(
+    temp_db: HubDatabase,
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    launch_ready = threading.Event()
+    update_committed = threading.Event()
+    errors: list[BaseException] = []
+
+    def launch() -> None:
+        launch_ready.set()
+        assert update_committed.wait(timeout=5)
+        try:
+            store.create_or_get_active(**_intent())
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    thread = threading.Thread(target=launch)
+    thread.start()
+    assert launch_ready.wait(timeout=5)
+    with temp_db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET validation_criteria = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                "Updated while close was evaluating.",
+                _TASK_UPDATED_AT + timedelta(seconds=1),
+                _TASK_ID,
+            ),
+        )
+    update_committed.set()
+    thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], TaskCloseReviewStaleTaskError)
+    assert store.get_active_for_task(_TASK_ID) is None
 
 
 def test_review_lifecycle_preserves_arguments_payload_and_delivery(temp_db: HubDatabase) -> None:
@@ -268,6 +334,7 @@ def test_memo_rows_stay_out_of_the_agentic_review_lifecycle(temp_db: HubDatabase
 _TASK_ID = "00000000-0000-4000-8000-000000000801"
 _SESSION_ID = "00000000-0000-4000-8000-000000000802"
 _RUN_ID = "00000000-0000-4000-8000-000000000803"
+_TASK_UPDATED_AT = datetime(2026, 9, 8, tzinfo=UTC)
 _ARGUMENTS = {
     "task_id": "#42",
     "reason": "completed",
@@ -288,6 +355,7 @@ def _intent() -> dict[str, Any]:
         "task_ref": "#42",
         "caller_session_id": _SESSION_ID,
         "close_arguments": _ARGUMENTS,
+        "expected_task_updated_at": _TASK_UPDATED_AT,
         "review_fingerprint": "review",
         "evidence_fingerprint": "evidence",
         "diff_sha": "d" * 64,

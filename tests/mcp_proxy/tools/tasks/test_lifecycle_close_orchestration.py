@@ -79,6 +79,8 @@ async def test_close_persists_and_launches_one_taskless_validator(
     result = await launch_close_review(ctx, evaluation=evaluation, close_arguments=arguments)
 
     assert store.created_arguments == arguments
+    assert evaluation.task is not None
+    assert store.expected_task_updated_at == evaluation.task.updated_at
     registry.call.assert_awaited_once()
     launch_args = registry.call.call_args.args[1]
     assert launch_args["agent"] == "task-close-validator"
@@ -102,6 +104,52 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert "Do not poll agent runs or re-call close_task." in result["message"]
     assert "Oversized" not in result["message"]
     assert result["criteria_review_duration_ms"] == 4.25
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_task_update_before_review_launch_returns_stale_without_spawning(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent close review",
+        validation_criteria="The original criterion passes.",
+    )
+    session = SessionManager(temp_db).register(
+        external_id=f"close-review-stale-{uuid4()}",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    evaluation = _evaluation()
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.resolved_session_id = session.id
+    manager.update_task(task.id, validation_criteria="The updated criterion passes.")
+    registry = SimpleNamespace(call=AsyncMock())
+    ctx = _ctx(registry=registry)
+    ctx.task_manager = manager
+
+    result = await launch_close_review(
+        ctx,
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+    )
+
+    assert result["success"] is False
+    assert result["closed"] is False
+    assert result["preview"] is True
+    assert result["error"] == "stale_task_state"
+    assert result["stale_state"] is True
+    assert result["required_actions"] == [
+        "Retry close_task; the existing evaluation will not be reused."
+    ]
+    assert "No validator was launched." in result["message"]
+    registry.call.assert_not_awaited()
+    assert TaskCloseReviewStore(temp_db).get_active_for_task(task.id) is None
 
 
 @pytest.mark.asyncio
@@ -971,12 +1019,14 @@ class _Store:
         self.review = review
         self.created = created
         self.created_arguments: dict[str, Any] | None = None
+        self.expected_task_updated_at: datetime | None = None
         self.finished_status: str | None = None
         self.claimed = False
         self.restored = False
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
         self.created_arguments = dict(kwargs["close_arguments"])
+        self.expected_task_updated_at = kwargs["expected_task_updated_at"]
         return self.review, self.created
 
     def bind_run(self, _review_id: str, run_id: str) -> TaskCloseReview:

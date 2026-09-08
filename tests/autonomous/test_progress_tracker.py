@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from gobby.autonomous.progress_tracker import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStore
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
 
 pytestmark = pytest.mark.unit
@@ -33,12 +35,22 @@ def _create_session(db: HubDatabase) -> str:
     )
 
 
-def _create_active_review(db: HubDatabase, session_id: str) -> TaskCloseReview:
+def _create_active_review(
+    db: HubDatabase,
+    session_id: str,
+    project_id: str,
+) -> TaskCloseReview:
+    task = LocalTaskManager(db).create_task(
+        project_id,
+        "Close review progress task",
+        validation_criteria="The progress behavior is covered.",
+    )
     review, created = TaskCloseReviewStore(db).create_or_get_active(
-        task_id=str(uuid4()),
-        task_ref="#42",
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
         caller_session_id=session_id,
         close_arguments={"preview": True},
+        expected_task_updated_at=task.updated_at,
         review_fingerprint="review",
         evidence_fingerprint="evidence",
         diff_sha="d" * 64,
@@ -49,7 +61,10 @@ def _create_active_review(db: HubDatabase, session_id: str) -> TaskCloseReview:
     return review
 
 
-def test_active_close_review_suppresses_stagnation(temp_db: HubDatabase) -> None:
+def test_active_close_review_suppresses_stagnation(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session_id = _create_session(temp_db)
     tracker = ProgressTracker(temp_db, stagnation_threshold=60)
     tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
@@ -59,7 +74,7 @@ def test_active_close_review_suppresses_stagnation(temp_db: HubDatabase) -> None
     )
     assert tracker.get_summary(session_id).is_stagnant is True
 
-    review = _create_active_review(temp_db, session_id)
+    review = _create_active_review(temp_db, session_id, sample_project["id"])
     assert tracker.get_summary(session_id).is_stagnant is False
 
     payload = {
@@ -75,9 +90,12 @@ def test_active_close_review_suppresses_stagnation(temp_db: HubDatabase) -> None
     assert tracker.get_summary(session_id).is_stagnant is True
 
 
-def test_close_review_delivery_records_progress(temp_db: HubDatabase) -> None:
+def test_close_review_delivery_records_progress(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session_id = _create_session(temp_db)
-    review = _create_active_review(temp_db, session_id)
+    review = _create_active_review(temp_db, session_id, sample_project["id"])
     payload = {
         "event": "task_close_review_completed",
         "review_id": review.id,
