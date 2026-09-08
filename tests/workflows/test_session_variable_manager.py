@@ -1127,6 +1127,33 @@ def test_upsert_bounded_list_variable_replaces_identity_and_updates_companion(
     assert variables["audit_ready"] is True
 
 
+def test_persisted_memory_review_variables_expose_only_outstanding_task_refs(db: Any) -> None:
+    from gobby.workflows.memory_review_conditions import pending_memory_reviews
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        S1,
+        {
+            "_memory_pending_task_reviews": [
+                {"closure_id": "reviewed", "task_id": "task-1", "task_ref": "#1"},
+                {"closure_id": "pending", "task_id": "task-2", "task_ref": "#2"},
+            ]
+        },
+    )
+    mgr.upsert_bounded_list_variable(
+        S1,
+        "_memory_task_review_records",
+        {"closure_id": "reviewed"},
+        identity={"closure_id": "reviewed"},
+        max_items=50,
+    )
+
+    assert pending_memory_reviews(mgr.get_variables(S1)) == [
+        {"task_id": "task-2", "task_ref": "#2"}
+    ]
+
+
 class TestStartupContextClaimGeneration:
     def test_owner_adopts_live_claim_and_strangers_see_live(self, db: Any) -> None:
         from gobby.workflows.state_manager import SessionVariableManager

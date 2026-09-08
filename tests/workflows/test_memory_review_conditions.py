@@ -11,6 +11,7 @@ import pytest
 
 from gobby.workflows.memory_review_conditions import (
     classify_memory_review_close,
+    pending_memory_reviews,
     pending_memory_reviews_complete,
     queue_memory_review_close,
 )
@@ -200,6 +201,24 @@ def test_pending_reviews_complete_only_when_every_closure_has_a_record(
     }
 
     assert pending_memory_reviews_complete(variables) is expected
+
+
+def test_pending_memory_reviews_returns_unique_unreviewed_task_refs_in_queue_order() -> None:
+    variables = {
+        "_memory_pending_task_reviews": [
+            _closure("reviewed"),
+            {**_closure("second:first"), "task_id": "second", "task_ref": "#2"},
+            {**_closure("second:duplicate"), "task_id": "second", "task_ref": "#2"},
+            {**_closure("third"), "task_id": "third", "task_ref": "#3"},
+            {"closure_id": "malformed", "task_id": "missing-ref"},
+        ],
+        "_memory_task_review_records": [{"closure_id": "reviewed"}],
+    }
+
+    assert pending_memory_reviews(variables) == [
+        {"task_id": "second", "task_ref": "#2"},
+        {"task_id": "third", "task_ref": "#3"},
+    ]
 
 
 def test_delivered_flag_drops_consumed_closures_before_queueing() -> None:

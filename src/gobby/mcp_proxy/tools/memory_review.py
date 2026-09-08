@@ -12,7 +12,10 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._id import resolve_task_reference
-from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
+from gobby.workflows.memory_review_conditions import (
+    pending_memory_reviews,
+    pending_memory_reviews_complete,
+)
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -42,8 +45,10 @@ def _closure_id(task: Task) -> str:
     return f"{task.id}:{closed_at}"
 
 
-def _record_review(state: SessionVariableManager, session_id: str, record: dict[str, Any]) -> bool:
-    """Persist one review record; return whether the queued batch is now fully reviewed.
+def _record_review(
+    state: SessionVariableManager, session_id: str, record: dict[str, Any]
+) -> tuple[bool, list[dict[str, str]]]:
+    """Persist one review record and return the remaining queued task references.
 
     A fully reviewed batch releases the post-close stop/compact gate exactly as
     delivering its block would, so proactive reviews are never re-requested.
@@ -55,10 +60,11 @@ def _record_review(state: SessionVariableManager, session_id: str, record: dict[
         identity={"closure_id": record["closure_id"]},
         max_items=_MAX_REVIEW_RECORDS,
     )
-    if not pending_memory_reviews_complete(state.get_variables(session_id)):
-        return False
-    state.set_variable(session_id, REVIEW_DELIVERED_VARIABLE, True)
-    return True
+    variables = state.get_variables(session_id)
+    reviews_complete = pending_memory_reviews_complete(variables)
+    if reviews_complete:
+        state.set_variable(session_id, REVIEW_DELIVERED_VARIABLE, True)
+    return reviews_complete, pending_memory_reviews(variables)
 
 
 def _enum_value(value: Any) -> Any:
@@ -236,7 +242,7 @@ def register_memory_review_tools(
             "candidate_ids": [candidate["id"] for candidate in serialized],
             "reviewed_at": datetime.now(UTC).isoformat(),
         }
-        reviews_complete = await asyncio.to_thread(
+        reviews_complete, pending_reviews = await asyncio.to_thread(
             _record_review, SessionVariableManager(session_manager.db), resolved_session_id, record
         )
         return {
@@ -247,4 +253,5 @@ def register_memory_review_tools(
             "candidate_count": len(serialized),
             "candidates": serialized,
             "pending_reviews_complete": reviews_complete,
+            "pending_reviews": pending_reviews,
         }
