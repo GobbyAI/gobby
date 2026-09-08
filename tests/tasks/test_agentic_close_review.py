@@ -256,6 +256,44 @@ def test_terminal_payload_has_stable_public_contract(
     assert isinstance(payload["required_actions"], list)
 
 
+@pytest.mark.parametrize(
+    ("blocking_reasons", "required_actions"),
+    [
+        pytest.param([], ["Inspect the invalid verdict."], id="zero"),
+        pytest.param(
+            ["Criterion 1 is unmet."],
+            ["Implement criterion 1."],
+            id="one",
+        ),
+        pytest.param(
+            ["Criterion 1 is unmet.", "Criterion 2 is unmet."],
+            ["Implement criterion 1.", "Implement criterion 2."],
+            id="multiple",
+        ),
+    ],
+)
+def test_invalid_terminal_payload_reports_complete_remediation(
+    blocking_reasons: list[str],
+    required_actions: list[str],
+) -> None:
+    payload = build_terminal_review_payload(
+        _review(status="running"),
+        status="invalid",
+        close_result={
+            "blocking_reasons": blocking_reasons,
+            "required_actions": required_actions,
+        },
+    )
+
+    assert payload["outstanding_finding_count"] == len(blocking_reasons)
+    assert payload["remediation_guidance"] == (
+        "Address every listed blocking reason, validate the complete fix set, and commit the "
+        "complete fix set before one resubmission."
+    )
+    assert payload["blocking_reasons"] == blocking_reasons
+    assert payload["required_actions"] == required_actions
+
+
 def test_external_pending_payload_names_coordinator_owned_criteria() -> None:
     payload = build_terminal_review_payload(
         _review(status="running"),
