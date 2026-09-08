@@ -83,6 +83,16 @@ class _AgentRunQueryMixin:
         )
         return runs[0] if runs else None
 
+    def get_active_run_for_worktree(self: _AgentRunQueryHost, worktree_id: str) -> AgentRun | None:
+        """Get the active run using a worktree, if any."""
+        runs = self._fetch_runs_with_live_stats(
+            "WHERE ar.worktree_id = %s AND ar.status IN ('pending', 'running')",
+            (worktree_id,),
+            order_by="ORDER BY ar.created_at DESC",
+            limit=1,
+        )
+        return runs[0] if runs else None
+
     def list_daemon_stop_resume_candidates(
         self: _AgentRunQueryHost,
         task_id: str,
