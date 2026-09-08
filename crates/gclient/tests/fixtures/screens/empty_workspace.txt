@@ -42,8 +42,8 @@
 19 : overlay0/panel_bg*4 -/panel_bg*17 overlay0/panel_bg*4 surface_dim/panel_bg*1 -/panel_bg*41 overlay1/panel_bg+b*12 -/panel_bg*41
 20 |─────────────────────────│                          select a terminal in the sidebar to attach                          |
 20 : surface_dim/panel_bg*26 -/panel_bg*26 overlay0/panel_bg*42 -/panel_bg*26
-21 | agents                  │                                                                                              |
-21 : overlay0/panel_bg+b*7 -/panel_bg*18 surface_dim/panel_bg*1 -/panel_bg*94
+21 | agents           grouped│                                                                                              |
+21 : overlay0/panel_bg+b*7 -/panel_bg*11 overlay0/panel_bg+b*7 surface_dim/panel_bg*1 -/panel_bg*94
 22 |                         │                                                                                              |
 22 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 23 |                         │                                                                                              |

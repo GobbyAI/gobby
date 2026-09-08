@@ -1,14 +1,18 @@
 //! 3.5 gclient starts independently of the Python CLI.
 
+use gobby_client::prefs::{load_prefs, save_prefs};
 use gobby_client::startup::{
     parse_args, prepare_at, resolve_probe_env_at, resolve_project_at, start_session,
     start_session_at, GtermHostState, HealthClient, HttpHealthClient, ProbeEnv, Ready,
     StartupError,
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
-use gobby_client::ui::settings::ClientPrefs;
+use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs};
+use gobby_client::ui::Chrome;
 use gobby_client::FrameDelivery;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
+use ratatui::backend::TestBackend;
+use ratatui::Terminal;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
@@ -668,6 +672,66 @@ fn no_mouse_flag_and_prefs_file_shape_ready() {
         stdout.contains("--no-mouse"),
         "usage text omits --no-mouse: {stdout}"
     );
+}
+
+/// 3.2.3 `[ui] agent_sort`: read at startup, shown on the settings dialog,
+/// written back by the prefs file, and an unknown value names its line.
+#[test]
+fn agent_sort_pref_round_trips() {
+    let project_id = "66666666-6666-4666-8666-666666666666";
+    let args = parse_args(["gclient", "--project", project_id]).expect("parse args");
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let path = home.path().join("client").join("prefs.toml");
+    std::fs::create_dir_all(path.parent().expect("prefs parent")).expect("create client dir");
+    std::fs::write(&path, "[ui]\nagent_sort = \"priority\"\n").expect("write prefs");
+
+    let ready = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &HealthyHost,
+        cwd.path(),
+        home.path(),
+    )
+    .expect("prefs file with agent_sort");
+    assert_eq!(ready.prefs.agent_sort, AgentSort::Priority);
+
+    save_prefs(home.path(), &ready.prefs).expect("save prefs");
+    let reloaded = load_prefs(home.path()).expect("load saved prefs");
+    assert_eq!(reloaded.agent_sort, AgentSort::Priority);
+    assert_eq!(reloaded, ready.prefs);
+
+    let mut chrome = Chrome::dark();
+    chrome.prefs = ready.prefs;
+    let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(frame, frame.area(), &chrome);
+        })
+        .expect("render settings");
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(screen.contains("agent sort"), "settings dialog: {screen:?}");
+    assert!(screen.contains("priority"), "settings dialog: {screen:?}");
+
+    std::fs::write(&path, "[ui]\nagent_sort = \"sideways\"\n").expect("write malformed prefs");
+    let error = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &HealthyHost,
+        cwd.path(),
+        home.path(),
+    )
+    .expect_err("an unknown agent sort was accepted");
+    assert!(matches!(error, StartupError::Prefs { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("line 2"), "{message}");
+    assert!(message.contains("sideways"), "{message}");
 }
 
 #[test]

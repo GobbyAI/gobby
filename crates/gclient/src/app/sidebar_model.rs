@@ -247,17 +247,21 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
     }
 }
 
-/// herdr's collapsed parent: blocked over unseen over working over idle.
-fn most_urgent(states: impl Iterator<Item = RowState>) -> RowState {
-    let priority = |state: RowState| match state {
+/// herdr `status_priority`: blocked over unseen over working over idle.
+pub fn urgency(state: RowState) -> u8 {
+    match state {
         RowState::Attention => 4,
         RowState::Unseen => 3,
         RowState::Working => 2,
         RowState::Idle => 1,
         RowState::Unknown => 0,
-    };
+    }
+}
+
+/// herdr's collapsed parent: the most urgent of its children's states.
+fn most_urgent(states: impl Iterator<Item = RowState>) -> RowState {
     states
-        .max_by_key(|state| priority(*state))
+        .max_by_key(|state| urgency(*state))
         .unwrap_or(RowState::Idle)
 }
 

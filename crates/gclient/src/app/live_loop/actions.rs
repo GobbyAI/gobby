@@ -11,6 +11,7 @@ use crate::prefs::{load_prefs, prefs_path};
 use crate::ui::chrome::attention_pane;
 use crate::ui::dialogs::{CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
+use crate::ui::sidebar::{agent_blocked, attention_order, next_machine_filter};
 use crate::ui::sidebar_rows::{displayed_project_ids, project_rows, RowKind};
 use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
@@ -24,9 +25,9 @@ use super::control::{
     set_live_scroll_offset, take_live_control,
 };
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
-use super::modal_input::{apply_rename, ModalOutcome};
+use super::modal_input::{apply_rename, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
-use super::projects::{focus_project, open_worktree};
+use super::projects::{focus_project, open_worktree, save_client_session};
 
 /// Reap the slots whose pane left the workspace and the tabs that emptied.
 /// Panes are never opened here: the tab bar is restored from the snapshot or
@@ -419,6 +420,17 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::ReloadConfig => reload_live_prefs(workspace, chrome),
+        Action::CycleMachineFilter => {
+            chrome.sidebar.machine_filter = next_machine_filter(
+                workspace.sidebar(),
+                chrome.sidebar.machine_filter.as_deref(),
+            );
+            save_client_session(workspace, chrome)?;
+        }
+        Action::ToggleAgentSort => {
+            chrome.prefs.agent_sort = chrome.prefs.agent_sort.toggled();
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
         // The router answers `Quit` before dispatch; `CustomCommand` is held
         // in the keymap table for the plugin-menu decision (#20201) and never
         // bound.
@@ -560,7 +572,7 @@ fn pick_attention_entry(
     chrome: &Chrome,
     action: Action,
 ) -> Option<String> {
-    let entries = workspace.attention_entry_ids();
+    let entries = attention_order(workspace, chrome);
     let len = entries.len();
     if len == 0 {
         return None;
@@ -580,7 +592,7 @@ fn pick_attention_entry(
 }
 
 /// The 2.3 jump from the keyboard: focus the entry's pane (lease follows)
-/// and open the response dialog when the entry is a prompt.
+/// and open the response dialog when the entry waits on attention.
 async fn jump_live_attention(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -589,7 +601,9 @@ async fn jump_live_attention(
     if let Some(pane_id) = attention_pane(&*workspace, entry_id) {
         focus_live_shown_pane(workspace, chrome, pane_id).await?;
     }
-    open_response_dialog(workspace, chrome, Some(entry_id)).await?;
+    if agent_blocked(&*workspace, entry_id) {
+        open_response_dialog(workspace, chrome, Some(entry_id)).await?;
+    }
     Ok(())
 }
 

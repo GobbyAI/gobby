@@ -6,25 +6,27 @@
 //! three-row agents header (rule + title), and the collapsed rail split in
 //! half around a `─` divider. The projects section itself is `projects`.
 
+pub mod agents;
 pub mod projects;
 
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, SidebarState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
-use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
-use crate::ui::sidebar_rows::{agent_rows, project_rows, row_line, RowKind, SidebarRow};
+use crate::ui::sidebar_rows::{project_rows, RowKind, SidebarRow};
 use crate::ui::status::state_dot;
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
+pub use agents::{
+    agent_blocked, agent_label, agent_rows, attention_order, machine_filter_label,
+    next_machine_filter, AGENTS_HEADER_ROWS, ALL_MACHINES,
+};
 pub use projects::{project_list_metrics, projects_body_rect};
 
-/// herdr `AGENT_PANEL_HEADER_ROWS`.
-const AGENTS_HEADER_ROWS: u16 = 3;
 /// Projects share of the sidebar when `SidebarState::section_split` is unset.
 const DEFAULT_SECTION_SPLIT: f32 = 0.5;
 
@@ -44,8 +46,12 @@ pub struct SidebarHits {
     pub agents: Vec<(String, Rect)>,
     /// Scrollbar lane beside the agents, when one was drawn.
     pub agents_scrollbar: Option<Rect>,
-    /// The machine filter control (3.2 draws it).
+    /// The machine filter label of the agents header, when more than one
+    /// machine is known.
     pub machine_filter: Option<Rect>,
+    /// The `grouped`/`priority` sort label of the agents header, when the
+    /// mouse is captured.
+    pub agent_sort: Option<Rect>,
     /// The `«`/`»` collapse toggle cell.
     pub toggle: Option<Rect>,
 }
@@ -90,7 +96,7 @@ pub fn render_sidebar<W: WorkspaceView>(
 
     let (projects_area, agents_area) = expanded_sections(area, chrome.sidebar.section_split);
     projects::render_projects(frame, projects_area, ws, chrome, is_navigating, &mut hits);
-    (hits.agents, hits.agents_scrollbar) = render_agents(frame, agents_area, ws, chrome);
+    agents::render_agents(frame, agents_area, ws, chrome, &mut hits);
     hits.toggle = render_toggle(frame, expanded_toggle_rect(area), "«", p);
     hits
 }
@@ -203,82 +209,6 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
     hits
 }
 
-fn render_agents<W: WorkspaceView>(
-    frame: &mut Frame,
-    area: Rect,
-    ws: &W,
-    chrome: &Chrome,
-) -> (Vec<(String, Rect)>, Option<Rect>) {
-    let p = &chrome.palette;
-    if area.width == 0 || area.height < AGENTS_HEADER_ROWS {
-        return (Vec::new(), None);
-    }
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            "─".repeat(usize::from(area.width)),
-            Style::default().fg(p.surface_dim),
-        )),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            " agents",
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        ))),
-        Rect::new(area.x, area.y + 1, area.width, 1),
-    );
-    let rows = agent_rows(ws, chrome);
-    let viewport = agents_body_rect(area, false).height;
-    let metrics = list_metrics(rows.len(), viewport, chrome.sidebar.agents_scroll);
-    let body = agents_body_rect(area, should_show_scrollbar(metrics));
-    let hits = render_rows(frame, body, &rows, metrics, chrome);
-    let track = should_show_scrollbar(metrics).then(|| scrollbar_track(area, body));
-    if let Some(track) = track {
-        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
-    }
-    (hits, track)
-}
-
-/// One line per visible agent row; selected rows sit on `surface1`, the
-/// focused pane's row on `surface_dim` (herdr `render_workspace_list`).
-fn render_rows(
-    frame: &mut Frame,
-    body: Rect,
-    rows: &[SidebarRow],
-    metrics: ScrollMetrics,
-    chrome: &Chrome,
-) -> Vec<(String, Rect)> {
-    let p = &chrome.palette;
-    let mut hits = Vec::new();
-    if body.width == 0 || body.height == 0 {
-        return hits;
-    }
-    let scroll = metrics
-        .max_offset_from_bottom
-        .saturating_sub(metrics.offset_from_bottom);
-    for (offset, row) in rows
-        .iter()
-        .skip(scroll)
-        .take(usize::from(body.height))
-        .enumerate()
-    {
-        let rect = Rect::new(body.x, body.y + offset as u16, body.width, 1);
-        let row_style = if row.selected {
-            Style::default().bg(p.surface1)
-        } else if row.active {
-            Style::default().bg(p.surface_dim)
-        } else {
-            Style::default()
-        };
-        frame.render_widget(
-            Paragraph::new(row_line(row, body.width, chrome)).style(row_style),
-            rect,
-        );
-        hits.push((row.id.clone(), rect));
-    }
-    hits
-}
-
 /// herdr `workspace_list_scroll_metrics` for fixed one-line rows.
 pub fn list_metrics(len: usize, viewport: u16, requested: usize) -> ScrollMetrics {
     let viewport = usize::from(viewport);
@@ -313,11 +243,17 @@ pub fn section_metrics<W: WorkspaceView>(
                 chrome.sidebar.scroll,
             )
         }
-        SidebarSection::Agents => list_metrics(
-            ws.attention_entry_ids().len(),
-            agents_body_rect(agents, false).height,
-            chrome.sidebar.agents_scroll,
-        ),
+        SidebarSection::Agents => {
+            let heights: Vec<u16> = agent_rows(ws, chrome)
+                .iter()
+                .map(SidebarRow::height)
+                .collect();
+            project_list_metrics(
+                &heights,
+                agents_body_rect(agents, false).height,
+                chrome.sidebar.agents_scroll,
+            )
+        }
     }
 }
 
@@ -448,6 +384,7 @@ mod tests {
     use super::*;
     use crate::app::Workspace;
     use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+    use crate::ui::scrollbar::should_show_scrollbar;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use serde_json::json;
@@ -578,7 +515,7 @@ mod tests {
         assert_eq!(hits.projects_menu, Some(Rect::new(21, 19, 4, 1)));
         assert_eq!(
             hits.agents,
-            vec![("run:term-alpha".to_string(), Rect::new(0, 23, 25, 1))]
+            vec![("run:term-alpha".to_string(), Rect::new(0, 23, 25, 2))]
         );
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[2].ends_with("▾│"), "{:?}", lines[2]);

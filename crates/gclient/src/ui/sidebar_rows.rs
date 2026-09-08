@@ -10,9 +10,7 @@
 
 use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
-use crate::ui::chrome::{
-    attention_label, attention_pane, row_state, Chrome, RowState, WorkspaceView,
-};
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::status::{control_indicator, state_dot, state_label, state_label_color};
 use crate::ui::text::{display_width, truncate_end};
 use ratatui::style::{Modifier, Style};
@@ -35,8 +33,11 @@ pub struct SidebarRow {
     pub label: String,
     pub kind: RowKind,
     pub state: RowState,
-    /// Backend and control state for agents; the task ref for worktrees.
+    /// The task ref of a worktree row.
     pub detail: String,
+    /// An agent row's second line: provider, model, task ref, tab, and
+    /// remote machine, empties already elided.
+    pub tokens: Vec<String>,
     /// The project card's second line: its checkout branch, `~` without one.
     pub branch: Option<String>,
     pub ahead: u32,
@@ -54,11 +55,12 @@ pub struct SidebarRow {
 }
 
 impl SidebarRow {
-    /// Screen lines the row takes: a project card is two, the rest one.
+    /// Screen lines the row takes: a project card and an agent row are two,
+    /// a worktree row one.
     pub fn height(&self) -> u16 {
         match self.kind {
-            RowKind::Project => 2,
-            RowKind::Worktree | RowKind::Agent => 1,
+            RowKind::Project | RowKind::Agent => 2,
+            RowKind::Worktree => 1,
         }
     }
 }
@@ -140,33 +142,6 @@ fn ordered_projects<'a>(projects: &'a [ProjectEntry], order: &[String]) -> Vec<&
     ordered
 }
 
-/// Agent rows in roster order: one per attention entry, on the terminal it
-/// points at.
-pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
-    let focused = chrome.focused_pane();
-    ws.attention_entry_ids()
-        .into_iter()
-        .map(|entry| {
-            let pane = attention_pane(ws, &entry);
-            let terminal = pane.map(|id| ws.pane(id).terminal_id.clone());
-            SidebarRow {
-                label: attention_label(ws, &entry),
-                kind: RowKind::Agent,
-                state: terminal
-                    .as_deref()
-                    .map_or(RowState::Unknown, |terminal| row_state(ws, terminal)),
-                detail: terminal.as_deref().map_or_else(
-                    || "detached".to_string(),
-                    |terminal| terminal_detail(ws, terminal, &chrome.palette),
-                ),
-                active: focused.is_some() && pane == focused,
-                id: entry,
-                ..SidebarRow::default()
-            }
-        })
-        .collect()
-}
-
 /// `<backend> <control glyph> <control label>` for an attached terminal,
 /// `detached` for a roster row without a pane.
 pub(crate) fn terminal_detail<W: WorkspaceView>(ws: &W, terminal_id: &str, p: &Palette) -> String {
@@ -193,7 +168,8 @@ pub(crate) fn attention_kind(entry_id: &str) -> &str {
 /// `{marker}{dot} {name}` with the group toggle at the right edge; a
 /// worktree row is `{marker}  ├─ {dot} {branch} · {task}` with the prefix in
 /// `overlay0` so the branch sits under its card's name; an agent row is the
-/// herdr composition: state dot, title truncated, trailing state label.
+/// herdr composition: state dot, the label always bold, trailing state
+/// label, with its tokens on `row_second_line`.
 pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     let p = &chrome.palette;
     let (glyph, glyph_color) = state_dot(row.state, p);
@@ -205,6 +181,8 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
     };
     let title_style = if row.selected || row.active {
         Style::default().fg(p.text).add_modifier(Modifier::BOLD)
+    } else if row.kind == RowKind::Agent {
+        Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(p.subtext0)
     };
@@ -254,14 +232,10 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
             let label_style = Style::default()
                 .fg(state_label_color(row.state, p))
                 .add_modifier(Modifier::DIM);
-            let trailing = [
-                (state_label(row.state), label_style),
-                (row.detail.as_str(), detail_style),
-            ];
             spans.extend(fitted_spans(
                 glyph,
                 (&row.label, title_style),
-                &trailing,
+                &[(state_label(row.state), label_style)],
                 p,
                 budget,
             ));
@@ -273,8 +247,34 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
 /// A project card's second line: the branch under the name, then ` ↑n` in
 /// the success role and ` ↓m` in the warning role when either count is set.
 /// The branch is `mauve` on the focused project and `overlay0` elsewhere.
+/// An agent row's second line: its tokens under the label, ` · ` apart, in
+/// herdr's dim `overlay0` agent style, dropped from the right as the width
+/// runs out.
 pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     let p = &chrome.palette;
+    if row.kind == RowKind::Agent {
+        let Some((first, rest)) = row.tokens.split_first() else {
+            return Line::default();
+        };
+        let token_style = Style::default()
+            .fg(if row.selected { p.mauve } else { p.overlay0 })
+            .add_modifier(Modifier::DIM);
+        let rest: Vec<(&str, Style)> = rest
+            .iter()
+            .map(|token| (token.as_str(), token_style))
+            .collect();
+        // One blank for the marker column, then the glyph column blank, so
+        // the tokens start under the label (herdr's three-cell indent).
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(fitted_spans(
+            (" ", token_style),
+            (first, token_style),
+            &rest,
+            p,
+            usize::from(width).saturating_sub(1),
+        ));
+        return Line::from(spans);
+    }
     let branch_style = Style::default().fg(if row.active { p.mauve } else { p.overlay0 });
     let mut counts: Vec<Span<'a>> = Vec::new();
     if row.ahead > 0 {
@@ -346,6 +346,7 @@ mod tests {
     use super::*;
     use crate::app::Workspace;
     use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+    use crate::ui::sidebar::agent_rows;
     use serde_json::json;
 
     fn scripted_workspace() -> Workspace {
@@ -449,8 +450,8 @@ mod tests {
         assert_eq!(rows[0].label, "term-alpha");
         assert_eq!(rows[0].kind, RowKind::Agent);
         assert_eq!(rows[0].state, RowState::Attention);
-        assert!(rows[0].detail.contains("native"));
-        assert!(rows[0].detail.contains("observe"));
+        assert_eq!(rows[0].height(), 2);
+        assert!(rows[0].tokens.is_empty(), "{:?}", rows[0].tokens);
     }
 
     #[test]
@@ -494,20 +495,31 @@ mod tests {
             label: "term-alpha".into(),
             kind: RowKind::Agent,
             state: RowState::Idle,
-            detail: "native ○ observe".into(),
+            tokens: vec!["codex".into(), "gpt-5".into(), "#123".into()],
             selected: true,
             ..SidebarRow::default()
         };
         let wide = line_text(&row_line(&row, 60, &chrome));
-        assert_eq!(wide, "▸○ term-alpha · idle · native ○ observe");
-        // The detail no longer fits beside the whole title, so it drops and
-        // the shorter state label stays.
-        let mid = line_text(&row_line(&row, 24, &chrome));
-        assert_eq!(mid, "▸○ term-alpha · idle");
-        // Narrower still: the title keeps its cells and the tokens go.
+        assert_eq!(wide, "▸○ term-alpha · idle");
+        // The state label no longer fits beside the whole title, so it drops
+        // before the title loses a cell.
         let narrow = line_text(&row_line(&row, 14, &chrome));
         assert_eq!(narrow, "▸○ term-alpha");
         let tiny = line_text(&row_line(&row, 8, &chrome));
         assert_eq!(tiny, "▸○ term…");
+        // The tokens sit under the label and drop from the right.
+        assert_eq!(
+            line_text(&row_second_line(&row, 60, &chrome)),
+            "   codex · gpt-5 · #123"
+        );
+        assert_eq!(
+            line_text(&row_second_line(&row, 18, &chrome)),
+            "   codex · gpt-5"
+        );
+        let bare = SidebarRow {
+            tokens: Vec::new(),
+            ..row
+        };
+        assert_eq!(line_text(&row_second_line(&bare, 60, &chrome)), "");
     }
 }

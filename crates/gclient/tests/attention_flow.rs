@@ -202,11 +202,11 @@ async fn respond_reaches_daemon() {
     mock.shutdown().await;
 }
 
-/// 2.3 attention click: the row jumps to its terminal and opens that entry's
-/// prompt, and the row names the terminal by title and tmux address, never
-/// by the session uuid the entry is keyed on.
+/// 3.2 agent row click: an idle row focuses its terminal, a blocked row
+/// jumps to its terminal and opens that entry's prompt, and a row names its
+/// session by title and ref, never by the uuid the entry is keyed on.
 #[tokio::test]
-async fn attention_click_jumps_and_labels_the_terminal() {
+async fn agent_row_click_jumps_and_labels_the_session() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     for _ in 0..2 {
@@ -215,14 +215,23 @@ async fn attention_click_jumps_and_labels_the_terminal() {
             "/api/terminals?",
             200,
             json!({
-                "items": [{
-                    "terminal_id": "terminal-1",
-                    "backend": "tmux",
-                    "state": "live",
-                    "title": "15",
-                    "session_id": "sess-1",
-                    "attach": {"backend": "tmux", "pane_id": "%15"}
-                }],
+                "items": [
+                    {
+                        "terminal_id": "terminal-1",
+                        "backend": "tmux",
+                        "state": "live",
+                        "title": "15",
+                        "session_id": "sess-1",
+                        "attach": {"backend": "tmux", "pane_id": "%15"}
+                    },
+                    {
+                        "terminal_id": "terminal-2",
+                        "backend": "tmux",
+                        "state": "live",
+                        "title": "zsh",
+                        "attach": {"backend": "tmux", "pane_id": "%16"}
+                    }
+                ],
                 "next_cursor": null,
                 "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
             }),
@@ -231,22 +240,47 @@ async fn attention_click_jumps_and_labels_the_terminal() {
     let roster = json!({
         "epoch": "attention-1",
         "seq": 1,
-        "entries": [{
-            "entry_id": "session:sess-1",
-            "attention": {
-                "attention_id": "att-1",
-                "state": "blocked",
-                "kind": "actionable",
-                "fingerprint": "fp-1",
-                "payload": {
-                    "prompt": "Ship this change?",
-                    "options": [{"option": 1, "label": "Approve"}]
+        "entries": [
+            {
+                "entry_id": "session:sess-1",
+                "session_id": "sess-1",
+                "terminal": {"terminal_id": "terminal-1", "backend": "tmux"},
+                "attention": {
+                    "attention_id": "att-1",
+                    "state": "blocked",
+                    "kind": "actionable",
+                    "fingerprint": "fp-1",
+                    "payload": {
+                        "prompt": "Ship this change?",
+                        "options": [{"option": 1, "label": "Approve"}]
+                    }
                 }
+            },
+            {
+                "entry_id": "run:terminal-2",
+                "terminal": {"terminal_id": "terminal-2", "backend": "tmux"}
             }
-        }]
+        ]
+    });
+    let sessions = json!({
+        "sessions": [{
+            "id": "sess-1",
+            "ref": "#12217",
+            "title": "15",
+            "status": "active",
+            "source": "claude"
+        }],
+        "count": 1,
+        "next_cursor": null
     });
     for _ in 0..4 {
         mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
+        mock.enqueue(
+            "GET",
+            "/api/sessions?project_id=project-1",
+            200,
+            sessions.clone(),
+        );
     }
 
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
@@ -259,14 +293,15 @@ async fn attention_click_jumps_and_labels_the_terminal() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the one attention row: the first body row of the
-    // attention section, which only the sidebar geometry decides.
-    let area = Rect::new(0, 0, 64, 18);
+    // Where the loop draws the two agent rows: the blocked session on the
+    // first two body rows of the agents section, the idle shell under it.
+    // Wide enough that the respond dialog leaves the sidebar uncovered.
+    let area = Rect::new(0, 0, 120, 24);
     let mut probe = Chrome::dark();
     probe.compute_view(&workspace, area);
-    let (_, attention) = expanded_sections(probe.view.sidebar_rect, None);
-    let body = agents_body_rect(attention, false);
-    let (column, row) = (body.x + 1, body.y);
+    let (_, agents) = expanded_sections(probe.view.sidebar_rect, None);
+    let body = agents_body_rect(agents, false);
+    let (column, blocked_row, idle_row) = (body.x + 1, body.y, body.y + 2);
 
     let mut terminal =
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
@@ -281,14 +316,21 @@ async fn attention_click_jumps_and_labels_the_terminal() {
 
     let driver = async {
         // The loop refetches the roster in its own reconcile and draws before
-        // it selects, so the click routes against a hit map holding the row.
+        // it selects, so the clicks route against a hit map holding the rows.
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
         let fetched = http_requests(&mock, "GET", "/api/attention/roster");
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),
             column,
-            row,
+            idle_row,
+        )
+        .await;
+        send_mouse(
+            &input_tx,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            blocked_row,
         )
         .await;
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", fetched + 1).await;
@@ -313,25 +355,38 @@ async fn attention_click_jumps_and_labels_the_terminal() {
 
     assert!(
         matches!(&chrome.dialog, Some(Dialog::Respond { entry_id, .. }) if entry_id == "session:sess-1"),
-        "the clicked entry's prompt opens: {:?}",
+        "the blocked entry's prompt opens: {:?}",
         chrome.dialog
     );
     assert_eq!(chrome.mode, Mode::Respond);
-    let pane = workspace
+    let blocked = workspace
         .pane_for_terminal("terminal-1")
-        .expect("terminal pane");
+        .expect("blocked terminal pane");
+    let idle = workspace
+        .pane_for_terminal("terminal-2")
+        .expect("idle terminal pane");
     assert_eq!(
         chrome.focused_pane(),
-        Some(pane),
-        "the click jumps to the terminal"
+        Some(blocked),
+        "the blocked row's click jumps to its terminal"
     );
-    assert_eq!(attention_label(&workspace, "session:sess-1"), "15 %15");
+    assert_eq!(
+        chrome.last_focused,
+        Some(idle),
+        "the idle row's click focused its terminal first"
+    );
+    assert_ne!(
+        chrome.status_message.as_deref(),
+        Some("No actionable attention prompt"),
+        "an idle row asks for no prompt"
+    );
+    assert_eq!(attention_label(&workspace, "session:sess-1"), "15 #12217");
 
     terminal
         .draw(|frame| {
             render_workspace(frame, &workspace, &chrome);
         })
-        .expect("render attention row");
+        .expect("render agent rows");
     let screen: String = terminal
         .backend()
         .buffer()
@@ -339,7 +394,8 @@ async fn attention_click_jumps_and_labels_the_terminal() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(screen.contains("15 %15"), "rendered UI: {screen:?}");
+    assert!(screen.contains("15 #12217"), "rendered UI: {screen:?}");
+    assert!(screen.contains("zsh %16"), "rendered UI: {screen:?}");
     assert!(!screen.contains("sess-1"), "rendered UI: {screen:?}");
     mock.shutdown().await;
 }

@@ -3,13 +3,13 @@
 //!
 //! State mapping: a herdr workspace card is a gclient project card (two
 //! lines, worktree rows under it); a herdr agent-panel entry is an agent row
-//! (one terminal, one line); a herdr attention state is the row's attention
+//! (one terminal, two lines); a herdr attention state is the row's attention
 //! entry. herdr's configurable multi-row token layouts collapse to gclient's
-//! fixed `glyph title · state · detail` agent line, where the detected agent
-//! kind becomes the pane backend shown in the detail token. Per-token style
-//! overrides and agent-panel sort modes are dropped surfaces; their fixtures
-//! map to the fixed rows and each adapted assertion carries the herdr
-//! original in a comment.
+//! fixed `glyph title · state` line over a `provider · model · task · tab ·
+//! machine` line, where the detected agent kind becomes the provider token.
+//! Per-token style overrides are a dropped surface; their fixtures map to the
+//! fixed rows and each adapted assertion carries the herdr original in a
+//! comment.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::sidebar_model::{AgentEntry, ProjectEntry, SidebarModel, WorktreeEntry};
@@ -27,16 +27,18 @@ use gobby_client::ui::chrome::{Chrome, Mode, RowState, SidebarState, WorkspaceVi
 use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::scrollbar::scrollbar_thumb_grab_offset;
+use gobby_client::ui::settings::AgentSort;
 use gobby_client::ui::sidebar::{
-    agents_body_rect, collapsed_sections, expanded_sections, expanded_toggle_rect, list_metrics,
-    project_list_metrics, projects_body_rect, render_collapsed_sidebar, render_sidebar,
-    section_metrics, SidebarHits,
+    agent_rows, agents_body_rect, collapsed_sections, expanded_sections, expanded_toggle_rect,
+    next_machine_filter, project_list_metrics, projects_body_rect, render_collapsed_sidebar,
+    render_sidebar, section_metrics, SidebarHits, ALL_MACHINES,
 };
 use gobby_client::ui::sidebar_rows::{
-    agent_rows, fitted_spans, project_rows, row_line, RowKind, SidebarRow,
+    fitted_spans, project_rows, row_line, row_second_line, RowKind, SidebarRow,
 };
 use gobby_client::ui::status::state_dot;
 use gobby_client::ui::text::display_width;
+use gobby_client::ui::Action;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -51,6 +53,8 @@ use super::token_map::{palette, theme};
 const PRODUCT: &str = "gobby";
 /// Pane backend for terminals whose herdr entry has no detected agent.
 const DEFAULT_BACKEND: &str = "native";
+/// The board's own machine id: where herdr's local agents run.
+const LOCAL_MACHINE: &str = "local";
 
 /// herdr `AppState` + `Workspace::test_new` stand-in: each herdr workspace
 /// is one project card and one terminal attached to one pane, listed as an
@@ -69,7 +73,11 @@ impl Board {
             roster: Vec::new(),
             attention: Vec::new(),
             panes: Vec::new(),
-            sidebar: SidebarModel::default(),
+            sidebar: SidebarModel {
+                local_machine: LOCAL_MACHINE.to_string(),
+                machines: vec![LOCAL_MACHINE.to_string()],
+                ..SidebarModel::default()
+            },
             focused: None,
         };
         for name in names {
@@ -78,22 +86,60 @@ impl Board {
         board
     }
 
-    /// Adds a workspace: a project card and a terminal whose `backend`
-    /// carries the herdr detected agent kind.
-    fn add(&mut self, name: &str, backend: &str) -> PaneId {
+    /// Adds a workspace: a project card and a terminal whose `agent` is the
+    /// herdr detected agent kind, listed as the row's provider.
+    fn add(&mut self, name: &str, agent: &str) -> PaneId {
+        self.add_on(name, name, agent, LOCAL_MACHINE)
+    }
+
+    /// herdr's remote agent: a terminal of `project` running on `machine`.
+    fn add_remote(&mut self, project: &str, name: &str, machine: &str) -> PaneId {
+        if !self.sidebar.machines.iter().any(|known| known == machine) {
+            self.sidebar.machines.push(machine.to_string());
+            self.sidebar.machines.sort();
+        }
+        self.add_on(project, name, DEFAULT_BACKEND, machine)
+    }
+
+    fn add_on(&mut self, project: &str, name: &str, agent: &str, machine: &str) -> PaneId {
         let id = PaneId(self.panes.len() as u32 + 1);
-        let mut pane = Pane::new(id, name, backend, "epoch");
+        let mut pane = Pane::new(id, name, DEFAULT_BACKEND, "epoch");
         // herdr names its rows; the board's `name` is that name, not a UUID.
         pane.title = name.to_string();
         self.panes.push(pane);
         self.roster.push(name.to_string());
         self.attention.push(format!("agent:{name}"));
-        self.sidebar.projects.push(ProjectEntry {
-            project_id: name.to_string(),
+        if !self
+            .sidebar
+            .projects
+            .iter()
+            .any(|known| known.project_id == project)
+        {
+            self.sidebar.projects.push(ProjectEntry {
+                project_id: project.to_string(),
+                name: project.to_string(),
+                ..ProjectEntry::default()
+            });
+        }
+        self.sidebar.agents.push(AgentEntry {
+            entry_id: format!("agent:{name}"),
+            project_id: project.to_string(),
+            machine_id: machine.to_string(),
+            terminal_id: name.to_string(),
+            backend: DEFAULT_BACKEND.to_string(),
             name: name.to_string(),
-            ..ProjectEntry::default()
+            provider: agent.to_string(),
+            ..AgentEntry::default()
         });
         id
+    }
+
+    fn agent_mut(&mut self, name: &str) -> &mut AgentEntry {
+        self.sidebar
+            .agents
+            .iter_mut()
+            .find(|agent| agent.terminal_id == name)
+            .expect("known agent")
     }
 
     fn project_mut(&mut self, name: &str) -> &mut ProjectEntry {
@@ -132,15 +178,9 @@ impl Board {
             RowState::Attention => {
                 // The chrome reads blockedness from the agent row, as the
                 // typed roster carries it; the entry id alone does not.
-                self.sidebar.agents.push(AgentEntry {
-                    entry_id: format!("agent:{name}"),
-                    terminal_id: name.to_string(),
-                    backend: DEFAULT_BACKEND.to_string(),
-                    name: name.to_string(),
-                    state: RowState::Attention,
-                    attention: Some(Attention::default()),
-                    ..Default::default()
-                });
+                let agent = self.agent_mut(name);
+                agent.state = RowState::Attention;
+                agent.attention = Some(Attention::default());
             }
             RowState::Working | RowState::Unseen => {
                 let pane = self
@@ -150,6 +190,9 @@ impl Board {
                     .expect("known terminal");
                 pane.new_output = true;
                 pane.live = state == RowState::Working;
+                // A working herdr agent is a running gobby run.
+                self.agent_mut(name).lifecycle_status =
+                    (state == RowState::Working).then(|| "running".to_string());
             }
             RowState::Idle => {}
             RowState::Unknown => self.panes.retain(|pane| pane.terminal_id != name),
@@ -201,8 +244,12 @@ impl WorkspaceView for Board {
     }
 }
 
+/// herdr's agent panel spans every workspace; gclient's agents section
+/// lists the focused project's local agents until the filter is `all`.
 fn chrome() -> Chrome {
-    Chrome::new(theme())
+    let mut chrome = Chrome::new(theme());
+    chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
+    chrome
 }
 
 /// herdr `app.active = Some(ws_idx)`: focus the workspace's project card
@@ -282,13 +329,17 @@ fn line_text(row: &SidebarRow, width: u16, chrome: &Chrome) -> String {
     spans_text(&row_line(row, width, chrome).spans)
 }
 
-fn plain_row(label: &str, state: RowState, detail: &str) -> SidebarRow {
+fn second_text(row: &SidebarRow, width: u16, chrome: &Chrome) -> String {
+    spans_text(&row_second_line(row, width, chrome).spans)
+}
+
+fn plain_row(label: &str, state: RowState, tokens: &[&str]) -> SidebarRow {
     SidebarRow {
         id: label.to_string(),
         label: label.to_string(),
         kind: RowKind::Agent,
         state,
-        detail: detail.to_string(),
+        tokens: tokens.iter().map(|token| token.to_string()).collect(),
         ..SidebarRow::default()
     }
 }
@@ -306,23 +357,19 @@ parity_tests! {
             board.set_state("one", RowState::Working);
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "one");
-            // herdr renders 26 columns over two rows; gclient's single row
-            // needs the width for the agent token to stay visible.
-            let area = Rect::new(0, 0, 34, 20);
+            let area = Rect::new(0, 0, 26, 20);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
             let body = agents_body(area, None);
             let p = palette();
 
-            let first = row_str(&terminal, body.y, 33);
-            let second = row_str(&terminal, body.y + 1, 33);
+            let first = row_str(&terminal, body.y, 25);
+            let second = row_str(&terminal, body.y + 1, 25);
             assert!(first.contains("one"));
-            // herdr: `assert_eq!(second, "   pi")`; gclient shows the agent
-            // token on the same row and leaves the next row empty.
-            assert!(first.contains(" pi "), "rendered row: {first:?}");
-            assert_eq!(second, "");
+            assert_eq!(second, "   pi");
             // herdr: `!contains("working")`; gclient's state indicator is a
             // (glyph, label) pair, so the label appears exactly once.
             assert_eq!(first.matches("working").count(), 1);
+            assert!(!second.contains("working"));
 
             let workspace_x = find_symbol_x(&terminal, body.y, body.width, "o");
             let workspace_style = style_at(&terminal, workspace_x, body.y);
@@ -331,8 +378,8 @@ parity_tests! {
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(workspace_style.bg, Some(p.surface_dim));
 
-            let agent_x = find_symbol_x(&terminal, body.y, body.width, "p");
-            let agent_style = style_at(&terminal, agent_x, body.y);
+            let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "p");
+            let agent_style = style_at(&terminal, agent_x, body.y + 1);
             assert_eq!(agent_style.fg, Some(p.overlay0));
             assert!(agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
@@ -346,16 +393,18 @@ parity_tests! {
             let mut board = Board::new(&[]);
             board.add("one", "pi");
             let chrome = chrome();
-            let area = Rect::new(0, 0, 34, 20);
+            let area = Rect::new(0, 0, 26, 20);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
             let body = agents_body(area, None);
             let p = palette();
             let workspace = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "o"), body.y);
-            let agent = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "p"), body.y);
+            let agent = style_at(&terminal, find_symbol_x(&terminal, body.y + 1, body.width, "p"), body.y + 1);
 
             // herdr: `text`; an unfocused gclient title is `subtext0`.
             assert_eq!(workspace.fg, Some(p.subtext0));
-            assert!(!workspace.add_modifier.contains(Modifier::BOLD));
+            // herdr: `!BOLD` under `bold = false`; gclient names every
+            // agent in bold (herdr's default workspace token).
+            assert!(workspace.add_modifier.contains(Modifier::BOLD));
             assert_eq!(agent.fg, Some(p.overlay0));
             // herdr: `!DIM` under `dim = false`; gclient keeps the default dim.
             assert!(agent.add_modifier.contains(Modifier::DIM));
@@ -444,20 +493,20 @@ parity_tests! {
             board.add("pi", "pi");
             board.add("claude", "claude");
             let mut chrome = chrome();
-            // herdr's 20x5 agent panel has a two-row body; gclient's agents
-            // body is two rows under a three-row projects section.
+            // herdr's 20x5 agent panel has a two-row body; gclient's two-line
+            // rows need the four rows under a three-row projects section.
             chrome.sidebar.section_split = Some(3);
-            let area = Rect::new(0, 0, 20, 8);
+            let area = Rect::new(0, 0, 20, 10);
             let body = agents_body(area, chrome.sidebar.section_split);
-            let metrics = list_metrics(2, body.height, chrome.sidebar.agents_scroll);
+            let metrics = project_list_metrics(&[2, 2], body.height, chrome.sidebar.agents_scroll);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
 
             assert_eq!(metrics.viewport_rows, 2);
             assert_eq!(metrics.max_offset_from_bottom, 0);
             // herdr: `" pi"` / `" claude"` (agent-only rows); gclient leads
-            // with the state glyph and title on consecutive rows.
+            // with the state glyph and title on every other row.
             let first = row_str(&terminal, body.y, body.width);
-            let second = row_str(&terminal, body.y + 1, body.width);
+            let second = row_str(&terminal, body.y + 2, body.width);
             assert!(first.contains(" pi"), "rendered row: {first:?}");
             assert!(second.contains(" claude"), "rendered row: {second:?}");
         }
@@ -490,17 +539,17 @@ parity_tests! {
 
         fn variable_agent_heights_pack_the_bottom_and_reveal_targets() {
             // herdr's first agent spans three rows (agent + two custom
-            // tokens) in a six-row panel; gclient agent rows are one line
-            // each, so three terminals in a two-row body carry the same
+            // tokens) in a six-row panel; gclient agent rows are two lines
+            // each, so three terminals in a four-row body carry the same
             // geometry.
             let board = Board::new(&["one", "two", "three"]);
             let mut chrome = chrome();
             chrome.sidebar.section_split = Some(3);
-            let area = Rect::new(0, 0, 20, 8);
+            let area = Rect::new(0, 0, 20, 10);
             let body = agents_body(area, chrome.sidebar.section_split);
-            assert_eq!(body.height, 2);
+            assert_eq!(body.height, 4);
 
-            let metrics = list_metrics(3, body.height, 0);
+            let metrics = project_list_metrics(&[2, 2, 2], body.height, 0);
             assert_eq!(metrics.max_offset_from_bottom, 1);
             // herdr: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
             // scrolling one row reveals the target row the packed layout hid.
@@ -531,7 +580,7 @@ parity_tests! {
 
         fn oversized_agent_override_is_clipped_to_the_panel_body() {
             // herdr overrides claude's rows with six agent tokens in a 20x5
-            // panel; gclient's agent row is one line in the same body.
+            // panel; gclient's agent row is two lines in the same body.
             let mut board = Board::new(&[]);
             board.add("one", "claude");
             board.set_state("one", RowState::Attention);
@@ -542,16 +591,16 @@ parity_tests! {
             assert_eq!(panel.height, 5);
             let body = agents_body_rect(panel, false);
 
-            let metrics = list_metrics(1, body.height, chrome.sidebar.agents_scroll);
+            let metrics = project_list_metrics(&[2], body.height, chrome.sidebar.agents_scroll);
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
 
             assert_eq!(metrics.viewport_rows, 1);
             assert_eq!(metrics.max_offset_from_bottom, 0);
             let entry = hits.agents.last().expect("one agent row").1;
             // herdr: the clipped entry height equals the body height; a
-            // one-line gclient row sits inside it instead.
+            // two-line gclient row fills the two-row body exactly.
             assert_eq!(body.intersection(entry), entry);
-            assert_eq!(entry.height, 1);
+            assert_eq!(entry.height, 2);
         }
 
         fn render_sidebar_toggle_draws_expanded_collapse_icon() {
@@ -574,28 +623,32 @@ parity_tests! {
 
         fn agent_panel_tab_label_visibility_tracks_tab_identity() {
             // herdr: `[("auto", None), ("custom", Some("focus")),
-            // ("multi", Some("1")), ("multi", Some("logs"))]`; gclient rows
-            // carry no tab token, so every entry keeps its terminal label.
+            // ("multi", Some("1")), ("multi", Some("logs"))]`; a gclient
+            // row's tab token is the tab showing its pane, and the grouped
+            // order follows the tab bar with tabless rows last.
             let mut board = Board::new(&[]);
             board.add("auto", "pi");
             board.add("custom", "claude");
             board.add("multi", "codex");
             board.add("multi-logs", "pi");
-            let chrome = chrome();
+            let mut chrome = chrome();
+            chrome.open_tab(board.pane_id("custom"), "focus");
+            chrome.open_tab(board.pane_id("multi"), "1");
+            chrome.open_tab(board.pane_id("multi-logs"), "logs");
 
             let entries = agent_rows(&board, &chrome);
-            let labels: Vec<_> = entries
+            let rows: Vec<(&str, RowKind, &[String])> = entries
                 .iter()
-                .map(|entry| (entry.label.as_str(), entry.kind))
+                .map(|entry| (entry.label.as_str(), entry.kind, entry.tokens.as_slice()))
                 .collect();
 
             assert_eq!(
-                labels,
+                rows,
                 [
-                    ("auto", RowKind::Agent),
-                    ("custom", RowKind::Agent),
-                    ("multi", RowKind::Agent),
-                    ("multi-logs", RowKind::Agent),
+                    ("custom", RowKind::Agent, &["claude".to_string(), "focus".to_string()][..]),
+                    ("multi", RowKind::Agent, &["codex".to_string(), "1".to_string()][..]),
+                    ("multi-logs", RowKind::Agent, &["pi".to_string(), "logs".to_string()][..]),
+                    ("auto", RowKind::Agent, &["pi".to_string()][..]),
                 ]
             );
             for entry in &entries {
@@ -605,9 +658,8 @@ parity_tests! {
         }
 
         fn priority_agent_panel_sort_uses_attention_then_space_order() {
-            // herdr: priority sort yields `["four", "two", "one", "three"]`;
-            // gclient has no sort modes: the agent rows keep space order and
-            // the blocked one carries the attention state on its row.
+            // herdr: priority sort yields `["four", "two", "one", "three"]`
+            // and grouped sort the space order.
             let mut board = Board::new(&["one", "two", "three", "four"]);
             board.set_state("one", RowState::Working);
             board.set_state("two", RowState::Unseen);
@@ -618,10 +670,14 @@ parity_tests! {
 
             let entries = agent_rows(&board, &chrome);
             let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
-
             assert_eq!(labels, ["one", "two", "three", "four"]);
             assert_eq!(entries[3].state, RowState::Attention);
             assert_eq!(entries[0].state, RowState::Working);
+
+            chrome.prefs.agent_sort = AgentSort::Priority;
+            let entries = agent_rows(&board, &chrome);
+            let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
+            assert_eq!(labels, ["four", "two", "one", "three"]);
         }
 
         fn collapsed_sidebar_numbers_grouped_agents_by_list_position() {
@@ -743,7 +799,7 @@ parity_tests! {
 
             let entries = agent_rows(&board, &chrome);
             assert_eq!(entries[0].label, "bridge");
-            assert_eq!(entries[0].detail.split(' ').next(), Some("planner"));
+            assert_eq!(entries[0].tokens[0], "planner");
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
@@ -933,79 +989,83 @@ parity_tests! {
     "src/ui/sidebar/tokens.rs" => {
         fn missing_custom_tokens_elide_rows_and_separators() {
             // herdr: rows `[state_icon, $missing]`, `[$missing]`, `[agent]`
-            // resolve to two rows; gclient elides the empty detail token and
-            // its separator from the single line.
+            // resolve to two rows; gclient elides the empty second line and
+            // its separators.
             let chrome = chrome();
-            let row = plain_row("pi", RowState::Working, "");
+            let row = plain_row("pi", RowState::Working, &[]);
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} pi · working", dot(RowState::Working)));
             assert_eq!(text.matches('·').count(), 1);
+            assert_eq!(second_text(&row, 60, &chrome), "");
         }
 
         fn state_text_and_arbitrary_values_are_independent_tokens() {
-            // herdr: `[state_text, $summary]` resolve independently.
+            // herdr: `[state_text, $summary]` resolve independently; the
+            // state stays on the first line and the value is a second-line
+            // token.
             let chrome = chrome();
-            let row = plain_row("repo", RowState::Working, "reviewing auth");
+            let row = plain_row("repo", RowState::Working, &["reviewing auth"]);
 
             let text = line_text(&row, 60, &chrome);
-            assert_eq!(
-                text,
-                format!(" {} repo · working · reviewing auth", dot(RowState::Working))
-            );
+            assert_eq!(text, format!(" {} repo · working", dot(RowState::Working)));
+            assert_eq!(second_text(&row, 60, &chrome), "   reviewing auth");
         }
 
         fn terminal_title_builtins_are_distinct_from_custom_tokens() {
             // herdr: raw title `⠋ raw title`, stripped `raw title`, custom
             // `custom title`; gclient's title is the row label and the custom
-            // value is the detail token.
+            // value is a second-line token.
             let chrome = chrome();
-            let row = plain_row("raw title", RowState::Working, "custom title");
+            let row = plain_row("raw title", RowState::Working, &["custom title"]);
 
             let text = line_text(&row, 60, &chrome);
             assert!(!text.contains('⠋'));
-            assert_eq!(
-                text,
-                format!(" {} raw title · working · custom title", dot(RowState::Working))
-            );
+            assert_eq!(text, format!(" {} raw title · working", dot(RowState::Working)));
+            assert_eq!(second_text(&row, 60, &chrome), "   custom title");
         }
 
         fn known_agent_override_replaces_default_rows() {
             // herdr: `rows_by_agent["pi"]` wins while `entry.agent` is `Pi`
-            // and the default rows return once it is `None`; gclient shows
-            // the agent's detail while its pane is attached and the default
-            // `detached` text once it is gone.
+            // and the default rows return once it is `None`; gclient's row
+            // keeps the roster's provider token and name once its pane is
+            // gone, and only the state changes.
             let mut board = Board::new(&[]);
             board.add("repo", "renamed pi");
             let chrome = chrome();
 
-            let detail = agent_rows(&board, &chrome)[0].detail.clone();
-            assert!(detail.starts_with("renamed pi"), "{detail:?}");
+            let rows = agent_rows(&board, &chrome);
+            assert_eq!(rows[0].tokens, ["renamed pi"]);
 
             board.set_state("repo", RowState::Unknown);
-            assert_eq!(agent_rows(&board, &chrome)[0].detail, "detached");
-            assert_eq!(agent_rows(&board, &chrome)[0].label, "repo");
+            let rows = agent_rows(&board, &chrome);
+            assert_eq!(rows[0].tokens, ["renamed pi"]);
+            assert_eq!(rows[0].label, "repo");
+            assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
         }
 
         fn grouped_children_suppress_all_builtin_git_details() {
             // herdr: `[state_icon, workspace("feature")]` with the branch and
             // `↑2 ↓1` suppressed; gclient agent rows never carry git details.
             let chrome = chrome();
-            let row = plain_row("feature", RowState::Idle, "");
+            let row = plain_row("feature", RowState::Idle, &[]);
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} feature · idle", dot(RowState::Idle)));
             assert!(!text.contains("worktree/feature") && !text.contains('↑'));
+            assert_eq!(second_text(&row, 60, &chrome), "");
         }
 
         fn workspace_custom_token_can_replace_git_specific_details() {
             // herdr: `[$jj_status]` resolves to `2 changes`.
             let chrome = chrome();
-            let row = plain_row("repo", RowState::Idle, "2 changes");
+            let row = plain_row("repo", RowState::Idle, &["2 changes"]);
 
             let text = line_text(&row, 60, &chrome);
-            assert_eq!(text, format!(" {} repo · idle · 2 changes", dot(RowState::Idle)));
-            assert!(!text.contains('↑') && !text.contains('↓'));
+            assert_eq!(text, format!(" {} repo · idle", dot(RowState::Idle)));
+            let second = second_text(&row, 60, &chrome);
+            assert_eq!(second, "   2 changes");
+            assert!(!second.contains('↑') && !second.contains('↓'));
         }
     }
 }
@@ -1042,10 +1102,16 @@ fn scripted_project(id: &str, name: &str) -> ProjectRow {
     }
 }
 
-/// `count` attention entries `run:term-0..`, each on its terminal.
+/// `count` blocked attention entries `run:term-0..`, each on its terminal.
 fn set_attention(ws: &mut Workspace, count: usize) {
     let entries: Vec<_> = (0..count)
-        .map(|index| json!({"entry_id": format!("run:term-{index}"), "kind": "blocked"}))
+        .map(|index| {
+            json!({
+                "entry_id": format!("run:term-{index}"),
+                "terminal": {"terminal_id": format!("term-{index}"), "backend": "native"},
+                "attention": {"attention_id": format!("att-{index}"), "kind": "actionable"},
+            })
+        })
         .collect();
     ws.daemon_mut().set_roster(json!({
         "epoch": "attention-1",
@@ -1075,8 +1141,8 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
     }
 }
 
-fn route(
-    ws: &Workspace,
+fn route<W: WorkspaceView>(
+    ws: &W,
     chrome: &mut Chrome,
     kind: MouseEventKind,
     column: u16,
@@ -1094,8 +1160,8 @@ fn pane(ws: &Workspace, index: usize) -> PaneId {
 #[test]
 fn agent_row_click_focuses_the_terminal() {
     // herdr `FocusWorkspace` from an agent-panel click. gclient shows the
-    // pane where it already is: its own tab, or split into the active tab
-    // when no tab shows it; then it asks for the row's prompt.
+    // pane where it already is: its own tab, or a new tab when none shows
+    // it; a blocked row then asks for its prompt.
     let mut ws = sidebar_workspace(3);
     set_attention(&mut ws, 3);
     let mut chrome = chrome();
@@ -1132,11 +1198,89 @@ fn agent_row_click_focuses_the_terminal() {
     );
     assert_eq!(
         chrome.tabs().tabs.len(),
-        2,
-        "a terminal no tab shows splits into the active tab"
+        3,
+        "a terminal no tab shows opens its own tab"
     );
-    assert_eq!(chrome.tabs().active_tab, 1);
+    assert_eq!(chrome.tabs().active_tab, 2);
     assert_eq!(chrome.focused_pane(), Some(pane(&ws, 2)));
+}
+
+/// 3.2 agents section: the rows follow the focused project and the machine
+/// filter, sort grouped or by priority, and the header's filter and sort
+/// labels are the mouse's controls for both.
+#[test]
+fn agent_rows_follow_project_and_machine_filter() {
+    const REMOTE: &str = "b2f7c0de-9a11-4c3e-8f2a-1d2e3f4a5b6c";
+    let mut board = Board::new(&[]);
+    board.add("alpha", "claude");
+    board.add("beta", "codex");
+    board.add_remote("alpha", "alpha-remote", REMOTE);
+    let mut chrome = chrome();
+    focus(&mut chrome, &mut board, "alpha");
+    let labels = |board: &Board, chrome: &Chrome| -> Vec<String> {
+        agent_rows(board, chrome)
+            .iter()
+            .map(|row| row.label.clone())
+            .collect()
+    };
+
+    // local (the default) lists the focused project's agents on this
+    // machine; a machine id lists the project's agents there; `all` lists
+    // every agent and names each remote machine on its second line.
+    chrome.sidebar.machine_filter = None;
+    assert_eq!(labels(&board, &chrome), ["alpha"]);
+    chrome.sidebar.machine_filter = Some(REMOTE.to_string());
+    assert_eq!(labels(&board, &chrome), ["alpha-remote"]);
+    chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
+    assert_eq!(labels(&board, &chrome), ["alpha", "beta", "alpha-remote"]);
+    let rows = agent_rows(&board, &chrome);
+    assert_eq!(second_text(&rows[0], 40, &chrome), "   claude");
+    assert_eq!(second_text(&rows[2], 40, &chrome), "   native · b2f7c0de");
+
+    let model = board.sidebar();
+    assert_eq!(
+        next_machine_filter(model, None).as_deref(),
+        Some(ALL_MACHINES)
+    );
+    assert_eq!(
+        next_machine_filter(model, Some(ALL_MACHINES)).as_deref(),
+        Some(REMOTE)
+    );
+    assert_eq!(next_machine_filter(model, Some(REMOTE)), None);
+
+    // Priority order puts the blocked agent first whatever its tab.
+    board.set_state("alpha-remote", RowState::Attention);
+    chrome.prefs.agent_sort = AgentSort::Priority;
+    assert_eq!(labels(&board, &chrome), ["alpha-remote", "alpha", "beta"]);
+
+    // The header: title, filter label, sort label; the labels are hits the
+    // mouse turns into the keymap actions.
+    let area = Rect::new(0, 0, 30, 20);
+    let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
+    let (_, agents_area) = expanded_sections(area, None);
+    assert_eq!(
+        row_str(&terminal, agents_area.y + 1, 29),
+        " agents          all priority"
+    );
+    let sort = hits.agent_sort.expect("sort label hit");
+    let filter = hits.machine_filter.expect("filter label hit");
+    chrome.view.sidebar_rect = area;
+    chrome.view.agent_sort_hit_area = hits.agent_sort;
+    chrome.view.machine_filter_hit_area = hits.machine_filter;
+    assert_eq!(
+        route(&board, &mut chrome, LEFT_DOWN, sort.x, sort.y),
+        MouseOutcome::Action(Action::ToggleAgentSort)
+    );
+    assert_eq!(
+        route(&board, &mut chrome, LEFT_DOWN, filter.x, filter.y),
+        MouseOutcome::Action(Action::CycleMachineFilter)
+    );
+
+    // One known machine: nothing to filter by, so no filter label.
+    let local = Board::new(&["alpha"]);
+    let (_, hits) = draw_sidebar(&local, &chrome, area.width, area.height);
+    assert_eq!(hits.machine_filter, None);
+    assert!(hits.agent_sort.is_some());
 }
 
 #[test]
@@ -1152,7 +1296,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         ..SidebarRows::default()
     });
     ws.select_project("proj-0");
-    set_attention(&mut ws, 10);
+    set_attention(&mut ws, 5);
     let mut chrome = chrome();
     chrome.open_pane(pane(&ws, 0), "0");
     let area = Rect::new(0, 0, 60, 24);

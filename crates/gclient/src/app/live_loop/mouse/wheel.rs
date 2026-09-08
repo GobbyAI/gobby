@@ -76,6 +76,7 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::ProjectsMenu
         | Hit::Agent(_)
         | Hit::MachineFilter
+        | Hit::AgentSort
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarToggle
@@ -90,7 +91,7 @@ pub(super) fn wheel<W: WorkspaceView>(
                 | Hit::GroupToggle(_)
                 | Hit::ProjectsNew
                 | Hit::ProjectsMenu => SidebarSection::Projects,
-                Hit::Agent(_) | Hit::MachineFilter => SidebarSection::Agents,
+                Hit::Agent(_) | Hit::MachineFilter | Hit::AgentSort => SidebarSection::Agents,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => match chrome.view.sidebar_section_divider_y {
                     Some(rule) if row >= rule => SidebarSection::Agents,

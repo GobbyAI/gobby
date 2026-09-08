@@ -23,6 +23,7 @@ use crate::ui::navigator::{
     navigator_rows, NavigatorRow, NavigatorState, NavigatorStateFilter, NavigatorTarget,
 };
 use crate::ui::settings::{PassthroughModifier, SettingsRow};
+use crate::ui::sidebar::attention_order;
 use crate::ui::sidebar_rows::{project_rows, RowKind};
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
@@ -289,12 +290,12 @@ fn pick_navigator_row<W: WorkspaceView>(
     };
     let outcome = match row.target {
         NavigatorTarget::Terminal(_) => row.pane.map(ModalOutcome::Focus),
-        NavigatorTarget::Attention(entry) => ws
-            .attention_entry_ids()
+        NavigatorTarget::Attention(entry) => attention_order(ws, chrome)
             .iter()
             .position(|candidate| *candidate == entry)
             .and_then(|index| u8::try_from(index + 1).ok())
-            .map(|index| ModalOutcome::Action(Action::FocusAttention(index))),
+            .map(|index| ModalOutcome::Action(Action::FocusAttention(index)))
+            .or_else(|| row.pane.map(ModalOutcome::Focus)),
     };
     match outcome {
         Some(outcome) => {
@@ -378,13 +379,14 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             let next = (current as isize + delta).rem_euclid(PASSTHROUGH_CYCLE.len() as isize);
             prefs.right_click_passthrough_modifier = PASSTHROUGH_CYCLE[next as usize];
         }
+        SettingsRow::AgentSort => prefs.agent_sort = prefs.agent_sort.toggled(),
     }
     persist_prefs(ws.gobby_home(), chrome);
 }
 
 /// Write the prefs when the workspace knows its Gobby home; the `modified`
 /// marker stays on while the file does not match the chrome.
-fn persist_prefs(home: Option<&Path>, chrome: &mut Chrome) {
+pub(super) fn persist_prefs(home: Option<&Path>, chrome: &mut Chrome) {
     let written = match home.map(|home| save_prefs(home, &chrome.prefs)) {
         Some(Ok(_)) => true,
         Some(Err(error)) => {

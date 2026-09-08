@@ -17,7 +17,7 @@ use ratatui::Frame;
 use serde::{Deserialize, Serialize};
 
 pub const SETTINGS_POPUP_WIDTH: u16 = 76;
-pub const SETTINGS_POPUP_HEIGHT: u16 = 22;
+pub const SETTINGS_POPUP_HEIGHT: u16 = 23;
 /// Column where a row's current value starts.
 const VALUE_COLUMN: usize = 30;
 
@@ -56,6 +56,34 @@ impl PassthroughModifier {
     }
 }
 
+/// Order of the sidebar's agent rows (herdr `agent_sort`): `grouped` keeps
+/// the tab order, `priority` puts the most urgent row first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentSort {
+    #[default]
+    Grouped,
+    Priority,
+}
+
+impl AgentSort {
+    /// The prefs-file spelling, which the settings row and the sidebar
+    /// header show.
+    pub fn label(self) -> &'static str {
+        match self {
+            AgentSort::Grouped => "grouped",
+            AgentSort::Priority => "priority",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            AgentSort::Grouped => AgentSort::Priority,
+            AgentSort::Priority => AgentSort::Grouped,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClientPrefs {
@@ -75,6 +103,8 @@ pub struct ClientPrefs {
     /// Held alone, this modifier makes a right-click pass through to the
     /// pane's app instead of opening the pane menu.
     pub right_click_passthrough_modifier: PassthroughModifier,
+    /// Order of the sidebar's agent rows.
+    pub agent_sort: AgentSort,
 }
 
 impl Default for ClientPrefs {
@@ -91,6 +121,7 @@ impl Default for ClientPrefs {
             hide_tab_bar_when_single_tab: false,
             sidebar_width: 26,
             right_click_passthrough_modifier: PassthroughModifier::None,
+            agent_sort: AgentSort::Grouped,
         }
     }
 }
@@ -117,10 +148,11 @@ pub enum SettingsRow {
     HideTabBarWhenSingleTab,
     SidebarWidth,
     RightClickPassthrough,
+    AgentSort,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 9] = [
+    pub const ALL: [SettingsRow; 10] = [
         SettingsRow::Theme,
         SettingsRow::MouseCapture,
         SettingsRow::PaneBorders,
@@ -130,6 +162,7 @@ impl SettingsRow {
         SettingsRow::HideTabBarWhenSingleTab,
         SettingsRow::SidebarWidth,
         SettingsRow::RightClickPassthrough,
+        SettingsRow::AgentSort,
     ];
 }
 
@@ -151,6 +184,7 @@ fn row_label(row: SettingsRow) -> &'static str {
         SettingsRow::HideTabBarWhenSingleTab => "hide tab bar with one tab",
         SettingsRow::SidebarWidth => "sidebar width",
         SettingsRow::RightClickPassthrough => "right-click passthrough",
+        SettingsRow::AgentSort => "agent sort",
     }
 }
 
@@ -177,6 +211,7 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
         SettingsRow::RightClickPassthrough => {
             prefs.right_click_passthrough_modifier.label().to_string()
         }
+        SettingsRow::AgentSort => prefs.agent_sort.label().to_string(),
     }
 }
 
@@ -336,5 +371,8 @@ mod tests {
         );
         prefs.right_click_passthrough_modifier = PassthroughModifier::Alt;
         assert_eq!(row_value(SettingsRow::RightClickPassthrough, &prefs), "alt");
+        assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "grouped");
+        prefs.agent_sort = prefs.agent_sort.toggled();
+        assert_eq!(row_value(SettingsRow::AgentSort, &prefs), "priority");
     }
 }

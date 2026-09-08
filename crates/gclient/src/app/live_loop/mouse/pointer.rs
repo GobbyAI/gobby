@@ -11,7 +11,7 @@ use crate::ui::pane_layout::metrics_for;
 use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
-use crate::ui::sidebar::section_metrics;
+use crate::ui::sidebar::{agent_blocked, section_metrics};
 use crate::ui::sidebar_rows::displayed_project_ids;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
@@ -173,14 +173,39 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        // The filter control lands with the agents section (plan 3.2).
-        Hit::MachineFilter => MouseOutcome::Handled,
+        Hit::MachineFilter => MouseOutcome::Action(Action::CycleMachineFilter),
+        Hit::AgentSort => MouseOutcome::Action(Action::ToggleAgentSort),
         Hit::Agent(entry_id) => {
+            // Another project's row focuses that project first: its panes
+            // attach when the project's tab set is restored.
+            let project = ws
+                .sidebar()
+                .agents
+                .iter()
+                .find(|agent| agent.entry_id == entry_id)
+                .map(|agent| agent.project_id.clone())
+                .filter(|project| {
+                    ws.focused_project()
+                        .is_some_and(|focused| focused != project)
+                });
+            if let Some(project) = project {
+                chrome.project_tabs.focus(&project);
+                return MouseOutcome::FocusProject(project);
+            }
             let pane = attention_pane(ws, &entry_id);
             if let Some(pane) = pane {
-                chrome.reveal_pane(pane, ws.pane(pane).display_name());
+                if !chrome.focus_pane(pane) {
+                    chrome.open_tab(pane, ws.pane(pane).display_name());
+                }
             }
-            MouseOutcome::Attention { pane, entry_id }
+            match pane {
+                _ if agent_blocked(ws, &entry_id) => MouseOutcome::Attention { pane, entry_id },
+                Some(pane) => MouseOutcome::Focus {
+                    pane,
+                    observe_only: false,
+                },
+                None => MouseOutcome::Handled,
+            }
         }
         Hit::SidebarToggle => {
             chrome.sidebar.collapsed = !chrome.sidebar.collapsed;

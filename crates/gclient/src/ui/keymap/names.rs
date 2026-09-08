@@ -32,6 +32,8 @@ pub enum Action {
     PreviousProject,
     NextProject,
     ToggleGroup,
+    CycleMachineFilter,
+    ToggleAgentSort,
     PreviousAttention,
     NextAttention,
     FocusAttention(u8),
@@ -151,6 +153,16 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec(
         "toggle_group",
         "Collapse or expand the project's worktrees",
+        &[],
+    ),
+    spec(
+        "cycle_machine_filter",
+        "Cycle the agents section's machine filter",
+        &[],
+    ),
+    spec(
+        "toggle_agent_sort",
+        "Toggle grouped/priority agent order",
         &[],
     ),
     spec(
@@ -287,6 +299,7 @@ action_names! {
     "open_notification_target" => OpenNotificationTarget, "previous_terminal" => PreviousTerminal,
     "next_terminal" => NextTerminal, "previous_project" => PreviousProject,
     "next_project" => NextProject, "toggle_group" => ToggleGroup,
+    "cycle_machine_filter" => CycleMachineFilter, "toggle_agent_sort" => ToggleAgentSort,
     "previous_attention" => PreviousAttention,
     "next_attention" => NextAttention, "new_tab" => NewTab, "rename_tab" => RenameTab,
     "previous_tab" => PreviousTab, "next_tab" => NextTab, "close_tab" => CloseTab,

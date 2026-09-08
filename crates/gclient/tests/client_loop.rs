@@ -4186,6 +4186,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "seq": 1,
         "entries": [{
             "entry_id": "run:terminal-b",
+            "terminal": {"terminal_id": "terminal-b", "backend": "native"},
             "attention": {
                 "attention_id": "att-b",
                 "state": "blocked",

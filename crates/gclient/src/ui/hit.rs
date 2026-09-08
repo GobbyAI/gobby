@@ -39,6 +39,8 @@ pub enum Hit {
     ProjectsMenu,
     /// The machine filter of the agents section.
     MachineFilter,
+    /// The `grouped`/`priority` sort label of the agents section.
+    AgentSort,
     SidebarToggle,
     /// The `│` column between sidebar and content.
     SidebarDivider,
@@ -205,6 +207,12 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
         .is_some_and(|rect| rect.contains(at))
     {
         return Hit::MachineFilter;
+    }
+    if view
+        .agent_sort_hit_area
+        .is_some_and(|rect| rect.contains(at))
+    {
+        return Hit::AgentSort;
     }
     if let Some((id, _)) = find_at(&view.worktree_hit_areas, at) {
         return Hit::Worktree(id.clone());

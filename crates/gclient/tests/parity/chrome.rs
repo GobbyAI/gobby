@@ -1214,13 +1214,15 @@ switch_project = "ctrl+1..9"
                     // Rehashed when the status line gained the transport
                     // field, again when the control indicator became a
                     // bracketed button, and again when a frameless pane began
-                    // naming its wait (2.3), and again when the sidebar
-                    // became project cards over agent rows (3.1): 4.1.3
-                    // requires a glyph change to fail here, so this digest
-                    // moves only alongside a deliberate render change.
+                    // naming its wait (2.3), again when the sidebar became
+                    // project cards over agent rows (3.1), and again when the
+                    // agents header gained its sort label over two-line rows
+                    // (3.2): 4.1.3 requires a glyph change to fail here, so
+                    // this digest moves only alongside a deliberate render
+                    // change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "8f85cb14d54b25517b3c1d9daa0f2b0a797adff0313326f99ccd9432bba835cf"
+                        "c8f8ba66c0c2e11f2a093961b77e18f850ec46fca39edf5c99c75c94fcfb207a"
                     );
                 });
         }
@@ -1272,7 +1274,11 @@ fn rendered_hits_match_drawn_cells() {
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
-        "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "attention": {"attention_id": "att-1", "kind": "actionable"}
+        }]
     }));
     ws.open_terminal("term-alpha", "native", "epoch")
         .expect("open term-alpha");
@@ -1374,6 +1380,7 @@ fn rendered_settings_hits_match_drawn_rows() {
         "hide tab bar with one tab",
         "sidebar width",
         "right-click passthrough",
+        "agent sort",
     ];
     for (index, rect) in &view.settings_row_hit_areas {
         let text = hit_text(&terminal, *rect);

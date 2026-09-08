@@ -3,7 +3,7 @@
 //! the run loop and read by every render module.
 
 use crate::app::project_tabs::{ProjectTabs, TabSet};
-use crate::app::sidebar_model::{agent_row_state, pane_state, SidebarModel};
+use crate::app::sidebar_model::{agent_row_state, pane_state, AgentEntry, SidebarModel};
 use crate::app::{
     short_terminal_id, ClickRun, ContextMenuState, MouseGesture, Pane, PaneId, Workspace,
 };
@@ -16,7 +16,7 @@ use crate::ui::keymap::Keymap;
 use crate::ui::navigator::NavigatorState;
 use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
-use crate::ui::sidebar;
+use crate::ui::sidebar::{self, agent_label};
 use crate::ui::sidebar_rows;
 use crate::ui::status::Toast;
 use gobby_terminal::layout::{self, PaneInfo, SplitBorder, TileLayout};
@@ -125,6 +125,14 @@ pub fn attention_subject(entry_id: &str) -> &str {
     entry_id.rsplit_once(':').map_or(entry_id, |(_, id)| id)
 }
 
+/// The sidebar's agent for an attention entry, when the roster joined one.
+fn agent_entry<'a, W: WorkspaceView>(ws: &'a W, entry_id: &str) -> Option<&'a AgentEntry> {
+    ws.sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.entry_id == entry_id)
+}
+
 /// The roster row an attention entry points at.
 ///
 /// The subject is a run id for a spawned agent and a session id for an
@@ -133,6 +141,11 @@ pub fn attention_subject(entry_id: &str) -> &str {
 /// therefore resolves nothing, which is why a blocked session never lit up its
 /// row. The terminal that hosts the session is the answer in both cases.
 pub fn attention_pane<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<PaneId> {
+    if let Some(agent) = agent_entry(ws, entry_id) {
+        if let Some(pane) = ws.pane_for_terminal(&agent.terminal_id) {
+            return Some(pane);
+        }
+    }
     let subject = attention_subject(entry_id);
     if let Some(pane) = ws.pane_for_terminal(subject) {
         return Some(pane);
@@ -147,6 +160,9 @@ pub fn attention_pane<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<PaneId
 /// then its address when it has one the name does not already show, so a
 /// blocked session reads `15 %15` and never its session uuid.
 pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
+    if let Some(agent) = agent_entry(ws, entry_id) {
+        return agent_label(ws, agent);
+    }
     let Some(pane) = attention_pane(ws, entry_id) else {
         return short_terminal_id(attention_subject(entry_id)).to_string();
     };
@@ -217,7 +233,10 @@ pub struct SidebarState {
     pub project_order: Vec<String>,
     /// Projects whose worktree rows are folded under the card.
     pub collapsed_projects: BTreeSet<String>,
-    /// Machine whose agents the sidebar lists; none lists every machine.
+    /// Machine filter of the agents section, kept by `session.json`: `None`
+    /// lists the focused project's agents on the local machine,
+    /// `Some(ALL_MACHINES)` every agent of every project and machine, and
+    /// `Some(machine_id)` the focused project's agents on that machine.
     pub machine_filter: Option<String>,
 }
 
@@ -354,6 +373,7 @@ pub struct ViewState {
     /// Agent rows drawn in the sidebar, by entry id.
     pub agent_hit_areas: Vec<(String, Rect)>,
     pub machine_filter_hit_area: Option<Rect>,
+    pub agent_sort_hit_area: Option<Rect>,
     /// The `│` column between the sidebar and the content column.
     pub sidebar_divider_x: Option<u16>,
     /// The `─` row between the projects and agents sections.
@@ -393,6 +413,7 @@ impl ViewState {
         self.projects_menu_hit_area = sidebar.projects_menu;
         self.agent_hit_areas = sidebar.agents;
         self.machine_filter_hit_area = sidebar.machine_filter;
+        self.agent_sort_hit_area = sidebar.agent_sort;
         self.projects_scrollbar_hit_area = sidebar.projects_scrollbar;
         self.agents_scrollbar_hit_area = sidebar.agents_scrollbar;
         self.sidebar_toggle_hit_area = sidebar.toggle;

@@ -150,7 +150,11 @@ fn modal_workspace() -> Workspace {
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
-        "entries": [{"entry_id": "run:term-alpha", "kind": "blocked"}]
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "attention": {"attention_id": "att-1", "kind": "actionable"}
+        }]
     }));
     ws.reconcile_subscribe_first().expect("scripted roster");
     ws.open_terminal("term-alpha", "native", "epoch")

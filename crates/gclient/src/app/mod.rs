@@ -346,6 +346,9 @@ impl Workspace {
         if !self.roster_ids.iter().any(|t| t == terminal_id) {
             self.roster_ids.push(terminal_id.to_string());
         }
+        // The agent rows name a terminal after its pane, so a pane opened
+        // after the roster landed re-derives its row.
+        self.rebuild_sidebar();
         self.attach_frames(id)?;
         Ok(id)
     }
