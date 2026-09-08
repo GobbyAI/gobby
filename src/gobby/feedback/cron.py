@@ -65,6 +65,7 @@ def register_feedback_review_cron(
             return "feedback review: no unreviewed rows"
         return (
             f"feedback review: run {result['run_id']}, "
+            f"reviewer {result['reviewer_agent_run_id']}, "
             f"{result['rows_considered']} row(s), "
             f"{result['tasks_filed']} task(s) filed, "
             f"{result['deduplicated']} deduplicated"

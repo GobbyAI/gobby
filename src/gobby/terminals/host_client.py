@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.terminals.host_protocol import (
     CONTROL_PROTOCOL_VERSION,
@@ -16,6 +17,11 @@ from gobby.terminals.host_protocol import (
 )
 
 MAX_CONTROL_LINE = 2 * 1024 * 1024
+MAX_WRITE_BATCH_TARGETS = 64
+MAX_WRITE_BATCH_PAYLOAD_BYTES = 1024 * 1024
+MAX_WRITE_BATCH_OPERATIONS_PER_TARGET = 128
+MAX_WRITE_BATCH_DELAY_MS = 1_000
+MAX_WRITE_BATCH_TOTAL_DELAY_MS = 5_000
 
 
 class HostEpochChangedError(RuntimeError):
@@ -66,6 +72,20 @@ class PingResult:
     host_epoch: str
     version: str
     host_pid: int
+
+
+@dataclass(frozen=True)
+class HostBatchOperation:
+    kind: Literal["text", "key"]
+    data: bytes
+    delay_ms: int = 0
+
+
+@dataclass(frozen=True)
+class HostBatchTarget:
+    recipient_id: str
+    host_terminal_id: str
+    operations: tuple[HostBatchOperation, ...]
 
 
 def encode_control_line(payload: dict[str, Any]) -> bytes:
@@ -220,8 +240,6 @@ class HostClient:
         submit: bool = False,
         operation_seq: int | None = None,
     ) -> dict[str, Any]:
-        import base64
-
         seq = self.next_seq if operation_seq is None else operation_seq
         payload: dict[str, Any] = {
             "method": "write",
@@ -237,6 +255,84 @@ class HostClient:
         if operation_seq is None:
             self.next_seq = seq + 1
         return result
+
+    async def write_batch(self, targets: Sequence[HostBatchTarget]) -> list[dict[str, Any]]:
+        """Write ordered operations to bounded native targets in one roundtrip."""
+        if len(targets) > MAX_WRITE_BATCH_TARGETS:
+            raise HostCommandError("too_many_targets")
+        payload_bytes = 0
+        recipient_ids: set[str] = set()
+        terminal_ids: set[str] = set()
+        encoded_targets: list[dict[str, Any]] = []
+        for target in targets:
+            if not target.recipient_id or not target.host_terminal_id:
+                raise HostCommandError("invalid_target")
+            if target.recipient_id in recipient_ids or target.host_terminal_id in terminal_ids:
+                raise HostCommandError("duplicate_target")
+            recipient_ids.add(target.recipient_id)
+            terminal_ids.add(target.host_terminal_id)
+            if (
+                not target.operations
+                or len(target.operations) > MAX_WRITE_BATCH_OPERATIONS_PER_TARGET
+            ):
+                raise HostCommandError("too_many_operations")
+            total_delay_ms = 0
+            operations: list[dict[str, Any]] = []
+            for operation in target.operations:
+                if operation.kind not in {"text", "key"}:
+                    raise HostCommandError("invalid_kind")
+                if operation.delay_ms < 0 or operation.delay_ms > MAX_WRITE_BATCH_DELAY_MS:
+                    raise HostCommandError("invalid_delay")
+                total_delay_ms += operation.delay_ms
+                if total_delay_ms > MAX_WRITE_BATCH_TOTAL_DELAY_MS:
+                    raise HostCommandError("invalid_delay")
+                payload_bytes += len(operation.data)
+                if payload_bytes > MAX_WRITE_BATCH_PAYLOAD_BYTES:
+                    raise HostCommandError("request_too_large")
+                operations.append(
+                    {
+                        "kind": operation.kind,
+                        "encoding": "utf8-b64",
+                        "data": base64.b64encode(operation.data).decode("ascii"),
+                        "delay_ms": operation.delay_ms,
+                    }
+                )
+            encoded_targets.append(
+                {
+                    "recipient_id": target.recipient_id,
+                    "host_terminal_id": target.host_terminal_id,
+                    "operations": operations,
+                }
+            )
+        seq = self.next_seq
+        result = await self._roundtrip(
+            {"method": "write_batch", "operation_seq": seq, "targets": encoded_targets}
+        )
+        raw_results = result.get("results")
+        if not isinstance(raw_results, list) or len(raw_results) != len(targets):
+            raise HostDecodeError("write_batch response missing per-target results")
+        decoded: list[dict[str, Any]] = []
+        for target, item in zip(targets, raw_results, strict=True):
+            if not isinstance(item, dict):
+                raise HostDecodeError("write_batch target result must be an object")
+            if item.get("recipient_id") != target.recipient_id:
+                raise HostDecodeError("write_batch target results are out of order")
+            if item.get("host_terminal_id") != target.host_terminal_id:
+                raise HostDecodeError("write_batch target result identifies the wrong terminal")
+            if item.get("ok") is True:
+                if item.get("written") is not True:
+                    raise HostDecodeError("write_batch success result is missing written=true")
+            elif item.get("ok") is False:
+                if not isinstance(item.get("error"), str) or item.get("stage") not in {
+                    "none",
+                    "partial",
+                }:
+                    raise HostDecodeError("write_batch failure result is malformed")
+            else:
+                raise HostDecodeError("write_batch target result is missing ok")
+            decoded.append(item)
+        self.next_seq = seq + 1
+        return decoded
 
     async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
         seq = self.next_seq

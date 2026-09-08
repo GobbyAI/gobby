@@ -13,12 +13,18 @@ import pytest
 
 from gobby.storage.terminals import native_locator_key
 from gobby.terminals.host_client import (
+    HostBatchTarget,
     HostCommandError,
+    HostDecodeError,
     HostUnavailableError,
     encode_control_line,
 )
 from gobby.terminals.host_protocol import HostListRow
-from gobby.terminals.native_runtime import NativeTerminalRuntime
+from gobby.terminals.native_runtime import (
+    NativeBatchFailure,
+    NativeBatchOperation,
+    NativeTerminalRuntime,
+)
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     Delivered,
@@ -29,6 +35,7 @@ from gobby.terminals.runtime import (
     TerminalWriteError,
 )
 from gobby.terminals.write_coordinator import (
+    NativeWakeBatchRequest,
     SequenceDelay,
     UnresolvedWriteStore,
     WriteCoordinator,
@@ -76,6 +83,9 @@ class FakeHostClient:
     resize_on_new_connection: int = 0
     connection_id: int = 1
     persist_pairs: list[dict[str, Any]] = field(default_factory=list)
+    batches: list[list[HostBatchTarget]] = field(default_factory=list)
+    batch_failures: dict[str, tuple[Literal["none", "partial"], str]] = field(default_factory=dict)
+    batch_exception: Exception | None = None
     children_alive: bool = True
     observer_bind: Literal["reserved", "bound", "entitled", "none"] = "reserved"
     host_pid: int = 4242
@@ -196,6 +206,38 @@ class FakeHostClient:
         self.next_seq = seq + 1
         return outcome
 
+    async def write_batch(self, targets: list[HostBatchTarget]) -> list[dict[str, Any]]:
+        await self.ensure_connected()
+        self.batches.append(list(targets))
+        if self.batch_exception is not None:
+            raise self.batch_exception
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            failure = self.batch_failures.get(target.recipient_id)
+            if failure is not None:
+                stage, code = failure
+                results.append(
+                    {
+                        "recipient_id": target.recipient_id,
+                        "host_terminal_id": target.host_terminal_id,
+                        "ok": False,
+                        "error": code,
+                        "stage": stage,
+                    }
+                )
+                continue
+            for operation in target.operations:
+                self.pty.append(operation.data)
+            results.append(
+                {
+                    "recipient_id": target.recipient_id,
+                    "host_terminal_id": target.host_terminal_id,
+                    "ok": True,
+                    "written": True,
+                }
+            )
+        return results
+
     async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
         await self.ensure_connected()
         self.kills.append(host_terminal_id)
@@ -247,12 +289,17 @@ def _runtime(client: FakeHostClient | None = None) -> tuple[NativeTerminalRuntim
     return runtime, host
 
 
-def _native_terminal(host: FakeHostClient, terminal_id: str | None = None) -> Any:
+def _native_terminal(
+    host: FakeHostClient,
+    terminal_id: str | None = None,
+    *,
+    host_terminal_id: str = "ht-1",
+) -> Any:
     tid = terminal_id or str(uuid4())
     row = make_memory_terminal(terminal_id=tid, backend="native")
     row.host_epoch = host.host_epoch
-    row.locator = {"host_terminal_id": "ht-1"}
-    row.locator_key = native_locator_key(host.host_epoch, "ht-1")
+    row.locator = {"host_terminal_id": host_terminal_id}
+    row.locator_key = native_locator_key(host.host_epoch, host_terminal_id)
     return row
 
 
@@ -657,6 +704,83 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     assert "text" in kinds
     assert interleaved == ["trying", "done"]
     assert kinds[-1] == "text" or host.writes[-1]["kind"] in {"text", "key"}
+
+
+@pytest.mark.asyncio
+async def test_native_wake_batch_preserves_target_results_order_and_latches() -> None:
+    host = FakeHostClient(
+        batch_failures={
+            "session-2": ("partial", "write_queue_unavailable"),
+            "session-3": ("none", "terminal_not_running"),
+        }
+    )
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
+    terminals = [_native_terminal(host, host_terminal_id=f"ht-{index}") for index in range(1, 4)]
+    store = MemoryTerminalStore()
+    store.rows.update({terminal.id: terminal for terminal in terminals})
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    store.persist_unresolved_write(terminals[2].id, "wake:session-3", "automatic")
+    operations = (
+        NativeBatchOperation(kind="key", payload="ctrl_u"),
+        NativeBatchOperation(kind="key", payload="ctrl_k", delay_ms=15),
+        NativeBatchOperation(kind="text", payload="continue", delay_ms=15),
+        NativeBatchOperation(kind="key", payload="enter", delay_ms=15),
+    )
+    requests = [
+        NativeWakeBatchRequest(
+            result_id=f"session-{index}",
+            terminal_id=terminal.id,
+            clear_action_key=f"wake-clear:session-{index}",
+            wake_action_key=f"wake:session-{index}",
+            operations=operations,
+        )
+        for index, terminal in enumerate(terminals, start=1)
+    ]
+
+    results = await coordinator.run_native_wake_batch(requests)
+
+    assert len(host.batches) == 1, results
+    assert [target.recipient_id for target in host.batches[0]] == [
+        "session-1",
+        "session-2",
+        "session-3",
+    ]
+    assert [operation.kind for operation in host.batches[0][0].operations] == [
+        "key",
+        "key",
+        "text",
+        "key",
+    ]
+    assert isinstance(results[0].outcome, Delivered)
+    assert isinstance(results[1].outcome, NativeBatchFailure)
+    assert results[1].outcome.stage == "partial"
+    assert isinstance(results[2].outcome, NativeBatchFailure)
+    assert results[2].outcome.stage == "none"
+    assert "wake:session-1" not in terminals[0].unresolved_writes
+    assert "wake:session-2" in terminals[1].unresolved_writes
+    assert "wake:session-3" in terminals[2].unresolved_writes
+
+
+@pytest.mark.asyncio
+async def test_native_wake_batch_decode_failure_is_indeterminate_and_keeps_latch() -> None:
+    host = FakeHostClient(batch_exception=HostDecodeError("malformed host response"))
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
+    terminal = _native_terminal(host)
+    store = MemoryTerminalStore(terminal)
+    coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime_registry(runtime))
+    request = NativeWakeBatchRequest(
+        result_id="session-1",
+        terminal_id=terminal.id,
+        clear_action_key="wake-clear:session-1",
+        wake_action_key="wake:session-1",
+        operations=(NativeBatchOperation(kind="text", payload="continue"),),
+    )
+
+    result = await coordinator.run_native_wake_batch([request])
+
+    assert isinstance(result[0].outcome, IndeterminateWrite)
+    assert result[0].outcome.detail == "malformed host response"
+    assert "wake:session-1" in terminal.unresolved_writes
 
 
 @pytest.mark.asyncio

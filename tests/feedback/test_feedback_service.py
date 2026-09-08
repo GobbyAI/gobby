@@ -1,4 +1,4 @@
-"""FeedbackReviewService behavior against the isolated hub with a stubbed LLM."""
+"""FeedbackReviewService behavior against the isolated hub with a stubbed reviewer."""
 
 from __future__ import annotations
 
@@ -15,6 +15,13 @@ from uuid import uuid4
 import pytest
 
 from gobby.config.sessions import FeedbackReviewConfig
+from gobby.feedback.agent import (
+    FeedbackReviewerLaunchError,
+    FeedbackReviewerResult,
+    FeedbackReviewerResultError,
+    FeedbackReviewerRunError,
+    FeedbackReviewerTimeoutError,
+)
 from gobby.feedback.service import (
     _RECENT_CLOSED_TASK_LIMIT,
     FINDINGS_EPIC_TITLE,
@@ -73,29 +80,25 @@ class _FakeLLM:
         self.error = error
         self.calls: list[dict[str, Any]] = []
 
-    async def call_json_feature(
+    async def review(
         self,
-        feature_config: Any,
         prompt: str,
-        system_prompt: str | None = None,
         *,
-        json_schema: dict[str, Any],
-        max_tokens: int | None = None,
-        caller: str | None = None,
-        total_timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
+        timeout_seconds: float,
+    ) -> FeedbackReviewerResult:
         self.calls.append(
             {
                 "prompt": prompt,
-                "max_tokens": max_tokens,
-                "caller": caller,
-                "total_timeout_seconds": total_timeout_seconds,
+                "timeout_seconds": timeout_seconds,
             }
         )
         if self.error is not None:
             raise self.error
         assert self.response is not None
-        return self.response
+        return FeedbackReviewerResult(
+            agent_run_id="reviewer-agent-run-1",
+            findings=self.response,
+        )
 
 
 class _FakeTaskManager:
@@ -343,11 +346,11 @@ async def test_run_review_files_tasks_marks_rows_and_renders_digest(
     assert result["tasks_filed"] == 1
     assert result["deduplicated"] == 0
 
-    # The distill call carries the review contract.
+    assert result["reviewer_agent_run_id"] == "reviewer-agent-run-1"
+
+    # The reviewer call carries the rendered observation batch and deadline.
     call = llm.calls[0]
-    assert call["caller"] == "feedback.review"
-    assert call["max_tokens"] == 8192
-    assert call["total_timeout_seconds"] == 900.0
+    assert call["timeout_seconds"] == 900.0
     # The bundled prompt rendered the observation payload verbatim.
     assert "close gate re-ran validation" in call["prompt"]
     assert first in call["prompt"]
@@ -369,6 +372,7 @@ async def test_run_review_files_tasks_marks_rows_and_renders_digest(
     assert run is not None
     assert run.status == "completed"
     assert run.actions is not None
+    assert run.actions["reviewer_agent_run_id"] == "reviewer-agent-run-1"
     assert run.actions["rows_marked_reviewed"] == 2
     assert run.digest_md is not None
     assert "Stop re-running validation at close" in run.digest_md
@@ -870,22 +874,73 @@ async def test_run_review_without_gobby_project_degrades_to_digest_only(
     assert run.actions["skipped"] == ["no project named 'gobby'; digest only"]
 
 
-async def test_run_review_failed_distill_finalizes_run_failed_and_reraises(
-    temp_db: HubDatabase, session_id: str
+@pytest.mark.parametrize(
+    ("error", "agent_run_id"),
+    [
+        pytest.param(
+            FeedbackReviewerLaunchError("feedback reviewer launch failed: tmux unavailable"),
+            None,
+            id="launch",
+        ),
+        pytest.param(
+            FeedbackReviewerRunError(
+                "feedback reviewer agent run-1 failed: process exited",
+                agent_run_id="run-1",
+            ),
+            "run-1",
+            id="agent-failure",
+        ),
+        pytest.param(
+            FeedbackReviewerTimeoutError(
+                "feedback reviewer agent run-2 timed out",
+                agent_run_id="run-2",
+            ),
+            "run-2",
+            id="timeout",
+        ),
+    ],
+)
+async def test_run_review_agent_error_finalizes_run_failed_and_keeps_rows_retryable(
+    temp_db: HubDatabase,
+    session_id: str,
+    error: Exception,
+    agent_run_id: str | None,
 ) -> None:
     first = _insert_feedback(temp_db, session_id)
-    llm = _FakeLLM(error=RuntimeError("provider unavailable"))
+    llm = _FakeLLM(error=error)
     service = _service(temp_db, llm, _FakeTaskManager())
 
-    with pytest.raises(RuntimeError, match="provider unavailable"):
+    with pytest.raises(type(error), match="feedback reviewer"):
         await service.run_review()
 
     store = FeedbackReviewStore(temp_db)
     run = store.latest_run()
     assert run is not None
     assert run.status == "failed"
-    assert run.error == "provider unavailable"
+    assert run.error == str(error)
+    assert run.actions == {"reviewer_agent_run_id": agent_run_id}
     # The batch stays unreviewed so the next run re-picks it.
+    row = temp_db.fetchone("SELECT reviewed FROM session_feedback WHERE id = %s", (first,))
+    assert row is not None and row["reviewed"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_review_rejects_malformed_agent_result_before_actions(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    first = _insert_feedback(temp_db, session_id)
+    llm = _FakeLLM(response={"clusters": [{"theme": "missing contract fields"}]})
+    task_manager = _FakeTaskManager()
+    service = _service(temp_db, llm, task_manager)
+
+    with pytest.raises(FeedbackReviewerResultError, match="failed schema validation"):
+        await service.run_review()
+
+    run = FeedbackReviewStore(temp_db).latest_run()
+    assert run is not None
+    assert run.status == "failed"
+    assert run.actions == {"reviewer_agent_run_id": "reviewer-agent-run-1"}
+    assert task_manager.created == []
     row = temp_db.fetchone("SELECT reviewed FROM session_feedback WHERE id = %s", (first,))
     assert row is not None and row["reviewed"] is False
 

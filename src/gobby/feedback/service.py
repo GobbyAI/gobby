@@ -20,6 +20,12 @@ from difflib import SequenceMatcher
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.feedback.agent import (
+    FeedbackReviewerError,
+    FeedbackReviewerProtocol,
+    FeedbackReviewerResult,
+    validate_feedback_findings,
+)
 from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow
 from gobby.prompts.loader import PromptLoader
 from gobby.sessions.handoff import FEEDBACK_TASK_REF_RE
@@ -49,68 +55,11 @@ DISTILL_TOTAL_DEADLINE_SECONDS = 900.0
 _DEDUP_LOOKUP_PAGE_SIZE = 200
 _RECENT_CLOSED_TASK_LIMIT = 100
 _THEME_SIMILARITY_THRESHOLD = 0.72
-_CLASSIFICATIONS = ("defect", "guidance-gap", "noise", "praise")
 _OBSERVATION_LINE_RE = re.compile(
     r"(?:Observations|Additional observations) \(session_feedback\.id\):\s*([^\n]+)",
     re.IGNORECASE,
 )
 _THEME_LINE_RE = re.compile(r"^Theme:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-
-FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "clusters": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "observation_ids": {"type": "array", "items": {"type": "string"}},
-                    "cited_paths": {"type": "array", "items": {"type": "string"}},
-                    "theme": {"type": "string"},
-                    "classification": {"type": "string", "enum": list(_CLASSIFICATIONS)},
-                    "proposed_task": {
-                        "type": ["object", "null"],
-                        "properties": {
-                            "title": {"type": "string"},
-                            "description": {"type": "string"},
-                            "labels": {"type": "array", "items": {"type": "string"}},
-                            "priority": {"type": "integer", "minimum": 1, "maximum": 4},
-                        },
-                        "required": ["title", "description"],
-                        "additionalProperties": False,
-                    },
-                    "digest_note": {"type": "string"},
-                },
-                "required": [
-                    "observation_ids",
-                    "cited_paths",
-                    "theme",
-                    "classification",
-                    "digest_note",
-                ],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["clusters"],
-    "additionalProperties": False,
-}
-
-
-class JSONFeatureProvider(Protocol):
-    """The slice of LLMService the distill pass needs."""
-
-    async def call_json_feature(
-        self,
-        feature_config: Any,
-        prompt: str,
-        system_prompt: str | None = None,
-        *,
-        json_schema: dict[str, Any],
-        max_tokens: int | None = None,
-        caller: str | None = None,
-        total_timeout_seconds: float | None = None,
-    ) -> dict[str, Any]: ...
 
 
 class ReviewTaskManagerProtocol(Protocol):
@@ -154,13 +103,13 @@ class FeedbackReviewService:
     def __init__(
         self,
         db: HubDatabase,
-        llm_service: JSONFeatureProvider,
+        reviewer: FeedbackReviewerProtocol,
         config: FeedbackReviewConfig,
         task_manager: ReviewTaskManagerProtocol | None,
     ) -> None:
         self.db = db
         self.store = FeedbackReviewStore(db)
-        self.llm_service = llm_service
+        self.reviewer = reviewer
         self.config = config
         self.task_manager = task_manager
 
@@ -176,9 +125,13 @@ class FeedbackReviewService:
             window_end=rows[-1].created_at,
             rows_considered=len(rows),
         )
+        reviewer_agent_run_id: str | None = None
         try:
-            findings = await self._distill(rows)
+            review_result = await self._distill(rows)
+            reviewer_agent_run_id = review_result.agent_run_id
+            findings = review_result.findings
             actions = await self._apply_actions(findings, rows, dry_run=dry_run)
+            actions["reviewer_agent_run_id"] = reviewer_agent_run_id
             if not dry_run:
                 actions["rows_marked_reviewed"] = self.store.mark_reviewed(
                     [row.id for row in rows], run_id
@@ -198,7 +151,14 @@ class FeedbackReviewService:
                 digest_md=digest,
             )
         except Exception as exc:
-            self.store.finalize_run(run_id, status="failed", error=str(exc))
+            if isinstance(exc, FeedbackReviewerError):
+                reviewer_agent_run_id = exc.agent_run_id
+            self.store.finalize_run(
+                run_id,
+                status="failed",
+                actions={"reviewer_agent_run_id": reviewer_agent_run_id},
+                error=str(exc),
+            )
             raise
         return {
             "status": "completed",
@@ -207,9 +167,10 @@ class FeedbackReviewService:
             "rows_considered": len(rows),
             "tasks_filed": len(actions.get("filed", [])),
             "deduplicated": actions.get("deduplicated", 0),
+            "reviewer_agent_run_id": reviewer_agent_run_id,
         }
 
-    async def _distill(self, rows: list[FeedbackRow]) -> dict[str, Any]:
+    async def _distill(self, rows: list[FeedbackRow]) -> FeedbackReviewerResult:
         loader = PromptLoader(db=self.db)
         prompt = loader.render(
             self.config.prompt_path,
@@ -218,20 +179,15 @@ class FeedbackReviewService:
                 "max_tasks": self.config.max_tasks_per_run,
             },
         )
-        response = await self.llm_service.call_json_feature(
-            self.config,
+        result = await self.reviewer.review(
             prompt,
-            json_schema=FEEDBACK_FINDINGS_SCHEMA,
-            max_tokens=self.config.max_tokens,
-            caller="feedback.review",
-            total_timeout_seconds=DISTILL_TOTAL_DEADLINE_SECONDS,
+            timeout_seconds=DISTILL_TOTAL_DEADLINE_SECONDS,
         )
-        if not isinstance(response, dict):
-            raise TypeError(f"feedback.review expected dict, got {type(response).__name__}")
-        clusters = response.get("clusters")
-        if not isinstance(clusters, list):
-            raise ValueError("feedback.review response missing 'clusters' list")
-        return {"clusters": [cluster for cluster in clusters if isinstance(cluster, dict)]}
+        findings = validate_feedback_findings(
+            result.findings,
+            agent_run_id=result.agent_run_id,
+        )
+        return FeedbackReviewerResult(agent_run_id=result.agent_run_id, findings=findings)
 
     async def _apply_actions(
         self,

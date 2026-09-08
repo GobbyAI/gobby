@@ -52,6 +52,34 @@ class FakeWakeDispatcher:
         return {"session_id": session_id, "delivered": True, "method": "fake"}
 
 
+class BatchWakeDispatcher(FakeWakeDispatcher):
+    def __init__(
+        self,
+        message_manager: InterSessionMessageManager,
+        *,
+        fail: bool = False,
+    ) -> None:
+        super().__init__()
+        self.message_manager = message_manager
+        self.fail = fail
+        self.batch_calls: list[tuple[list[str], str]] = []
+        self.durable_seen = False
+
+    async def dispatch_live_wakes(
+        self, session_ids: list[str], *, priority: str = "normal"
+    ) -> list[dict[str, Any]]:
+        self.batch_calls.append((list(session_ids), priority))
+        self.durable_seen = all(
+            self.message_manager.get_messages(session_id) for session_id in session_ids
+        )
+        if self.fail:
+            raise ConnectionError("native host disconnected")
+        return [
+            {"session_id": session_id, "delivered": True, "method": "terminal"}
+            for session_id in session_ids
+        ]
+
+
 class FailingWakeDispatcher:
     async def dispatch_live_wake(
         self, session_id: str, *, priority: str = "normal"
@@ -932,6 +960,46 @@ class TestMailboxBroadcast:
         assert result.wake_results == []
         assert result.broadcast_id
         assert len(result.message_ids) == len(result.recipient_session_ids)
+
+    @pytest.mark.asyncio
+    async def test_project_wake_batches_after_durable_fanout_and_reports_failure(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        project_manager: LocalProjectManager,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        ids = _setup_broadcast_scenario(
+            isolated_checkout_factory,
+            temp_db,
+            project_manager,
+            session_manager,
+            sample_project["id"],
+        )
+        message_manager = InterSessionMessageManager(temp_db)
+        dispatcher = BatchWakeDispatcher(message_manager, fail=True)
+        mailbox = MailboxService(
+            db=temp_db,
+            message_manager=message_manager,
+            session_manager=session_manager,
+            wake_dispatcher=dispatcher,
+        )
+
+        result = await mailbox.send(
+            from_session_id=ids["sender"],
+            target="project",
+            content="durable batch wake",
+            wake=True,
+            priority="urgent",
+        )
+
+        assert dispatcher.calls == []
+        assert dispatcher.batch_calls == [(result.recipient_session_ids, "urgent")]
+        assert dispatcher.durable_seen is True
+        assert len(result.message_ids) == len(result.recipient_session_ids)
+        assert [item["session_id"] for item in result.wake_results] == result.recipient_session_ids
+        assert {item["error_code"] for item in result.wake_results} == {"wake_dispatch_failed"}
 
     @pytest.mark.asyncio
     async def test_project_target_uses_active_parent_when_child_session_expired(

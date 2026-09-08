@@ -133,6 +133,102 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
 
 
 @pytest.mark.asyncio
+async def test_three_native_recipients_use_one_ordered_batch() -> None:
+    session_ids = [
+        "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+        "2a1b0639-bb96-56bf-9dfa-e28194dbab4b",
+        "0fe83c82-cd2f-501c-b06c-dc89d5f47726",
+    ]
+    sessions = {
+        session_id: FakeSession(
+            id=session_id,
+            terminal_context=NATIVE_TERMINAL_CONTEXT,
+            status="paused",
+        )
+        for session_id in session_ids
+    }
+    session_manager = MagicMock()
+    session_manager.get.side_effect = sessions.get
+    rows = [
+        replace(make_memory_terminal(backend="native"), session_id=session_id)
+        for session_id in session_ids
+    ]
+    store = MemoryTerminalStore()
+    store.rows.update({row.id: row for row in rows})
+    batch_sender = AsyncMock(
+        return_value=[
+            {
+                "session_id": session_id,
+                "delivered": True,
+                "method": "terminal",
+            }
+            for session_id in session_ids
+        ]
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=MagicMock(),
+        tmux_sender=AsyncMock(),
+        native_batch_sender=batch_sender,
+        terminal_manager=store,
+    )
+
+    results = await dispatcher.dispatch_live_wakes(session_ids)
+
+    batch_sender.assert_awaited_once()
+    batch_call = batch_sender.await_args
+    assert batch_call is not None
+    targets = batch_call.args[0]
+    assert [target.session_id for target in targets] == session_ids
+    assert [target.terminal_id for target in targets] == [row.id for row in rows]
+    assert [result["session_id"] for result in results] == session_ids
+    assert all(result["delivered"] is True for result in results)
+
+
+@pytest.mark.asyncio
+async def test_batch_keeps_active_nonurgent_recipient_out_of_terminal_injection() -> None:
+    paused_id = WAKE_SESSION_ID
+    active_id = REPRO_SESSION_ID
+    sessions = {
+        paused_id: FakeSession(paused_id, terminal_context=NATIVE_TERMINAL_CONTEXT),
+        active_id: FakeSession(
+            active_id,
+            terminal_context=NATIVE_TERMINAL_CONTEXT,
+            status="active",
+        ),
+    }
+    session_manager = MagicMock()
+    session_manager.get.side_effect = sessions.get
+    rows = [
+        replace(make_memory_terminal(backend="native"), session_id=session_id)
+        for session_id in (paused_id, active_id)
+    ]
+    store = MemoryTerminalStore()
+    store.rows.update({row.id: row for row in rows})
+    batch_sender = AsyncMock(
+        return_value=[{"session_id": paused_id, "delivered": True, "method": "terminal"}]
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=MagicMock(),
+        tmux_sender=AsyncMock(),
+        native_batch_sender=batch_sender,
+        terminal_manager=store,
+    )
+
+    results = await dispatcher.dispatch_live_wakes([paused_id, active_id])
+
+    batch_call = batch_sender.await_args
+    assert batch_call is not None
+    targets = batch_call.args[0]
+    assert [target.session_id for target in targets] == [paused_id]
+    assert results[0]["delivered"] is True
+    assert results[1]["delivered"] is False
+    assert results[1]["method"] == "next_call_context"
+    assert results[1]["skipped"] == "session_active"
+
+
+@pytest.mark.asyncio
 async def test_final_preflight_suppresses_session_that_becomes_protected(
     managed_chain: ManagedChain,
 ) -> None:

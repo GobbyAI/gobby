@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -13,7 +14,11 @@ from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import (
     MAX_CONTROL_LINE,
+    MAX_WRITE_BATCH_TARGETS,
+    HostBatchOperation,
+    HostBatchTarget,
     HostCommandError,
+    HostDecodeError,
     HostUnavailableError,
     encode_control_line,
 )
@@ -35,7 +40,35 @@ from gobby.terminals.runtime import (
     TerminalSpawnRequest,
     TerminalWriteError,
     WriteOutcome,
+    is_named_key,
 )
+
+
+@dataclass(frozen=True)
+class NativeBatchOperation:
+    kind: Literal["text", "key"]
+    payload: str
+    delay_ms: int = 0
+
+
+@dataclass(frozen=True)
+class NativeBatchTarget:
+    result_id: str
+    terminal: Terminal
+    operations: tuple[NativeBatchOperation, ...]
+
+
+@dataclass(frozen=True)
+class NativeBatchFailure:
+    stage: Literal["none", "partial"]
+    code: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class NativeBatchResult:
+    result_id: str
+    outcome: WriteOutcome | NativeBatchFailure
 
 
 class HostManagerControl:
@@ -65,7 +98,14 @@ class HostManagerControl:
         return getattr(client, name)
 
 
-__all__ = ["HostManagerControl", "NativeTerminalRuntime"]
+__all__ = [
+    "HostManagerControl",
+    "NativeBatchFailure",
+    "NativeBatchOperation",
+    "NativeBatchResult",
+    "NativeBatchTarget",
+    "NativeTerminalRuntime",
+]
 
 
 class NativeTerminalRuntime:
@@ -312,6 +352,102 @@ class NativeTerminalRuntime:
             dropped_bytes=int(dropped) if isinstance(dropped, int) else 0,
             total_bytes=int(total) if isinstance(total, int) else len(text.encode("utf-8")),
         )
+
+    async def write_batch(self, targets: Sequence[NativeBatchTarget]) -> list[NativeBatchResult]:
+        """Dispatch one bounded host request and preserve a result for every target."""
+        if len(targets) > MAX_WRITE_BATCH_TARGETS:
+            failure = NativeBatchFailure(
+                stage="none",
+                code="too_many_targets",
+                detail=f"native wake batches are limited to {MAX_WRITE_BATCH_TARGETS} targets",
+            )
+            return [NativeBatchResult(target.result_id, failure) for target in targets]
+
+        results: dict[str, NativeBatchResult] = {}
+        host_targets: list[HostBatchTarget] = []
+        try:
+            await self._ensure()
+        except HostUnavailableError as exc:
+            failure = NativeBatchFailure(stage="none", code=exc.code, detail=exc.message)
+            return [NativeBatchResult(target.result_id, failure) for target in targets]
+
+        for target in targets:
+            try:
+                host_terminal_id = self._host_id(target.terminal)
+            except TerminalWriteError as exc:
+                results[target.result_id] = NativeBatchResult(
+                    target.result_id,
+                    NativeBatchFailure(
+                        stage=exc.stage,
+                        code="host_terminal_id_missing",
+                        detail=str(exc),
+                    ),
+                )
+                continue
+            operations: list[HostBatchOperation] = []
+            invalid_key = False
+            for operation in target.operations:
+                if operation.kind == "key":
+                    if not is_named_key(operation.payload):
+                        invalid_key = True
+                        break
+                    data = encode_named_key(operation.payload)
+                else:
+                    data = operation.payload.encode("utf-8")
+                operations.append(
+                    HostBatchOperation(
+                        kind=operation.kind,
+                        data=data,
+                        delay_ms=operation.delay_ms,
+                    )
+                )
+            if invalid_key:
+                results[target.result_id] = NativeBatchResult(
+                    target.result_id,
+                    NativeBatchFailure(
+                        stage="none",
+                        code="invalid_key",
+                        detail="native wake batch contains an invalid named key",
+                    ),
+                )
+                continue
+            host_targets.append(
+                HostBatchTarget(
+                    recipient_id=target.result_id,
+                    host_terminal_id=host_terminal_id,
+                    operations=tuple(operations),
+                )
+            )
+
+        if host_targets:
+            try:
+                host_results = await self._client.write_batch(host_targets)
+            except HostCommandError as exc:
+                failure = NativeBatchFailure(stage="none", code=exc.code, detail=str(exc))
+                for host_target in host_targets:
+                    results[host_target.recipient_id] = NativeBatchResult(
+                        host_target.recipient_id, failure
+                    )
+            except (ConnectionError, HostDecodeError) as exc:
+                for host_target in host_targets:
+                    results[host_target.recipient_id] = NativeBatchResult(
+                        host_target.recipient_id,
+                        IndeterminateWrite(detail=str(exc)),
+                    )
+            else:
+                for item in host_results:
+                    result_id = str(item["recipient_id"])
+                    if item.get("ok") is True:
+                        outcome: WriteOutcome | NativeBatchFailure = Delivered()
+                    else:
+                        stage: Literal["none", "partial"] = (
+                            "partial" if item.get("stage") == "partial" else "none"
+                        )
+                        code = str(item.get("error") or "terminal_write_failed")
+                        outcome = NativeBatchFailure(stage=stage, code=code, detail=code)
+                    results[result_id] = NativeBatchResult(result_id, outcome)
+
+        return [results[target.result_id] for target in targets]
 
     async def write_text(
         self,
