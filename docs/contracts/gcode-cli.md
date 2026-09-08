@@ -128,11 +128,19 @@ byte budget returns `continuation_mismatch`. `complete`, `completeness`,
 graph traversal truncation describe the actual page and upstream bounds.
 
 Evidence reads never invoke agent/model orchestration, update source files,
-write facts, autoindex, or retry against stale data. Hybrid selectors require a
-complete semantic identity. The CLI currently installs no audited semantic
-provider, so a valid hybrid request fails explicitly with `semantic_failure`
-rather than falling back to lexical results; missing or malformed identity is
-`semantic_identity_required`, and any future provider must match it exactly.
+write facts, autoindex, or retry against stale data. Deterministic selectors do
+not resolve or call embedding/vector services. A `hybrid` selector is an
+explicit opt-in and requires the complete expected embedding endpoint, model,
+dimension, and per-project vector index identity. The CLI derives the effective
+identity from its grant-backed embedding/vector configuration, verifies the
+actual Qdrant collection name and cosine schema, and requires an exact match
+before issuing one daemon-routed native query embedding and a strict vector
+lookup. The response records that verified effective identity, not merely the
+request value. Missing or malformed request identity is
+`semantic_identity_required`; a changed expected identity is
+`semantic_identity_mismatch`; missing configuration/index state, incompatible
+collection schema, changed embedding response identity, and provider failures
+are `semantic_failure`. Hybrid failures never fall back to lexical-only results.
 
 All evidence contract errors exit `2`, write one JSON object to stderr, and
 leave stdout empty. Codes include `snapshot_binding_mismatch`,

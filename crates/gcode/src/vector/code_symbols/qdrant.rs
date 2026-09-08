@@ -295,6 +295,23 @@ pub fn vector_search(
         .collect())
 }
 
+pub(super) fn vector_search_strict(
+    config: &QdrantConfig,
+    collection: &str,
+    query_vector: &[f32],
+    limit: usize,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    let request = SearchRequest {
+        vector: query_vector.to_vec(),
+        limit,
+        filter: None,
+    };
+    Ok(gobby_core::qdrant::search(config, collection, request)?
+        .into_iter()
+        .map(|hit| (hit.id, f64::from(hit.score)))
+        .collect())
+}
+
 fn vector_search_degradation_warning(state: &ServiceState) -> Option<String> {
     match state {
         ServiceState::Available => None,

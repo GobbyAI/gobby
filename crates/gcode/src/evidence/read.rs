@@ -8,6 +8,7 @@ use super::snapshot::{canonical_hash, validate_repo_path};
 use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 
 pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Result<QueryResult> {
+    validate_selector(selector)?;
     let items = match selector {
         ReadSelector::Range {
             path,
@@ -24,7 +25,6 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
             path,
             qualified_name,
         } => {
-            validate_repo_path(path)?;
             library.validate_index_inventory()?;
             let matches = library
                 .facts
@@ -70,6 +70,36 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
         result_limit,
         graph_depth: None,
     })
+}
+
+pub(super) fn validate_selector(selector: &ReadSelector) -> Result<()> {
+    match selector {
+        ReadSelector::Range {
+            path,
+            start_line,
+            end_line,
+        } => {
+            validate_repo_path(path)?;
+            if *start_line == 0 || end_line < start_line {
+                return Err(EvidenceError::InvalidSelector {
+                    detail: "line ranges are one-based, inclusive, and non-empty".to_string(),
+                });
+            }
+        }
+        ReadSelector::Symbol {
+            path,
+            qualified_name,
+        } => {
+            validate_repo_path(path)?;
+            if qualified_name.trim().is_empty() {
+                return Err(EvidenceError::InvalidSelector {
+                    detail: "qualified symbol name must not be empty".to_string(),
+                });
+            }
+        }
+        ReadSelector::CommitMetadata => {}
+    }
+    Ok(())
 }
 
 pub(super) fn source_for_symbol(

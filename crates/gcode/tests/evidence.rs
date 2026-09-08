@@ -2,6 +2,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
+mod common;
+
 #[test]
 #[serial_test::serial(serial_db)]
 fn test_evidence_cli_contract() -> anyhow::Result<()> {
@@ -50,7 +52,7 @@ fn database_contract() -> anyhow::Result<()> {
     use gobby_code::evidence::{
         DEFAULT_GRAPH_DEPTH, DEFAULT_MAX_BYTES, DEFAULT_RESULT_LIMIT, EVIDENCE_SCHEMA_VERSION,
         EntitySelector, EvidenceItem, EvidenceOperation, EvidenceRequest, GraphQuery,
-        GraphSelector, HybridIdentity, ReadSelector, SearchLane, SearchSelector, Snapshot,
+        GraphSelector, ReadSelector, SearchLane, SearchSelector, Snapshot,
     };
     use postgres::{Client, NoTls};
 
@@ -62,28 +64,30 @@ fn database_contract() -> anyhow::Result<()> {
         database_url: database_url.clone(),
     };
 
-    let project = tempfile::tempdir()?;
-    std::fs::create_dir_all(project.path().join(".gobby"))?;
-    std::fs::create_dir_all(project.path().join("src"))?;
-    std::fs::write(project.path().join(FILE_PATH), SOURCE)?;
+    let project_dir = tempfile::tempdir()?;
+    let project = project_dir.path().canonicalize()?;
+    std::fs::create_dir_all(project.join(".gobby"))?;
+    std::fs::create_dir_all(project.join("src"))?;
+    std::fs::write(project.join(FILE_PATH), SOURCE)?;
     std::fs::write(
-        project.path().join(".gobby/project.json"),
+        project.join(".gobby/project.json"),
         serde_json::json!({"id": PROJECT_ID, "name": "evidence-cli-contract"}).to_string(),
     )?;
-    git(project.path(), &["init", "--quiet", "-b", "main"])?;
-    git(project.path(), &["add", FILE_PATH])?;
-    let commit_oid = commit(project.path(), "initial evidence fixture")?;
-    let snapshot = Snapshot::prepare(project.path(), PROJECT_ID, &commit_oid)?;
+    git(&project, &["init", "--quiet", "-b", "main"])?;
+    git(&project, &["add", FILE_PATH])?;
+    let commit_oid = commit(&project, "initial evidence fixture")?;
+    let snapshot = Snapshot::prepare(&project, PROJECT_ID, &commit_oid)?;
+    assert_pure_preflight_rejections(snapshot.binding())?;
 
-    gobby_code::test_env::seed_test_checkout(&mut conn, PROJECT_ID, project.path())
+    gobby_code::test_env::seed_test_checkout(&mut conn, PROJECT_ID, &project)
         .map_err(anyhow::Error::msg)?;
-    let home = isolated_gobby_home(project.path())?;
+    let home = isolated_gobby_home(&project)?;
     let connections = gobby_core::grant::DirectConnections::postgres(&database_url);
     let mut index = Command::new(env!("CARGO_BIN_EXE_gcode"));
     index
-        .current_dir(project.path())
+        .current_dir(&project)
         .args(["--quiet", "--project"])
-        .arg(project.path())
+        .arg(&project)
         .args(["index", "--full"]);
     attach_managed_grant(&mut index, &home, PROJECT_ID, &connections)?;
     let indexed = index.output()?;
@@ -93,7 +97,7 @@ fn database_contract() -> anyhow::Result<()> {
         String::from_utf8_lossy(&indexed.stderr)
     );
 
-    let status_before = git(project.path(), &["status", "--porcelain"])?;
+    let status_before = git(&project, &["status", "--porcelain"])?;
     let facts_before = fact_count(&mut conn)?;
     let indexed_hash_before = indexed_hash(&mut conn)?;
 
@@ -110,8 +114,8 @@ fn database_contract() -> anyhow::Result<()> {
         max_bytes: DEFAULT_MAX_BYTES,
         continuation: None,
     };
-    let response = run_success(project.path(), &home, &connections, &range_request)?;
-    let repeated = run_success(project.path(), &home, &connections, &range_request)?;
+    let response = run_success(&project, &home, &connections, &range_request)?;
+    let repeated = run_success(&project, &home, &connections, &range_request)?;
     assert_eq!(
         response, repeated,
         "identical reads are byte-contract deterministic"
@@ -163,7 +167,7 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    let metadata = run_success(project.path(), &home, &connections, &metadata_request)?;
+    let metadata = run_success(&project, &home, &connections, &metadata_request)?;
     assert_eq!(metadata.contract.lane, "read_commit_metadata");
     assert_eq!(metadata.items.len(), 1);
     let EvidenceItem::CommitMetadata(record) = &metadata.items[0] else {
@@ -199,7 +203,7 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    let all_search = run_success(project.path(), &home, &connections, &search_request)?;
+    let all_search = run_success(&project, &home, &connections, &search_request)?;
     assert_eq!(all_search.items.len(), 2);
     let item_sizes = all_search
         .items
@@ -210,7 +214,7 @@ fn database_contract() -> anyhow::Result<()> {
     assert!(item_sizes.iter().sum::<usize>() > one_item_budget);
     let mut page_request = search_request.clone();
     page_request.max_bytes = one_item_budget;
-    let first_page = run_success(project.path(), &home, &connections, &page_request)?;
+    let first_page = run_success(&project, &home, &connections, &page_request)?;
     assert!(!first_page.complete);
     assert_eq!(
         first_page.completeness,
@@ -224,7 +228,7 @@ fn database_contract() -> anyhow::Result<()> {
         .expect("paginated response continuation");
     let mut continuation_request = page_request.clone();
     continuation_request.continuation = Some(continuation.clone());
-    let second_page = run_success(project.path(), &home, &connections, &continuation_request)?;
+    let second_page = run_success(&project, &home, &connections, &continuation_request)?;
     assert!(second_page.complete);
     assert_eq!(second_page.bounds.returned_items, 1);
     assert!(second_page.continuation.is_none());
@@ -235,7 +239,7 @@ fn database_contract() -> anyhow::Result<()> {
     let mut bad_continuation = continuation_request;
     bad_continuation.continuation = Some(format!("{continuation}x"));
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &bad_continuation,
@@ -245,7 +249,7 @@ fn database_contract() -> anyhow::Result<()> {
     let mut oversized = range_request.clone();
     oversized.max_bytes = 1;
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &oversized,
@@ -255,7 +259,7 @@ fn database_contract() -> anyhow::Result<()> {
     let mut mismatched = range_request.clone();
     mismatched.binding.tree_oid = "0".repeat(40);
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &mismatched,
@@ -265,7 +269,7 @@ fn database_contract() -> anyhow::Result<()> {
     let mut missing = range_request.clone();
     missing.binding.commit_oid = "0".repeat(40);
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &missing,
@@ -274,7 +278,7 @@ fn database_contract() -> anyhow::Result<()> {
     let mut invalid_oid = range_request.clone();
     invalid_oid.binding.commit_oid = "HEAD".to_string();
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &invalid_oid,
@@ -296,7 +300,7 @@ fn database_contract() -> anyhow::Result<()> {
         ..range_request.clone()
     };
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &incompatible,
@@ -312,39 +316,14 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    assert_request_error(
-        project.path(),
-        &home,
-        &connections,
-        &unsafe_path,
-        "unsafe_path",
-    )?;
+    assert_request_error(&project, &home, &connections, &unsafe_path, "unsafe_path")?;
 
-    let hybrid = EvidenceRequest {
-        operation: EvidenceOperation::Search {
-            search: SearchSelector {
-                lane: SearchLane::Hybrid,
-                query: "evidence".to_string(),
-                paths: Vec::new(),
-                language: None,
-                kind: None,
-                limit: DEFAULT_RESULT_LIMIT,
-                hybrid_identity: Some(HybridIdentity {
-                    endpoint: "https://embedding.invalid/v1".to_string(),
-                    model: "audited-model".to_string(),
-                    dimension: 768,
-                    index_id: "audited-index".to_string(),
-                }),
-            },
-        },
-        ..range_request.clone()
-    };
-    assert_request_error(
-        project.path(),
+    assert_audited_hybrid_contract(
+        &project,
         &home,
-        &connections,
-        &hybrid,
-        "semantic_failure",
+        &database_url,
+        &range_request,
+        first_symbol_id(&mut conn)?,
     )?;
 
     let graph = EvidenceRequest {
@@ -363,25 +342,19 @@ fn database_contract() -> anyhow::Result<()> {
         },
         ..range_request.clone()
     };
-    assert_request_error(
-        project.path(),
-        &home,
-        &connections,
-        &graph,
-        "graph_unavailable",
-    )?;
+    assert_request_error(&project, &home, &connections, &graph, "graph_unavailable")?;
 
     let raw_request = serde_json::to_string(&range_request)?;
-    let allow_stale = run_raw_evidence(project.path(), &home, &connections, &raw_request, true)?;
+    let allow_stale = run_raw_evidence(&project, &home, &connections, &raw_request, true)?;
     assert_error(&allow_stale, "stale_admission_bypass_forbidden");
     let text_format =
-        run_raw_evidence_with_format(project.path(), &home, &connections, &raw_request, "text")?;
+        run_raw_evidence_with_format(&project, &home, &connections, &raw_request, "text")?;
     assert_error(&text_format, "unsupported_evidence_format");
 
     let mut malformed_selector = serde_json::to_value(&range_request)?;
     malformed_selector["read"]["kind"] = Value::String("unknown".to_string());
     let malformed_selector = run_raw_evidence(
-        project.path(),
+        &project,
         &home,
         &connections,
         &serde_json::to_string(&malformed_selector)?,
@@ -389,13 +362,10 @@ fn database_contract() -> anyhow::Result<()> {
     )?;
     assert_error(&malformed_selector, "invalid_evidence_request");
 
-    std::fs::write(
-        project.path().join(FILE_PATH),
-        SOURCE.replace("needle", "changed"),
-    )?;
-    git(project.path(), &["add", FILE_PATH])?;
-    let stale_commit = commit(project.path(), "change without reindex")?;
-    let stale_snapshot = Snapshot::prepare(project.path(), PROJECT_ID, &stale_commit)?;
+    std::fs::write(project.join(FILE_PATH), SOURCE.replace("needle", "changed"))?;
+    git(&project, &["add", FILE_PATH])?;
+    let stale_commit = commit(&project, "change without reindex")?;
+    let stale_snapshot = Snapshot::prepare(&project, PROJECT_ID, &stale_commit)?;
     let stale_request = EvidenceRequest {
         binding: stale_snapshot.binding().clone(),
         operation: EvidenceOperation::Search {
@@ -412,7 +382,7 @@ fn database_contract() -> anyhow::Result<()> {
         ..range_request.clone()
     };
     assert_request_error(
-        project.path(),
+        &project,
         &home,
         &connections,
         &stale_request,
@@ -430,7 +400,7 @@ fn database_contract() -> anyhow::Result<()> {
         "stale evidence must not autoindex"
     );
     assert_eq!(
-        git(project.path(), &["status", "--porcelain"])?,
+        git(&project, &["status", "--porcelain"])?,
         status_before,
         "evidence must not mutate the source checkout"
     );
@@ -438,11 +408,364 @@ fn database_contract() -> anyhow::Result<()> {
     let unavailable = gobby_core::grant::DirectConnections::postgres(
         "postgresql://gobby_test:gobby_test@127.0.0.1:1/unavailable_test",
     );
-    let unavailable_output =
-        run_raw_evidence(project.path(), &home, &unavailable, &raw_request, false)?;
+    let unavailable_output = run_raw_evidence(&project, &home, &unavailable, &raw_request, false)?;
     assert_error(&unavailable_output, "index_unavailable");
 
     drop(cleanup);
+    Ok(())
+}
+
+#[cfg(gcode_postgres_tests)]
+fn assert_pure_preflight_rejections(
+    binding: &gobby_code::evidence::SnapshotBinding,
+) -> anyhow::Result<()> {
+    use gobby_code::evidence::{
+        DEFAULT_GRAPH_DEPTH, DEFAULT_MAX_BYTES, DEFAULT_RESULT_LIMIT, EvidenceOperation,
+        EvidenceRequest, GraphQuery, GraphSelector, ReadSelector, SearchLane, SearchSelector,
+    };
+
+    let root_dir = tempfile::tempdir()?;
+    let root = root_dir.path().canonicalize()?;
+    std::fs::create_dir_all(root.join(".gobby"))?;
+    std::fs::write(
+        root.join(".gobby/project.json"),
+        serde_json::json!({"id": PROJECT_ID, "name": "pure-evidence-preflight"}).to_string(),
+    )?;
+    let home = isolated_gobby_home(&root)?;
+    let unavailable = gobby_core::grant::DirectConnections::postgres(
+        "postgresql://gobby_test:gobby_test@127.0.0.1:1/unavailable_test",
+    );
+    let base = EvidenceRequest {
+        schema_version: 1,
+        binding: binding.clone(),
+        operation: EvidenceOperation::Read {
+            read: ReadSelector::CommitMetadata,
+        },
+        max_bytes: DEFAULT_MAX_BYTES,
+        continuation: None,
+    };
+    let unsupported_schema = EvidenceRequest {
+        schema_version: 2,
+        ..base.clone()
+    };
+    assert_request_error(
+        &root,
+        &home,
+        &unavailable,
+        &unsupported_schema,
+        "unsupported_schema",
+    )?;
+    let missing_selector = EvidenceRequest {
+        operation: EvidenceOperation::Graph {
+            graph: GraphSelector {
+                query: GraphQuery::Callers,
+                source: None,
+                target: None,
+                direction: None,
+                depth: DEFAULT_GRAPH_DEPTH,
+                relations: Vec::new(),
+                limit: DEFAULT_RESULT_LIMIT,
+            },
+        },
+        ..base.clone()
+    };
+    assert_request_error(
+        &root,
+        &home,
+        &unavailable,
+        &missing_selector,
+        "invalid_selector",
+    )?;
+    let unsafe_path = EvidenceRequest {
+        operation: EvidenceOperation::Read {
+            read: ReadSelector::Range {
+                path: "../outside.rs".to_string(),
+                start_line: 1,
+                end_line: 1,
+            },
+        },
+        ..base.clone()
+    };
+    assert_request_error(&root, &home, &unavailable, &unsafe_path, "unsafe_path")?;
+    let missing_identity = EvidenceRequest {
+        operation: EvidenceOperation::Search {
+            search: SearchSelector {
+                lane: SearchLane::Hybrid,
+                query: "semantic evidence".to_string(),
+                paths: Vec::new(),
+                language: None,
+                kind: None,
+                limit: DEFAULT_RESULT_LIMIT,
+                hybrid_identity: None,
+            },
+        },
+        ..base
+    };
+    assert_request_error(
+        &root,
+        &home,
+        &unavailable,
+        &missing_identity,
+        "semantic_identity_required",
+    )
+}
+
+#[cfg(gcode_postgres_tests)]
+fn assert_audited_hybrid_contract(
+    project: &std::path::Path,
+    home: &std::path::Path,
+    database_url: &str,
+    base: &gobby_code::evidence::EvidenceRequest,
+    symbol_id: String,
+) -> anyhow::Result<()> {
+    use common::http::{spawn_http_responses, spawn_http_responses_after_probes};
+    use gobby_code::evidence::{
+        EvidenceOperation, EvidenceRequest, HybridIdentity, SearchLane, SearchSelector,
+    };
+
+    const ENDPOINT: &str = "https://embedding.example.invalid/v1";
+    const MODEL: &str = "audited-model";
+    const DIMENSION: usize = 3;
+    let index_id = format!("code_symbols_{PROJECT_ID}");
+    let identity = HybridIdentity {
+        endpoint: ENDPOINT.to_string(),
+        model: MODEL.to_string(),
+        dimension: DIMENSION,
+        index_id: index_id.clone(),
+    };
+    let request = EvidenceRequest {
+        operation: EvidenceOperation::Search {
+            search: SearchSelector {
+                lane: SearchLane::Hybrid,
+                query: "semantic-only-query".to_string(),
+                paths: Vec::new(),
+                language: None,
+                kind: None,
+                limit: 1,
+                hybrid_identity: Some(identity.clone()),
+            },
+        },
+        ..base.clone()
+    };
+
+    let deterministic = EvidenceRequest {
+        operation: EvidenceOperation::Search {
+            search: SearchSelector {
+                lane: SearchLane::Literal,
+                query: "evidence_token".to_string(),
+                paths: Vec::new(),
+                language: None,
+                kind: None,
+                limit: 1,
+                hybrid_identity: None,
+            },
+        },
+        ..base.clone()
+    };
+    let dead_services = gobby_core::grant::DirectConnections::postgres(database_url)
+        .with_qdrant("http://127.0.0.1:1", None);
+    let deterministic_output = run_raw_with_audited_services(
+        project,
+        home,
+        &dead_services,
+        "http://127.0.0.1:1",
+        &serde_json::to_string(&deterministic)?,
+    )?;
+    anyhow::ensure!(
+        deterministic_output.status.success(),
+        "deterministic evidence touched unavailable semantic services: {}",
+        String::from_utf8_lossy(&deterministic_output.stderr)
+    );
+
+    let collection_schema = serde_json::json!({
+        "result": {"config": {"params": {"vectors": {
+            "size": DIMENSION,
+            "distance": "Cosine"
+        }}}}
+    });
+    let (qdrant_url, qdrant) = spawn_http_responses(vec![
+        (200, collection_schema.clone()),
+        (
+            200,
+            serde_json::json!({
+                "result": [{"id": symbol_id, "score": 0.9, "payload": {}}]
+            }),
+        ),
+    ]);
+    let (daemon_url, daemon) = spawn_http_responses_after_probes(vec![(
+        200,
+        serde_json::json!({
+            "embeddings": [[0.1, 0.2, 0.3]],
+            "model": MODEL,
+            "dim": DIMENSION
+        }),
+    )]);
+    let connections =
+        gobby_core::grant::DirectConnections::postgres(database_url).with_qdrant(&qdrant_url, None);
+    let response = run_with_audited_services(project, home, &connections, &daemon_url, &request)?;
+    assert_eq!(response.contract.hybrid, Some(identity.clone()));
+    assert_eq!(response.items.len(), 1);
+    let qdrant_requests = qdrant.join().expect("Qdrant fixture thread")?;
+    assert!(qdrant_requests[0].starts_with(&format!("GET /collections/{index_id} ")));
+    assert!(
+        qdrant_requests[1].starts_with(&format!("POST /collections/{index_id}/points/search "))
+    );
+    let daemon_requests = daemon.join().expect("daemon fixture thread")?;
+    assert!(daemon_requests[0].starts_with("POST /api/embeddings "));
+    let daemon_body: Value = serde_json::from_str(
+        daemon_requests[0]
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .expect("daemon request body"),
+    )?;
+    assert_eq!(daemon_body["model"], MODEL);
+    assert_eq!(daemon_body["is_query"], true);
+
+    let (qdrant_url, qdrant) = spawn_http_responses(vec![(200, collection_schema.clone())]);
+    let connections =
+        gobby_core::grant::DirectConnections::postgres(database_url).with_qdrant(&qdrant_url, None);
+    let mut changed = request.clone();
+    let EvidenceOperation::Search { search } = &mut changed.operation else {
+        unreachable!("hybrid request remains a search")
+    };
+    search
+        .hybrid_identity
+        .as_mut()
+        .expect("hybrid identity")
+        .model = "changed-model".to_string();
+    let output = run_raw_with_audited_services(
+        project,
+        home,
+        &connections,
+        "http://127.0.0.1:1",
+        &serde_json::to_string(&changed)?,
+    )?;
+    assert_error(&output, "semantic_identity_mismatch");
+    qdrant.join().expect("Qdrant mismatch fixture thread")?;
+
+    let (qdrant_url, qdrant) = spawn_http_responses(vec![(404, serde_json::json!({}))]);
+    let connections =
+        gobby_core::grant::DirectConnections::postgres(database_url).with_qdrant(&qdrant_url, None);
+    let output = run_raw_with_audited_services(
+        project,
+        home,
+        &connections,
+        "http://127.0.0.1:1",
+        &serde_json::to_string(&request)?,
+    )?;
+    assert_error(&output, "semantic_failure");
+    qdrant.join().expect("missing Qdrant fixture thread")?;
+
+    let (qdrant_url, qdrant) = spawn_http_responses(vec![(200, collection_schema)]);
+    let (daemon_url, daemon) =
+        spawn_http_responses_after_probes(vec![(400, serde_json::json!({"error": "denied"}))]);
+    let connections =
+        gobby_core::grant::DirectConnections::postgres(database_url).with_qdrant(&qdrant_url, None);
+    let output = run_raw_with_audited_services(
+        project,
+        home,
+        &connections,
+        &daemon_url,
+        &serde_json::to_string(&request)?,
+    )?;
+    assert_error(&output, "semantic_failure");
+    qdrant.join().expect("Qdrant provider fixture thread")?;
+    daemon.join().expect("daemon failure fixture thread")?;
+
+    Ok(())
+}
+
+#[cfg(gcode_postgres_tests)]
+fn run_with_audited_services(
+    project: &std::path::Path,
+    home: &std::path::Path,
+    connections: &gobby_core::grant::DirectConnections,
+    daemon_url: &str,
+    request: &gobby_code::evidence::EvidenceRequest,
+) -> anyhow::Result<gobby_code::evidence::EvidenceResponse> {
+    let output = run_raw_with_audited_services(
+        project,
+        home,
+        connections,
+        daemon_url,
+        &serde_json::to_string(request)?,
+    )?;
+    anyhow::ensure!(
+        output.status.success(),
+        "audited hybrid evidence request failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+#[cfg(gcode_postgres_tests)]
+fn run_raw_with_audited_services(
+    project: &std::path::Path,
+    home: &std::path::Path,
+    connections: &gobby_core::grant::DirectConnections,
+    daemon_url: &str,
+    request_json: &str,
+) -> anyhow::Result<std::process::Output> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+    command
+        .current_dir(project)
+        .args(["--quiet", "--project"])
+        .arg(project)
+        .args(["evidence", "--request-json", request_json]);
+    attach_audited_hybrid_grant(&mut command, home, PROJECT_ID, connections, daemon_url)?;
+    Ok(command.output()?)
+}
+
+#[cfg(gcode_postgres_tests)]
+fn attach_audited_hybrid_grant(
+    command: &mut Command,
+    home: &std::path::Path,
+    project_id: &str,
+    connections: &gobby_core::grant::DirectConnections,
+    daemon_url: &str,
+) -> anyhow::Result<()> {
+    use std::collections::BTreeMap;
+
+    let machine = std::fs::read_to_string(home.join("machine_id"))?;
+    let mut grant =
+        gobby_core::grant::managed_direct_grant(project_id, machine.trim(), connections);
+    grant.capabilities.embed = gobby_core::grant::AiCapability::Daemon {};
+    grant = grant.with_checksum();
+    let settings = gobby_core::grant::CachedSettings {
+        config_revision: grant.config_revision,
+        settings: BTreeMap::from([
+            ("ai.embeddings.routing".to_string(), "daemon".to_string()),
+            (
+                "ai.embeddings.transport".to_string(),
+                "openai_compatible_http".to_string(),
+            ),
+            (
+                "ai.embeddings.provider".to_string(),
+                "audited-provider".to_string(),
+            ),
+            (
+                "ai.embeddings.api_base".to_string(),
+                "https://embedding.example.invalid/v1".to_string(),
+            ),
+            (
+                "ai.embeddings.model".to_string(),
+                "audited-model".to_string(),
+            ),
+            ("ai.embeddings.dim".to_string(), "3".to_string()),
+        ]),
+    };
+    let grant_dir = home.join("grants/audited-hybrid");
+    std::fs::create_dir_all(&grant_dir)?;
+    let path = grant_dir.join("grant.json");
+    gobby_core::grant::write_coherent_pair(&path, &grant, &settings)?;
+    std::fs::write(home.join("local_cli_token"), "audited-test-token\n")?;
+    command
+        .env("GOBBY_HOME", home)
+        .env("GOBBY_DAEMON_URL", daemon_url)
+        .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path)
+        .env_remove("GOBBY_AGENT_API_TOKEN")
+        .env_remove("GOBBY_AGENT_RUN_ID")
+        .env_remove("GOBBY_MANAGED_EXECUTION_ID");
     Ok(())
 }
 
@@ -616,6 +939,16 @@ fn indexed_hash(conn: &mut postgres::Client) -> anyhow::Result<String> {
             "SELECT content_hash FROM code_indexed_files
              WHERE project_id = $1 AND file_path = $2",
             &[&uuid_param(), &FILE_PATH],
+        )?
+        .get(0))
+}
+
+#[cfg(gcode_postgres_tests)]
+fn first_symbol_id(conn: &mut postgres::Client) -> anyhow::Result<String> {
+    Ok(conn
+        .query_one(
+            "SELECT id::text FROM code_symbols WHERE project_id = $1 ORDER BY id LIMIT 1",
+            &[&uuid_param()],
         )?
         .get(0))
 }
