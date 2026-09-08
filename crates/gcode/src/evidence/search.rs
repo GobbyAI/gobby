@@ -86,7 +86,7 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> R
     })
 }
 
-fn validate_selector(selector: &SearchSelector) -> Result<()> {
+pub(super) fn validate_selector(selector: &SearchSelector) -> Result<()> {
     if selector.query.trim().is_empty() {
         return Err(EvidenceError::InvalidSelector {
             detail: "search query must not be empty".to_string(),
@@ -339,7 +339,7 @@ fn hybrid_search(
     Ok((
         symbols_to_items(library, symbols)?,
         lexical.truncated || semantic.truncated || union_truncated,
-        Some(expected.clone()),
+        Some(effective),
     ))
 }
 

@@ -7,6 +7,19 @@ use std::time::{Duration, Instant};
 pub fn spawn_http_responses(
     responses: Vec<(u16, Value)>,
 ) -> (String, JoinHandle<io::Result<Vec<String>>>) {
+    spawn_http_responses_with_probe_policy(responses, false)
+}
+
+pub fn spawn_http_responses_after_probes(
+    responses: Vec<(u16, Value)>,
+) -> (String, JoinHandle<io::Result<Vec<String>>>) {
+    spawn_http_responses_with_probe_policy(responses, true)
+}
+
+fn spawn_http_responses_with_probe_policy(
+    responses: Vec<(u16, Value)>,
+    ignore_empty_probes: bool,
+) -> (String, JoinHandle<io::Result<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     listener
         .set_nonblocking(true)
@@ -15,9 +28,21 @@ pub fn spawn_http_responses(
     let handle = thread::spawn(move || {
         let mut requests = Vec::new();
         for (status, body) in responses {
-            let mut stream = accept_with_timeout(&listener, Duration::from_secs(5))?;
-            stream.set_nonblocking(false)?;
-            requests.push(read_http_request(&mut stream)?);
+            let (mut stream, request) = loop {
+                let mut stream = accept_with_timeout(&listener, Duration::from_secs(5))?;
+                stream.set_nonblocking(false)?;
+                match read_http_request(&mut stream)? {
+                    Some(request) => break (stream, request),
+                    None if ignore_empty_probes => continue,
+                    None => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "connection closed before HTTP request",
+                        ));
+                    }
+                }
+            };
+            requests.push(request);
 
             let body = body.to_string();
             write!(
@@ -52,7 +77,7 @@ fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> io::Result<
     }
 }
 
-fn read_http_request(stream: &mut TcpStream) -> io::Result<String> {
+fn read_http_request(stream: &mut TcpStream) -> io::Result<Option<String>> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut request = Vec::new();
     let mut buffer = [0; 4096];
@@ -61,6 +86,9 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<String> {
     loop {
         match stream.read(&mut buffer) {
             Ok(0) => {
+                if request.is_empty() {
+                    return Ok(None);
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "connection closed before complete test HTTP request",
@@ -92,7 +120,7 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<String> {
         if let Some(expected_len) = expected_len
             && request.len() >= expected_len
         {
-            return Ok(String::from_utf8_lossy(&request).into_owned());
+            return Ok(Some(String::from_utf8_lossy(&request).into_owned()));
         }
     }
 }

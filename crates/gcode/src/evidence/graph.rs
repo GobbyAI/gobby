@@ -84,7 +84,7 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &GraphSelector) -> Re
     })
 }
 
-fn validate_selector(selector: &GraphSelector) -> Result<()> {
+pub(super) fn validate_selector(selector: &GraphSelector) -> Result<()> {
     if selector.limit == 0 {
         return Err(EvidenceError::InvalidSelector {
             detail: "graph limit must be positive".to_string(),

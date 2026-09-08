@@ -20,6 +20,25 @@ pub use snapshot::Snapshot;
 
 pub type Result<T> = std::result::Result<T, EvidenceError>;
 
+/// Validate the schema and selector shape without touching Git or external services.
+pub fn validate_request_shape(request: &EvidenceRequest) -> Result<()> {
+    if request.schema_version != EVIDENCE_SCHEMA_VERSION {
+        return Err(EvidenceError::UnsupportedSchema {
+            found: request.schema_version,
+        });
+    }
+    if request.max_bytes == 0 {
+        return Err(EvidenceError::InvalidSelector {
+            detail: "max_bytes must be positive".to_string(),
+        });
+    }
+    match &request.operation {
+        EvidenceOperation::Search { search } => search::validate_selector(search),
+        EvidenceOperation::Read { read } => read::validate_selector(read),
+        EvidenceOperation::Graph { graph } => graph::validate_selector(graph),
+    }
+}
+
 #[derive(Debug)]
 pub enum EvidenceError {
     BindingMismatch {
@@ -324,19 +343,10 @@ impl EvidenceLibrary {
     }
 
     fn validate_request(&self, request: &EvidenceRequest) -> Result<()> {
-        if request.schema_version != EVIDENCE_SCHEMA_VERSION {
-            return Err(EvidenceError::UnsupportedSchema {
-                found: request.schema_version,
-            });
-        }
+        validate_request_shape(request)?;
         if request.binding != *self.snapshot.binding() {
             return Err(EvidenceError::BindingMismatch {
                 detail: "request binding differs from verified snapshot".to_string(),
-            });
-        }
-        if request.max_bytes == 0 {
-            return Err(EvidenceError::InvalidSelector {
-                detail: "max_bytes must be positive".to_string(),
             });
         }
         Ok(())
