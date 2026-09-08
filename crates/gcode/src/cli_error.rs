@@ -1,9 +1,13 @@
 //! Typed public CLI errors for grant-gated dispatch.
 
-use std::fmt;
+use std::{fmt, fs, path::Path};
 
 use gobby_core::grant::GrantError;
+use gobby_core::schema::SchemaIdentityContract;
 use serde_json::json;
+
+const EXPECTED_IDENTITY_PATH: &str = "src/gobby/storage/schema_expected_identity.json";
+const CUTOVER_RECOVERY: &str = "run `uv run gobby cutover --path .` from this source checkout";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliError {
@@ -21,6 +25,25 @@ impl CliError {
             recovery: grant_recovery(&error).map(str::to_string),
             exit_status: error.exit_status() as u8,
         }
+    }
+
+    pub fn grant_for_checkout(error: GrantError, project_root: &Path) -> Self {
+        let mut rendered = Self::grant(error);
+        if rendered.code != "schema_mismatch" {
+            return rendered;
+        }
+        let Some((embedded_version, expected_version)) = schema_identity_versions(project_root)
+        else {
+            return rendered;
+        };
+        if embedded_version == expected_version {
+            return rendered;
+        }
+        rendered.message = format!(
+            "schema identity mismatch: installed/embedded schema v{embedded_version} does not match checkout-expected schema v{expected_version}"
+        );
+        rendered.recovery = Some(CUTOVER_RECOVERY.to_string());
+        rendered
     }
 
     pub fn project_required() -> Self {
@@ -146,9 +169,8 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
         GrantError::Expired | GrantError::Revoked => Some(
             "re-run the command after the daemon reissues the grant; if it persists, restart the session",
         ),
-        GrantError::SchemaMismatch
-        | GrantError::DeploymentMismatch
-        | GrantError::ConfigRevisionMismatch => {
+        GrantError::SchemaMismatch => Some(CUTOVER_RECOVERY),
+        GrantError::DeploymentMismatch | GrantError::ConfigRevisionMismatch => {
             Some("restart the Gobby daemon so grants match the installed schema and config")
         }
         GrantError::Timeout
@@ -158,13 +180,53 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
     }
 }
 
+fn schema_identity_versions(project_root: &Path) -> Option<(i32, i32)> {
+    let raw = fs::read(project_root.join(EXPECTED_IDENTITY_PATH)).ok()?;
+    let expected: SchemaIdentityContract = serde_json::from_slice(&raw).ok()?;
+    Some((
+        SchemaIdentityContract::embedded().latest_version,
+        expected.latest_version,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::CliError;
     use gobby_core::grant::GrantError;
+    use gobby_core::schema::SchemaIdentityContract;
 
     const SKEW_RECOVERY: &str = "rebuild and reinstall the ~/.gobby/bin binaries (`gobby install`), or restart the Gobby daemon that matches them";
     const DAEMON_RECOVERY: &str = "start the Gobby daemon (`gobby start`)";
+
+    #[test]
+    fn schema_mismatch_names_identity_versions_and_exact_cutover() -> anyhow::Result<()> {
+        let checkout = tempfile::tempdir()?;
+        let identity_path = checkout
+            .path()
+            .join("src/gobby/storage/schema_expected_identity.json");
+        std::fs::create_dir_all(identity_path.parent().expect("identity path has parent"))?;
+        let embedded = SchemaIdentityContract::embedded();
+        let expected = SchemaIdentityContract {
+            latest_version: embedded.latest_version + 1,
+            ..embedded.clone()
+        };
+        std::fs::write(identity_path, serde_json::to_vec(&expected)?)?;
+
+        let rendered = CliError::grant_for_checkout(GrantError::SchemaMismatch, checkout.path());
+
+        assert_eq!(
+            rendered.message,
+            format!(
+                "schema identity mismatch: installed/embedded schema v{} does not match checkout-expected schema v{}",
+                embedded.latest_version, expected.latest_version
+            )
+        );
+        assert_eq!(
+            rendered.recovery.as_deref(),
+            Some("run `uv run gobby cutover --path .` from this source checkout")
+        );
+        Ok(())
+    }
 
     #[test]
     fn payload_skew_grant_error_includes_reinstall_recovery() {
