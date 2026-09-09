@@ -89,6 +89,14 @@ class SynthesisReporter:
                     if agent is not None and agent.status in {"pending", "running"}:
                         return  # The lifecycle monitor owns this live writer's timeout.
                 if agent is None or agent.status != "success":
+                    if (
+                        agent is not None
+                        and agent.started_at is None
+                        and agent.error
+                        and transient_publication_error(agent.error)
+                    ):
+                        await asyncio.to_thread(self.store.phase, attempt_id, "launch")
+                        raise OSError(agent.error)
                     raise RuntimeError(
                         agent.error
                         if agent is not None and agent.error

@@ -158,7 +158,7 @@ class FeedbackReviewService:
                     attempt["agent_run_id"] = exc.agent_run_id
                 if isinstance(exc, FeedbackReviewerLaunchError):
                     attempt["phase"] = "launch"
-                    if index == 0 and isinstance(exc.__cause__, (OSError, TimeoutError)):
+                    if index == 0 and exc.transient:
                         continue
                 raise
             finally:

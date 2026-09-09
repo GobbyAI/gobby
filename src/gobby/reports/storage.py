@@ -278,14 +278,19 @@ class ReportStore:
         for row in unlinked:
             self.attach_agent(str(row["id"]), str(row["agent_run_id"]), str(row["worktree_id"]))
         rows = self.db.fetchall(
-            """SELECT a.id, a.agent_run_id FROM synthesis_report_attempts a LEFT JOIN agent_runs r ON r.id = a.agent_run_id
+            """SELECT a.id, a.agent_run_id, r.error, r.started_at AS agent_started_at
+            FROM synthesis_report_attempts a LEFT JOIN agent_runs r ON r.id = a.agent_run_id
             WHERE a.status = 'running' AND (r.id IS NULL OR r.status NOT IN ('pending', 'running', 'success'))"""
         )
         for row in rows:
+            launch_failed = row["agent_started_at"] is None and bool(row["error"])
+            if launch_failed:
+                self.phase(str(row["id"]), "launch")
             self.fail(
                 str(row["id"]),
-                "daemon restarted during publication",
-                transient=row["agent_run_id"] is None,
+                row["error"] or "daemon restarted during publication",
+                transient=row["agent_run_id"] is None
+                or (launch_failed and transient_publication_error(str(row["error"]))),
                 interrupted=True,
             )
 

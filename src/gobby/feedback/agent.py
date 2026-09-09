@@ -105,6 +105,19 @@ class FeedbackReviewerError(RuntimeError):
 class FeedbackReviewerLaunchError(FeedbackReviewerError):
     """The named reviewer could not be launched."""
 
+    @property
+    def transient(self) -> bool:
+        return isinstance(self.__cause__, (OSError, TimeoutError)) or any(
+            message in str(self).lower()
+            for message in (
+                "temporarily unavailable",
+                "connection reset",
+                "input/output error",
+                "message too long",
+                "socket unavailable",
+            )
+        )
+
 
 class FeedbackReviewerRunError(FeedbackReviewerError):
     """The named reviewer reached a non-success terminal state."""
@@ -263,26 +276,10 @@ class FeedbackReviewerAgent:
         run_id = str(run_id_value) if run_id_value else None
         if not spawn_result.get("success") or run_id is None:
             detail = str(spawn_result.get("error") or "spawn returned no agent run")
-            # The spawn boundary serializes exceptions. Recover only known
-            # transport failures; invalid definitions stay explicit failures.
-            cause = (
-                OSError(detail)
-                if any(
-                    message in detail.lower()
-                    for message in (
-                        "temporarily unavailable",
-                        "connection reset",
-                        "input/output error",
-                        "message too long",
-                        "socket unavailable",
-                    )
-                )
-                else None
-            )
             raise FeedbackReviewerLaunchError(
                 f"feedback reviewer launch failed: {detail}",
                 agent_run_id=run_id,
-            ) from cause
+            )
 
         completion_error: Exception | None = None
         try:
@@ -311,6 +308,10 @@ class FeedbackReviewerAgent:
             )
         if run.status != "success":
             detail = run.error or run.result or f"terminal status {run.status}"
+            if run.started_at is None and run.error:
+                raise FeedbackReviewerLaunchError(
+                    f"feedback reviewer background launch failed: {detail}", agent_run_id=run_id
+                )
             raise FeedbackReviewerRunError(
                 f"feedback reviewer agent {run_id} failed: {detail}",
                 agent_run_id=run_id,
