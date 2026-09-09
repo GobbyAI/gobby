@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.tools.tasks._context import (
+    CHECKOUT_RESOLUTION_ERRORS,
+    RegistryContext,
+    checkout_unresolved_error,
+)
 from gobby.plans.semantic_lint import find_file_paths_in_text
+from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
-from gobby.utils.git import run_git_command
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -73,7 +81,7 @@ class TaskScopeEvaluation:
         )
 
 
-def evaluate_task_scope(
+async def evaluate_task_scope_async(
     *,
     db: HubDatabase,
     task: Task,
@@ -93,7 +101,7 @@ def evaluate_task_scope(
     if (declared_paths or advisory_paths) and commit_list:
         if not repo_path:
             raise RuntimeError("No repository path is available for linked commit inspection.")
-        actual_paths.update(collect_commit_paths(commit_list, repo_path))
+        actual_paths.update(await collect_commit_paths_async(commit_list, repo_path))
 
     if _BUNDLED_CONTENT_MANIFEST in actual_paths and any(
         _path_is_under(path, _SHARED_INSTALL_ROOT) for path in actual_paths
@@ -133,6 +141,11 @@ def evaluate_task_scope(
         scope_justification=justification,
         justification_error=justification_error,
     )
+
+
+def evaluate_task_scope(**kwargs: Any) -> TaskScopeEvaluation:
+    """Offline synchronous facade for direct-library consumers."""
+    return asyncio.run(evaluate_task_scope_async(**kwargs))
 
 
 def collect_declared_task_scope(db: HubDatabase, task: Task) -> set[str]:
@@ -196,22 +209,58 @@ def find_targets_not_found(repo_path: str, targets: Iterable[str]) -> list[str]:
     return sorted({target for target in targets if not (root / target).exists()})
 
 
-def collect_commit_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
+def targets_not_found_for_request(
+    ctx: RegistryContext,
+    *,
+    project_id: str,
+    session_id: str | None,
+    description: str | None,
+    affected_files: list[str] | None,
+) -> list[str] | dict[str, Any]:
+    """Return missing targets from the session's registered operation checkout."""
+    targets = collect_declared_task_targets(description, affected_files)
+    if not targets:
+        return []
+    try:
+        resolved_session = ctx.resolve_session_id(session_id) if session_id else None
+        session = ctx.session_manager.get(resolved_session) if resolved_session else None
+        machine_id = ctx.checkout_machine_id(project_id, session_id)
+        primary = ctx.get_project_repo_path(project_id, machine_id)
+        workspace = getattr(session, "workspace_path", None)
+        repo_path = primary
+        if workspace and (not primary or os.path.realpath(workspace) != os.path.realpath(primary)):
+            repo_path = resolve_operation_root(
+                ctx.task_manager.db,
+                project_id,
+                machine_id,
+                overlay_path=workspace,
+            )
+    except CHECKOUT_RESOLUTION_ERRORS as exc:
+        return checkout_unresolved_error(exc)
+    return [] if repo_path is None else find_targets_not_found(repo_path, targets)
+
+
+async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     """Return normalized paths changed by each prospective linked commit."""
     paths: set[str] = set()
     for sha in commit_shas:
-        output = run_git_command(
-            ["git", "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha],
+        result = await daemon_git.run(
+            ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha],
             cwd=repo_path,
             timeout=10,
         )
-        if output is None:
+        if not isinstance(result, GitOk):
             raise RuntimeError(f"Cannot inspect changed paths for commit {sha}.")
-        for path in output.splitlines():
+        for path in result.stdout.splitlines():
             normalized = _normalize_repo_path(path)
             if normalized is not None:
                 paths.add(normalized)
     return paths
+
+
+def collect_commit_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
+    """Offline synchronous facade for direct-library consumers."""
+    return asyncio.run(collect_commit_paths_async(commit_shas, repo_path))
 
 
 def _iter_target_block_lines(description: str) -> Iterable[str]:

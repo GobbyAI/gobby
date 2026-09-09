@@ -106,8 +106,11 @@ class SynthesisReporter:
                     )
             report = await asyncio.to_thread(self.store.get, kind, run_id)
             await asyncio.to_thread(self.store.phase, attempt_id, "verification")
-            await asyncio.to_thread(
-                verify_publication, self.store, report, Path(self.git_manager.repo_path), attempt_id
+            await verify_publication(
+                self.store,
+                report,
+                Path(self.git_manager.repo_path),
+                attempt_id,
             )
         except asyncio.CancelledError:
             # The child may still be running. Preserve its attempt and reattach

@@ -16,6 +16,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.task_affected_files import AnnotationSource, TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
 
     # --- update_observed_files ---
 
-    def update_observed_files(
+    async def update_observed_files(
         task_id: str,
         require_commits: bool = False,
     ) -> dict[str, Any]:
@@ -60,8 +61,6 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
         Returns:
             Dict with task_id, commits_processed, files_observed, and files list
         """
-        import subprocess
-
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
@@ -115,19 +114,23 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
         all_files: set[str] = set()
         commits_processed = 0
         for sha in commit_shas:
-            try:
-                result = subprocess.run(
-                    ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    cwd=repo_path,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    all_files.update(result.stdout.strip().split("\n"))
-                    commits_processed += 1
-            except (subprocess.TimeoutExpired, FileNotFoundError):
+            result = await daemon_git.run(
+                ("diff-tree", "--no-commit-id", "--name-only", "-r", sha),
+                cwd=repo_path,
+                timeout=10,
+            )
+            if not isinstance(result, GitOk):
                 logger.warning("Failed to get diff-tree for commit %s", sha)
+                return {
+                    "task_id": resolved_id,
+                    "commits_processed": 0,
+                    "files_observed": 0,
+                    "files": [],
+                    "error": f"Git is unavailable while inspecting commit {sha}",
+                }
+            if result.stdout.strip():
+                all_files.update(result.stdout.strip().split("\n"))
+            commits_processed += 1
 
         if all_files:
             af_manager.set_files(resolved_id, sorted(all_files), "observed")

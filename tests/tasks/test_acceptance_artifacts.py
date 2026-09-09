@@ -7,6 +7,7 @@ import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -360,7 +361,7 @@ def test_feature() -> None:
     test_other()
     assert value or True
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
 
     result = evaluate_acceptance_artifacts(
         criteria="Feature works.\ntest: tests/test_feature.py::test_feature",
@@ -383,7 +384,7 @@ fn protocol_frame_roundtrip() {
     assert_eq!(format!("{}", 256), "256");
 }
 """
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
 
     result = evaluate_acceptance_artifacts(
         criteria=(
@@ -436,7 +437,7 @@ def test_test_named_helper_call_is_not_delegation(
     symbol: str,
     body: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
@@ -481,7 +482,7 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     body: str,
     finding: str,
 ) -> None:
-    monkeypatch.setattr(artifacts_module, "_resolve_test_body", lambda *_args: body)
+    monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=body))
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",

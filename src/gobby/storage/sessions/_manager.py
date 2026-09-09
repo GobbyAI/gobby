@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.sessions.status_events import SessionStatusTransitionCallback
@@ -251,18 +250,6 @@ class SessionManager(
             resource_kind="session",
             resource_id=external_id,
         )
-        working_dir = project_path or str(Path.cwd())
-
-        if not git_branch:
-            try:
-                from gobby.utils.git import get_git_branch
-
-                git_branch = get_git_branch(working_dir)
-                if git_branch:
-                    self.logger.debug("Extracted git_branch from project_path: %s", git_branch)
-            except Exception as e:
-                self.logger.debug("Could not extract git_branch: %s", e)
-
         try:
             session = self.register(
                 external_id=external_id,

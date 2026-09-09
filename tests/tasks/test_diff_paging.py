@@ -26,6 +26,7 @@ from gobby.tasks.diff_paging import (
     DiffPagingError,
     decode_content,
     get_task_diff_page,
+    get_task_diff_page_async,
     read_file_at_commit,
     serialized_page_size,
 )
@@ -522,9 +523,9 @@ def test_manifest_limit_zero_skips_numstat(repo: Path, monkeypatch: pytest.Monke
     calls: list[tuple[str | bytes, ...]] = []
     original_run_git = diff_paging._run_git
 
-    def recording_run_git(args: list[str | bytes], **kwargs: Any) -> None:
+    async def recording_run_git(args: list[str | bytes], **kwargs: Any) -> tuple[int, bytes]:
         calls.append(tuple(args))
-        original_run_git(args, **kwargs)
+        return await original_run_git(args, **kwargs)
 
     monkeypatch.setattr(diff_paging, "_run_git", recording_run_git)
 
@@ -549,9 +550,11 @@ def test_manifest_offset_skips_numstat_for_noncontributing_commits(
     numstat_commits: list[str] = []
     original_numstat = diff_paging._numstat_totals
 
-    def recording_numstat(commit: str, **kwargs: Any) -> dict[bytes, tuple[int | None, int | None]]:
+    async def recording_numstat(
+        commit: str, **kwargs: Any
+    ) -> dict[bytes, tuple[int | None, int | None]]:
         numstat_commits.append(commit)
-        return original_numstat(commit, **kwargs)
+        return await original_numstat(commit, **kwargs)
 
     monkeypatch.setattr(diff_paging, "_numstat_totals", recording_numstat)
     initial = get_task_diff_page(
@@ -620,12 +623,8 @@ def _hanging_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return bin_dir
 
 
-def _assert_process_absent(pid: int) -> None:
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
-
-
-def test_sync_mcp_path_returns_git_timeout_and_reaps_child(
+@pytest.mark.asyncio
+async def test_mcp_path_returns_typed_git_timeout(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _hanging_git(tmp_path, monkeypatch)
@@ -637,17 +636,16 @@ def test_sync_mcp_path_returns_git_timeout_and_reaps_child(
     registry = create_commit_registry(
         task_manager=cast(Any, manager),
         project_manager=cast(Any, _ProjectManager(repo)),
-        get_task_diff_page_fn=get_task_diff_page,
+        get_task_diff_page_fn=get_task_diff_page_async,
         git_timeout_seconds=0.05,
     )
 
-    result = registry.call_sync(
+    result = await registry.call(
         "get_task_diff", {"task_id": "task-id", "include_uncommitted": True}
     )
 
     assert result["error_code"] == "git_timeout"
-    assert result["details"]["reaped"] is True
-    _assert_process_absent(cast(int, result["details"]["pid"]))
+    assert result["details"]["timeout_seconds"] == pytest.approx(0.05, abs=0.01)
 
 
 @pytest.mark.parametrize(
@@ -676,8 +674,10 @@ def test_smaller_git_deadline_wins(
 
     assert error.value.code == "git_timeout"
     assert time.monotonic() - started < 0.3
-    assert error.value.details["reaped"] is True
-    _assert_process_absent(cast(int, error.value.details["pid"]))
+    assert error.value.details["timeout_seconds"] == pytest.approx(
+        min(server_timeout, caller_timeout),
+        abs=0.02,
+    )
 
 
 def test_mcp_schema_enforces_all_server_maxima(repo: Path) -> None:

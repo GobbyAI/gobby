@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import subprocess
 from collections.abc import Callable
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -21,6 +20,7 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_closed,
 )
+from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, GitTimeout, daemon_git
 from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
@@ -205,8 +205,7 @@ class FeedbackActions:
                 if recent_closed_tasks:
                     if repo_root is None:
                         repo_root = await asyncio.to_thread(self._gobby_repo_root, project_id)
-                    closed_duplicate = await asyncio.to_thread(
-                        _find_reachable_closed_duplicate,
+                    closed_duplicate = await _find_reachable_closed_duplicate(
                         recent_closed_tasks,
                         cluster,
                         title,
@@ -241,8 +240,7 @@ class FeedbackActions:
                 if cited_paths:
                     if repo_root is None:
                         repo_root = await asyncio.to_thread(self._gobby_repo_root, project_id)
-                    missing_paths = await asyncio.to_thread(
-                        _missing_paths_at_head,
+                    missing_paths = await _missing_paths_at_head(
                         repo_root,
                         cited_paths,
                     )
@@ -251,8 +249,7 @@ class FeedbackActions:
                         priority = 3
 
                     newest_observation_at = _newest_observation_at(observation_ids, rows_by_id)
-                    newest_touch = await asyncio.to_thread(
-                        _newest_touching_commit,
+                    newest_touch = await _newest_touching_commit(
                         repo_root,
                         cited_paths,
                     )
@@ -523,7 +520,7 @@ def _find_duplicate(candidates: list[Any], cluster: dict[str, Any], title: str) 
     return None
 
 
-def _find_reachable_closed_duplicate(
+async def _find_reachable_closed_duplicate(
     candidates: list[Any],
     cluster: dict[str, Any],
     title: str,
@@ -534,12 +531,12 @@ def _find_reachable_closed_duplicate(
             continue
         if _find_duplicate([candidate], cluster, title) is None:
             continue
-        if _task_commits_reachable_from_head(repo_root, candidate):
+        if await _task_commits_reachable_from_head(repo_root, candidate):
             return candidate
     return None
 
 
-def _task_commits_reachable_from_head(repo_root: Path, task: Any) -> bool:
+async def _task_commits_reachable_from_head(repo_root: Path, task: Any) -> bool:
     raw_commits = getattr(task, "commits", None)
     if not isinstance(raw_commits, (list, tuple)) or not raw_commits:
         return False
@@ -547,7 +544,7 @@ def _task_commits_reachable_from_head(repo_root: Path, task: Any) -> bool:
     if any(not commit for commit in commits):
         return False
     for commit in commits:
-        result = _run_git(repo_root, "merge-base", "--is-ancestor", commit, "HEAD")
+        result = await _run_git(repo_root, "merge-base", "--is-ancestor", commit, "HEAD")
         if result.returncode == 0:
             continue
         if result.returncode != 1:
@@ -592,45 +589,43 @@ def _repo_relative_path(value: str) -> str | None:
     return normalized if normalized not in {"", "."} else None
 
 
-def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo_root), *args],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=30,
-    )
+async def _run_git(repo_root: Path, *args: str) -> GitResult:
+    return await daemon_git.run(args, cwd=repo_root, timeout=30)
 
 
-def _require_git_head(repo_root: Path) -> None:
-    result = _run_git(repo_root, "rev-parse", "--verify", "HEAD")
-    if result.returncode != 0:
+async def _require_git_head(repo_root: Path) -> None:
+    result = await _run_git(repo_root, "rev-parse", "--verify", "HEAD")
+    if not isinstance(result, GitOk):
         detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
         raise RuntimeError(f"unable to verify feedback paths at HEAD: {detail}")
 
 
-def _missing_paths_at_head(repo_root: Path, cited_paths: list[str]) -> list[str]:
-    _require_git_head(repo_root)
+async def _missing_paths_at_head(repo_root: Path, cited_paths: list[str]) -> list[str]:
+    await _require_git_head(repo_root)
     missing: list[str] = []
     for cited_path in cited_paths:
         repo_path = _repo_relative_path(cited_path)
         if repo_path is None:
             missing.append(cited_path)
             continue
-        result = _run_git(repo_root, "cat-file", "-e", f"HEAD:{repo_path}")
-        if result.returncode != 0:
+        result = await _run_git(repo_root, "cat-file", "-e", f"HEAD:{repo_path}")
+        if isinstance(result, GitTimeout) or (
+            isinstance(result, GitFailed) and result.returncode is None
+        ):
+            raise RuntimeError("unable to verify feedback paths at HEAD: git unavailable")
+        if not isinstance(result, GitOk):
             missing.append(cited_path)
     return missing
 
 
-def _newest_touching_commit(
+async def _newest_touching_commit(
     repo_root: Path,
     cited_paths: list[str],
 ) -> tuple[str, datetime] | None:
     repo_paths = [path for value in cited_paths if (path := _repo_relative_path(value))]
     if not repo_paths:
         return None
-    result = _run_git(
+    result = await _run_git(
         repo_root,
         "log",
         "-1",
@@ -638,7 +633,7 @@ def _newest_touching_commit(
         "--",
         *repo_paths,
     )
-    if result.returncode != 0:
+    if not isinstance(result, GitOk):
         detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
         raise RuntimeError(f"unable to check feedback path recency: {detail}")
     payload = result.stdout.strip()

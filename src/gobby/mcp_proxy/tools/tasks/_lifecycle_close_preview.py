@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 )
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_checklist import CloseGateResult
+from gobby.utils.daemon_git import normalize_commit_sha
 
 
 @dataclass
@@ -164,7 +165,7 @@ class CloseEvaluation:
         return response
 
 
-def resolve_close_commit_shas(
+async def resolve_close_commit_shas(
     task_manager: LocalTaskManager,
     *,
     task: Task,
@@ -180,9 +181,9 @@ def resolve_close_commit_shas(
         if cwd is None:
             return resolved, _repo_path_error()
         try:
-            from gobby.tasks.commits import resolve_task_tagged_commits
+            from gobby.tasks.commits import resolve_task_tagged_commits_async
 
-            tagged = resolve_task_tagged_commits(
+            tagged = await resolve_task_tagged_commits_async(
                 task_manager,
                 task_id=task_id,
                 since=claim_started_at,
@@ -202,9 +203,7 @@ def resolve_close_commit_shas(
     if commit_sha:
         if cwd is None:
             return resolved, _repo_path_error()
-        from gobby.utils.git import normalize_commit_sha
-
-        normalized = normalize_commit_sha(commit_sha, cwd=cwd)
+        normalized = await normalize_commit_sha(commit_sha, cwd=cwd)
         if normalized is None:
             return resolved, {
                 "error": "invalid_commit_sha",
@@ -215,7 +214,7 @@ def resolve_close_commit_shas(
     return resolved, None
 
 
-def unlinked_tagged_commits(
+async def unlinked_tagged_commits(
     task_manager: LocalTaskManager,
     *,
     task: Task,
@@ -228,9 +227,9 @@ def unlinked_tagged_commits(
     if cwd is None:
         return ([], []), _repo_path_error()
     try:
-        from gobby.tasks.commits import unlinked_task_tagged_commits
+        from gobby.tasks.commits import unlinked_task_tagged_commits_async
 
-        divergence = unlinked_task_tagged_commits(
+        divergence = await unlinked_task_tagged_commits_async(
             task_manager,
             task_id=task_id,
             since=format_git_since(task.created_at),
@@ -265,7 +264,7 @@ def link_close_commit_shas(
         if cwd is None:
             return task, _repo_path_error()
         try:
-            task_manager.link_commit(task.id, commit_sha, cwd=cwd)
+            task_manager.link_commit(task.id, commit_sha)
         except ValueError as exc:
             return task, {"error": "commit_link_failed", "message": str(exc)}
         existing.add(commit_sha)

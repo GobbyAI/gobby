@@ -398,7 +398,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
 
             # Detect source type and load
             if _is_github_source(source, local_path_exists=local_import_path is not None):
-                parsed = await asyncio.to_thread(loader.load_from_github, source, validate=True)
+                parsed = await loader.load_from_github_async(source, validate=True)
                 scan_source_type = "github"
             elif source.endswith(".zip"):
                 zip_source = local_import_path or await _resolve_project_import_path(

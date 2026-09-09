@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,6 +14,7 @@ from gobby.runner_init.helpers import ensure_machine_identity
 from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.utils.daemon_git import GitTimeout, daemon_git
 from gobby.utils.session_context import session_context_for_test
 
 
@@ -449,7 +450,7 @@ class TestRegisterSession:
         session_manager.register.assert_not_called()
 
 
-def test_get_session_commits_uses_machine_checkout(  # tdd-red window
+async def test_get_session_commits_uses_machine_checkout(  # tdd-red window
     session_manager: SessionManager,
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -496,8 +497,47 @@ def test_get_session_commits_uses_machine_checkout(  # tdd-red window
     tool = registry.get_tool("get_session_commits")
     assert tool is not None
 
-    result = tool(session_id=session.id)
+    result = await registry.call("get_session_commits", {"session_id": session.id})
 
     assert result.get("success") is not False
     messages = [commit.get("message") for commit in result.get("commits", [])]
     assert "checkout-commit" in messages
+
+
+async def test_get_session_commits_fails_closed_when_git_times_out(
+    session_manager: SessionManager,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    repo = Path(tmp_path) / "repo"
+    isolated = install_isolated_checkout_project(session_manager.db, repo, monkeypatch=monkeypatch)
+    session = session_manager.register(
+        external_id="commits-timeout",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
+    monkeypatch.setattr(
+        daemon_git,
+        "run",
+        AsyncMock(
+            return_value=GitTimeout(
+                status="timeout",
+                argv=("git", "log"),
+                timeout=10.0,
+            )
+        ),
+    )
+    registry = create_session_messages_registry(
+        session_manager=session_manager,
+        db=session_manager.db,
+    )
+
+    result = await registry.call("get_session_commits", {"session_id": session.id})
+
+    assert result["success"] is False
+    assert result["error"] == "Git command timed out"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.workflows import task_dirty_state
 
 
@@ -46,6 +46,66 @@ def test_task_dirty_paths_batches_scoped_git_status(
             10,
         )
     ]
+
+
+async def test_committable_task_paths_async_filters_definitively_ignored_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], str, float, str | None]] = []
+
+    async def fake_run(
+        args: list[str],
+        *,
+        cwd: str,
+        timeout: float,
+        input_text: str | None = None,
+    ) -> GitOk:
+        calls.append((args, cwd, timeout, input_text))
+        return GitOk(
+            status="ok",
+            argv=("git", *args),
+            stdout="ignored.py\0",
+            stderr="",
+        )
+
+    monkeypatch.setattr(daemon_git, "run", fake_run)
+
+    assert await task_dirty_state.committable_task_paths_async(
+        {"tracked.py", "ignored.py"},
+        "/repo",
+    ) == {"tracked.py"}
+    assert calls == [
+        (
+            ["check-ignore", "--stdin", "-z"],
+            "/repo",
+            10.0,
+            "ignored.py\0tracked.py\0",
+        )
+    ]
+
+
+async def test_committable_task_paths_async_keeps_all_paths_when_git_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_run(
+        args: list[str],
+        *,
+        cwd: str,
+        timeout: float,
+        input_text: str | None = None,
+    ) -> GitFailed:
+        return GitFailed(
+            status="failed",
+            argv=("git", *args),
+            returncode=128,
+            stdout="",
+            stderr="fatal: unavailable",
+        )
+
+    monkeypatch.setattr(daemon_git, "run", fake_run)
+
+    paths = {"tracked.py", "possibly-ignored.py"}
+    assert await task_dirty_state.committable_task_paths_async(paths, "/repo") == paths
 
 
 def test_task_dirty_paths_keeps_leading_space_status_on_first_line(

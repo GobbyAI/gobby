@@ -188,7 +188,7 @@ async def test_list_commits_paginates_and_preserves_requested_limit() -> None:
 @pytest.mark.asyncio
 async def test_list_commits_uses_git_fallback_for_unexpected_mcp_shape() -> None:
     helper = _helper({"unexpected": "shape"})
-    helper._run_git = MagicMock(
+    helper._run_git_async = AsyncMock(
         return_value=SimpleNamespace(
             returncode=0,
             stdout=("abcdef1234567890\tabcdef1\tFrom git\tGit Author\t2026-07-11T00:00:00Z\n"),
@@ -207,7 +207,7 @@ async def test_list_commits_uses_git_fallback_for_unexpected_mcp_shape() -> None
             "date": "2026-07-11T00:00:00Z",
         }
     ]
-    helper._run_git.assert_called_once_with(
+    helper._run_git_async.assert_awaited_once_with(
         [
             "log",
             "main",
@@ -221,7 +221,7 @@ async def test_list_commits_uses_git_fallback_for_unexpected_mcp_shape() -> None
 @pytest.mark.asyncio
 async def test_list_commits_chains_git_fallback_failure_to_mcp_shape_error() -> None:
     helper = _helper({"unexpected": "shape"})
-    helper._run_git = MagicMock(side_effect=OSError("git log failed"))
+    helper._run_git_async = AsyncMock(side_effect=OSError("git log failed"))
 
     with pytest.raises(OSError, match="git log failed") as exc_info:
         await helper.list_commits("main")

@@ -341,3 +341,23 @@ def _kill_process_group(process: subprocess.Popen[str]) -> None:
 
 
 daemon_git = DaemonGitService()
+
+
+async def normalize_commit_sha(
+    sha: str | None,
+    *,
+    cwd: str | Path | None = None,
+    timeout: float = 5.0,
+) -> str | None:
+    """Resolve a commit object to Git's canonical unique short SHA."""
+    if not sha or len(sha) < 4:
+        return None
+    repo_path = cwd if cwd is not None else Path.cwd()
+    object_type = await daemon_git.run(("cat-file", "-t", sha), cwd=repo_path, timeout=timeout)
+    if not isinstance(object_type, GitOk) or object_type.stdout.strip() != "commit":
+        return None
+    resolved = await daemon_git.run(("rev-parse", "--short", sha), cwd=repo_path, timeout=timeout)
+    if not isinstance(resolved, GitOk):
+        return None
+    normalized = resolved.stdout.strip()
+    return normalized or None

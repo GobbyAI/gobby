@@ -17,12 +17,6 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     claimed_session_window_start as _claimed_session_window_start,
 )
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
-    committable_task_paths as _committable_task_paths,
-)
-from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
-    has_committable_edits as _has_committable_edits,
-)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
@@ -32,9 +26,20 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import determine_close_outcome
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
-from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths, evaluate_task_scope
+from gobby.mcp_proxy.tools.tasks._task_scope import (
+    collect_commit_paths_async as collect_commit_paths,
+)
+from gobby.mcp_proxy.tools.tasks._task_scope import (
+    evaluate_task_scope_async as evaluate_task_scope,
+)
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError, TaskStaleStateError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.workflows.task_dirty_state import (
+    committable_task_paths_async as _committable_task_paths,
+)
+from gobby.workflows.task_dirty_state import (
+    has_committable_edits_async as _has_committable_edits,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +76,7 @@ def _attribution_commit_shas(
     )
 
 
-def _linked_commit_paths(
+async def _linked_commit_paths(
     task: Task,
     repo_path: str,
     prospective_commit_shas: Sequence[str] = (),
@@ -81,7 +86,7 @@ def _linked_commit_paths(
     if not commits:
         return frozenset()
     try:
-        return frozenset(collect_commit_paths(commits, repo_path))
+        return frozenset(await collect_commit_paths(commits, repo_path))
     except RuntimeError as exc:
         # A sha git cannot inspect here (rebased away, wrong checkout) leaves the
         # checklist exactly where it was before this fallback existed. Gate 7 and
@@ -113,20 +118,13 @@ async def capture_attribution(
         # a task that really did edit files. Linked commits are the durable record, so
         # fall back to them instead of reading committed work as a no-edit close --
         # which would skip gate 10 and starve gate 12 of transcript evidence.
-        raw_paths = await asyncio.to_thread(
-            _linked_commit_paths,
+        raw_paths = await _linked_commit_paths(
             task,
             repo_path,
             prospective_commit_shas,
         )
         attributed = attributed or bool(raw_paths)
-    edited_paths = frozenset(
-        await asyncio.to_thread(
-            _committable_task_paths,
-            set(raw_paths),
-            repo_path,
-        )
-    )
+    edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
     return CloseAttributionSnapshot(
         owner_session_id=owner_session_id,
         attributed=attributed,
@@ -201,10 +199,7 @@ async def commit_close(
             evaluation,
             f"Task gate inputs changed after evaluation ({', '.join(changed)}); retry close_task.",
         )
-    # Off the loop: the re-resolve forks git per sha, same as the evaluation's
-    # own call did before #20861.
-    commit_shas, error = await asyncio.to_thread(
-        resolve_close_commit_shas,
+    commit_shas, error = await resolve_close_commit_shas(
         ctx.task_manager,
         task=fresh,
         task_id=task.id,
@@ -222,8 +217,7 @@ async def commit_close(
         )
     if not fresh_skip_leaf_checks:
         # The evaluation's gate-7 divergence scan, repeated against fresh git state.
-        (unlinked_on_head, _elsewhere), tagged_error = await asyncio.to_thread(
-            unlinked_tagged_commits,
+        (unlinked_on_head, _elsewhere), tagged_error = await unlinked_tagged_commits(
             ctx.task_manager,
             task=fresh,
             task_id=task.id,
@@ -237,8 +231,7 @@ async def commit_close(
                 "Task-tagged commits landed after evaluation and are not linked; retry close_task.",
             )
         try:
-            fresh_scope = await asyncio.to_thread(
-                evaluate_task_scope,
+            fresh_scope = await evaluate_task_scope(
                 db=ctx.task_manager.db,
                 task=fresh,
                 commit_shas=commit_shas,
@@ -262,20 +255,13 @@ async def commit_close(
         set(fresh_attribution.edited_paths) if fresh_attribution is not None else set()
     )
     has_dirty_edits = bool(fresh_edited_paths and evaluation.repo_path) and (
-        await asyncio.to_thread(
-            _has_committable_edits,
-            fresh_edited_paths,
-            evaluation.repo_path or "",
-        )
+        await _has_committable_edits(fresh_edited_paths, evaluation.repo_path or "")
     )
     if has_dirty_edits:
         return stale_close_response(
             evaluation,
             "Task-attributed files changed after evaluation; commit them and retry close_task.",
         )
-    # Off the loop: this reaches git by its own route -- the storage layer's
-    # link_commit -> normalize_commit_sha -> run_git_command -> subprocess.run --
-    # which is why #20861's three offloads did not cover it (#20862).
     linked, link_error = await asyncio.to_thread(
         link_close_commit_shas,
         ctx.task_manager,

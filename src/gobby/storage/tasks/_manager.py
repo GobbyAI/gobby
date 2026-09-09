@@ -1,7 +1,6 @@
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
-from pathlib import Path
 from typing import Any, cast
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -525,15 +524,15 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         self._notify_listeners()
         return result
 
-    def link_commit(self, task_id: str, commit_sha: str, cwd: str | Path | None = None) -> Task:
-        """Add ``commit_sha`` to the task's commits array (normalized to short SHA)."""
-        if _link_commit(self.db, task_id, commit_sha, cwd):
+    def link_commit(self, task_id: str, commit_sha: str) -> Task:
+        """Add a Git-resolved canonical short SHA to the task's commits array."""
+        if _link_commit(self.db, task_id, commit_sha):
             self._notify_listeners()
         return self.get_task(task_id)
 
-    def unlink_commit(self, task_id: str, commit_sha: str, cwd: str | Path | None = None) -> Task:
+    def unlink_commit(self, task_id: str, commit_sha: str) -> Task:
         """Remove ``commit_sha`` from the task's commits array if present."""
-        if _unlink_commit(self.db, task_id, commit_sha, cwd):
+        if _unlink_commit(self.db, task_id, commit_sha):
             self._notify_listeners()
         return self.get_task(task_id)
 

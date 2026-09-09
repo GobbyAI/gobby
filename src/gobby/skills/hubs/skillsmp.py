@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 import httpx
 
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
-from gobby.skills.loader import GitHubRef, SkillLoadError, clone_skill_repo
+from gobby.skills.loader import GitHubRef, SkillLoadError, clone_skill_repo_async
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,7 @@ class SkillsMPProvider(HubProvider):
                     error="No GitHub source URL provided",
                 )
 
-            path, ref = self._download_from_github(github_url.strip(), version, target_dir)
+            path, ref = await self._download_from_github(github_url.strip(), version, target_dir)
             return DownloadResult(
                 success=True,
                 slug=slug,
@@ -276,14 +276,14 @@ class SkillsMPProvider(HubProvider):
             logger.error("Failed to download SkillsMP skill %s: %s", slug, e)
             return DownloadResult(success=False, slug=slug, error=str(e))
 
-    def _download_from_github(
+    async def _download_from_github(
         self,
         github_url: str,
         version: str | None,
         target_dir: str | None,
     ) -> tuple[str, GitHubRef]:
         ref = self._parse_github_url(github_url, version)
-        repo_path = clone_skill_repo(ref)
+        repo_path = await clone_skill_repo_async(ref)
         skill_path = repo_path / ref.path if ref.path else repo_path
         self._validate_skill_directory(skill_path)
         return self._copy_skill_directory(skill_path, target_dir), ref

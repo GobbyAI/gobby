@@ -3,10 +3,10 @@
 Provides utilities for linking commits to tasks and computing diffs.
 """
 
+import asyncio
 import logging
 import os
 import re
-import subprocess  # nosec B404 # internal git commands
 import tempfile
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
@@ -23,7 +23,8 @@ from gobby.tasks.diff_paging import (
     decode_content,
     get_task_diff_page,
 )
-from gobby.utils.git import git_subprocess_env, run_git_command
+from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.git import git_subprocess_env
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
@@ -76,7 +77,7 @@ _EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _NET_PATCH_GIT_TIMEOUT_SECONDS = 30
 
 
-def collect_commit_diff_text(
+async def collect_commit_diff_text_async(
     commit_shas: list[str],
     *,
     cwd: str | Path,
@@ -97,12 +98,11 @@ def collect_commit_diff_text(
     """
     if not commit_shas:
         return ""
-    net = _net_commit_patch(commit_shas, cwd=cwd)
+    net = await _net_commit_patch(commit_shas, cwd=cwd)
     if net is not None:
         return net
-    result = run_git_command(
+    result = await daemon_git.run(
         [
-            "git",
             "show",
             "--diff-merges=first-parent",
             "--format=",
@@ -114,12 +114,17 @@ def collect_commit_diff_text(
         cwd=cwd,
         timeout=30,
     )
-    if result is None:
+    if not isinstance(result, GitOk):
         raise RuntimeError("git show failed while assembling the close criteria-review diff")
-    return result
+    return result.stdout
 
 
-def _git_bytes(
+def collect_commit_diff_text(commit_shas: list[str], *, cwd: str | Path) -> str:
+    """Offline synchronous facade for CLI and direct-library consumers."""
+    return asyncio.run(collect_commit_diff_text_async(commit_shas, cwd=cwd))
+
+
+async def _git_bytes(
     args: list[str],
     *,
     cwd: str | Path,
@@ -128,47 +133,41 @@ def _git_bytes(
 ) -> bytes | None:
     """Run one git command; stdout bytes on success, None on any failure."""
     base_env = git_subprocess_env() or os.environ
-    try:
-        completed = subprocess.run(  # nosec B603 # internal git command
-            ["git", *args],
-            cwd=cwd,
-            input=stdin,
-            capture_output=True,
-            timeout=_NET_PATCH_GIT_TIMEOUT_SECONDS,
-            check=False,
-            env={**base_env, **(env or {})},
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.debug("git %s failed while assembling the net close patch: %s", args[0], exc)
-        return None
-    if completed.returncode != 0:
+    result = await daemon_git.run(
+        args,
+        cwd=cwd,
+        input_text=stdin.decode("utf-8", errors="surrogateescape") if stdin is not None else None,
+        timeout=_NET_PATCH_GIT_TIMEOUT_SECONDS,
+        env={**base_env, **(env or {})},
+    )
+    if not isinstance(result, GitOk):
         logger.debug(
             "git %s failed while assembling the net close patch: %s",
             args[0],
-            completed.stderr.decode("utf-8", errors="replace").strip(),
+            result.stderr.strip(),
         )
         return None
-    return completed.stdout
+    return result.stdout.encode("utf-8", errors="surrogateescape")
 
 
-def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
+async def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
     """Canonicalize the linked commits and order them oldest-first by topology.
 
     Commit timestamps cannot order commits made within one second, so the walk
     is topological, bounded below by the set's common ancestor.
     """
-    resolved = _git_bytes(["rev-parse", *commit_shas], cwd=cwd)
+    resolved = await _git_bytes(["rev-parse", *commit_shas], cwd=cwd)
     if not resolved:
         return None
     wanted = list(dict.fromkeys(resolved.decode("ascii", errors="replace").split()))
-    common = _git_bytes(["merge-base", "--octopus", *wanted], cwd=cwd)
+    common = await _git_bytes(["merge-base", "--octopus", *wanted], cwd=cwd)
     if not common:
         return None
     floor = common.decode("ascii", errors="replace").strip()
     bounds: list[str] = []
-    if _git_bytes(["rev-parse", "--verify", "--quiet", f"{floor}^"], cwd=cwd):
+    if await _git_bytes(["rev-parse", "--verify", "--quiet", f"{floor}^"], cwd=cwd):
         bounds.append(f"^{floor}^")
-    listed = _git_bytes(["rev-list", "--topo-order", "--reverse", *wanted, *bounds], cwd=cwd)
+    listed = await _git_bytes(["rev-list", "--topo-order", "--reverse", *wanted, *bounds], cwd=cwd)
     if not listed:
         return None
     members = set(wanted)
@@ -176,11 +175,11 @@ def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | N
     return ordered if len(ordered) == len(members) else None
 
 
-def _is_merge(sha: str, *, cwd: str | Path) -> bool:
-    return _git_bytes(["rev-parse", "--verify", "--quiet", f"{sha}^2"], cwd=cwd) is not None
+async def _is_merge(sha: str, *, cwd: str | Path) -> bool:
+    return await _git_bytes(["rev-parse", "--verify", "--quiet", f"{sha}^2"], cwd=cwd) is not None
 
 
-def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes | None:
+async def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes | None:
     """First-parent patch of a merge that lands every other linked commit.
 
     A landing merge reaches the other commits only through its second parent,
@@ -188,37 +187,37 @@ def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes | None
     those commits again on top of it cannot apply.
     """
     tip = ordered[-1]
-    if not _is_merge(tip, cwd=cwd):
+    if not await _is_merge(tip, cwd=cwd):
         return None
     for sha in ordered[:-1]:
-        if _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^2"], cwd=cwd) is None:
+        if await _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^2"], cwd=cwd) is None:
             return None
-        if _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^1"], cwd=cwd) is not None:
+        if await _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^1"], cwd=cwd) is not None:
             return None
-    return _git_bytes(
+    return await _git_bytes(
         ["diff", "--find-renames", "--find-copies", "--binary", f"{tip}^1", tip],
         cwd=cwd,
     )
 
 
-def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
+async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
     """Replay the commits onto a temporary index and diff it against their base."""
-    ordered = _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await _ancestry_order(commit_shas, cwd=cwd)
     if not ordered:
         return None
-    landing = _landing_merge_patch(ordered, cwd=cwd)
+    landing = await _landing_merge_patch(ordered, cwd=cwd)
     if landing is not None:
         return landing.decode("utf-8", errors="replace").strip()
-    if any(_is_merge(sha, cwd=cwd) for sha in ordered):
+    if any([await _is_merge(sha, cwd=cwd) for sha in ordered]):
         return None
-    parent = _git_bytes(["rev-parse", "--verify", "--quiet", f"{ordered[0]}^"], cwd=cwd)
+    parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{ordered[0]}^"], cwd=cwd)
     base = parent.decode("ascii", errors="replace").strip() if parent else _EMPTY_TREE_SHA
     with tempfile.TemporaryDirectory(prefix="gobby-close-index-") as scratch:
         env = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
-        if _git_bytes(["read-tree", base], cwd=cwd, env=env) is None:
+        if await _git_bytes(["read-tree", base], cwd=cwd, env=env) is None:
             return None
         for sha in ordered:
-            patch = _git_bytes(
+            patch = await _git_bytes(
                 ["show", "--format=", "--find-renames", "--find-copies", "--binary", sha],
                 cwd=cwd,
             )
@@ -226,7 +225,7 @@ def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
                 return None
             if not patch.strip():
                 continue
-            applied = _git_bytes(
+            applied = await _git_bytes(
                 ["apply", "--cached", "--binary", "--whitespace=nowarn", "-"],
                 cwd=cwd,
                 env=env,
@@ -234,7 +233,7 @@ def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
             )
             if applied is None:
                 return None
-        net = _git_bytes(
+        net = await _git_bytes(
             ["diff", "--cached", "--find-renames", "--find-copies", "--binary", base],
             cwd=cwd,
             env=env,
@@ -591,7 +590,7 @@ def _resolve_task_filter(
     return refs, task
 
 
-def _task_tagged_git_history(
+async def _task_tagged_git_history(
     task_manager: "LocalTaskManager",
     *,
     task_id: str | None,
@@ -607,22 +606,25 @@ def _task_tagged_git_history(
     """
     working_dir = Path(cwd) if cwd else Path.cwd()
     resolved_project_name = project_name or get_current_project_name()
-    git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
+    git_cmd = ["log", "--reverse", "--pretty=format:%h|%s"]
     since_args = [f"--since={since}"] if since else []
     if revs is not None:
-        log_output = run_git_command([*git_cmd, *revs, *since_args], cwd=working_dir)
+        result = await daemon_git.run([*git_cmd, *revs, *since_args], cwd=working_dir)
     elif branch := (_resolve_branch_for_task(task_manager, task_id) if task_id else None):
         # The isolation branch carries worktree-era commits, but its row outlives the
         # branch: an ancestor epic's worktree record still named wt-epic-19651 after
         # that branch had merged into 0.5.0, so a log confined to it missed every
         # [gobby-#21451] commit made on the base checkout (#21530). Union HEAD in;
         # the task-ref filter below already keeps foreign commits out.
-        log_output = run_git_command([*git_cmd, branch, "HEAD", *since_args], cwd=working_dir)
-        if log_output is None:
+        result = await daemon_git.run([*git_cmd, branch, "HEAD", *since_args], cwd=working_dir)
+        if not isinstance(result, GitOk):
             # A deleted branch fails the whole log; the checkout is still worth scanning.
-            log_output = run_git_command([*git_cmd, *since_args], cwd=working_dir)
+            result = await daemon_git.run([*git_cmd, *since_args], cwd=working_dir)
     else:
-        log_output = run_git_command([*git_cmd, *since_args], cwd=working_dir)
+        result = await daemon_git.run([*git_cmd, *since_args], cwd=working_dir)
+    if not isinstance(result, GitOk):
+        raise RuntimeError(f"git log unavailable: {result.stderr.strip()}")
+    log_output = result.stdout
     if not log_output:
         return []
 
@@ -637,7 +639,7 @@ def _task_tagged_git_history(
     return commits
 
 
-def resolve_task_tagged_commits(
+async def resolve_task_tagged_commits_async(
     task_manager: "LocalTaskManager",
     *,
     task_id: str,
@@ -651,7 +653,7 @@ def resolve_task_tagged_commits(
     if task_filter is None:
         return []
     accepted_refs, task = task_filter
-    history = _task_tagged_git_history(
+    history = await _task_tagged_git_history(
         task_manager,
         task_id=task.id,
         since=since,
@@ -665,13 +667,18 @@ def resolve_task_tagged_commits(
     ]
 
 
+def resolve_task_tagged_commits(task_manager: "LocalTaskManager", **kwargs: Any) -> list[str]:
+    """Offline synchronous facade for CLI and direct-library consumers."""
+    return asyncio.run(resolve_task_tagged_commits_async(task_manager, **kwargs))
+
+
 def _shares_sha_prefix(sha: str, linked: Collection[str]) -> bool:
     # Linked SHAs are stored in ``rev-parse --short`` form and ``%h`` prints the
     # same, but the abbreviation length grows with the repository.
     return any(known.startswith(sha) or sha.startswith(known) for known in linked)
 
 
-def unlinked_task_tagged_commits(
+async def unlinked_task_tagged_commits_async(
     task_manager: "LocalTaskManager",
     *,
     task_id: str,
@@ -693,8 +700,8 @@ def unlinked_task_tagged_commits(
         return [], []
     accepted_refs, task = task_filter
 
-    def tagged(*revs: str) -> list[str]:
-        history = _task_tagged_git_history(
+    async def tagged(*revs: str) -> list[str]:
+        history = await _task_tagged_git_history(
             task_manager,
             task_id=task.id,
             since=since,
@@ -709,12 +716,19 @@ def unlinked_task_tagged_commits(
             and not _shares_sha_prefix(commit.sha, linked)
         ]
 
-    on_head = tagged("HEAD")
-    elsewhere = [sha for sha in tagged("--all") if sha not in on_head]
+    on_head = await tagged("HEAD")
+    elsewhere = [sha for sha in await tagged("--all") if sha not in on_head]
     return on_head, elsewhere
 
 
-def auto_link_commits(
+def unlinked_task_tagged_commits(
+    task_manager: "LocalTaskManager", **kwargs: Any
+) -> tuple[list[str], list[str]]:
+    """Offline synchronous facade for CLI and direct-library consumers."""
+    return asyncio.run(unlinked_task_tagged_commits_async(task_manager, **kwargs))
+
+
+async def auto_link_commits_async(
     task_manager: "LocalTaskManager",
     task_id: str | None = None,
     since: str | None = None,
@@ -748,7 +762,7 @@ def auto_link_commits(
         seq_num = getattr(task, "seq_num", None)
         task_ref = f"#{seq_num}" if isinstance(seq_num, int) and seq_num > 0 else task_id
         existing_commits = list(task.commits or [])
-        history = _task_tagged_git_history(
+        history = await _task_tagged_git_history(
             task_manager,
             task_id=task.id,
             since=since,
@@ -774,7 +788,7 @@ def auto_link_commits(
                 result.skipped += 1
                 continue
             try:
-                task_manager.link_commit(task.id, commit_sha, cwd=cwd)
+                task_manager.link_commit(task.id, commit_sha)
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, task_ref, error)
                 result.skipped += 1
@@ -785,7 +799,7 @@ def auto_link_commits(
         return result
 
     result = AutoLinkResult()
-    history = _task_tagged_git_history(
+    history = await _task_tagged_git_history(
         task_manager,
         task_id=None,
         since=since,
@@ -817,7 +831,7 @@ def auto_link_commits(
 
             try:
                 # Link the commit using UUID
-                task_manager.link_commit(task.id, commit_sha, cwd=cwd)
+                task_manager.link_commit(task.id, commit_sha)
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, tid, error)
                 result.skipped += 1
@@ -832,3 +846,8 @@ def auto_link_commits(
             logger.debug("Auto-linked commit %s to task %s", commit_sha, tid)
 
     return result
+
+
+def auto_link_commits(task_manager: "LocalTaskManager", **kwargs: Any) -> AutoLinkResult:
+    """Offline synchronous facade for CLI and direct-library consumers."""
+    return asyncio.run(auto_link_commits_async(task_manager, **kwargs))

@@ -196,7 +196,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if parsed_skill is None and is_github_ref:
                 # GitHub URL
                 try:
-                    parsed_skill = ctx.loader.load_from_github(source)
+                    parsed_skill = await ctx.loader.load_from_github_async(source)
                     source_type = "github"
                 except SkillLoadError as e:
                     return {"success": False, "error": f"Failed to load from GitHub: {e}"}

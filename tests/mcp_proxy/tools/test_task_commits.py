@@ -1,6 +1,5 @@
 """Tests for the task commit-linking MCP tools."""
 
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,15 +9,15 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_task_sync_git_helper_runs_off_event_loop_thread() -> None:
-    """The actual task-sync registry must dispatch its synchronous Git helper off-loop."""
+async def test_task_git_helper_is_awaited() -> None:
+    """The task registry must await its async Git helper."""
     from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
-    event_loop_thread = threading.get_ident()
-    helper_threads: list[int] = []
+    helper_called = False
 
-    def auto_link_commits_fn(**_kwargs: object) -> SimpleNamespace:
-        helper_threads.append(threading.get_ident())
+    async def auto_link_commits_fn(**_kwargs: object) -> SimpleNamespace:
+        nonlocal helper_called
+        helper_called = True
         return SimpleNamespace(linked_tasks=[], total_linked=0, skipped=0, skipped_refs=[])
 
     registry = create_commit_registry(
@@ -40,17 +39,17 @@ async def test_task_sync_git_helper_runs_off_event_loop_thread() -> None:
         result = await registry.call("auto_link_commits", {})
 
     assert result == {"linked_tasks": [], "total_linked": 0, "skipped": 0, "skipped_refs": []}
-    assert helper_threads
-    assert helper_threads[0] != event_loop_thread
+    assert helper_called is True
 
 
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
 class TestLinkCommit:
     """Tests for link_commit MCP tool."""
 
-    def test_link_commit_success(self, patched_project_context: MagicMock) -> None:
+    async def test_link_commit_success(self, patched_project_context: MagicMock) -> None:
         """Test successful commit linking."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -65,13 +64,13 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
-        result = link(task_id="task-1", commit_sha="abc123")
+        result = await link(task_id="task-1", commit_sha="abc123")
 
         assert result["task_id"] == "task-1"
         assert "abc123" in result["commits"]
-        task_manager.link_commit.assert_called_once_with("task-1", "abc123", cwd=None)
+        task_manager.link_commit.assert_called_once_with("task-1", "abc123")
 
-    def test_link_commit_error(self, patched_project_context: MagicMock) -> None:
+    async def test_link_commit_error(self, patched_project_context: MagicMock) -> None:
         """Test link_commit returns error on failure."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -83,12 +82,12 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
-        result = link(task_id="task-1", commit_sha="abc123")
+        result = await link(task_id="task-1", commit_sha="abc123")
 
         assert "error" in result
         assert "Task not found" in result["error"]
 
-    def test_link_commit_task_not_found_after_resolution(
+    async def test_link_commit_task_not_found_after_resolution(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -103,12 +102,12 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
-        result = link(task_id="task-uuid", commit_sha="abc123")
+        result = await link(task_id="task-uuid", commit_sha="abc123")
 
         assert result == {"error": "Task task-uuid not found"}
         task_manager.link_commit.assert_not_called()
 
-    def test_link_commit_empty_commits_list(
+    async def test_link_commit_empty_commits_list(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -126,12 +125,12 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
-        result = link(task_id="task-1", commit_sha="abc123")
+        result = await link(task_id="task-1", commit_sha="abc123")
 
         # Should handle None commits gracefully
         assert result["commits"] == []
 
-    def test_link_commit_uses_registered_project_path_override(
+    async def test_link_commit_uses_registered_project_path_override(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -158,7 +157,7 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
-        result = link(
+        result = await link(
             task_id="task-1",
             commit_sha="abc123",
             project_path=str(repo_path),
@@ -167,14 +166,9 @@ class TestLinkCommit:
         assert result["commits"] == ["abc123"]
         assert "error" not in result
         task_manager.get_task.assert_any_call("task-1")
-        project_manager.get.assert_any_call("project-1")
-        task_manager.link_commit.assert_called_once_with(
-            "task-1",
-            "abc123",
-            cwd=str(repo_path),
-        )
+        task_manager.link_commit.assert_called_once_with("task-1", "abc123")
 
-    def test_link_commit_rejects_unknown_project_path(
+    async def test_link_commit_rejects_unknown_project_path(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -199,17 +193,22 @@ class TestLinkCommit:
         )
 
         link = registry.get_tool("link_commit")
-        result = link(task_id="task-1", commit_sha="abc123", project_path=str(outside))
+        with patch(
+            "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+            side_effect=ValueError("project_path is outside the task project repo"),
+        ):
+            result = await link(task_id="task-1", commit_sha="abc123", project_path=str(outside))
 
         assert "error" in result
         assert "outside the task project repo" in result["error"]
         task_manager.link_commit.assert_not_called()
 
 
+@pytest.mark.asyncio
 class TestUnlinkCommit:
     """Tests for unlink_commit MCP tool."""
 
-    def test_unlink_commit_success(self, patched_project_context: MagicMock) -> None:
+    async def test_unlink_commit_success(self, patched_project_context: MagicMock) -> None:
         """Test successful commit unlinking."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -224,13 +223,13 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
-        result = unlink(task_id="task-1", commit_sha="abc123")
+        result = await unlink(task_id="task-1", commit_sha="abc123")
 
         assert result["task_id"] == "task-1"
         assert result["commits"] == []
-        task_manager.unlink_commit.assert_called_once_with("task-1", "abc123", cwd=None)
+        task_manager.unlink_commit.assert_called_once_with("task-1", "abc123")
 
-    def test_unlink_commit_error(self, patched_project_context: MagicMock) -> None:
+    async def test_unlink_commit_error(self, patched_project_context: MagicMock) -> None:
         """Test unlink_commit returns error on failure."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -242,12 +241,12 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
-        result = unlink(task_id="task-1", commit_sha="abc123")
+        result = await unlink(task_id="task-1", commit_sha="abc123")
 
         assert "error" in result
         assert "Commit not linked" in result["error"]
 
-    def test_unlink_commit_task_not_found_after_resolution(
+    async def test_unlink_commit_task_not_found_after_resolution(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -262,12 +261,12 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
-        result = unlink(task_id="task-uuid", commit_sha="abc123")
+        result = await unlink(task_id="task-uuid", commit_sha="abc123")
 
         assert result == {"error": "Task task-uuid not found"}
         task_manager.unlink_commit.assert_not_called()
 
-    def test_unlink_commit_uses_registered_project_path_override(
+    async def test_unlink_commit_uses_registered_project_path_override(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -294,7 +293,7 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
-        result = unlink(
+        result = await unlink(
             task_id="task-1",
             commit_sha="abc123",
             project_path=str(repo_path),
@@ -303,14 +302,9 @@ class TestUnlinkCommit:
         assert result["commits"] == []
         assert "error" not in result
         task_manager.get_task.assert_any_call("task-1")
-        project_manager.get.assert_any_call("project-1")
-        task_manager.unlink_commit.assert_called_once_with(
-            "task-1",
-            "abc123",
-            cwd=str(repo_path),
-        )
+        task_manager.unlink_commit.assert_called_once_with("task-1", "abc123")
 
-    def test_unlink_commit_rejects_unknown_project_path_before_git(
+    async def test_unlink_commit_rejects_unknown_project_path_before_git(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -338,17 +332,22 @@ class TestUnlinkCommit:
         )
 
         unlink = registry.get_tool("unlink_commit")
-        result = unlink(task_id="task-1", commit_sha="abc123", project_path=str(outside))
+        with patch(
+            "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+            side_effect=ValueError("project_path is outside the task project repo"),
+        ):
+            result = await unlink(task_id="task-1", commit_sha="abc123", project_path=str(outside))
 
         assert "error" in result
         assert "outside the task project repo" in result["error"]
         task_manager.unlink_commit.assert_not_called()
 
 
+@pytest.mark.asyncio
 class TestAutoLinkCommits:
     """Tests for auto_link_commits MCP tool."""
 
-    def test_auto_link_commits_basic(
+    async def test_auto_link_commits_basic(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -374,13 +373,13 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link()
+        result = await auto_link()
 
         assert result["total_linked"] == 2
         assert "task-1" in result["linked_tasks"]
         assert "task-2" in result["linked_tasks"]
 
-    def test_auto_link_commits_with_task_filter(
+    async def test_auto_link_commits_with_task_filter(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -405,14 +404,14 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link(task_id="task-1")
+        result = await auto_link(task_id="task-1")
 
         # Verify task_id was passed
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs["task_id"] == "task-1"
         assert result["linked_tasks"] == ["task-1"]
 
-    def test_auto_link_commits_task_filter_uses_registered_project_path_override(
+    async def test_auto_link_commits_task_filter_uses_registered_project_path_override(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -445,12 +444,12 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link(task_id="task-1", project_path=str(repo_path))
+        result = await auto_link(task_id="task-1", project_path=str(repo_path))
 
         assert result["linked_tasks"] == ["task-1"]
         assert mock_fn.call_args.kwargs["cwd"] == str(repo_path)
 
-    def test_auto_link_commits_task_filter_rejects_unknown_project_path_before_git(
+    async def test_auto_link_commits_task_filter_rejects_unknown_project_path_before_git(
         self,
         patched_project_context: MagicMock,
         tmp_path: Path,
@@ -479,13 +478,17 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link(task_id="task-1", project_path=str(outside))
+        with patch(
+            "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+            side_effect=ValueError("project_path is outside the task project repo"),
+        ):
+            result = await auto_link(task_id="task-1", project_path=str(outside))
 
         assert "error" in result
         assert "outside the task project repo" in result["error"]
         mock_fn.assert_not_called()
 
-    def test_auto_link_commits_task_filter_not_found(
+    async def test_auto_link_commits_task_filter_not_found(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -502,7 +505,7 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link(task_id="task-uuid")
+        result = await auto_link(task_id="task-uuid")
 
         assert result == {"error": "Task task-uuid not found"}
         assert [call.args for call in task_manager.get_task.call_args_list] == [
@@ -512,7 +515,7 @@ class TestAutoLinkCommits:
         task_manager.resolve_task_reference.assert_not_called()
         mock_fn.assert_not_called()
 
-    def test_auto_link_commits_with_since(
+    async def test_auto_link_commits_with_since(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -537,13 +540,13 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link(since="1 week ago")
+        result = await auto_link(since="1 week ago")
 
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs["since"] == "1 week ago"
         assert result["total_linked"] == 0
 
-    def test_auto_link_commits_no_project(
+    async def test_auto_link_commits_no_project(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -572,7 +575,7 @@ class TestAutoLinkCommits:
             )
 
             auto_link = registry.get_tool("auto_link_commits")
-            result = auto_link()
+            result = await auto_link()
 
             # Should still work, just with cwd=None
             call_kwargs = mock_fn.call_args.kwargs
@@ -580,10 +583,11 @@ class TestAutoLinkCommits:
             assert result["linked_tasks"] == []
 
 
+@pytest.mark.asyncio
 class TestGitIntegrationEdgeCases:
     """Tests for git integration edge cases."""
 
-    def test_link_commit_full_sha(self, patched_project_context: MagicMock) -> None:
+    async def test_link_commit_full_sha(self, patched_project_context: MagicMock) -> None:
         """Test linking with full SHA."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -599,13 +603,13 @@ class TestGitIntegrationEdgeCases:
 
         link = registry.get_tool("link_commit")
         full_sha = "abc123def456789abcdef123456789abcdef1234"
-        link(task_id="task-1", commit_sha=full_sha)
+        await link(task_id="task-1", commit_sha=full_sha)
 
-        task_manager.link_commit.assert_called_with("task-1", full_sha, cwd=None)
+        task_manager.link_commit.assert_called_with("task-1", full_sha)
         assert task_manager.link_commit.call_count >= 1
         assert task_manager.link_commit.call_args is not None
 
-    def test_link_commit_short_sha(self, patched_project_context: MagicMock) -> None:
+    async def test_link_commit_short_sha(self, patched_project_context: MagicMock) -> None:
         """Test linking with short SHA."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -620,13 +624,13 @@ class TestGitIntegrationEdgeCases:
         )
 
         link = registry.get_tool("link_commit")
-        link(task_id="task-1", commit_sha="abc123")
+        await link(task_id="task-1", commit_sha="abc123")
 
-        task_manager.link_commit.assert_called_with("task-1", "abc123", cwd=None)
+        task_manager.link_commit.assert_called_with("task-1", "abc123")
         assert task_manager.link_commit.call_count >= 1
         assert task_manager.link_commit.call_args is not None
 
-    def test_auto_link_with_skipped_commits(
+    async def test_auto_link_with_skipped_commits(
         self,
         patched_project_context: MagicMock,
     ) -> None:
@@ -655,7 +659,7 @@ class TestGitIntegrationEdgeCases:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        result = auto_link()
+        result = await auto_link()
 
         assert len(result["skipped"]) == 2
         assert result["skipped"][0]["reason"] == "already linked"
@@ -665,12 +669,27 @@ class TestGitIntegrationEdgeCases:
 @pytest.fixture
 def patched_project_context() -> Iterator[MagicMock]:
     """Fixture providing mock dependencies for registry creation."""
-    with patch("gobby.mcp_proxy.tools.task_commits.get_current_project_id") as mock_project_id:
+    with (
+        patch("gobby.mcp_proxy.tools.task_commits.get_current_project_id") as mock_project_id,
+        patch(
+            "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
+            side_effect=lambda sha, **_kwargs: sha,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_commits.resolve_project_repo_path",
+            side_effect=lambda **kwargs: kwargs["project_path"],
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+            side_effect=lambda **kwargs: kwargs["project_path"],
+        ),
+    ):
         mock_project_id.return_value = "test-project-id"
         yield mock_project_id
 
 
-def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
+@pytest.mark.asyncio
+async def test_task_git_helpers_follow_repo_path_resolution() -> None:
     """Commit/diff helpers must reject bad repo paths before Git helper work."""
     from gobby.mcp_proxy.tools.task_commits import create_commit_registry
     from gobby.mcp_proxy.tools.task_repo_paths import RepoPathValidationError
@@ -690,11 +709,11 @@ def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
             self.get_task_calls.append(task_id)
             return self.task
 
-        def link_commit(self, task_id: str, commit_sha: str, cwd: str | None = None) -> object:
+        def link_commit(self, task_id: str, commit_sha: str) -> object:
             self.link_commit_called = True
             raise AssertionError("link_commit should not run after repo path rejection")
 
-        def unlink_commit(self, task_id: str, commit_sha: str, cwd: str | None = None) -> object:
+        def unlink_commit(self, task_id: str, commit_sha: str) -> object:
             self.unlink_commit_called = True
             raise AssertionError("unlink_commit should not run after repo path rejection")
 
@@ -724,10 +743,10 @@ def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
         side_effect=RepoPathValidationError("repo path blocked"),
     ):
         results = [
-            registry.get_tool("link_commit")(task_id="task-1", commit_sha="abc123"),
-            registry.get_tool("unlink_commit")(task_id="task-1", commit_sha="abc123"),
-            registry.get_tool("auto_link_commits")(task_id="task-1"),
-            registry.get_tool("get_task_diff")(task_id="task-1"),
+            await registry.get_tool("link_commit")(task_id="task-1", commit_sha="abc123"),
+            await registry.get_tool("unlink_commit")(task_id="task-1", commit_sha="abc123"),
+            await registry.get_tool("auto_link_commits")(task_id="task-1"),
+            await registry.get_tool("get_task_diff")(task_id="task-1"),
         ]
 
     assert results == [{"error": "repo path blocked"}] * 4

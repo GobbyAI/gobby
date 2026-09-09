@@ -10,7 +10,6 @@ This module provides operations for managing task lifecycle:
 
 import logging
 from datetime import datetime
-from pathlib import Path
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
@@ -146,19 +145,16 @@ def remove_label(db: HubDatabase, task_id: str, label: str) -> Task:
     return get_task(db, task_id)
 
 
-def link_commit(
-    db: HubDatabase, task_id: str, commit_sha: str, cwd: str | Path | None = None
-) -> bool:
+def link_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     """Link a commit SHA to a task.
 
     Adds the commit SHA to the task's commits array if not already present.
-    The SHA is normalized to dynamic short format for consistency.
+    The caller supplies a Git-resolved canonical short SHA.
 
     Args:
         db: Database protocol instance
         task_id: The task ID to link the commit to.
         commit_sha: The git commit SHA to link (short or full).
-        cwd: Working directory for git operations (defaults to current directory).
 
     Returns:
         True if commit was added, False if already present.
@@ -166,11 +162,7 @@ def link_commit(
     Raises:
         ValueError: If task not found or SHA cannot be resolved.
     """
-    from gobby.utils.git import normalize_commit_sha
-
-    # Normalize SHA to dynamic short format
-    normalized_sha = normalize_commit_sha(commit_sha, cwd=cwd)
-    if not normalized_sha:
+    if not commit_sha:
         raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
 
     get_task(db, task_id)  # Validate identity without reading mutation state.
@@ -184,26 +176,23 @@ def link_commit(
              WHERE id = %s
                AND NOT COALESCE(commits, '[]'::jsonb) @> jsonb_build_array(%s::text)
             """,
-            (normalized_sha, utc_now(), task_id, normalized_sha),
+            (commit_sha, utc_now(), task_id, commit_sha),
         )
     if cursor.rowcount > 0:
         return True
     return False
 
 
-def unlink_commit(
-    db: HubDatabase, task_id: str, commit_sha: str, cwd: str | Path | None = None
-) -> bool:
+def unlink_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     """Unlink a commit SHA from a task.
 
     Removes the commit SHA from the task's commits array if present.
-    Uses normalized SHA for exact matching.
+    Uses the caller-supplied canonical short SHA for exact matching.
 
     Args:
         db: Database protocol instance
         task_id: The task ID to unlink the commit from.
         commit_sha: The git commit SHA to unlink (short or full).
-        cwd: Working directory for git operations (defaults to current directory).
 
     Returns:
         True if commit was removed, False if not found.
@@ -211,13 +200,9 @@ def unlink_commit(
     Raises:
         ValueError: If task not found.
     """
-    from gobby.utils.git import normalize_commit_sha
-
-    # Normalize SHA to dynamic short format
-    normalized_sha = normalize_commit_sha(commit_sha, cwd=cwd)
     get_task(db, task_id)  # Validate identity without reading mutation state.
 
-    if not normalized_sha:
+    if not commit_sha:
         return False
 
     with db.transaction() as conn:
@@ -229,7 +214,7 @@ def unlink_commit(
              WHERE id = %s
                AND COALESCE(commits, '[]'::jsonb) @> jsonb_build_array(%s::text)
             """,
-            (normalized_sha, utc_now(), task_id, normalized_sha),
+            (commit_sha, utc_now(), task_id, commit_sha),
         )
     if cursor.rowcount > 0:
         return True

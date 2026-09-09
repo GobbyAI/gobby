@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import re
-import subprocess
 import textwrap
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
+
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _ARTIFACT_REF_RE = re.compile(
     r"^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?"
@@ -91,21 +93,23 @@ def malformed_test_reference_findings(criteria: str) -> tuple[str, ...]:
     )
 
 
-def evaluate_acceptance_artifacts(
+async def evaluate_acceptance_artifacts_async(
     *,
     criteria: str,
     repo_path: str,
     commit_shas: list[str],
 ) -> AcceptanceArtifactResult:
     """Resolve named tests, reject placebo bodies, and verify local evidence provenance."""
-    tests, resolution_findings = resolve_acceptance_tests(criteria, repo_path, commit_shas)
+    tests, resolution_findings = await resolve_acceptance_tests_async(
+        criteria, repo_path, commit_shas
+    )
     findings = list(resolution_findings)
     for test in tests:
         findings.extend(_test_body_findings(test))
 
     evidence_files = extract_artifact_references(criteria, "file")
     findings.extend(
-        validate_structured_file_evidence(
+        await validate_structured_file_evidence_async(
             evidence_files=evidence_files,
             repo_path=repo_path,
             commit_shas=commit_shas,
@@ -119,7 +123,20 @@ def evaluate_acceptance_artifacts(
     )
 
 
-def resolve_acceptance_tests(
+def evaluate_acceptance_artifacts(
+    *, criteria: str, repo_path: str, commit_shas: list[str]
+) -> AcceptanceArtifactResult:
+    """Offline synchronous facade for direct-library consumers."""
+    return asyncio.run(
+        evaluate_acceptance_artifacts_async(
+            criteria=criteria,
+            repo_path=repo_path,
+            commit_shas=commit_shas,
+        )
+    )
+
+
+async def resolve_acceptance_tests_async(
     criteria: str,
     repo_path: str,
     commit_shas: list[str],
@@ -140,12 +157,19 @@ def resolve_acceptance_tests(
             findings.append(f"{reference}: a linked commit is required to resolve the test body")
             continue
         try:
-            body = _resolve_test_body(path, symbol, repo_path, commit_shas[-1])
+            body = await _resolve_test_body(path, symbol, repo_path, commit_shas[-1])
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
         tests.append(AcceptanceTest(reference, path, symbol, body))
     return tuple(tests), tuple(findings)
+
+
+def resolve_acceptance_tests(
+    criteria: str, repo_path: str, commit_shas: list[str]
+) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
+    """Offline synchronous facade for direct-library consumers."""
+    return asyncio.run(resolve_acceptance_tests_async(criteria, repo_path, commit_shas))
 
 
 def render_acceptance_test_bodies(tests: tuple[AcceptanceTest, ...]) -> str:
@@ -239,7 +263,7 @@ def _line_contains_word(value: str, word: str) -> bool:
     return any(pattern.search(line) for line in value.splitlines())
 
 
-def validate_structured_file_evidence(
+async def validate_structured_file_evidence_async(
     *,
     evidence_files: tuple[str, ...],
     repo_path: str,
@@ -247,14 +271,14 @@ def validate_structured_file_evidence(
 ) -> tuple[str, ...]:
     """Validate structured CI evidence using only repository-local facts."""
     findings: list[str] = []
-    repo_slug = _repository_slug(repo_path)
+    repo_slug = await _repository_slug(repo_path)
     for path in evidence_files:
         path_error = _path_error(path, repo_path)
         if path_error:
             findings.append(f"{path}: {path_error}")
             continue
         try:
-            content = _read_committed_file(path, commit_shas, repo_path)
+            content = await _read_committed_file(path, commit_shas, repo_path)
         except RuntimeError as exc:
             findings.append(f"{path}: {exc}")
             continue
@@ -272,7 +296,7 @@ def validate_structured_file_evidence(
             if timestamp is None:
                 findings.append(f"{label}: invalid utc_timestamp {fields['utc_timestamp']!r}")
                 continue
-            commit_time = _commit_time(sha, repo_path)
+            commit_time = await _commit_time(sha, repo_path)
             if commit_time is None:
                 findings.append(f"{label}: cited commit {sha} does not exist")
             elif commit_time > timestamp:
@@ -287,7 +311,7 @@ def validate_structured_file_evidence(
                 findings.append(
                     f"{label}: run_url is not a repository-owned GitHub Actions run URL"
                 )
-            if commit_time is not None and not _workflow_exists(
+            if commit_time is not None and not await _workflow_exists(
                 sha, fields["workflow_name"], repo_path
             ):
                 findings.append(
@@ -295,6 +319,19 @@ def validate_structured_file_evidence(
                     f"is absent from cited commit {sha}"
                 )
     return tuple(findings)
+
+
+def validate_structured_file_evidence(
+    *, evidence_files: tuple[str, ...], repo_path: str, commit_shas: list[str]
+) -> tuple[str, ...]:
+    """Offline synchronous facade for direct-library consumers."""
+    return asyncio.run(
+        validate_structured_file_evidence_async(
+            evidence_files=evidence_files,
+            repo_path=repo_path,
+            commit_shas=commit_shas,
+        )
+    )
 
 
 def parse_test_reference(reference: str) -> tuple[str, str] | None:
@@ -306,24 +343,16 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
     return (path, symbol) if path and symbol else None
 
 
-def _resolve_test_body(path: str, symbol: str, repo_path: str, commit_sha: str) -> str:
-    source = _read_test_file_from_commit(path, commit_sha, repo_path)
+async def _resolve_test_body(path: str, symbol: str, repo_path: str, commit_sha: str) -> str:
+    source = await _read_test_file_from_commit(path, commit_sha, repo_path)
     if Path(path).suffix.casefold() == ".py":
         return _extract_python_test_body(source, symbol)
     return _extract_braced_test_body(source, symbol)
 
 
-def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str) -> str:
-    result = subprocess.run(
-        ["git", "show", f"{commit_sha}:{path}"],
-        cwd=repo_path,
-        text=True,
-        errors="replace",
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    if result.returncode != 0:
+async def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str) -> str:
+    result = await daemon_git.run(("show", f"{commit_sha}:{path}"), cwd=repo_path, timeout=30)
+    if not isinstance(result, GitOk):
         raise RuntimeError(f"last linked commit {commit_sha[:12]} does not contain {path}")
     return result.stdout
 
@@ -555,19 +584,15 @@ def _strip_markdown_value(value: str) -> str:
     return value.strip().strip("`").strip()
 
 
-def _read_committed_file(path: str, commit_shas: list[str], repo_path: str) -> str:
+async def _read_committed_file(path: str, commit_shas: list[str], repo_path: str) -> str:
     for sha in reversed(commit_shas):
-        result = subprocess.run(
-            ["git", "show", f"{sha}:{path}"],
-            cwd=repo_path,
-            text=True,
-            errors="replace",
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-        if result.returncode == 0:
+        result = await daemon_git.run(("show", f"{sha}:{path}"), cwd=repo_path, timeout=30)
+        if isinstance(result, GitOk):
             return result.stdout
+        if isinstance(result, GitTimeout) or (
+            isinstance(result, GitFailed) and result.returncode is None
+        ):
+            raise RuntimeError("git is unavailable while resolving evidence")
     candidate = Path(repo_path, path)
     try:
         return candidate.read_text(encoding="utf-8")
@@ -575,9 +600,9 @@ def _read_committed_file(path: str, commit_shas: list[str], repo_path: str) -> s
         raise RuntimeError("referenced evidence file is missing or unreadable") from exc
 
 
-def _commit_time(sha: str, repo_path: str) -> datetime | None:
+async def _commit_time(sha: str, repo_path: str) -> datetime | None:
     try:
-        value = _run_command(["git", "show", "-s", "--format=%cI", sha], repo_path).strip()
+        value = (await _run_command(["show", "-s", "--format=%cI", sha], repo_path)).strip()
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (RuntimeError, ValueError):
         return None
@@ -594,9 +619,9 @@ def _parse_utc(value: str) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _repository_slug(repo_path: str) -> str | None:
+async def _repository_slug(repo_path: str) -> str | None:
     try:
-        remote = _run_command(["git", "remote", "get-url", "origin"], repo_path).strip()
+        remote = (await _run_command(["remote", "get-url", "origin"], repo_path)).strip()
     except RuntimeError:
         return None
     patterns = (
@@ -622,11 +647,13 @@ def _is_repo_actions_url(url: str, repo_slug: str) -> bool:
     )
 
 
-def _workflow_exists(sha: str, workflow_name: str, repo_path: str) -> bool:
+async def _workflow_exists(sha: str, workflow_name: str, repo_path: str) -> bool:
     try:
-        paths = _run_command(
-            ["git", "ls-tree", "-r", "--name-only", sha, "--", ".github/workflows"],
-            repo_path,
+        paths = (
+            await _run_command(
+                ["ls-tree", "-r", "--name-only", sha, "--", ".github/workflows"],
+                repo_path,
+            )
         ).splitlines()
     except RuntimeError:
         return False
@@ -635,7 +662,7 @@ def _workflow_exists(sha: str, workflow_name: str, repo_path: str) -> bool:
         if not path.endswith((".yml", ".yaml")):
             continue
         try:
-            content = _run_command(["git", "show", f"{sha}:{path}"], repo_path)
+            content = await _run_command(["show", f"{sha}:{path}"], repo_path)
         except RuntimeError:
             continue
         match = _WORKFLOW_NAME_RE.search(content)
@@ -655,20 +682,9 @@ def _path_error(path: str, repo_path: str) -> str | None:
     return None
 
 
-def _run_command(args: list[str], cwd: str) -> str:
-    try:
-        result = subprocess.run(
-            args,
-            cwd=cwd,
-            text=True,
-            errors="replace",
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(f"{args[0]} command failed: {exc}") from exc
-    if result.returncode != 0:
+async def _run_command(args: list[str], cwd: str) -> str:
+    result = await daemon_git.run(args, cwd=cwd, timeout=30)
+    if not isinstance(result, GitOk):
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise RuntimeError(detail)
     return result.stdout

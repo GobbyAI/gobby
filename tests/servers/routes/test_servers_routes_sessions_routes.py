@@ -32,6 +32,7 @@ from gobby.storage.machines import LocalMachineManager, MachineNotRegisteredErro
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.daemon_git import GitOk
 from tests._timing import wait_for_condition
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
@@ -790,8 +791,15 @@ class TestRegisterSession:
         mock_server.session_manager.register.return_value = session
 
         with patch(
-            "gobby.utils.git.get_git_metadata",
-            return_value={"git_branch": "feature/test"},
+            "gobby.utils.daemon_git.daemon_git.run",
+            new=AsyncMock(
+                return_value=GitOk(
+                    status="ok",
+                    argv=("git", "branch", "--show-current"),
+                    stdout="feature/test\n",
+                    stderr="",
+                )
+            ),
         ):
             response = client.post(
                 "/api/sessions/register",

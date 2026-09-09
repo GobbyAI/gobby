@@ -15,7 +15,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import AgentTaskClaimConflictError, TaskNotFoundError
 from gobby.utils.session_context import session_context_for_test
-from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.isolated_checkout import insert_overlay, install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -216,6 +216,109 @@ class TestCreateTaskTool:
 
         assert result["targets_not_found"] == ["src/gobby/tasks/missing.py"]
         mock_task_manager.update_task.assert_called_once()
+
+    async def test_update_checks_targets_in_claimed_session_operation_checkout(
+        self,
+        mock_task_manager: MagicMock,
+        canonical_task_session: Session,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        overlay = tmp_path / "claimed-overlay"
+        target = overlay / "src/gobby/tasks/overlay_only.py"
+        target.parent.mkdir(parents=True)
+        target.touch()
+        insert_overlay(
+            temp_db,
+            project_id=canonical_task_session.project_id,
+            machine_id=canonical_task_session.machine_id,
+            path=str(overlay),
+            kind="worktree",
+        )
+        claimed_session = SessionManager(temp_db).register(
+            external_id="claimed-operation-session",
+            machine_id=canonical_task_session.machine_id,
+            source="codex",
+            project_id=canonical_task_session.project_id,
+            workspace_path=str(overlay),
+        )
+        task = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440104",
+            seq_num=104,
+            project_id=canonical_task_session.project_id,
+            task_type="task",
+            category="code",
+            validation_criteria="Target validation uses the claimed checkout.",
+            implementation_domain="backend",
+            is_escalated=False,
+            claimed_by_session_id=claimed_session.id,
+        )
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.update_task.return_value = task
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._crud.require_claim_authority",
+            return_value=None,
+        ):
+            result = await create_task_registry(mock_task_manager).call(
+                "update_task",
+                {
+                    "task_id": task.id,
+                    "description": "Targets:\n- src/gobby/tasks/overlay_only.py",
+                },
+            )
+
+        assert "targets_not_found" not in result
+        mock_task_manager.update_task.assert_called_once()
+
+    async def test_update_rejects_unregistered_claimed_checkout_without_primary_fallback(
+        self,
+        mock_task_manager: MagicMock,
+        canonical_task_session: Session,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        primary_target = tmp_path / "isolated-checkout/src/gobby/tasks/primary_only.py"
+        primary_target.parent.mkdir(parents=True)
+        primary_target.touch()
+        unregistered_overlay = tmp_path / "unregistered-overlay"
+        unregistered_overlay.mkdir()
+        claimed_session = SessionManager(temp_db).register(
+            external_id="unregistered-operation-session",
+            machine_id=canonical_task_session.machine_id,
+            source="codex",
+            project_id=canonical_task_session.project_id,
+            workspace_path=str(unregistered_overlay),
+        )
+        task = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440105",
+            seq_num=105,
+            project_id=canonical_task_session.project_id,
+            task_type="task",
+            category="code",
+            validation_criteria="Rejected overlays fail with a typed error.",
+            implementation_domain="backend",
+            is_escalated=False,
+            claimed_by_session_id=claimed_session.id,
+        )
+        mock_task_manager.get_task.return_value = task
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._crud.require_claim_authority",
+            return_value=None,
+        ):
+            result = await create_task_registry(mock_task_manager).call(
+                "update_task",
+                {
+                    "task_id": task.id,
+                    "description": "Targets:\n- src/gobby/tasks/primary_only.py",
+                },
+            )
+
+        assert result["success"] is False
+        assert result["error_type"] == "checkout_unresolved"
+        assert "not a registered worktree or clone" in result["error"]
+        mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_title_does_not_resolve_project_checkout(
