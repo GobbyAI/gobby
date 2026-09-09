@@ -10,6 +10,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import PipelineSubscriberStorageError
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observer_plan_mode import detect_plan_mode_from_context
@@ -80,21 +81,14 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("labels", "expected_decision"),
-    [
-        pytest.param(["live-session"], "allow", id="database-label-enables-exemption"),
-        pytest.param([], "block", id="ordinary-task-blocks"),
-    ],
-)
-async def test_require_task_close_uses_database_labels_after_mode_reset(
+@pytest.mark.parametrize("labels", [["live-session"], []])
+async def test_require_task_close_rejects_label_bypass_after_mode_reset(
     db: HubDatabase,
     labels: list[str],
-    expected_decision: str,
 ) -> None:
     _sync_bundled(db)
     task_manager = LocalTaskManager(db)
-    project = LocalProjectManager(db).create(name=f"label-gate-{expected_decision}", repo_path=None)
+    project = LocalProjectManager(db).create(name=f"label-gate-{len(labels)}", repo_path=None)
     task = task_manager.create_task(
         project_id=project.id,
         title="Claimed task",
@@ -122,7 +116,7 @@ async def test_require_task_close_uses_database_labels_after_mode_reset(
     )
 
     assert variables["mode_level"] == 2
-    assert response.decision == expected_decision
+    assert response.decision == "block"
 
 
 @pytest.mark.asyncio
@@ -167,7 +161,7 @@ async def test_require_task_close_rejects_mixed_live_and_ordinary_claims(
 
 
 @pytest.mark.asyncio
-async def test_require_epic_tree_close_skips_live_session_epic(db: HubDatabase) -> None:
+async def test_require_epic_tree_close_rejects_live_session_label(db: HubDatabase) -> None:
     _sync_bundled(db)
     task_manager = LocalTaskManager(db)
     project = LocalProjectManager(db).create(name="live-epic-gate", repo_path=None)
@@ -200,7 +194,136 @@ async def test_require_epic_tree_close_skips_live_session_epic(db: HubDatabase) 
         },
     )
 
-    assert response.decision == "allow"
+    assert response.decision == "block"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_dependency_yields_claim_gates_and_rearms_after_close(
+    db: HubDatabase,
+) -> None:
+    _sync_bundled(db)
+    session_id = "11111111-1111-4111-8111-111111111111"
+    task_manager = LocalTaskManager(db)
+    project = LocalProjectManager(db).create(name="dependency-stop-wait", repo_path=None)
+    epic = task_manager.create_task(
+        project_id=project.id,
+        title="Blocked epic",
+        task_type="epic",
+        category="planning",
+        validation_criteria="Test task completion is observable.",
+    )
+    task_manager.create_task(
+        project_id=project.id,
+        title="Open child",
+        parent_task_id=epic.id,
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
+    blocker = task_manager.create_task(
+        project_id=project.id,
+        title="External blocker",
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
+    TaskDependencyManager(db).add_dependency(epic.id, blocker.id)
+    variables: dict[str, object] = {
+        "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
+        "mode_level": 2,
+        "task_claimed": True,
+        "claimed_tasks": {epic.id: f"#{epic.seq_num}"},
+        "stop_attempts": 7,
+    }
+    engine = RuleEngine(db, task_manager=task_manager)
+
+    waiting = await engine.evaluate(_make_event(), session_id, variables)
+
+    assert waiting.decision == "allow"
+    assert variables["stop_attempts"] == 7
+
+    task_manager.close_task(blocker.id, force=True)
+    rearmed = await engine.evaluate(_make_event(), session_id, variables)
+
+    assert rearmed.decision == "block"
+    assert "require-task-close" in (rearmed.reason or "")
+    assert "require-epic-tree-close" in (rearmed.reason or "")
+    assert variables["stop_attempts"] == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "expected_decision"),
+    [
+        pytest.param("Human architecture decision required", "allow", id="nonblank-reason"),
+        pytest.param("   ", "block", id="blank-reason"),
+    ],
+)
+async def test_escalation_requires_nonblank_reason(
+    db: HubDatabase,
+    reason: str,
+    expected_decision: str,
+) -> None:
+    _sync_bundled(db)
+    session_id = "11111111-1111-4111-8111-111111111111"
+    task_manager = LocalTaskManager(db)
+    project = LocalProjectManager(db).create(
+        name=f"escalation-stop-wait-{expected_decision}",
+        repo_path=None,
+    )
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Escalated task",
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
+    task_manager.escalate_task(task.id, reason=reason)
+    variables: dict[str, object] = {
+        "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
+        "mode_level": 2,
+        "task_claimed": True,
+        "claimed_tasks": {task.id: f"#{task.seq_num}"},
+        "stop_attempts": 0,
+        "awaiting_reason": "worker-authored free-form wait",
+    }
+
+    response = await RuleEngine(db, task_manager=task_manager).evaluate(
+        _make_event(),
+        session_id,
+        variables,
+    )
+
+    assert response.decision == expected_decision
+    assert variables["stop_attempts"] == (0 if expected_decision == "allow" else 1)
+
+
+@pytest.mark.asyncio
+async def test_ordinary_claim_remains_blocking_after_retry_limit(db: HubDatabase) -> None:
+    _sync_bundled(db)
+    task_manager = LocalTaskManager(db)
+    project = LocalProjectManager(db).create(name="retry-limit-stop-gate", repo_path=None)
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Ordinary claimed task",
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
+
+    response = await RuleEngine(db, task_manager=task_manager).evaluate(
+        _make_event(),
+        session_id="11111111-1111-4111-8111-111111111111",
+        variables={
+            "_agent_type": "default",
+            "_memory_initial_stop_checked": True,
+            "mode_level": 2,
+            "task_claimed": True,
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
+            "stop_attempts": 8,
+            "max_stop_attempts": 8,
+        },
+    )
+
+    assert response.decision == "block"
 
 
 @pytest.mark.asyncio

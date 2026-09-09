@@ -10,9 +10,11 @@ from uuid import UUID
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
+    all_tasks_have_durable_stop_wait,
     all_tasks_have_label,
     first_tdd_code_path,
     first_tdd_test_path,
@@ -419,6 +421,65 @@ class TestTaskNeedsHumanReview:
 
     def test_no_manager_returns_false(self) -> None:
         assert task_needs_human_review(None, "#100") is False
+
+
+class TestAllTasksHaveDurableStopWait:
+    def test_unresolved_blocking_dependency_rearms_when_blocker_closes(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, title="Blocked task")
+        blocker = _task(manager, sample_project, title="Open blocker")
+        TaskDependencyManager(temp_db).add_dependency(task.id, blocker.id)
+
+        assert all_tasks_have_durable_stop_wait(manager, task.id) is True
+
+        manager.close_task(blocker.id, force=True)
+
+        assert all_tasks_have_durable_stop_wait(manager, task.id) is False
+
+    def test_nonblank_escalation_reason_is_durable(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.escalate_task(task.id, reason="Architecture decision required")
+
+        assert all_tasks_have_durable_stop_wait(manager, task.id) is True
+
+    def test_blank_escalation_reason_is_not_durable(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.escalate_task(task.id, reason="   ")
+
+        assert all_tasks_have_durable_stop_wait(manager, task.id) is False
+
+    def test_every_claimed_task_must_have_an_objective_wait(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        manager = _manager(temp_db)
+        escalated = _task(manager, sample_project, title="Escalated task")
+        ordinary = _task(manager, sample_project, title="Ordinary task")
+        manager.escalate_task(escalated.id, reason="Human decision required")
+
+        assert all_tasks_have_durable_stop_wait(manager, [escalated.id, ordinary.id]) is False
+
+    def test_empty_or_missing_tasks_fail_closed(self, temp_db: HubDatabase) -> None:
+        manager = _manager(temp_db)
+
+        assert all_tasks_have_durable_stop_wait(manager, []) is False
+        assert all_tasks_have_durable_stop_wait(None, ["missing"]) is False
+        assert all_tasks_have_durable_stop_wait(manager, ["missing"]) is False
 
 
 class TestTaskTypeIn:

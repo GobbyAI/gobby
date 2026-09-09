@@ -660,6 +660,33 @@ def task_needs_human_review(task_manager: TaskProvider | None, task_id: TaskIdRe
     return projected_task_state(task) == "escalated"
 
 
+def all_tasks_have_durable_stop_wait(
+    task_manager: TaskProvider | None,
+    task_id_or_ids: TaskIdInput,
+) -> bool:
+    """Return whether every claimed task has an objective durable wait state."""
+    task_ids = _normalize_task_ids(task_id_or_ids, "all_tasks_have_durable_stop_wait")
+    if not task_ids or not task_manager:
+        return False
+
+    for task_id in task_ids:
+        task = _get_task(task_manager, task_id)
+        if task is None:
+            logger.warning("all_tasks_have_durable_stop_wait: Task '%s' not found", task_id)
+            return False
+
+        escalation_reason = getattr(task, "escalation_reason", None)
+        has_escalation = bool(
+            getattr(task, "is_escalated", False)
+            and isinstance(escalation_reason, str)
+            and escalation_reason.strip()
+        )
+        if not getattr(task, "active_blocked_by", set()) and not has_escalation:
+            return False
+
+    return True
+
+
 def _normalize_task_id(task_id: Any) -> str:
     """Normalize a task_id to string format.
 

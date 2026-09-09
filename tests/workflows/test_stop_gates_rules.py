@@ -463,6 +463,7 @@ class TestRequireTaskClose:
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
                 "has_active_agent_wait": lambda: False,
+                "has_durable_stop_wait": lambda: False,
             },
         )
         assert body.when is not None
@@ -493,6 +494,7 @@ class TestRequireTaskClose:
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
                 "has_active_agent_wait": lambda: False,
+                "has_durable_stop_wait": lambda: False,
             },
         )
         assert body.when is not None
@@ -545,6 +547,7 @@ class TestLegitimateWaitConditions:
                 "all_tasks_have_label": lambda _task_ids, _label: False,
                 "task_tree_complete": lambda _task_ids: False,
                 "has_active_agent_wait": lambda: True,
+                "has_durable_stop_wait": lambda: True,
             },
         )
 
@@ -573,6 +576,7 @@ class TestLegitimateWaitConditions:
                 "all_tasks_have_label": lambda _task_ids, _label: False,
                 "task_tree_complete": lambda _task_ids: False,
                 "has_active_agent_wait": lambda: False,
+                "has_durable_stop_wait": lambda: False,
             },
         )
 
