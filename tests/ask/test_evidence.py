@@ -179,7 +179,7 @@ def _persist_authority(
         GrantBundle.model_validate(
             {
                 "config_revision": 0,
-                "deployment": {"token": "test-" * 4, "fencing_epoch": 1},
+                "deployment": {"token": "a" * 16, "fencing_epoch": 1},
                 "schema_identity": {
                     "runner_protocol": 1,
                     "baseline_version": 1,

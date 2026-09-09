@@ -209,7 +209,7 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     monkeypatch.setattr(
         "gobby.agents.code_index._active_deployment_grant_context",
         lambda: DeploymentGrantContext(
-            token="test-" * 4,
+            token="a" * 16,
             fencing_epoch=1,
             signing_secret="ask-native-integration-signing-secret",
         ),
