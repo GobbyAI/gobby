@@ -142,8 +142,7 @@ async def push_dry_run_probe(
 ) -> dict[str, Any]:
     command = ["push", "--dry-run", "origin", f"HEAD:{branch}"]
     if git_manager is not None:
-        result = await asyncio.to_thread(
-            git_manager.run_git_command,
+        result = await git_manager.run_git_command(
             command,
             cwd=repo_path,
             timeout=_PROTECTION_PROBE_TIMEOUT_SECONDS,

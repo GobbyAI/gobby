@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -25,7 +26,7 @@ __all__ = [
 ]
 
 
-def ensure_epic_integration_workspaces(
+async def ensure_epic_integration_workspaces(
     *,
     task_manager: LocalTaskManager,
     root_task: Task,
@@ -85,7 +86,7 @@ def ensure_epic_integration_workspaces(
             )
             or _integration_branch(task)
         )
-        integration = workspace_services.ensure_integration(
+        integration = await workspace_services.ensure_integration(
             task=task,
             backend=backend,
             branch_name=integration_branch,
@@ -102,7 +103,8 @@ def ensure_epic_integration_workspaces(
             ),
         )
         if merge_closed_descendant_commits:
-            _merge_closed_descendant_commits(
+            await asyncio.to_thread(
+                _merge_closed_descendant_commits,
                 tasks=tasks,
                 parent_by_id=parent_by_id,
                 epic_id=task.id,
@@ -121,7 +123,7 @@ def ensure_epic_integration_workspaces(
         )
 
 
-def ensure_task_parent_integration_workspace(
+async def ensure_task_parent_integration_workspace(
     *,
     task_manager: LocalTaskManager,
     task: Task,
@@ -164,7 +166,7 @@ def ensure_task_parent_integration_workspace(
             )
             or _integration_branch(epic)
         )
-        integration = workspace_services.ensure_integration(
+        integration = await workspace_services.ensure_integration(
             task=epic,
             backend=backend,
             branch_name=integration_branch,

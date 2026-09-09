@@ -1,14 +1,17 @@
-"""Synchronous worktree deletion transaction shared by transport adapters."""
+"""Worktree deletion with asynchronous Git and guarded database cleanup."""
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
 
@@ -66,20 +69,42 @@ async def delete_worktree_transaction(
     task_manager: LocalTaskManager | None,
 ) -> WorktreeDeletionResult:
     """Perform lookup, nonblocking Git mutation, storage cleanup, and event emission."""
+    context = contextvars.copy_context()
     if request.surface is DeletionSurface.MAINTENANCE:
-        with worktree_storage.lock_for_cleanup(request.worktree_id) as worktree:
+        guard = worktree_storage.lock_for_cleanup(request.worktree_id)
+        entered = False
+
+        def enter_guard() -> Worktree | None:
+            nonlocal entered
+            worktree = guard.__enter__()
+            entered = True
+            return worktree
+
+        try:
+            worktree = await run_thread_to_completion(context.run, enter_guard)
             if worktree is None:
                 return WorktreeDeletionResult(
                     success=False, git_deleted=False, error="Worktree is no longer eligible"
                 )
             return await _delete_worktree(
-                boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager
+                boundary,
+                request,
+                worktree,
+                worktree_storage,
+                resolve_git_manager,
+                task_manager,
+                context,
             )
-    worktree = worktree_storage.get(request.worktree_id)
+        finally:
+            if entered:
+                await run_thread_to_completion(context.run, guard.__exit__, *sys.exc_info())
+    worktree = await run_thread_to_completion(
+        context.run, worktree_storage.get, request.worktree_id
+    )
     if worktree is None:
         return WorktreeDeletionResult(success=True, found=False)
     return await _delete_worktree(
-        boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager
+        boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager, context
     )
 
 
@@ -90,8 +115,9 @@ async def _delete_worktree(
     worktree_storage: LocalWorktreeManager,
     resolve_git_manager: GitManagerResolver,
     task_manager: LocalTaskManager | None,
+    context: contextvars.Context,
 ) -> WorktreeDeletionResult:
-    git_manager = resolve_git_manager(worktree)
+    git_manager = await run_thread_to_completion(context.run, resolve_git_manager, worktree)
     if request.merged_into is not None and git_manager is None:
         return WorktreeDeletionResult(
             success=False,
@@ -112,6 +138,17 @@ async def _delete_worktree(
     if git_failure is not None:
         return git_failure
 
+    return await run_thread_to_completion(
+        context.run, _finish_storage_deletion, request, worktree, worktree_storage, task_manager
+    )
+
+
+def _finish_storage_deletion(
+    request: WorktreeDeletionRequest,
+    worktree: Worktree,
+    worktree_storage: LocalWorktreeManager,
+    task_manager: LocalTaskManager | None,
+) -> WorktreeDeletionResult:
     if not worktree_storage.delete(request.worktree_id):
         return WorktreeDeletionResult(
             success=False,

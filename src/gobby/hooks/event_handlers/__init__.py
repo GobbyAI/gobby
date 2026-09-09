@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.event_handlers._agent import AgentEventHandlerMixin
@@ -146,7 +146,9 @@ class EventHandlers(
         self.logger = logger or logging.getLogger(__name__)
 
         # Build handler map
-        self._handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]] = {
+        self._handler_map: dict[
+            HookEventType, Callable[[HookEvent], HookResponse | Coroutine[Any, Any, HookResponse]]
+        ] = {
             HookEventType.SESSION_START: self.handle_session_start,
             HookEventType.SESSION_END: self.handle_session_end,
             HookEventType.SETUP: self.handle_neutral,
@@ -194,7 +196,7 @@ class EventHandlers(
 
     def get_handler(
         self, event_type: HookEventType | str
-    ) -> Callable[[HookEvent], HookResponse] | None:
+    ) -> Callable[[HookEvent], HookResponse | Coroutine[Any, Any, HookResponse]] | None:
         """
         Get handler for an event type.
 
@@ -211,7 +213,11 @@ class EventHandlers(
                 return None
         return self._handler_map.get(event_type)
 
-    def get_handler_map(self) -> dict[HookEventType, Callable[[HookEvent], HookResponse]]:
+    def get_handler_map(
+        self,
+    ) -> dict[
+        HookEventType, Callable[[HookEvent], HookResponse | Coroutine[Any, Any, HookResponse]]
+    ]:
         """
         Get a copy of the handler map.
 

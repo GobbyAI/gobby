@@ -28,7 +28,7 @@ class GitOk:
 
 @dataclass(frozen=True, slots=True)
 class GitTimeout:
-    """A Git process group killed after exceeding its deadline."""
+    """A command past its deadline; its worker owns eventual kill and reap."""
 
     status: Literal["timeout"]
     argv: tuple[str, ...]
@@ -60,6 +60,7 @@ class GitStatusEntry:
 
 type GitResult = GitOk | GitTimeout | GitFailed
 type _StatusKey = tuple[
+    asyncio.AbstractEventLoop,
     str,
     tuple[str, ...],
     float,
@@ -131,6 +132,7 @@ class DaemonGitService:
 
     def __init__(self) -> None:
         self._status_inflight: dict[_StatusKey, _InFlight] = {}
+        self._status_lock = threading.Lock()
 
     async def run(
         self,
@@ -187,23 +189,24 @@ class DaemonGitService:
             return GitFailed("failed", argv, None, "", str(exc))
         effective_env = dict(env) if env is not None else None
         env_key = tuple(sorted(effective_env.items())) if effective_env is not None else None
-        key: _StatusKey = (resolved_cwd, argv, timeout, env_key)
+        key: _StatusKey = (asyncio.get_running_loop(), resolved_cwd, argv, timeout, env_key)
 
-        flight = self._status_inflight.get(key)
-        if flight is None:
-            task = asyncio.create_task(
-                self._execute(
-                    argv,
-                    cwd=resolved_cwd,
-                    timeout=timeout,
-                    env=effective_env,
-                    input_text=None,
+        with self._status_lock:
+            flight = self._status_inflight.get(key)
+            if flight is None:
+                task = asyncio.create_task(
+                    self._execute(
+                        argv,
+                        cwd=resolved_cwd,
+                        timeout=timeout,
+                        env=effective_env,
+                        input_text=None,
+                    )
                 )
-            )
-            flight = _InFlight(task=task)
-            self._status_inflight[key] = flight
+                flight = _InFlight(task=task)
+                self._status_inflight[key] = flight
 
-        flight.waiters += 1
+            flight.waiters += 1
         cancelled = False
         try:
             return await asyncio.shield(flight.task)
@@ -211,12 +214,16 @@ class DaemonGitService:
             cancelled = True
             raise
         finally:
-            flight.waiters -= 1
-            if cancelled and flight.waiters == 0 and not flight.task.done():
+            with self._status_lock:
+                flight.waiters -= 1
+                last_cancelled = cancelled and flight.waiters == 0
+                if (last_cancelled or flight.task.done()) and self._status_inflight.get(
+                    key
+                ) is flight:
+                    self._status_inflight.pop(key)
+            if last_cancelled and not flight.task.done():
                 flight.task.cancel()
                 await _await_cleanup(flight.task)
-            if flight.task.done() and self._status_inflight.get(key) is flight:
-                self._status_inflight.pop(key, None)
 
     async def _execute(
         self,
@@ -237,17 +244,20 @@ class DaemonGitService:
             name="gobby-daemon-git",
             daemon=True,
         )
-        worker.start()
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            return GitFailed("failed", argv, None, "", str(exc))
 
         try:
             return await asyncio.wait_for(asyncio.shield(completion), timeout)
         except TimeoutError:
             control.kill()
-            outcome = await _await_cleanup(completion)
-            return GitTimeout("timeout", argv, timeout, outcome.stdout, outcome.stderr)
+            # The dedicated worker owns eventual kill/reap, including a process
+            # that has not returned from Popen yet. Never await a wedged spawn.
+            return GitTimeout("timeout", argv, timeout)
         except asyncio.CancelledError:
             control.kill()
-            await _await_cleanup(completion)
             raise
 
 
@@ -262,6 +272,7 @@ def _run_git_worker(
     input_text: str | None,
 ) -> None:
     """Own one process from spawn through communication and leader reap."""
+    process: subprocess.Popen[str] | None = None
     try:
         process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
             argv,
@@ -281,7 +292,10 @@ def _run_git_worker(
             result: GitOk | GitFailed = GitOk("ok", argv, stdout, stderr)
         else:
             result = GitFailed("failed", argv, process.returncode, stdout, stderr)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except Exception as exc:
+        if process is not None:
+            _kill_process_group(process)
+            process.wait()
         result = GitFailed("failed", argv, None, "", str(exc))
     finally:
         control.mark_finished()

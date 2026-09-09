@@ -4,9 +4,10 @@ import asyncio
 import os
 import stat
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -85,12 +86,12 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     service = DaemonGitService()
 
     success = await service.run(
-        ["rev-parse", "HEAD"], cwd=tmp_path, timeout=60.0, env=_git_env(tmp_path)
+        ["rev-parse", "HEAD"], cwd=tmp_path, timeout=2.0, env=_git_env(tmp_path)
     )
     failure = await service.run(
         ["status"],
         cwd=tmp_path,
-        timeout=60.0,
+        timeout=2.0,
         env=_git_env(tmp_path, GIT_TEST_FAIL="1"),
     )
 
@@ -180,31 +181,44 @@ async def test_disjoint_reads_overlap() -> None:
 
     service = ProbeService()
     requests = asyncio.gather(
-        service.run(["rev-parse", "HEAD"], cwd="."),
-        service.run(["show", "HEAD:file.py"], cwd="."),
+        service.status(".", ["first.py"]),
+        service.status(".", ["second.py"]),
     )
 
     await asyncio.wait_for(both_started.wait(), timeout=0.2)
+    assert len(started) == 2
     release.set()
-    await requests
+    assert all(isinstance(result, GitOk) for result in await requests)
 
 
 @pytest.mark.asyncio
-async def test_cancelling_one_coalesced_waiter_preserves_the_other(tmp_path: Path) -> None:
-    _write_fake_git(tmp_path)
-    count = tmp_path / "count"
-    service = DaemonGitService()
-    env = _git_env(tmp_path, GIT_TEST_COUNT=str(count), GIT_TEST_DELAY="0.1")
-    first = asyncio.create_task(service.status(tmp_path, ["a.py"], timeout=60.0, env=env))
-    second = asyncio.create_task(service.status(tmp_path, ["a.py"], timeout=60.0, env=env))
+async def test_cancelling_one_coalesced_waiter_preserves_the_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
 
-    await asyncio.sleep(0.02)
+    async def execute(argv: tuple[str, ...], **kwargs: object) -> GitOk:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return GitOk("ok", argv, "", "")
+
+    service = DaemonGitService()
+    monkeypatch.setattr(service, "_execute", execute)
+    first = asyncio.create_task(service.status(tmp_path, ["a.py"]))
+    second = asyncio.create_task(service.status(tmp_path, ["a.py"]))
+
+    await asyncio.wait_for(started.wait(), timeout=1)
     first.cancel()
 
     with pytest.raises(asyncio.CancelledError):
         await first
+    release.set()
     assert isinstance(await second, GitOk)
-    assert count.read_text(encoding="utf-8") == "x"
+    assert calls == 1
 
 
 @pytest.mark.asyncio
@@ -256,27 +270,155 @@ async def test_deadline_includes_slow_spawn(
     _write_fake_git(tmp_path)
     real_popen = subprocess.Popen
     created: list[subprocess.Popen[str]] = []
+    release_spawn = threading.Event()
+    finished = threading.Event()
 
     def slow_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
-        time.sleep(0.1)
+        release_spawn.wait(5)
         process = real_popen(*args, **kwargs)
         created.append(process)
+        finished.set()
         return process
 
     monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", slow_popen)
     service = DaemonGitService()
 
-    result = await service.run(
-        ["status"],
-        cwd=tmp_path,
-        timeout=0.02,
-        env=_git_env(tmp_path, GIT_TEST_DELAY="30"),
-    )
-
-    assert isinstance(result, GitTimeout)
+    try:
+        started = time.monotonic()
+        result = await asyncio.wait_for(
+            service.run(
+                ["status"],
+                cwd=tmp_path,
+                timeout=0.02,
+                env=_git_env(tmp_path, GIT_TEST_DELAY="30"),
+            ),
+            timeout=0.5,
+        )
+        assert isinstance(result, GitTimeout)
+        assert time.monotonic() - started < 0.5
+        assert not created
+    finally:
+        release_spawn.set()
+        assert await asyncio.to_thread(finished.wait, 2)
     assert len(created) == 1
-    assert created[0].returncode is not None
     await _assert_process_group_gone(created[0].pid)
+    assert created[0].poll() is not None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["argv", "env", "input"])
+async def test_invalid_worker_arguments_resolve_completion(tmp_path: Path, invalid: str) -> None:
+    result = await asyncio.wait_for(
+        DaemonGitService().run(
+            cast(list[str], [object()]) if invalid == "argv" else ["hash-object", "--stdin"],
+            cwd=tmp_path,
+            timeout=10,
+            env=cast(dict[str, str], {"INVALID": object()}) if invalid == "env" else None,
+            input_text=cast(str, object()) if invalid == "input" else None,
+        ),
+        timeout=1,
+    )
+    assert isinstance(result, GitFailed)
+    assert result.returncode is None
+    assert result.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_status_does_not_join_a_cancelled_last_waiter_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def execute(argv: tuple[str, ...], **kwargs: object) -> GitOk:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            try:
+                await asyncio.Future[None]()
+            except asyncio.CancelledError:
+                cleaning.set()
+                await release.wait()
+                raise
+        return GitOk("ok", argv, "replacement", "")
+
+    service = DaemonGitService()
+    monkeypatch.setattr(service, "_execute", execute)
+    first = asyncio.create_task(service.status(".", ["a.py"]))
+    await asyncio.wait_for(started.wait(), 1)
+    first.cancel()
+    await asyncio.wait_for(cleaning.wait(), 1)
+    try:
+        replacement = await asyncio.wait_for(service.status(".", ["a.py"]), 1)
+        assert isinstance(replacement, GitOk)
+        assert replacement.stdout == "replacement"
+        assert calls == 2
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+    assert not service._status_inflight
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_status_does_not_coalesce_across_event_loop_threads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_fake_git(tmp_path)
+    real_popen = subprocess.Popen
+    barrier = threading.Barrier(2)
+    count = tmp_path / "count"
+    env = _git_env(tmp_path, GIT_TEST_COUNT=str(count))
+
+    def overlapping_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        barrier.wait(timeout=2)
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", overlapping_popen)
+    service = DaemonGitService()
+
+    def other_loop() -> GitOk | GitFailed | GitTimeout:
+        return asyncio.run(service.status(tmp_path, ["same.py"], env=env))
+
+    first, second = await asyncio.gather(
+        service.status(tmp_path, ["same.py"], env=env),
+        asyncio.to_thread(other_loop),
+    )
+    assert isinstance(first, GitOk)
+    assert isinstance(second, GitOk)
+    assert count.read_text() == "xx"
+    assert not service._status_inflight
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_disjoint_status_processes_overlap(tmp_path: Path) -> None:
+    executable = tmp_path / "git"
+    executable.write_text(
+        "#!/bin/sh\n"
+        'for path in "$@"; do :; done\n'
+        'touch "$GIT_TEST_READY/$path"\n'
+        'while [ ! -e "$GIT_TEST_READY/a.py" ] || [ ! -e "$GIT_TEST_READY/b.py" ]; do\n'
+        "  /bin/sleep 0.01\n"
+        "done\n"
+    )
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+    ready = tmp_path / "ready"
+    ready.mkdir()
+    service = DaemonGitService()
+    env = _git_env(tmp_path, GIT_TEST_READY=str(ready))
+    first, second = await asyncio.gather(
+        service.status(tmp_path, ["a.py"], timeout=2, env=env),
+        service.status(tmp_path, ["b.py"], timeout=2, env=env),
+    )
+    assert isinstance(first, GitOk)
+    assert isinstance(second, GitOk)
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -54,8 +53,7 @@ def register_branch_protection_tool(
 
         remote_url: str | None = None
         if git_manager is not None:
-            remote = await asyncio.to_thread(
-                git_manager.run_git_command,
+            remote = await git_manager.run_git_command(
                 ["remote", "get-url", "origin"],
                 cwd=effective_repo_path,
                 timeout=10,

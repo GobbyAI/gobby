@@ -157,8 +157,7 @@ def register_merge_apply_tool(
                     encoding="utf-8",
                 )
 
-                add_result = await asyncio.to_thread(
-                    git_manager.stage_files,
+                add_result = await git_manager.stage_files(
                     [conflict.file_path],
                     cwd=wt_path,
                 )
@@ -171,7 +170,7 @@ def register_merge_apply_tool(
                     }
                 written.append(conflict.file_path)
 
-            unmerged = await asyncio.to_thread(git_manager.get_unmerged_files, cwd=wt_path)
+            unmerged = await git_manager.get_unmerged_files(cwd=wt_path)
             if unmerged:
                 return {
                     "success": False,
@@ -217,8 +216,7 @@ def register_merge_apply_tool(
                     result["dirty_files"] = direct_result.get("dirty_files", [])
                 return result
 
-            commit_result = await asyncio.to_thread(
-                git_manager.run_git_command,
+            commit_result = await git_manager.run_git_command(
                 ["commit", "--no-edit"],
                 cwd=wt_path,
                 timeout=30,

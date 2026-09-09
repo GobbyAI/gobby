@@ -161,7 +161,7 @@ async def get_file_changes_async(
     diff_result = _require_git_ok(diff_raw, "Git diff status")
     untracked_result = _require_git_ok(untracked_raw, "Git untracked status")
 
-    changes = []
+    changes: list[str] = []
     if diff_result.stdout.strip():
         changes.extend(("Modified/Deleted:", diff_result.stdout.strip()))
     if untracked_result.stdout.strip():
@@ -189,7 +189,7 @@ def get_file_changes(project_path: str | None = None, paths: Sequence[str] | Non
         )
     except Exception:
         return "Unable to determine file changes"
-    changes = []
+    changes: list[str] = []
     if diff_result.stdout.strip():
         changes.extend(("Modified/Deleted:", diff_result.stdout.strip()))
     if untracked_result.stdout.strip():

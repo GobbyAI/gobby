@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def cleanup_merged_task_artifacts_after_agent_exit(
+async def cleanup_merged_task_artifacts_after_agent_exit(
     db: HubDatabase,
     task_id: str,
     *,
@@ -37,23 +37,23 @@ def cleanup_merged_task_artifacts_after_agent_exit(
 
     task_manager = LocalTaskManager(db)
 
-    def cleanup() -> list[Any]:
+    async def cleanup() -> list[Any]:
         if preserve_worktree_id:
-            return cleanup_successful_merge_artifacts(
+            return await cleanup_successful_merge_artifacts(
                 db,
                 task_id,
                 preserve_worktree_ids={preserve_worktree_id},
             )
-        return cleanup_successful_merge_artifacts(db, task_id)
+        return await cleanup_successful_merge_artifacts(db, task_id)
 
     merge_stage = task_manager.stage_states.get(task_id, "merge")
     if merge_stage is not None and merge_stage.state == "done":
-        return cleanup()
+        return await cleanup()
 
     task = task_manager.get_task(task_id)
     if task is None or task.closed_at is None or task.closed_reason != "already_implemented":
         return []
-    return cleanup()
+    return await cleanup()
 
 
 class TerminalResourceCleaner:
@@ -205,8 +205,7 @@ class TerminalResourceCleaner:
                     if reused_worktree and run.worktree_id
                     else {}
                 )
-                artifacts = await self._run_db(
-                    cleanup_merged_task_artifacts_after_agent_exit,
+                artifacts = await cleanup_merged_task_artifacts_after_agent_exit(
                     self._db,
                     run.task_id,
                     **cleanup_kwargs,

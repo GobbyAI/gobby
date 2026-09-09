@@ -6,9 +6,10 @@ to :mod:`gobby.hooks.event_handlers`.  See :class:`HookManager` for details.
 
 import asyncio
 import copy
+import inspect
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
@@ -341,7 +342,10 @@ class HookManager(HookManagerDispatchMixin):
         if daemon_unavailable:
             return daemon_unavailable
 
-        return self._handle_after_daemon_ready(event)
+        response = self._handle_after_daemon_ready(event)
+        if isinstance(response, HookResponse):
+            return response
+        return asyncio.run(response)
 
     async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
         """Internal async handle logic wrapped by span."""
@@ -353,14 +357,17 @@ class HookManager(HookManagerDispatchMixin):
         if daemon_unavailable:
             return daemon_unavailable
 
-        return await asyncio.to_thread(self._handle_after_daemon_ready, event)
+        response = await asyncio.to_thread(self._handle_after_daemon_ready, event)
+        if isinstance(response, HookResponse):
+            return response
+        return await response
 
     def _handle_after_daemon_ready(
         self,
         event: HookEvent,
         blocking_deadline: BlockingEffectDeadline | None = None,
-    ) -> HookResponse:
-        """Run hook handling after the daemon readiness gate has passed."""
+    ) -> HookResponse | Coroutine[Any, Any, HookResponse]:
+        """Run hook preparation, returning async handlers to the calling loop."""
         if blocking_deadline is None:
             blocking_deadline = new_blocking_effect_deadline()
         # SESSION_START is special: the handler establishes the canonical
@@ -546,11 +553,23 @@ class HookManager(HookManagerDispatchMixin):
 
             try:
                 response = handler(event)
+                if inspect.isawaitable(response):
+                    return self._complete_async_handler(event, response, workflow_context)
             except Exception as e:
                 self.logger.exception("Event handler %s failed: %s", event.event_type, e)
                 return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
         return self._complete_response(event, response, workflow_context)
+
+    async def _complete_async_handler(
+        self, event: HookEvent, response: Awaitable[HookResponse], workflow_context: str | None
+    ) -> HookResponse:
+        try:
+            resolved = await response
+        except Exception as exc:
+            self.logger.exception("Event handler %s failed: %s", event.event_type, exc)
+            return HookResponse(decision="allow", reason=f"Handler error: {exc}")
+        return await asyncio.to_thread(self._complete_response, event, resolved, workflow_context)
 
     def _complete_response(
         self,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -181,11 +180,10 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
 
             try:
-                inspected = await asyncio.to_thread(
-                    resolved_manager.inspect_worktree,
+                inspected = await resolved_manager.inspect_worktree(
                     worktree_path,
                 )
-                base_branch = await asyncio.to_thread(resolved_manager.get_default_branch)
+                base_branch = await resolved_manager.get_default_branch()
                 worktree, adopted = ctx.worktree_storage.register_adopted(
                     project_id=resolved_project_id,
                     branch_name=inspected.branch,
@@ -301,7 +299,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="mark_worktree_merged",
         description="Mark a worktree as merged (ready for cleanup).",
     )
-    def mark_worktree_merged(worktree_id: str) -> dict[str, Any]:
+    async def mark_worktree_merged(worktree_id: str) -> dict[str, Any]:
         """Mark a worktree as merged.
 
         Args:
@@ -323,7 +321,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "error": f"Detached worktree '{worktree_id}' cannot be marked as merged",
             }
 
-        git_merged = is_worktree_git_merged(worktree, ctx.git_manager)
+        git_merged = await is_worktree_git_merged(worktree, ctx.git_manager)
         if git_merged is None:
             return {"success": False, "error": "Git manager not available"}
         if not git_merged:

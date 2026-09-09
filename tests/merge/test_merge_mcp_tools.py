@@ -15,6 +15,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.utils.daemon_git import GitOk
+from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +47,7 @@ class TestMergeToolsImports:
         # Create registry with mock dependencies
         mock_storage = MagicMock()
         mock_resolver = MagicMock()
-        mock_git_manager = MagicMock()
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
 
         registry = create_merge_registry(
             merge_storage=mock_storage,
@@ -76,7 +78,7 @@ class TestMergeRegistryCreation:
 
         mock_storage = MagicMock()
         mock_resolver = MagicMock()
-        mock_git_manager = MagicMock()
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
 
         registry = create_merge_registry(
             merge_storage=mock_storage,
@@ -93,7 +95,7 @@ class TestMergeRegistryCreation:
 
         mock_storage = MagicMock()
         mock_resolver = MagicMock()
-        mock_git_manager = MagicMock()
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
 
         registry = create_merge_registry(
             merge_storage=mock_storage,
@@ -112,6 +114,13 @@ class TestMergeRegistryCreation:
 
 class TestMergeStartTool:
     """Tests for merge_start tool."""
+
+    @pytest.fixture(autouse=True)
+    def git_conflict_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.merge_conflict_hydration.daemon_git.run",
+            AsyncMock(return_value=GitOk("ok", ("git", "diff"), "", "")),
+        )
 
     @pytest.fixture
     def mock_storage(self):
@@ -138,7 +147,7 @@ class TestMergeStartTool:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager."""
-        git_manager = MagicMock()
+        git_manager = MagicMock(spec=WorktreeGitManager)
         git_manager.repo_path = "/test/repo"
         return git_manager
 
@@ -513,7 +522,7 @@ class TestMergeStatusTool:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager."""
-        return MagicMock()
+        return MagicMock(spec=WorktreeGitManager)
 
     @pytest.fixture
     def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):
@@ -677,7 +686,7 @@ class TestMergeResolveTool:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager."""
-        return MagicMock()
+        return MagicMock(spec=WorktreeGitManager)
 
     @pytest.fixture
     def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):
@@ -1049,10 +1058,10 @@ class TestMergeApplyTool:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager with subprocess-like public git methods."""
-        git_manager = MagicMock()
-        git_manager.stage_files = MagicMock()
-        git_manager.get_unmerged_files = MagicMock(return_value=[])
-        git_manager.run_git_command = MagicMock()
+        git_manager = MagicMock(spec=WorktreeGitManager)
+        git_manager.stage_files = AsyncMock()
+        git_manager.get_unmerged_files = AsyncMock(return_value=[])
+        git_manager.run_git_command = AsyncMock()
         return git_manager
 
     @pytest.fixture
@@ -1323,8 +1332,8 @@ class TestMergeAbortTool:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager."""
-        git_manager = MagicMock()
-        git_manager.run_git_command = MagicMock()
+        git_manager = MagicMock(spec=WorktreeGitManager)
+        git_manager.run_git_command = AsyncMock()
         return git_manager
 
     @pytest.fixture
@@ -1490,7 +1499,7 @@ class TestMergeToolValidation:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager."""
-        return MagicMock()
+        return MagicMock(spec=WorktreeGitManager)
 
     @pytest.fixture
     def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):
@@ -1562,7 +1571,7 @@ class TestMergeToolErrors:
     @pytest.fixture
     def mock_git_manager(self):
         """Create mock git manager."""
-        return MagicMock()
+        return MagicMock(spec=WorktreeGitManager)
 
     @pytest.fixture
     def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):

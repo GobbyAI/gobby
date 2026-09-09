@@ -22,7 +22,7 @@ from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
-from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
+from gobby.utils.daemon_git import GitTimeout, daemon_git
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -70,11 +70,11 @@ async def _run_git(
         raise subprocess.TimeoutExpired(
             result.argv, result.timeout, output=result.stdout, stderr=result.stderr
         )
-    if isinstance(result, GitFailed) and result.returncode is None:
+    if result.returncode is None:
         raise OSError(result.stderr or "Git could not be started")
     return subprocess.CompletedProcess(
         args=result.argv,
-        returncode=0 if isinstance(result, GitOk) else result.returncode,
+        returncode=result.returncode,
         stdout=result.stdout,
         stderr=result.stderr,
     )

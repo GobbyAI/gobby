@@ -2,7 +2,7 @@
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -152,74 +152,74 @@ class TestWorktreeGitManagerRunGit:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_run_git_success(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_run_git_success(self, mock_run, manager) -> None:
         """_run_git returns CompletedProcess on success."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "status"],
+            args=["status"],
             returncode=0,
             stdout="On branch main",
             stderr="",
         )
 
-        result = manager._run_git(["status"])
+        result = await manager._run_git(["status"])
 
         assert result.returncode == 0
         assert result.stdout == "On branch main"
         mock_run.assert_called_once()
 
-    @patch("subprocess.run")
-    def test_run_git_uses_repo_path(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_run_git_uses_repo_path(self, mock_run, manager) -> None:
         """_run_git uses repo_path as default cwd."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "status"],
+            args=["status"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        manager._run_git(["status"])
+        (await manager._run_git(["status"]))
 
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs["cwd"] == manager.repo_path
 
-    @patch("subprocess.run")
-    def test_run_git_custom_cwd(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_run_git_custom_cwd(self, mock_run, manager, tmp_path) -> None:
         """_run_git accepts custom cwd."""
         custom_path = tmp_path / "custom"
         custom_path.mkdir()
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "status"],
+            args=["status"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        manager._run_git(["status"], cwd=custom_path)
+        (await manager._run_git(["status"], cwd=custom_path))
 
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs["cwd"] == custom_path
 
-    @patch("subprocess.run")
-    def test_run_git_merges_environment_overrides(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_run_git_merges_environment_overrides(self, mock_run, manager) -> None:
         """_run_git preserves the process environment and applies overrides."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "status"], returncode=0, stdout="", stderr=""
+            args=["status"], returncode=0, stdout="", stderr=""
         )
 
-        manager.run_git_command(["status"], env={"GOBBY_MERGE": "1"})
+        (await manager.run_git_command(["status"], env={"GOBBY_MERGE": "1"}))
 
         call_env = mock_run.call_args.kwargs["env"]
         assert call_env["GOBBY_MERGE"] == "1"
         assert "PATH" in call_env
 
-    @patch("subprocess.run")
-    def test_run_git_timeout(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_run_git_timeout(self, mock_run, manager) -> None:
         """_run_git raises on timeout."""
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
 
         with pytest.raises(subprocess.TimeoutExpired):
-            manager._run_git(["status"])
+            (await manager._run_git(["status"]))
 
 
 class TestWorktreeGitManagerCreateWorktree:
@@ -230,19 +230,19 @@ class TestWorktreeGitManagerCreateWorktree:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    def test_create_fails_if_path_exists(self, manager, tmp_path) -> None:
+    async def test_create_fails_if_path_exists(self, manager, tmp_path) -> None:
         """Create fails if worktree path already exists."""
         existing_path = tmp_path / "existing"
         existing_path.mkdir()
 
-        result = manager.create_worktree(existing_path, "feature/test")
+        result = await manager.create_worktree(existing_path, "feature/test")
 
         assert result.success is False
         assert "already exists" in result.message
 
     @pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
-    @patch("subprocess.run")
-    def test_create_rejects_remote_base_before_side_effects(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_rejects_remote_base_before_side_effects(
         self,
         mock_run: MagicMock,
         manager: WorktreeGitManager,
@@ -251,7 +251,7 @@ class TestWorktreeGitManagerCreateWorktree:
     ) -> None:
         worktree_path = tmp_path / "worktrees" / "feature-test"
 
-        result = manager.create_worktree(
+        result = await manager.create_worktree(
             worktree_path,
             "feature/test",
             base_branch=base_branch,
@@ -262,92 +262,92 @@ class TestWorktreeGitManagerCreateWorktree:
         assert not worktree_path.parent.exists()
         mock_run.assert_not_called()
 
-    @patch("subprocess.run")
-    def test_create_with_new_branch(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_with_new_branch(self, mock_run, manager, tmp_path) -> None:
         """Create worktree with new branch."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "add"],
+            args=["worktree", "add"],
             returncode=0,
             stdout="Preparing worktree",
             stderr="",
         )
 
-        result = manager.create_worktree(
+        result = await manager.create_worktree(
             worktree_path, "feature/test", base_branch="main", create_branch=True
         )
 
         assert result.success is True
         assert "Created worktree" in result.message
 
-    @patch("subprocess.run")
-    def test_create_with_existing_branch(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_with_existing_branch(self, mock_run, manager, tmp_path) -> None:
         """Create worktree with existing branch."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "add"],
+            args=["worktree", "add"],
             returncode=0,
             stdout="Preparing worktree",
             stderr="",
         )
 
-        result = manager.create_worktree(worktree_path, "feature/test", create_branch=False)
+        result = await manager.create_worktree(worktree_path, "feature/test", create_branch=False)
 
         assert result.success is True
 
-    @patch("subprocess.run")
-    def test_create_handles_git_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_handles_git_failure(self, mock_run, manager, tmp_path) -> None:
         """Create handles git command failure."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         # First call is fetch (succeeds), second call is worktree add (fails)
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "fetch"],
+                args=["fetch"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "worktree", "add"],
+                args=["worktree", "add"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: could not create worktree",
             ),
         ]
 
-        result = manager.create_worktree(worktree_path, "feature/test")
+        result = await manager.create_worktree(worktree_path, "feature/test")
 
         assert result.success is False
         assert "Failed to create" in result.message
 
-    @patch("subprocess.run")
-    def test_create_reuses_existing_branch_when_new_branch_exists(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_reuses_existing_branch_when_new_branch_exists(
         self, mock_run, manager, tmp_path
     ) -> None:
         """Restarted builds can reuse task branches left after artifact cleanup."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "worktree", "add"],
+                args=["worktree", "add"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: a branch named 'feature/test' already exists",
             ),
             subprocess.CompletedProcess(
-                args=["git", "worktree", "add"],
+                args=["worktree", "add"],
                 returncode=0,
                 stdout="Preparing worktree",
                 stderr="",
             ),
         ]
 
-        result = manager.create_worktree(
+        result = await manager.create_worktree(
             worktree_path,
             "feature/test",
             base_branch="integration-branch",
@@ -357,19 +357,19 @@ class TestWorktreeGitManagerCreateWorktree:
 
         assert result.success is True
         assert "Created worktree" in result.message
-        assert [call.args[0][1:3] for call in mock_run.call_args_list] == [
+        assert [call.args[0][:2] for call in mock_run.call_args_list] == [
             ["rev-parse", "--verify"],
             ["worktree", "add"],
             ["worktree", "add"],
         ]
 
-    @patch("subprocess.run")
-    def test_create_handles_timeout(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_handles_timeout(self, mock_run, manager, tmp_path) -> None:
         """Create handles git timeout."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=60)
 
-        result = manager.create_worktree(worktree_path, "feature/test")
+        result = await manager.create_worktree(worktree_path, "feature/test")
 
         assert result.success is False
         assert "timed out" in result.message
@@ -383,42 +383,42 @@ class TestWorktreeGitManagerDeleteWorktree:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_delete_success(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_success(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree successfully."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "remove"],
+            args=["worktree", "remove"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        result = manager.delete_worktree(worktree_path)
+        result = await manager.delete_worktree(worktree_path)
 
         assert result.success is True
         assert "Deleted worktree" in result.message
 
-    @patch("subprocess.run")
-    def test_delete_with_force(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_with_force(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree with force option."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "remove", "--force"],
+            args=["worktree", "remove", "--force"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        result = manager.delete_worktree(worktree_path, force=True)
+        result = await manager.delete_worktree(worktree_path, force=True)
 
         assert result.success is True
         # Check that --force was passed
         call_args = mock_run.call_args[0][0]
         assert "--force" in call_args
 
-    @patch("subprocess.run")
-    def test_delete_with_branch_deletion(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_with_branch_deletion(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree and associated branch."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
@@ -427,40 +427,38 @@ class TestWorktreeGitManagerDeleteWorktree:
         mock_run.side_effect = [
             # branch --show-current
             subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="feature/test\n", stderr=""
+                args=["branch"], returncode=0, stdout="feature/test\n", stderr=""
             ),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
             # rev-list (ahead/behind)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
             # merge-base --is-ancestor (merged)
-            subprocess.CompletedProcess(
-                args=["git", "merge-base"], returncode=0, stdout="", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["merge-base"], returncode=0, stdout="", stderr=""),
             # worktree remove
             subprocess.CompletedProcess(
-                args=["git", "worktree", "remove"], returncode=0, stdout="", stderr=""
+                args=["worktree", "remove"], returncode=0, stdout="", stderr=""
             ),
             # branch -D (preflight already proved ancestry)
-            subprocess.CompletedProcess(
-                args=["git", "branch", "-D"], returncode=0, stdout="", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch", "-D"], returncode=0, stdout="", stderr=""),
         ]
 
-        result = manager.delete_worktree(worktree_path, delete_branch=True, base_branch="main")
+        result = await manager.delete_worktree(
+            worktree_path, delete_branch=True, base_branch="main"
+        )
 
         assert result.success is True
         assert "branch" in result.message
         assert mock_run.call_args_list[-1].args[0][-3:] == ["branch", "-D", "feature/test"]
 
-    @patch("subprocess.run")
-    def test_force_worktree_removal_does_not_force_branch_deletion(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_force_worktree_removal_does_not_force_branch_deletion(
         self, mock_run, manager, tmp_path
     ) -> None:
         """Dirty-file force never implies branch force: unmerged still refuses."""
@@ -468,12 +466,10 @@ class TestWorktreeGitManagerDeleteWorktree:
         worktree_path.mkdir(parents=True)
         mock_run.side_effect = [
             # merge-base --is-ancestor: branch is NOT merged into its base
-            subprocess.CompletedProcess(
-                args=["git", "merge-base"], returncode=1, stdout="", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["merge-base"], returncode=1, stdout="", stderr=""),
         ]
 
-        result = manager.delete_worktree(
+        result = await manager.delete_worktree(
             worktree_path,
             force=True,
             delete_branch=True,
@@ -493,13 +489,13 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert worktree_path.exists()
         assert len(mock_run.call_args_list) == 1
 
-    @patch("subprocess.run")
-    def test_delete_branch_requires_base_branch(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_branch_requires_base_branch(self, mock_run, manager, tmp_path) -> None:
         """Ordinary branch deletion without a stored base is refused outright."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
 
-        result = manager.delete_worktree(
+        result = await manager.delete_worktree(
             worktree_path,
             delete_branch=True,
             branch_name="feature/test",
@@ -511,8 +507,8 @@ class TestWorktreeGitManagerDeleteWorktree:
         mock_run.assert_not_called()
 
     @pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
-    @patch("subprocess.run")
-    def test_delete_rejects_remote_merge_proof_before_side_effects(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_rejects_remote_merge_proof_before_side_effects(
         self,
         mock_run: MagicMock,
         manager: WorktreeGitManager,
@@ -522,7 +518,7 @@ class TestWorktreeGitManagerDeleteWorktree:
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
 
-        result = manager.delete_worktree(
+        result = await manager.delete_worktree(
             worktree_path,
             delete_branch=True,
             branch_name="feature/test",
@@ -534,8 +530,8 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert worktree_path.exists()
         mock_run.assert_not_called()
 
-    @patch("subprocess.run")
-    def test_delete_refuses_when_merge_state_unresolvable(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_refuses_when_merge_state_unresolvable(
         self, mock_run, manager, tmp_path
     ) -> None:
         """A merge-base error (unknown ref) refuses deletion instead of guessing."""
@@ -543,14 +539,14 @@ class TestWorktreeGitManagerDeleteWorktree:
         worktree_path.mkdir(parents=True)
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "merge-base"],
+                args=["merge-base"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: Not a valid object name refs/heads/gone",
             ),
         ]
 
-        result = manager.delete_worktree(
+        result = await manager.delete_worktree(
             worktree_path,
             delete_branch=True,
             branch_name="feature/test",
@@ -561,24 +557,22 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert "could not be verified" in result.message
         assert worktree_path.exists()
 
-    @patch("subprocess.run")
-    def test_branch_force_deletion_requires_explicit_flag(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_branch_force_deletion_requires_explicit_flag(
         self, mock_run, manager, tmp_path
     ) -> None:
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "worktree", "remove", "--force"],
+                args=["worktree", "remove", "--force"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
-            subprocess.CompletedProcess(
-                args=["git", "branch", "-D"], returncode=0, stdout="", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch", "-D"], returncode=0, stdout="", stderr=""),
         ]
 
-        result = manager.delete_worktree(
+        result = await manager.delete_worktree(
             worktree_path,
             force=True,
             delete_branch=True,
@@ -589,25 +583,25 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert result.success is True
         assert mock_run.call_args_list[1].args[0][-3:] == ["branch", "-D", "feature/test"]
 
-    @patch("subprocess.run")
-    def test_delete_handles_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_handles_failure(self, mock_run, manager, tmp_path) -> None:
         """Delete handles git failure."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "remove"],
+            args=["worktree", "remove"],
             returncode=128,
             stdout="",
             stderr="error: cannot remove: dirty",
         )
 
-        result = manager.delete_worktree(worktree_path)
+        result = await manager.delete_worktree(worktree_path)
 
         assert result.success is False
         assert "Failed to remove" in result.message
 
-    @patch("subprocess.run")
-    def test_delete_recovers_when_git_fails_after_removing_path(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_recovers_when_git_fails_after_removing_path(
         self, mock_run, manager, tmp_path
     ) -> None:
         """A nonzero git exit is recoverable if the worktree path is already gone."""
@@ -615,7 +609,7 @@ class TestWorktreeGitManagerDeleteWorktree:
         worktree_path.mkdir(parents=True)
 
         def run_side_effect(args, **_kwargs):
-            if args[:2] == ["git", "worktree"] and args[2] == "remove":
+            if args[:2] == ["worktree", "remove"]:
                 worktree_path.rmdir()
                 return subprocess.CompletedProcess(
                     args=args,
@@ -623,21 +617,23 @@ class TestWorktreeGitManagerDeleteWorktree:
                     stdout="",
                     stderr="fatal: validation failed after removing path",
                 )
-            if args[:3] == ["git", "worktree", "prune"]:
+            if args[:2] == ["worktree", "prune"]:
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
             return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = run_side_effect
 
-        result = manager.delete_worktree(worktree_path)
+        result = await manager.delete_worktree(worktree_path)
 
         assert result.success is True
         assert not worktree_path.exists()
         assert "git remove reported" in result.message
-        assert ["git", "worktree", "prune"] in [call.args[0] for call in mock_run.call_args_list]
+        assert ["worktree", "prune"] in [call.args[0] for call in mock_run.call_args_list]
 
-    @patch("subprocess.run")
-    def test_delete_force_fallback_on_untracked_files(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_force_fallback_on_untracked_files(
+        self, mock_run, manager, tmp_path
+    ) -> None:
         """Force delete falls back to rmtree when git remove fails with untracked files."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
@@ -648,20 +644,20 @@ class TestWorktreeGitManagerDeleteWorktree:
         # git worktree remove --force fails, then git worktree prune succeeds
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "worktree", "remove", "--force"],
+                args=["worktree", "remove", "--force"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: cannot remove: Directory not empty",
             ),
             subprocess.CompletedProcess(
-                args=["git", "worktree", "prune"],
+                args=["worktree", "prune"],
                 returncode=0,
                 stdout="pruned stale entry\n",
                 stderr="",
             ),
         ]
 
-        result = manager.delete_worktree(worktree_path, force=True)
+        result = await manager.delete_worktree(worktree_path, force=True)
 
         assert result.success is True
         assert result.output == "pruned stale entry\n"
@@ -676,49 +672,49 @@ class TestWorktreeGitManagerSyncFromMain:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    def test_sync_fails_if_path_not_exists(self, manager, tmp_path) -> None:
+    async def test_sync_fails_if_path_not_exists(self, manager, tmp_path) -> None:
         """Sync fails if worktree path doesn't exist."""
         worktree_path = tmp_path / "nonexistent"
 
-        result = manager.sync_from_main(worktree_path)
+        result = await manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "does not exist" in result.message
 
-    @patch("subprocess.run")
-    def test_sync_with_rebase(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_with_rebase(self, mock_run, manager, tmp_path) -> None:
         """Sync with rebase strategy."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "rebase"], returncode=0, stdout="", stderr=""
+            args=["rebase"], returncode=0, stdout="", stderr=""
         )
 
-        result = manager.sync_from_main(worktree_path, strategy="rebase")
+        result = await manager.sync_from_main(worktree_path, strategy="rebase")
 
         assert result.success is True
         assert "rebase" in result.message
-        assert mock_run.call_args.args[0] == ["git", "rebase", "main"]
+        assert mock_run.call_args.args[0] == ["rebase", "main"]
 
-    @patch("subprocess.run")
-    def test_sync_with_merge(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_with_merge(self, mock_run, manager, tmp_path) -> None:
         """Sync with merge strategy."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "merge"], returncode=0, stdout="", stderr=""
+            args=["merge"], returncode=0, stdout="", stderr=""
         )
 
-        result = manager.sync_from_main(worktree_path, strategy="merge")
+        result = await manager.sync_from_main(worktree_path, strategy="merge")
 
         assert result.success is True
         assert "merge" in result.message
-        assert mock_run.call_args.args[0] == ["git", "merge", "main", "--no-edit"]
+        assert mock_run.call_args.args[0] == ["merge", "main", "--no-edit"]
 
-    @patch("subprocess.run")
-    def test_sync_with_explicit_remote_branch_fetches_then_merges(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_with_explicit_remote_branch_fetches_then_merges(
         self, mock_run, manager, tmp_path
     ) -> None:
         """Explicit remote sync fetches and merges the requested remote-tracking ref."""
@@ -726,27 +722,26 @@ class TestWorktreeGitManagerSyncFromMain:
         worktree_path.mkdir()
 
         mock_run.side_effect = [
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
-            subprocess.CompletedProcess(args=["git", "merge"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["fetch"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["merge"], returncode=0, stdout="", stderr=""),
         ]
 
-        result = manager.sync_from_main(
+        result = await manager.sync_from_main(
             worktree_path,
             strategy="merge",
             source_branch="origin/main",
         )
 
         assert result.success is True
-        assert mock_run.call_args_list[0].args[0] == ["git", "fetch", "origin", "main"]
+        assert mock_run.call_args_list[0].args[0] == ["fetch", "origin", "main"]
         assert mock_run.call_args_list[1].args[0] == [
-            "git",
             "merge",
             "origin/main",
             "--no-edit",
         ]
 
-    @patch("subprocess.run")
-    def test_sync_handles_conflict(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_handles_conflict(self, mock_run, manager, tmp_path) -> None:
         """Sync handles merge/rebase conflicts."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -754,45 +749,45 @@ class TestWorktreeGitManagerSyncFromMain:
         mock_run.side_effect = [
             # rebase with conflict
             subprocess.CompletedProcess(
-                args=["git", "rebase"],
+                args=["rebase"],
                 returncode=1,
                 stdout="CONFLICT (content): ...",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "diff"],
+                args=["diff"],
                 returncode=0,
                 stdout="file.py\n",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "rebase", "--abort"],
+                args=["rebase", "--abort"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
         ]
 
-        result = manager.sync_from_main(worktree_path)
+        result = await manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "conflicts" in result.message.lower()
         assert result.output == "file.py"
 
-    @patch("subprocess.run")
-    def test_sync_handles_fetch_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_handles_fetch_failure(self, mock_run, manager, tmp_path) -> None:
         """Sync handles fetch failure."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "fetch"],
+            args=["fetch"],
             returncode=128,
             stdout="",
             stderr="fatal: could not fetch",
         )
 
-        result = manager.sync_from_main(worktree_path, source_branch="origin/main")
+        result = await manager.sync_from_main(worktree_path, source_branch="origin/main")
 
         assert result.success is False
         assert "Failed to fetch" in result.message
@@ -806,36 +801,34 @@ class TestWorktreeGitManagerGetStatus:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    def test_get_status_nonexistent_path(self, manager, tmp_path) -> None:
+    async def test_get_status_nonexistent_path(self, manager, tmp_path) -> None:
         """Get status returns None for non-existent path."""
-        result = manager.get_worktree_status(tmp_path / "nonexistent")
+        result = await manager.get_worktree_status(tmp_path / "nonexistent")
 
         assert result is None
 
-    @patch("subprocess.run")
-    def test_get_status_clean(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_clean(self, mock_run, manager, tmp_path) -> None:
         """Get status for clean worktree."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = [
             # branch --show-current
-            subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="main\n", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch"], returncode=0, stdout="main\n", stderr=""),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
             # rev-list (ahead/behind)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         assert status.branch == "main"
@@ -846,8 +839,8 @@ class TestWorktreeGitManagerGetStatus:
         assert status.ahead == 0
         assert status.behind == 0
 
-    @patch("subprocess.run")
-    def test_get_status_with_changes(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_with_changes(self, mock_run, manager, tmp_path) -> None:
         """Get status for worktree with changes."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -855,26 +848,26 @@ class TestWorktreeGitManagerGetStatus:
         mock_run.side_effect = [
             # branch --show-current
             subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="feature/test\n", stderr=""
+                args=["branch"], returncode=0, stdout="feature/test\n", stderr=""
             ),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="def5678\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="def5678\n", stderr=""
             ),
             # status --porcelain (staged, modified, untracked)
             subprocess.CompletedProcess(
-                args=["git", "status"],
+                args=["status"],
                 returncode=0,
                 stdout="M  staged.py\n M modified.py\n?? untracked.py\n",
                 stderr="",
             ),
             # rev-list (ahead/behind)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="2\t3\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="2\t3\n", stderr=""
             ),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         assert status.has_staged_changes is True
@@ -883,15 +876,15 @@ class TestWorktreeGitManagerGetStatus:
         assert status.behind == 2
         assert status.ahead == 3
 
-    @patch("subprocess.run")
-    def test_get_status_handles_exception(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_handles_exception(self, mock_run, manager, tmp_path) -> None:
         """Get status handles exception gracefully."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = Exception("Git error")
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is None
 
@@ -904,42 +897,42 @@ class TestWorktreeGitManagerListWorktrees:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_list_empty(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_empty(self, mock_run, manager) -> None:
         """List returns empty list when no worktrees."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert worktrees == []
 
-    @patch("subprocess.run")
-    def test_list_single_worktree(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_single_worktree(self, mock_run, manager) -> None:
         """List returns single worktree."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout="worktree /path/to/repo\nHEAD abc1234567890\nbranch refs/heads/main\n\n",
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 1
         assert worktrees[0].path == "/path/to/repo"
         assert worktrees[0].commit == "abc1234567890"
         assert worktrees[0].branch == "main"
 
-    @patch("subprocess.run")
-    def test_list_multiple_worktrees(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_multiple_worktrees(self, mock_run, manager) -> None:
         """List returns multiple worktrees."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=(
                 "worktree /path/to/repo\n"
@@ -954,17 +947,17 @@ class TestWorktreeGitManagerListWorktrees:
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 2
         assert worktrees[0].branch == "main"
         assert worktrees[1].branch == "feature/one"
 
-    @patch("subprocess.run")
-    def test_list_with_flags(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_with_flags(self, mock_run, manager) -> None:
         """List parses locked/prunable/detached flags."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=(
                 "worktree /path/to/worktree\nHEAD abc1234567890\ndetached\nlocked\nprunable\n\n"
@@ -972,7 +965,7 @@ class TestWorktreeGitManagerListWorktrees:
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 1
         assert worktrees[0].is_detached is True
@@ -980,21 +973,20 @@ class TestWorktreeGitManagerListWorktrees:
         assert worktrees[0].prunable is True
         assert worktrees[0].branch is None
 
-    @patch("subprocess.run")
-    def test_list_handles_failure(self, mock_run, manager, caplog) -> None:
-        """List returns empty list on git failure."""
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_handles_failure(self, mock_run, manager, caplog) -> None:
+        """A failed inventory must not look like an empty repository."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=128,
             stdout="",
             stderr="fatal: not a git repository",
         )
 
-        worktrees = manager.list_worktrees()
-
-        assert worktrees == []
+        with pytest.raises(RuntimeError, match="failed to list worktrees"):
+            await manager.list_worktrees()
         assert any(
-            record.levelname == "ERROR" and "Failed to list worktrees" in record.message
+            record.levelname == "ERROR" and "Error listing worktrees" in record.message
             for record in caplog.records
         )
 
@@ -1007,32 +999,32 @@ class TestWorktreeGitManagerPrune:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_prune_success(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_prune_success(self, mock_run, manager) -> None:
         """Prune succeeds."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "prune"],
+            args=["worktree", "prune"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        result = manager.prune_worktrees()
+        result = await manager.prune_worktrees()
 
         assert result.success is True
         assert "Pruned" in result.message
 
-    @patch("subprocess.run")
-    def test_prune_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_prune_failure(self, mock_run, manager) -> None:
         """Prune handles failure."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "prune"],
+            args=["worktree", "prune"],
             returncode=1,
             stdout="",
             stderr="error: pruning failed",
         )
 
-        result = manager.prune_worktrees()
+        result = await manager.prune_worktrees()
 
         assert result.success is False
         assert "Failed to prune" in result.message
@@ -1046,34 +1038,34 @@ class TestWorktreeGitManagerLock:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_lock_success(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_lock_success(self, mock_run, manager, tmp_path) -> None:
         """Lock worktree successfully."""
         worktree_path = tmp_path / "worktree"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "lock"],
+            args=["worktree", "lock"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        result = manager.lock_worktree(worktree_path)
+        result = await manager.lock_worktree(worktree_path)
 
         assert result.success is True
         assert "Locked" in result.message
 
-    @patch("subprocess.run")
-    def test_lock_with_reason(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_lock_with_reason(self, mock_run, manager, tmp_path) -> None:
         """Lock worktree with reason."""
         worktree_path = tmp_path / "worktree"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "lock"],
+            args=["worktree", "lock"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        result = manager.lock_worktree(worktree_path, reason="Important work")
+        result = await manager.lock_worktree(worktree_path, reason="Important work")
 
         assert result.success is True
         # Check that --reason was passed
@@ -1081,18 +1073,18 @@ class TestWorktreeGitManagerLock:
         assert "--reason" in call_args
         assert "Important work" in call_args
 
-    @patch("subprocess.run")
-    def test_lock_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_lock_failure(self, mock_run, manager, tmp_path) -> None:
         """Lock handles failure."""
         worktree_path = tmp_path / "worktree"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "lock"],
+            args=["worktree", "lock"],
             returncode=128,
             stdout="",
             stderr="error: already locked",
         )
 
-        result = manager.lock_worktree(worktree_path)
+        result = await manager.lock_worktree(worktree_path)
 
         assert result.success is False
         assert "Failed to lock" in result.message
@@ -1106,45 +1098,45 @@ class TestWorktreeGitManagerUnlock:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_unlock_success(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_unlock_success(self, mock_run, manager, tmp_path) -> None:
         """Unlock worktree successfully."""
         worktree_path = tmp_path / "worktree"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "unlock"],
+            args=["worktree", "unlock"],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        result = manager.unlock_worktree(worktree_path)
+        result = await manager.unlock_worktree(worktree_path)
 
         assert result.success is True
         assert "Unlocked" in result.message
 
-    @patch("subprocess.run")
-    def test_unlock_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_unlock_failure(self, mock_run, manager, tmp_path) -> None:
         """Unlock handles failure."""
         worktree_path = tmp_path / "worktree"
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "unlock"],
+            args=["worktree", "unlock"],
             returncode=128,
             stdout="",
             stderr="error: not locked",
         )
 
-        result = manager.unlock_worktree(worktree_path)
+        result = await manager.unlock_worktree(worktree_path)
 
         assert result.success is False
         assert "Failed to unlock" in result.message
 
-    @patch("subprocess.run")
-    def test_unlock_handles_exception(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_unlock_handles_exception(self, mock_run, manager, tmp_path) -> None:
         """Unlock handles generic exception gracefully."""
         worktree_path = tmp_path / "worktree"
         mock_run.side_effect = Exception("Unexpected error")
 
-        result = manager.unlock_worktree(worktree_path)
+        result = await manager.unlock_worktree(worktree_path)
 
         assert result.success is False
         assert "Error unlocking worktree" in result.message
@@ -1159,17 +1151,17 @@ class TestWorktreeGitManagerRunGitCalledProcessError:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_run_git_called_process_error(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_run_git_called_process_error(self, mock_run, manager) -> None:
         """_run_git raises CalledProcessError when check=True."""
         mock_run.side_effect = subprocess.CalledProcessError(
             returncode=128,
-            cmd=["git", "status"],
+            cmd=["status"],
             stderr="fatal: not a git repository",
         )
 
         with pytest.raises(subprocess.CalledProcessError):
-            manager._run_git(["status"], check=True)
+            (await manager._run_git(["status"], check=True))
 
 
 class TestWorktreeGitManagerCreateWorktreeFetchFailure:
@@ -1180,19 +1172,19 @@ class TestWorktreeGitManagerCreateWorktreeFetchFailure:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_create_worktree_fetch_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_worktree_fetch_failure(self, mock_run, manager, tmp_path) -> None:
         """Create worktree fails when fetch fails."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "fetch"],
+            args=["fetch"],
             returncode=128,
             stdout="",
             stderr="fatal: could not fetch origin/main",
         )
 
-        result = manager.create_worktree(
+        result = await manager.create_worktree(
             worktree_path, "feature/test", base_branch="main", create_branch=True
         )
 
@@ -1200,14 +1192,14 @@ class TestWorktreeGitManagerCreateWorktreeFetchFailure:
         assert "Failed to fetch" in result.message
         assert result.error == "fatal: could not fetch origin/main"
 
-    @patch("subprocess.run")
-    def test_create_worktree_generic_exception(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_create_worktree_generic_exception(self, mock_run, manager, tmp_path) -> None:
         """Create worktree handles generic exception."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
 
         mock_run.side_effect = Exception("Unexpected git error")
 
-        result = manager.create_worktree(
+        result = await manager.create_worktree(
             worktree_path, "feature/test", base_branch="main", create_branch=True
         )
 
@@ -1224,8 +1216,8 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_delete_branch_deletion_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_branch_deletion_failure(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree succeeds but branch deletion fails."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
@@ -1235,52 +1227,52 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         mock_run.side_effect = [
             # branch --show-current
             subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="feature/test\n", stderr=""
+                args=["branch"], returncode=0, stdout="feature/test\n", stderr=""
             ),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
             # rev-list (ahead/behind)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
             # merge-base --is-ancestor (merged)
-            subprocess.CompletedProcess(
-                args=["git", "merge-base"], returncode=0, stdout="", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["merge-base"], returncode=0, stdout="", stderr=""),
             # worktree remove - success
             subprocess.CompletedProcess(
-                args=["git", "worktree", "remove"], returncode=0, stdout="", stderr=""
+                args=["worktree", "remove"], returncode=0, stdout="", stderr=""
             ),
             # branch -D - failure (e.g. checked out elsewhere)
             subprocess.CompletedProcess(
-                args=["git", "branch", "-D"],
+                args=["branch", "-D"],
                 returncode=1,
                 stdout="",
                 stderr="error: Cannot delete branch 'feature/test' checked out at elsewhere",
             ),
         ]
 
-        result = manager.delete_worktree(worktree_path, delete_branch=True, base_branch="main")
+        result = await manager.delete_worktree(
+            worktree_path, delete_branch=True, base_branch="main"
+        )
 
         assert result.success is False
         assert "failed to delete branch" in result.message
         assert result.error == "error: Cannot delete branch 'feature/test' checked out at elsewhere"
 
-    @patch("subprocess.run")
-    def test_delete_branch_with_no_status(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_branch_with_no_status(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree with delete_branch=True but no status found."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         # Path doesn't exist, so get_worktree_status returns None
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "remove"], returncode=0, stdout="", stderr=""
+            args=["worktree", "remove"], returncode=0, stdout="", stderr=""
         )
 
-        result = manager.delete_worktree(worktree_path, delete_branch=True)
+        result = await manager.delete_worktree(worktree_path, delete_branch=True)
 
         assert result.success is True
         # No branch was deleted since we couldn't determine the branch
@@ -1290,40 +1282,40 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
             "Deleted worktree" in result.message and "deleted branch" not in result.message.lower()
         )
 
-    @patch("subprocess.run")
-    def test_delete_missing_path_prunes_and_deletes_explicit_branch(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_missing_path_prunes_and_deletes_explicit_branch(
         self, mock_run, manager, tmp_path
     ) -> None:
         """Delete missing worktree paths by pruning the stale registration and branch."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "merge-base"],
+                args=["merge-base"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "worktree", "remove"],
+                args=["worktree", "remove"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: not a working tree",
             ),
             subprocess.CompletedProcess(
-                args=["git", "worktree", "prune"],
+                args=["worktree", "prune"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "branch", "-D"],
+                args=["branch", "-D"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
         ]
 
-        result = manager.delete_worktree(
+        result = await manager.delete_worktree(
             worktree_path,
             force=True,
             delete_branch=True,
@@ -1336,26 +1328,26 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         assert mock_run.call_args_list[2].args[0][-2:] == ["worktree", "prune"]
         assert mock_run.call_args_list[3].args[0][-3:] == ["branch", "-D", "feature/test"]
 
-    @patch("subprocess.run")
-    def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree handles timeout."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
 
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
 
-        result = manager.delete_worktree(worktree_path)
+        result = await manager.delete_worktree(worktree_path)
 
         assert result.success is False
         assert "timed out" in result.message
 
-    @patch("subprocess.run")
-    def test_delete_generic_exception(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_delete_generic_exception(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree handles generic exception."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
 
         mock_run.side_effect = Exception("Unexpected error during delete")
 
-        result = manager.delete_worktree(worktree_path)
+        result = await manager.delete_worktree(worktree_path)
 
         assert result.success is False
         assert "Error deleting worktree" in result.message
@@ -1370,8 +1362,8 @@ class TestWorktreeGitManagerSyncEdgeCases:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_sync_rebase_failure_no_conflict(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_rebase_failure_no_conflict(self, mock_run, manager, tmp_path) -> None:
         """Sync fails with rebase error but no conflict."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1379,28 +1371,28 @@ class TestWorktreeGitManagerSyncEdgeCases:
         mock_run.side_effect = [
             # rebase failure (not a conflict)
             subprocess.CompletedProcess(
-                args=["git", "rebase"],
+                args=["rebase"],
                 returncode=1,
                 stdout="",
                 stderr="error: cannot rebase: dirty index",
             ),
             subprocess.CompletedProcess(
-                args=["git", "rebase", "--abort"],
+                args=["rebase", "--abort"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
         ]
 
-        result = manager.sync_from_main(worktree_path)
+        result = await manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "Failed to rebase" in result.message
         assert "dirty index" in result.error
-        assert mock_run.call_args_list[-1].args[0] == ["git", "rebase", "--abort"]
+        assert mock_run.call_args_list[-1].args[0] == ["rebase", "--abort"]
 
-    @patch("subprocess.run")
-    def test_sync_merge_failure_no_conflict(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_merge_failure_no_conflict(self, mock_run, manager, tmp_path) -> None:
         """Sync fails with merge error but no conflict."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1408,27 +1400,27 @@ class TestWorktreeGitManagerSyncEdgeCases:
         mock_run.side_effect = [
             # merge failure (not a conflict)
             subprocess.CompletedProcess(
-                args=["git", "merge"],
+                args=["merge"],
                 returncode=1,
                 stdout="",
                 stderr="error: You have unstaged changes",
             ),
             subprocess.CompletedProcess(
-                args=["git", "merge", "--abort"],
+                args=["merge", "--abort"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
         ]
 
-        result = manager.sync_from_main(worktree_path, strategy="merge")
+        result = await manager.sync_from_main(worktree_path, strategy="merge")
 
         assert result.success is False
         assert "Failed to merge" in result.message
-        assert mock_run.call_args_list[-1].args[0] == ["git", "merge", "--abort"]
+        assert mock_run.call_args_list[-1].args[0] == ["merge", "--abort"]
 
-    @patch("subprocess.run")
-    def test_sync_conflict_in_stderr(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_conflict_in_stderr(self, mock_run, manager, tmp_path) -> None:
         """Sync detects conflict in stderr."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1436,34 +1428,34 @@ class TestWorktreeGitManagerSyncEdgeCases:
         mock_run.side_effect = [
             # merge with conflict in stderr
             subprocess.CompletedProcess(
-                args=["git", "merge"],
+                args=["merge"],
                 returncode=1,
                 stdout="",
                 stderr="CONFLICT (content): Merge conflict in file.py",
             ),
             subprocess.CompletedProcess(
-                args=["git", "diff"],
+                args=["diff"],
                 returncode=0,
                 stdout="file.py\n",
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["git", "merge", "--abort"],
+                args=["merge", "--abort"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
         ]
 
-        result = manager.sync_from_main(worktree_path, strategy="merge")
+        result = await manager.sync_from_main(worktree_path, strategy="merge")
 
         assert result.success is False
         assert "conflicts" in result.message.lower()
         assert "abort" in result.message.lower()
         assert result.output == "file.py"
 
-    @patch("subprocess.run")
-    def test_sync_timeout(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_timeout(self, mock_run, manager, tmp_path) -> None:
         """Sync handles timeout."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1471,28 +1463,28 @@ class TestWorktreeGitManagerSyncEdgeCases:
         mock_run.side_effect = [
             subprocess.TimeoutExpired(cmd="git", timeout=120),
             subprocess.CompletedProcess(
-                args=["git", "rebase", "--abort"],
+                args=["rebase", "--abort"],
                 returncode=0,
                 stdout="",
                 stderr="",
             ),
         ]
 
-        result = manager.sync_from_main(worktree_path)
+        result = await manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "timed out" in result.message
-        assert mock_run.call_args_list[-1].args[0] == ["git", "rebase", "--abort"]
+        assert mock_run.call_args_list[-1].args[0] == ["rebase", "--abort"]
 
-    @patch("subprocess.run")
-    def test_sync_generic_exception(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_sync_generic_exception(self, mock_run, manager, tmp_path) -> None:
         """Sync handles generic exception."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = Exception("Network error")
 
-        result = manager.sync_from_main(worktree_path)
+        result = await manager.sync_from_main(worktree_path)
 
         assert result.success is False
         assert "Error syncing worktree" in result.message
@@ -1507,8 +1499,8 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_get_status_no_upstream(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_no_upstream(self, mock_run, manager, tmp_path) -> None:
         """Get status when branch has no upstream."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1516,49 +1508,49 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
         mock_run.side_effect = [
             # branch --show-current
             subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="feature/test\n", stderr=""
+                args=["branch"], returncode=0, stdout="feature/test\n", stderr=""
             ),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain (clean)
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
             # rev-list fails (no upstream)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"],
+                args=["rev-list"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: no upstream branch",
             ),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         # Without upstream, ahead/behind defaults to 0
         assert status.ahead == 0
         assert status.behind == 0
 
-    @patch("subprocess.run")
-    def test_get_status_detached_head(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_detached_head(self, mock_run, manager, tmp_path) -> None:
         """Get status with detached HEAD (no branch)."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = [
             # branch --show-current returns empty (detached)
-            subprocess.CompletedProcess(args=["git", "branch"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["branch"], returncode=0, stdout="", stderr=""),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain (clean)
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
             # No rev-list call since branch is empty
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         assert status.branch == ""
@@ -1567,8 +1559,8 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
         assert status.ahead == 0
         assert status.behind == 0
 
-    @patch("subprocess.run")
-    def test_get_status_branch_command_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_branch_command_failure(self, mock_run, manager, tmp_path) -> None:
         """Get status when branch command fails."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -1576,52 +1568,50 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
         mock_run.side_effect = [
             # branch --show-current fails
             subprocess.CompletedProcess(
-                args=["git", "branch"],
+                args=["branch"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: not a git repo",
             ),
             # rev-parse fails
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: not a git repo",
             ),
             # status --porcelain
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         assert status.branch is None
         assert status.commit is None
 
-    @patch("subprocess.run")
-    def test_get_status_ahead_behind_parsing(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_ahead_behind_parsing(self, mock_run, manager, tmp_path) -> None:
         """Get status parses ahead/behind correctly."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = [
             # branch --show-current
-            subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="main\n", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch"], returncode=0, stdout="main\n", stderr=""),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain
-            subprocess.CompletedProcess(args=["git", "status"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["status"], returncode=0, stdout="", stderr=""),
             # rev-list with non-numeric counts should not discard the status
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="five\t2\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="five\t2\n", stderr=""
             ),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         assert status.branch == "main"
@@ -1629,7 +1619,7 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
         assert status.ahead == 0
         assert status.behind == 0
 
-    def test_get_status_compares_explicit_base_ref(self, manager, tmp_path) -> None:
+    async def test_get_status_compares_explicit_base_ref(self, manager, tmp_path) -> None:
         """Get status compares a diverged worktree branch with its recorded base."""
         repo_path = tmp_path / "repo"
         worktree_path = tmp_path / "worktree"
@@ -1639,9 +1629,7 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
             capture_output=True,
             text=True,
         )
-        subprocess.run(
-            ["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True
-        )
+        subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True)
         subprocess.run(
             ["git", "-C", str(repo_path), "config", "user.email", "test@example.com"],
             check=True,
@@ -1674,26 +1662,24 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
             capture_output=True,
         )
 
-        status = manager.get_worktree_status(worktree_path, comparison_ref="base")
+        status = await manager.get_worktree_status(worktree_path, comparison_ref="base")
 
         assert status is not None
         assert status.ahead == 1
         assert status.behind == 1
 
-    @patch("subprocess.run")
-    def test_get_status_status_porcelain_parsing(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_status_porcelain_parsing(self, mock_run, manager, tmp_path) -> None:
         """Get status correctly parses various porcelain status formats."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = [
             # branch --show-current
-            subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="main\n", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch"], returncode=0, stdout="main\n", stderr=""),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain with various statuses:
             # A  = staged new file
@@ -1703,18 +1689,16 @@ class TestWorktreeGitManagerGetStatusEdgeCases:
             #  D = deleted in worktree
             # ?? = untracked
             subprocess.CompletedProcess(
-                args=["git", "status"],
+                args=["status"],
                 returncode=0,
                 stdout="A  new_file.py\nAM modified_staged.py\nMM both.py\nD  deleted.py\n D removed.py\n?? untracked.txt\n",
                 stderr="",
             ),
             # rev-list (no upstream)
-            subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=128, stdout="", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["rev-list"], returncode=128, stdout="", stderr=""),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         assert status.has_staged_changes is True
@@ -1730,27 +1714,27 @@ class TestWorktreeGitManagerListWorktreesEdgeCases:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_list_worktrees_bare_repo(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_bare_repo(self, mock_run, manager) -> None:
         """List worktrees parses bare repository."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=("worktree /path/to/repo.git\nHEAD abc1234567890\nbare\n\n"),
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 1
         assert worktrees[0].is_bare is True
         assert worktrees[0].path == "/path/to/repo.git"
 
-    @patch("subprocess.run")
-    def test_list_worktrees_non_refs_heads_branch(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_non_refs_heads_branch(self, mock_run, manager) -> None:
         """List worktrees parses branches without refs/heads prefix."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=(
                 "worktree /path/to/worktree\nHEAD abc1234567890\nbranch feature/direct-branch\n\n"
@@ -1758,17 +1742,17 @@ class TestWorktreeGitManagerListWorktreesEdgeCases:
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 1
         # Branch without refs/heads/ prefix should be used as-is
         assert worktrees[0].branch == "feature/direct-branch"
 
-    @patch("subprocess.run")
-    def test_list_worktrees_locked_with_reason(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_locked_with_reason(self, mock_run, manager) -> None:
         """List worktrees parses locked with reason."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=(
                 "worktree /path/to/worktree\n"
@@ -1780,16 +1764,16 @@ class TestWorktreeGitManagerListWorktreesEdgeCases:
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 1
         assert worktrees[0].locked is True
 
-    @patch("subprocess.run")
-    def test_list_worktrees_prunable_with_reason(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_prunable_with_reason(self, mock_run, manager) -> None:
         """List worktrees parses prunable with reason."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=(
                 "worktree /path/to/worktree\n"
@@ -1801,31 +1785,29 @@ class TestWorktreeGitManagerListWorktreesEdgeCases:
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         assert len(worktrees) == 1
         assert worktrees[0].prunable is True
 
-    @patch("subprocess.run")
-    def test_list_worktrees_exception(self, mock_run, manager) -> None:
-        """List worktrees handles exception gracefully."""
-        mock_run.side_effect = Exception("Git process crashed")
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_exception(self, mock_run, manager) -> None:
+        """A crashed inventory must not look like an empty repository."""
+        mock_run.side_effect = RuntimeError("Git process crashed")
+        with pytest.raises(RuntimeError, match="Git process crashed"):
+            await manager.list_worktrees()
 
-        worktrees = manager.list_worktrees()
-
-        assert worktrees == []
-
-    @patch("subprocess.run")
-    def test_list_worktrees_no_trailing_newline(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_no_trailing_newline(self, mock_run, manager) -> None:
         """List worktrees handles output without trailing newline."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout="worktree /path/to/repo\nHEAD abc1234567890\nbranch refs/heads/main",
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         # Should handle last entry without trailing newline
         assert len(worktrees) == 1
@@ -1841,12 +1823,12 @@ class TestWorktreeGitManagerPruneEdgeCases:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_prune_exception(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_prune_exception(self, mock_run, manager) -> None:
         """Prune handles exception gracefully."""
         mock_run.side_effect = Exception("Git process crashed")
 
-        result = manager.prune_worktrees()
+        result = await manager.prune_worktrees()
 
         assert result.success is False
         assert "Error pruning worktrees" in result.message
@@ -1861,13 +1843,13 @@ class TestWorktreeGitManagerLockEdgeCases:
         """Create manager with temp directory."""
         return WorktreeGitManager(tmp_path)
 
-    @patch("subprocess.run")
-    def test_lock_exception(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_lock_exception(self, mock_run, manager, tmp_path) -> None:
         """Lock handles exception gracefully."""
         worktree_path = tmp_path / "worktree"
         mock_run.side_effect = Exception("Permission denied")
 
-        result = manager.lock_worktree(worktree_path)
+        result = await manager.lock_worktree(worktree_path)
 
         assert result.success is False
         assert "Error locking worktree" in result.message
@@ -1886,11 +1868,11 @@ class TestWorktreeGitManagerBranchCoverage:
         ("count", "expected"),
         [("1\n", (True, 1)), ("0\n", (False, 0))],
     )
-    def test_has_unpushed_commits_without_upstream_compares_default_branch(
+    async def test_has_unpushed_commits_without_upstream_compares_default_branch(
         self, manager, count, expected
     ) -> None:
         """Local-only branches count commits ahead of the default branch."""
-        manager._run_git = Mock(
+        manager._run_git = AsyncMock(
             side_effect=[
                 subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr=""),
                 subprocess.CompletedProcess(
@@ -1903,7 +1885,7 @@ class TestWorktreeGitManagerBranchCoverage:
             ]
         )
 
-        result = manager.has_unpushed_commits("feature/local")
+        result = await manager.has_unpushed_commits("feature/local")
 
         assert result == expected
         manager._run_git.assert_called_with(
@@ -1911,72 +1893,67 @@ class TestWorktreeGitManagerBranchCoverage:
             timeout=5,
         )
 
-    @patch("subprocess.run")
-    def test_has_unpushed_commits_missing_branch_is_not_local_only(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_has_unpushed_commits_missing_branch_is_not_local_only(
+        self, mock_run, manager
+    ) -> None:
         """Missing local refs are not treated as local-only unpushed branches."""
         mock_run.side_effect = [
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: Needed a single revision",
             ),
             subprocess.CompletedProcess(
-                args=["git", "rev-list"],
+                args=["rev-list"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: ambiguous argument",
             ),
         ]
 
-        has_unpushed, count = manager.has_unpushed_commits("missing/integration")
+        has_unpushed, count = await manager.has_unpushed_commits("missing/integration")
 
         assert has_unpushed is False
         assert count == 0
 
-    @patch("subprocess.run")
-    def test_get_status_porcelain_failure(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_porcelain_failure(self, mock_run, manager, tmp_path) -> None:
         """Get status when status --porcelain command fails."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = [
             # branch --show-current
-            subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="main\n", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch"], returncode=0, stdout="main\n", stderr=""),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain fails
             subprocess.CompletedProcess(
-                args=["git", "status"],
+                args=["status"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: not a git repository",
             ),
             # rev-list (ahead/behind)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
-        assert status is not None
-        # When porcelain fails, flags should remain False (defaults)
-        assert status.has_uncommitted_changes is False
-        assert status.has_staged_changes is False
-        assert status.has_untracked_files is False
-        assert status.branch == "main"
-        assert status.commit == "abc1234"
+        assert status is None
+        assert mock_run.await_count == 3
 
-    @patch("subprocess.run")
-    def test_list_worktrees_unknown_line_format(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_list_worktrees_unknown_line_format(self, mock_run, manager) -> None:
         """List worktrees ignores unknown line formats."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "worktree", "list"],
+            args=["worktree", "list"],
             returncode=0,
             stdout=(
                 "worktree /path/to/repo\n"
@@ -1989,7 +1966,7 @@ class TestWorktreeGitManagerBranchCoverage:
             stderr="",
         )
 
-        worktrees = manager.list_worktrees()
+        worktrees = await manager.list_worktrees()
 
         # Should still parse the worktree correctly, ignoring unknown fields
         assert len(worktrees) == 1
@@ -1997,35 +1974,33 @@ class TestWorktreeGitManagerBranchCoverage:
         assert worktrees[0].branch == "main"
         assert worktrees[0].commit == "abc1234567890"
 
-    @patch("subprocess.run")
-    def test_get_status_single_char_status_line(self, mock_run, manager, tmp_path) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_status_single_char_status_line(self, mock_run, manager, tmp_path) -> None:
         """Get status handles single character status line (edge case)."""
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
         mock_run.side_effect = [
             # branch --show-current
-            subprocess.CompletedProcess(
-                args=["git", "branch"], returncode=0, stdout="main\n", stderr=""
-            ),
+            subprocess.CompletedProcess(args=["branch"], returncode=0, stdout="main\n", stderr=""),
             # rev-parse --short HEAD
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
+                args=["rev-parse"], returncode=0, stdout="abc1234\n", stderr=""
             ),
             # status --porcelain with edge case single character line
             subprocess.CompletedProcess(
-                args=["git", "status"],
+                args=["status"],
                 returncode=0,
                 stdout="M\n",  # Single char line (malformed but should not crash)
                 stderr="",
             ),
             # rev-list (ahead/behind)
             subprocess.CompletedProcess(
-                args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
+                args=["rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
         ]
 
-        status = manager.get_worktree_status(worktree_path)
+        status = await manager.get_worktree_status(worktree_path)
 
         assert status is not None
         # Single char 'M' in index position means staged
@@ -2034,11 +2009,11 @@ class TestWorktreeGitManagerBranchCoverage:
         assert status.has_uncommitted_changes is False
 
 
-@patch("gobby.worktrees.git._runner.subprocess.run")
+@patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
 class TestWorktreeGitManagerGetDefaultBranch:
     """Tests for get_default_branch method."""
 
-    def test_get_default_branch_from_origin_head(self, mock_run, tmp_path) -> None:
+    async def test_get_default_branch_from_origin_head(self, mock_run, tmp_path) -> None:
         """Get default branch from origin/HEAD symbolic ref."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -2046,17 +2021,17 @@ class TestWorktreeGitManagerGetDefaultBranch:
         manager = WorktreeGitManager(repo_path)
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "symbolic-ref"],
+            args=["symbolic-ref"],
             returncode=0,
             stdout="refs/remotes/origin/main\n",
             stderr="",
         )
 
-        branch = manager.get_default_branch()
+        branch = await manager.get_default_branch()
 
         assert branch == "main"
 
-    def test_get_default_branch_from_origin_head_master(self, mock_run, tmp_path) -> None:
+    async def test_get_default_branch_from_origin_head_master(self, mock_run, tmp_path) -> None:
         """Get default branch 'master' from origin/HEAD."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -2064,17 +2039,17 @@ class TestWorktreeGitManagerGetDefaultBranch:
         manager = WorktreeGitManager(repo_path)
 
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "symbolic-ref"],
+            args=["symbolic-ref"],
             returncode=0,
             stdout="refs/remotes/origin/master\n",
             stderr="",
         )
 
-        branch = manager.get_default_branch()
+        branch = await manager.get_default_branch()
 
         assert branch == "master"
 
-    def test_get_default_branch_fallback_to_local_main(self, mock_run, tmp_path) -> None:
+    async def test_get_default_branch_fallback_to_local_main(self, mock_run, tmp_path) -> None:
         """Fall back to local main branch when origin/HEAD fails."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -2084,25 +2059,25 @@ class TestWorktreeGitManagerGetDefaultBranch:
         mock_run.side_effect = [
             # symbolic-ref fails (no origin/HEAD)
             subprocess.CompletedProcess(
-                args=["git", "symbolic-ref"],
+                args=["symbolic-ref"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: ref refs/remotes/origin/HEAD is not a symbolic ref",
             ),
             # rev-parse for local main succeeds
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=0,
                 stdout="abc123\n",
                 stderr="",
             ),
         ]
 
-        branch = manager.get_default_branch()
+        branch = await manager.get_default_branch()
 
         assert branch == "main"
 
-    def test_get_default_branch_fallback_to_remote_master(self, mock_run, tmp_path) -> None:
+    async def test_get_default_branch_fallback_to_remote_master(self, mock_run, tmp_path) -> None:
         """Fall back to remote master when main doesn't exist."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -2112,46 +2087,46 @@ class TestWorktreeGitManagerGetDefaultBranch:
         mock_run.side_effect = [
             # symbolic-ref fails
             subprocess.CompletedProcess(
-                args=["git", "symbolic-ref"],
+                args=["symbolic-ref"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: not a symbolic ref",
             ),
             # rev-parse for local main fails
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: Needed a single revision",
             ),
             # rev-parse for remote main fails
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: Needed a single revision",
             ),
             # rev-parse for local master fails
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: Needed a single revision",
             ),
             # rev-parse for remote master succeeds
             subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
+                args=["rev-parse"],
                 returncode=0,
                 stdout="def456\n",
                 stderr="",
             ),
         ]
 
-        branch = manager.get_default_branch()
+        branch = await manager.get_default_branch()
 
         assert branch == "master"
 
-    def test_get_default_branch_fallback_to_main(self, mock_run, tmp_path) -> None:
+    async def test_get_default_branch_fallback_to_main(self, mock_run, tmp_path) -> None:
         """Fall back to 'main' when all detection methods fail."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -2166,12 +2141,12 @@ class TestWorktreeGitManagerGetDefaultBranch:
             stderr="fatal: error",
         )
 
-        branch = manager.get_default_branch()
+        branch = await manager.get_default_branch()
 
         # Should fall back to "main"
         assert branch == "main"
 
-    def test_get_default_branch_handles_exception(self, mock_run, tmp_path) -> None:
+    async def test_get_default_branch_handles_exception(self, mock_run, tmp_path) -> None:
         """Handle exception gracefully and fall back to main."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -2180,7 +2155,7 @@ class TestWorktreeGitManagerGetDefaultBranch:
 
         mock_run.side_effect = Exception("Git not available")
 
-        branch = manager.get_default_branch()
+        branch = await manager.get_default_branch()
 
         # Should fall back to "main"
         assert branch == "main"
@@ -2197,7 +2172,7 @@ class TestWorktreeGitManagerMergeBranch:
     def _mock_rev_parse(self, branch="feature/test"):
         """Helper: mock for initial rev-parse --abbrev-ref HEAD."""
         return subprocess.CompletedProcess(
-            args=["git", "rev-parse"], returncode=0, stdout=f"{branch}\n", stderr=""
+            args=["rev-parse"], returncode=0, stdout=f"{branch}\n", stderr=""
         )
 
     def _mock_success(self, args_hint="git"):
@@ -2208,19 +2183,19 @@ class TestWorktreeGitManagerMergeBranch:
         """Helper: generic failed CompletedProcess."""
         return subprocess.CompletedProcess(args=[args_hint], returncode=1, stdout="", stderr=stderr)
 
-    @patch("subprocess.run")
-    def test_merge_rejects_push(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_rejects_push(self, mock_run, manager) -> None:
         """Merge rejects push=True before running git."""
 
-        result = manager.merge_branch("feature/test", "main", push=True)
+        result = await manager.merge_branch("feature/test", "main", push=True)
 
         assert result.success is False
         assert result.error == "push_not_supported"
         assert "never pushes" in result.message
         mock_run.assert_not_called()
 
-    @patch("subprocess.run")
-    def test_merge_success_no_push(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_success_no_push(self, mock_run, manager) -> None:
         """Merge succeeds without push."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2228,64 +2203,64 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout main
             self._mock_success(),  # pull origin main
             subprocess.CompletedProcess(
-                args=["git", "merge"], returncode=0, stdout="Merge made\n", stderr=""
+                args=["merge"], returncode=0, stdout="Merge made\n", stderr=""
             ),  # merge --no-ff
             # No push call
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main", push=False)
+        result = await manager.merge_branch("feature/test", "main", push=False)
 
         assert result.success is True
         assert "Successfully merged" in result.message
 
-    @patch("subprocess.run")
-    def test_merge_fetch_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_fetch_failure(self, mock_run, manager) -> None:
         """Merge fails when fetch fails."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
             subprocess.CompletedProcess(
-                args=["git", "fetch"],
+                args=["fetch"],
                 returncode=128,
                 stdout="",
                 stderr="fatal: could not reach remote",
             ),  # fetch fails
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert "Failed to fetch" in result.message
         assert "could not reach remote" in result.error
 
-    @patch("subprocess.run")
-    def test_merge_checkout_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_checkout_failure(self, mock_run, manager) -> None:
         """Merge fails when checkout fails."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
             self._mock_success(),  # fetch origin
             subprocess.CompletedProcess(
-                args=["git", "checkout"],
+                args=["checkout"],
                 returncode=1,
                 stdout="",
                 stderr="error: pathspec 'main' did not match",
             ),  # checkout fails
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert "Failed to checkout" in result.message
 
-    @patch("subprocess.run")
-    def test_merge_pull_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_pull_failure(self, mock_run, manager) -> None:
         """Merge fails when pull fails."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
             self._mock_success(),  # fetch origin
             self._mock_success(),  # checkout main
             subprocess.CompletedProcess(
-                args=["git", "pull"],
+                args=["pull"],
                 returncode=1,
                 stdout="",
                 stderr="error: cannot pull with rebase",
@@ -2293,13 +2268,13 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert "Failed to pull" in result.message
 
-    @patch("subprocess.run")
-    def test_merge_conflict(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_conflict(self, mock_run, manager) -> None:
         """Merge detects conflicts and aborts."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2307,13 +2282,13 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout main
             self._mock_success(),  # pull origin main
             subprocess.CompletedProcess(
-                args=["git", "merge"],
+                args=["merge"],
                 returncode=1,
                 stdout="CONFLICT (content): Merge conflict in src/foo.py",
                 stderr="",
             ),  # merge fails with conflict
             subprocess.CompletedProcess(
-                args=["git", "diff"],
+                args=["diff"],
                 returncode=0,
                 stdout="src/foo.py\nsrc/bar.py\n",
                 stderr="",
@@ -2322,7 +2297,7 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert result.error == "merge_conflict"
@@ -2330,21 +2305,21 @@ class TestWorktreeGitManagerMergeBranch:
         assert "src/foo.py" in result.output
         assert "src/bar.py" in result.output
 
-    @patch("subprocess.run")
-    def test_get_unmerged_files_raises_on_git_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_get_unmerged_files_raises_on_git_failure(self, mock_run, manager) -> None:
         """Unmerged-file inspection surfaces git failures with stderr context."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=["git", "diff"],
+            args=["diff"],
             returncode=128,
             stdout="",
             stderr="fatal: not a git repository",
         )
 
         with pytest.raises(RuntimeError, match="failed to list unmerged files.*not a git"):
-            manager.get_unmerged_files()
+            (await manager.get_unmerged_files())
 
-    @patch("subprocess.run")
-    def test_merge_non_conflict_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_non_conflict_failure(self, mock_run, manager) -> None:
         """Merge fails with non-conflict error."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2352,7 +2327,7 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout main
             self._mock_success(),  # pull origin main
             subprocess.CompletedProcess(
-                args=["git", "merge"],
+                args=["merge"],
                 returncode=1,
                 stdout="",
                 stderr="fatal: refusing to merge unrelated histories",
@@ -2361,24 +2336,24 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert "Merge failed" in result.message
         assert "unrelated histories" in result.error
 
-    @patch("subprocess.run")
-    def test_merge_push_failure(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_push_failure(self, mock_run, manager) -> None:
         """push=True is rejected instead of attempting a remote push."""
 
-        result = manager.merge_branch("feature/test", "main", push=True)
+        result = await manager.merge_branch("feature/test", "main", push=True)
 
         assert result.success is False
         assert result.error == "push_not_supported"
         mock_run.assert_not_called()
 
-    @patch("subprocess.run")
-    def test_merge_timeout(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_timeout(self, mock_run, manager) -> None:
         """Merge handles timeout."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2390,14 +2365,14 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert "timed out" in result.message
         assert result.error == "timeout"
 
-    @patch("subprocess.run")
-    def test_merge_generic_exception(self, mock_run, manager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_generic_exception(self, mock_run, manager) -> None:
         """Merge handles generic exception."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2409,14 +2384,14 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert "Merge error" in result.message
         assert result.error == "Unexpected git crash"
 
-    @patch("subprocess.run")
-    def test_merge_restores_original_branch(
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_restores_original_branch(
         self, mock_run: Mock, manager: WorktreeGitManager
     ) -> None:
         """Merge restores original branch in finally block."""
@@ -2426,12 +2401,12 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout main
             self._mock_success(),  # pull origin main
             subprocess.CompletedProcess(
-                args=["git", "merge"], returncode=0, stdout="Merge made\n", stderr=""
+                args=["merge"], returncode=0, stdout="Merge made\n", stderr=""
             ),  # merge succeeds
             self._mock_success(),  # checkout feature/other (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is True
         # Verify the last call was checkout back to feature/other
@@ -2439,8 +2414,10 @@ class TestWorktreeGitManagerMergeBranch:
         assert "checkout" in last_call[0][0]
         assert "feature/other" in last_call[0][0]
 
-    @patch("subprocess.run")
-    def test_merge_conflict_in_stderr(self, mock_run: Mock, manager: WorktreeGitManager) -> None:
+    @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
+    async def test_merge_conflict_in_stderr(
+        self, mock_run: Mock, manager: WorktreeGitManager
+    ) -> None:
         """Merge detects conflict from stderr."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2448,13 +2425,13 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout main
             self._mock_success(),  # pull origin main
             subprocess.CompletedProcess(
-                args=["git", "merge"],
+                args=["merge"],
                 returncode=1,
                 stdout="",
                 stderr="CONFLICT (modify/delete): src/foo.py",
             ),  # merge fails with conflict in stderr
             subprocess.CompletedProcess(
-                args=["git", "diff"],
+                args=["diff"],
                 returncode=0,
                 stdout="src/foo.py\n",
                 stderr="",
@@ -2463,7 +2440,7 @@ class TestWorktreeGitManagerMergeBranch:
             self._mock_success(),  # checkout feature/test (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main")
+        result = await manager.merge_branch("feature/test", "main")
 
         assert result.success is False
         assert result.error == "merge_conflict"

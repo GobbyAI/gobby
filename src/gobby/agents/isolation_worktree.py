@@ -64,7 +64,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         branch_name = generate_branch_name(config)
         partial_state["branch"] = branch_name
         base_branch = config.base_branch
-        current_branch = await asyncio.to_thread(self._git_manager.get_current_branch)
+        current_branch = await self._git_manager.get_current_branch()
         if current_branch and base_branch == "main" and current_branch != "main":
             base_branch = current_branch
 
@@ -110,8 +110,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                     existing.worktree_path,
                     existing.id,
                 )
-                await asyncio.to_thread(
-                    worktree_reuse.cleanup_stale_worktree_registration,
+                await worktree_reuse.cleanup_stale_worktree_registration(
                     self._git_manager,
                     self._worktree_storage,
                     existing,
@@ -120,9 +119,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         use_local = False
 
         # Check for unpushed commits on the base branch
-        has_unpushed, unpushed_count = await asyncio.to_thread(
-            self._git_manager.has_unpushed_commits, base_branch
-        )
+        has_unpushed, unpushed_count = await self._git_manager.has_unpushed_commits(base_branch)
         if has_unpushed:
             # Use local branch ref to preserve unpushed commits
             use_local = True
@@ -138,8 +135,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         worktree_path = self._generate_worktree_path(branch_name, project_name)
 
         # Create git worktree
-        result = await asyncio.to_thread(
-            self._git_manager.create_worktree,
+        result = await self._git_manager.create_worktree(
             worktree_path=worktree_path,
             branch_name=branch_name,
             base_branch=base_branch,
@@ -168,8 +164,7 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         created_base_commit_sha: str | None = None
         if config.task_id is not None:
-            created_base_commit_sha = await asyncio.to_thread(
-                worktree_reuse.capture_worktree_base_commit_sha,
+            created_base_commit_sha = await worktree_reuse.capture_worktree_base_commit_sha(
                 git_manager=self._git_manager,
                 worktree_path=worktree_path,
                 base_branch=base_branch,
@@ -219,8 +214,7 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         if worktree_path:
             try:
-                await asyncio.to_thread(
-                    self._git_manager.delete_worktree,
+                await self._git_manager.delete_worktree(
                     worktree_path=worktree_path,
                     force=True,
                     delete_branch=True,

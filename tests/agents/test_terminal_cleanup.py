@@ -33,7 +33,7 @@ def _stub_srt_runner_reap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(terminal_cleanup, "reap_sandbox_run_roots", reap_roots)
 
 
-def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None:
+async def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None:
     db = MagicMock()
     task_manager = MagicMock()
     task_manager.stage_states.get.return_value = SimpleNamespace(state="in_progress")
@@ -43,14 +43,14 @@ def test_cleanup_merged_task_artifacts_skips_when_merge_stage_not_done() -> None
         patch("gobby.storage.tasks.LocalTaskManager", return_value=task_manager),
         patch("gobby.build.controls.cleanup_successful_merge_artifacts") as cleanup,
     ):
-        result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
+        result = await cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
 
     assert result == []
     assert len(result) == 0
     cleanup.assert_not_called()
 
 
-def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> None:
+async def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> None:
     db = MagicMock()
     artifacts = [SimpleNamespace(deleted=True, deferred=False)]
     task_manager = MagicMock()
@@ -67,14 +67,14 @@ def test_cleanup_merged_task_artifacts_runs_for_already_implemented_close() -> N
             return_value=artifacts,
         ) as cleanup,
     ):
-        result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
+        result = await cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
 
     assert result == artifacts
     assert result[0].deleted is True
     cleanup.assert_called_once_with(db, "task-1")
 
 
-def test_cleanup_merged_task_artifacts_preserves_reused_worktree() -> None:
+async def test_cleanup_merged_task_artifacts_preserves_reused_worktree() -> None:
     db = MagicMock()
     artifacts = [SimpleNamespace(deleted=False, deferred=True)]
     task_manager = MagicMock()
@@ -91,7 +91,7 @@ def test_cleanup_merged_task_artifacts_preserves_reused_worktree() -> None:
             return_value=artifacts,
         ) as cleanup,
     ):
-        result = cleanup_merged_task_artifacts_after_agent_exit(
+        result = await cleanup_merged_task_artifacts_after_agent_exit(
             db,
             "task-1",
             preserve_worktree_id="wt-1",
@@ -102,7 +102,7 @@ def test_cleanup_merged_task_artifacts_preserves_reused_worktree() -> None:
     cleanup.assert_called_once_with(db, "task-1", preserve_worktree_ids={"wt-1"})
 
 
-def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
+async def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
     db = MagicMock()
     artifacts = [SimpleNamespace(deleted=True, deferred=False)]
     task_manager = MagicMock()
@@ -115,7 +115,7 @@ def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
             return_value=artifacts,
         ) as cleanup,
     ):
-        result = cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
+        result = await cleanup_merged_task_artifacts_after_agent_exit(db, "task-1")
 
     assert result == artifacts
     assert result[0].deferred is False

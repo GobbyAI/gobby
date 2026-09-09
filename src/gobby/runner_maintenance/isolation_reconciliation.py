@@ -116,12 +116,11 @@ async def _reconcile_project_worktrees(
     manager = WorktreeGitManager(checkout_root)
     try:
         primary_path = await asyncio.to_thread(_canonical_path, checkout_root)
-        worktrees = await asyncio.to_thread(
-            worktree_git_status.list_worktrees,
+        worktrees = await worktree_git_status.list_worktrees(
             manager,
             failure_log_level=logging.DEBUG,
         )
-        base_branch = await asyncio.to_thread(manager.get_default_branch)
+        base_branch = await manager.get_default_branch()
     except Exception as exc:
         logger.debug("Skipping worktree reconciliation for %s: %s", project.name, exc)
         return 0
@@ -134,7 +133,7 @@ async def _reconcile_project_worktrees(
             candidate_path = await asyncio.to_thread(_canonical_path, worktree.path)
             if candidate_path == primary_path:
                 continue
-            inspected = await asyncio.to_thread(manager.inspect_worktree, candidate_path)
+            inspected = await manager.inspect_worktree(candidate_path)
             _, created = await _run_db(
                 run_db,
                 storage.register_adopted,
@@ -174,7 +173,7 @@ async def _reconcile_project_clones(
 
     if not candidates:
         return 0
-    base_branch = await asyncio.to_thread(manager.get_default_branch)
+    base_branch = await manager.get_default_branch()
 
     adopted = 0
     for candidate in candidates:

@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -421,8 +421,9 @@ class TestNotificationHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_notification(event)
+        response = handlers.handle_notification(event)
 
+        assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
     def test_notification_status_update_error(self, mock_dependencies: dict) -> None:
@@ -492,7 +493,7 @@ class TestNotificationHandlerEdgeCases:
 class TestWorktreeHandlers:
     """Test WORKTREE_CREATE and WORKTREE_REMOVE default behavior."""
 
-    def test_worktree_create_returns_created_path(self, mock_dependencies: dict) -> None:
+    async def test_worktree_create_returns_created_path(self, mock_dependencies: dict) -> None:
         mock_dependencies["worktree_manager"].get_by_branch.return_value = None
 
         handlers = EventHandlers(**mock_dependencies)
@@ -504,9 +505,9 @@ class TestWorktreeHandlers:
 
         git_manager = MagicMock()
         git_manager.repo_path = "/repo"
-        git_manager.get_current_branch.return_value = "main"
-        git_manager.has_unpushed_commits.return_value = (False, 0)
-        git_manager.create_worktree.return_value = MagicMock(success=True, message="ok")
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
+        git_manager.create_worktree = AsyncMock(return_value=MagicMock(success=True, message="ok"))
 
         with (
             patch(
@@ -520,7 +521,7 @@ class TestWorktreeHandlers:
             patch("gobby.hooks.event_handlers._misc.copy_project_json_to_worktree"),
             patch("gobby.hooks.event_handlers._misc.install_provider_hooks"),
         ):
-            response = handlers.handle_worktree_create(event)
+            response = await handlers.handle_worktree_create(event)
 
         assert response.worktree_path == "/tmp/worktrees/feature-auth"
         git_manager.create_worktree.assert_called_once_with(
@@ -541,7 +542,9 @@ class TestWorktreeHandlers:
         assert mock_dependencies["worktree_manager"].create.call_count == 1
         assert mock_dependencies["worktree_manager"].create.call_args is not None
 
-    def test_worktree_remove_deletes_git_worktree_and_record(self, mock_dependencies: dict) -> None:
+    async def test_worktree_remove_deletes_git_worktree_and_record(
+        self, mock_dependencies: dict
+    ) -> None:
         mock_dependencies["worktree_manager"].has_path_on_other_machine.return_value = False
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(
             id="wt-123",
@@ -564,8 +567,10 @@ class TestWorktreeHandlers:
             patch("gobby.hooks.event_handlers._misc.WorktreeGitManager") as mock_git_cls,
         ):
             mock_git_manager = mock_git_cls.return_value
-            mock_git_manager.delete_worktree.return_value = MagicMock(success=True, message="ok")
-            response = handlers.handle_worktree_remove(event)
+            mock_git_manager.delete_worktree = AsyncMock(
+                return_value=MagicMock(success=True, message="ok")
+            )
+            response = await handlers.handle_worktree_remove(event)
 
         assert response.decision == "allow"
         mock_git_manager.delete_worktree.assert_called_once_with(
@@ -581,7 +586,7 @@ class TestWorktreeHandlers:
         assert mock_dependencies["worktree_manager"].delete.call_count == 1
         assert mock_dependencies["worktree_manager"].delete.call_args is not None
 
-    def test_worktree_remove_ignores_remote_record(self, mock_dependencies: dict) -> None:
+    async def test_worktree_remove_ignores_remote_record(self, mock_dependencies: dict) -> None:
         worktree_manager = mock_dependencies["worktree_manager"]
         worktree_manager.has_path_on_other_machine.return_value = True
         handlers = EventHandlers(**mock_dependencies)
@@ -592,7 +597,7 @@ class TestWorktreeHandlers:
         )
 
         with patch("gobby.hooks.event_handlers._misc.WorktreeGitManager") as mock_git_cls:
-            response = handlers.handle_worktree_remove(event)
+            response = await handlers.handle_worktree_remove(event)
 
         assert response.decision == "allow"
         worktree_manager.has_path_on_other_machine.assert_called_once_with(
