@@ -46,5 +46,22 @@ Place the tests at `<module>/tests.rs` and declare them from `<module>.rs` with:
 mod tests;
 ```
 
+## Daemon family crates
+
+Stage 2 of `ROADMAP.md` absorbs the Python daemon one route family at a time,
+each as its own crate statically linked into `gdaemon` (decision 16):
+
+- Directory `crates/g<family>`, package `gobby-<family>` (`crates/gtasks` →
+  `gobby-tasks`), `publish = false`, version inherited from the workspace.
+- Add the crate to the root `Cargo.toml` `members` list when its Stage 2 epic
+  starts; no placeholder crates.
+- Export one static `RouteFamily`: the prefixes the family claims, its
+  `axum::Router` over the shared daemon state, and its service trait. `gdaemon`
+  composes families in its routing table; the per-family `Proxy | Native |
+  Compare` backend comes from bootstrap.
+- Own the family's row types and repositories, built on the `gcore` async pool
+  and transaction seam. Reach another family only through its public API;
+  Cargo rejects the cycle otherwise, and that is intended.
+
 The crate → binary map and the rebuild-and-reinstall requirement (including the
 new-inode install step macOS needs) live in `AGENTS.md` under Architecture Facts.

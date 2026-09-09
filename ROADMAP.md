@@ -4,7 +4,7 @@ Gobby is a local-first control plane for AI coding tools: persistent sessions,
 task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
 automation around the tools developers already use.
 
-Last refreshed: 2026-09-01. This document is the roadmap and the architecture
+Last refreshed: 2026-09-09. This document is the roadmap and the architecture
 decision record. The live tracker is epic #21542.
 
 ## Where we are (2026-09-01)
@@ -114,6 +114,11 @@ authentication are prerequisites and are not yet tasks.
 - **The public CLI plus daemon API is the plugin surface.** Manifest-driven
   external processes on the public API only, in Rust, so plugins survive every
   migration stage (#20201).
+- **The absorbed daemon is composed from family crates.** Each Stage 2 route
+  family is a workspace-private crate statically linked into `gdaemon`,
+  exporting a `RouteFamily` (claimed prefixes, router, service trait) that the
+  front door's routing table composes. One release, one lockfile, one schema
+  identity pin; the routing-table flip is the stability mechanism (decision 16).
 - **HTTP splits machine checkouts from hub documents.** `/api/files` is the
   checkout browser on this daemon; hub-owned `files_home` content is under
   `/api/hub/...`; nodes reach hub routes through `hub_daemon_url` (one hop).
@@ -204,7 +209,7 @@ wrapper, no mismatch latch. Compare mode is a proxy feature.
 
 | Ref | Scope |
 | --- | --- |
-| **S1.1** · #21551 | `gdaemon serve`: axum front door on `:60887`/`:60888` proxying HTTP and WS to Python on loopback; native `GET /api/health`; bearer pass-through; the WS proxy passes the `terminal_ws_golden` corpus and chat WS unchanged |
+| **S1.1** · #21551 | `gdaemon serve`: axum front door on `:60887`/`:60888` proxying HTTP and WS to Python on loopback; native `GET /api/health`; bearer pass-through; the WS proxy passes the `terminal_ws_golden` corpus and chat WS unchanged; defines the `RouteFamily` seam and the per-family `Proxy | Native | Compare` backend read from bootstrap |
 | **S1.2** · #21553 | Mode enum `standalone`/`hub`/`node` and the mode-assembled service container; boundary semantics only, duties come in Stage 4 |
 | **S1.3** · #21554 | Singleton lease and Python backend lifecycle in Rust; retires the Python lease modules; `hub` and `standalone` lease, a node registers instead |
 | **S1.4** · #21555 | Node registration over WS and machine API keys; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines` |
@@ -219,7 +224,9 @@ Stage 1 starts now, in its own worktree, concurrent with #21334, #19664, and the
 ### Stage 2 — strangler absorption behind the front door (#21544)
 
 Ordered so story B emerges mid-port; hook ingress lands late because the rule
-engine is entangled with sessions and MCP dispatch.
+engine is entangled with sessions and MCP dispatch. Each family lands as its own
+workspace-private crate (decision 16), added to the workspace when its epic is
+claimed; S2.3 is the template.
 
 | Ref | Family |
 | --- | --- |
@@ -397,6 +404,26 @@ separate planning effort before implementation.
     `gclient` as soon as it carries the daily operator verbs (S3.2). The
     Python package becomes `gobby-backend` until it retires at S3.4;
     `gdaemon` and `gterm` keep their names.
+16. **The absorbed daemon is composed from family crates** (2026-09-09).
+    Mechanism: workspace crates statically linked into `gdaemon` — no dylib
+    plugins (no stable ABI; tokio across a dylib boundary yields two runtimes)
+    and no per-family processes (only `gterm` earns one, for PTY survival);
+    third-party pluggability stays external on the public API (decision 7).
+    Versioning: family crates are `publish = false` and inherit the workspace
+    version — one release, one lockfile, one schema identity pin; stability
+    comes from the routing-table flip and the S1.5 corpus, never version pins.
+    Route seam: each family exports a static `RouteFamily` (claimed prefixes,
+    `axum::Router` over shared state, service trait); `gdaemon` holds one
+    routing table whose per-family backend `Proxy | Native | Compare` is read
+    from bootstrap, so a flip or rollback is a config change with no redeploy.
+    Data model: per-family row types and repositories over the S2.1 `gcore`
+    async pool and transaction seam; cross-family reads go through the owning
+    crate's public API, and Cargo's refusal of dependency cycles is the
+    untangling force (expect the sessions/tasks/rules triangle to need a small
+    shared trait-or-event crate). Granularity: one crate per Stage 2 route
+    family, created when its epic is claimed; S2.3 is the template. Naming:
+    `crates/g<family>` → package `gobby-<family>`, after `crates/gcode` →
+    `gobby-code`.
 
 ## References
 
