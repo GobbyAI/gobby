@@ -208,9 +208,7 @@ class ClaimValidationResult(_FrozenModel):
     diagnostics: tuple[ValidationDiagnostic, ...] = ()
 
 
-class ClaimValidationReport(_FrozenModel):
-    draft_hash: Sha256Digest
-    evidence_manifest_hash: Sha256Digest
+class _ValidationReport(_FrozenModel):
     results: tuple[ClaimValidationResult, ...]
     diagnostics: tuple[ValidationDiagnostic, ...] = ()
 
@@ -225,32 +223,23 @@ class ClaimValidationReport(_FrozenModel):
             for diagnostic in self.diagnostics
             + tuple(item for result in self.results for item in result.diagnostics)
         )
+
+
+class ClaimValidationReport(_ValidationReport):
+    draft_hash: Sha256Digest
+    evidence_manifest_hash: Sha256Digest
 
     @property
     def is_valid(self) -> bool:
         return not self.diagnostics and all(result.accepted for result in self.results)
 
 
-class ReviewValidationReport(_FrozenModel):
+class ReviewValidationReport(_ValidationReport):
     draft_hash: Sha256Digest
     evidence_manifest_hash: Sha256Digest
     reviewer_run_id: str
     missing_question_parts: tuple[str, ...]
-    results: tuple[ClaimValidationResult, ...]
-    diagnostics: tuple[ValidationDiagnostic, ...] = ()
     review: ReviewerResult
-
-    @property
-    def accepted_claim_ids(self) -> tuple[str, ...]:
-        return tuple(result.claim_id for result in self.results if result.accepted)
-
-    @property
-    def diagnostic_codes(self) -> tuple[str, ...]:
-        return tuple(
-            diagnostic.code
-            for diagnostic in self.diagnostics
-            + tuple(item for result in self.results for item in result.diagnostics)
-        )
 
     @property
     def is_valid(self) -> bool:
@@ -390,17 +379,13 @@ def _validate_source(
     return diagnostics
 
 
-def _changed_path_body(value: ChangedPathSelector) -> dict[str, Any]:
-    return value.model_dump(mode="json")
-
-
 def _validate_git_metadata(
     item: CommitMetadataEvidenceItem,
     binding: SnapshotBinding,
 ) -> list[ValidationDiagnostic]:
     diagnostics: list[ValidationDiagnostic] = []
     commit = binding.commit
-    changed_paths = [_changed_path_body(path) for path in commit.changed_paths]
+    changed_paths = [path.model_dump(mode="json") for path in commit.changed_paths]
     changed_paths_digest = _rust_json_hash(changed_paths)
     if changed_paths_digest != commit.changed_paths_digest:
         diagnostics.append(
@@ -453,7 +438,7 @@ def _validate_git_metadata(
         diagnostics.append(
             _diagnostic("git_metadata_mismatch", "changed path is not in the canonical comparison")
         )
-    record_body = None if item.changed_path is None else _changed_path_body(item.changed_path)
+    record_body = None if item.changed_path is None else item.changed_path.model_dump(mode="json")
     expected_record_hash = _rust_json_hash(record_body)
     if item.record_hash != expected_record_hash:
         diagnostics.append(
@@ -511,15 +496,19 @@ def _validate_graph(
     return diagnostics
 
 
+def _record_supports_exhaustive_scope(record: RecordedEvidence) -> bool:
+    response = record.response
+    return response.complete and (
+        response.completeness in {"complete", "complete_empty"} and not response.exclusions
+    )
+
+
 def _validate_evidence_manifest(
     manifest: EvidenceManifest,
     pinned_blobs: Mapping[tuple[str, str], bytes],
-) -> tuple[
-    list[ValidationDiagnostic],
-    dict[str, EvidenceItem],
-    dict[str, RecordedEvidence],
-]:
+) -> tuple[list[ValidationDiagnostic], dict[str, EvidenceItem], dict[str, list[RecordedEvidence]]]:
     diagnostics: list[ValidationDiagnostic] = []
+    add = diagnostics.append
     binding = manifest.snapshot_binding
     entries = [entry.model_dump(mode="json") for entry in manifest.inventory.entries]
     if (
@@ -527,48 +516,40 @@ def _validate_evidence_manifest(
         or manifest.inventory.digest != binding.inventory_digest
         or _rust_json_hash(entries) != manifest.inventory.digest
     ):
-        diagnostics.append(
-            _diagnostic("snapshot_inventory_mismatch", "snapshot inventory identity is invalid")
-        )
+        add(_diagnostic("snapshot_inventory_mismatch", "snapshot inventory identity is invalid"))
     inventory = {entry.path: entry for entry in manifest.inventory.entries}
     if len(inventory) != len(manifest.inventory.entries):
-        diagnostics.append(
-            _diagnostic("snapshot_inventory_mismatch", "snapshot inventory paths are duplicated")
-        )
+        add(_diagnostic("snapshot_inventory_mismatch", "snapshot inventory paths are duplicated"))
     items: dict[str, EvidenceItem] = {}
-    item_records: dict[str, RecordedEvidence] = {}
+    item_records: dict[str, list[RecordedEvidence]] = {}
+    invocation_ids: set[str] = set()
     for record in manifest.records:
         response = record.response
+        if record.invocation_id in invocation_ids:
+            add(_diagnostic("duplicate_invocation_id", "invocation id occurs more than once"))
+        invocation_ids.add(record.invocation_id)
         if record.run_id != manifest.run_id:
             diagnostics.append(_diagnostic("cross_run_evidence", "evidence record has another run"))
         if record.snapshot_inventory_digest != binding.inventory_digest:
-            diagnostics.append(
-                _diagnostic("snapshot_inventory_mismatch", "evidence record has another snapshot")
-            )
+            add(_diagnostic("snapshot_inventory_mismatch", "evidence has another snapshot"))
         response_body = _response_body(response)
         if canonical_hash(response_body) != record.response_hash:
-            diagnostics.append(
-                _diagnostic("response_hash_mismatch", "recorded evidence response hash is invalid")
-            )
+            add(_diagnostic("response_hash_mismatch", "evidence response hash is invalid"))
         if canonical_hash(response.request) != record.request_hash or not (
             len(response.request_fingerprint) == 64
             and all(character in "0123456789abcdef" for character in response.request_fingerprint)
         ):
-            diagnostics.append(
-                _diagnostic("request_hash_mismatch", "gcode request fingerprint is invalid")
-            )
+            add(_diagnostic("request_hash_mismatch", "gcode request fingerprint is invalid"))
         request_binding = response.request.get("binding")
         binding_body = binding.model_dump(mode="json")
         if response.binding != binding or request_binding != binding_body:
-            diagnostics.append(
-                _diagnostic("snapshot_binding_mismatch", "gcode response has another snapshot")
-            )
+            add(_diagnostic("snapshot_binding_mismatch", "gcode response has another snapshot"))
         if (
             response.contract.name != "gcode-evidence"
             or response.contract.schema_version != 1
             or response.contract.tool != "gobby-code"
         ):
-            diagnostics.append(
+            add(
                 _diagnostic(
                     "unsupported_evidence_contract", "gcode contract identity is unsupported"
                 )
@@ -576,12 +557,10 @@ def _validate_evidence_manifest(
         if response.bounds.returned_items != len(
             response.items
         ) or response.bounds.total_items < len(response.items):
-            diagnostics.append(
-                _diagnostic("evidence_bounds_mismatch", "gcode response bounds are inconsistent")
-            )
+            add(_diagnostic("evidence_bounds_mismatch", "gcode response bounds are inconsistent"))
         if response.complete:
             if response.completeness not in {"complete", "complete_empty", "excluded_scope"}:
-                diagnostics.append(
+                add(
                     _diagnostic(
                         "evidence_completeness_mismatch", "complete response is inconsistent"
                     )
@@ -591,21 +570,34 @@ def _validate_evidence_manifest(
             "truncated_index",
             "truncated_traversal",
         }:
-            diagnostics.append(
-                _diagnostic("evidence_completeness_mismatch", "partial response is inconsistent")
-            )
+            add(_diagnostic("evidence_completeness_mismatch", "partial response is inconsistent"))
+        record_item_ids: set[str] = set()
         for item in response.items:
-            if item.evidence_id in items:
+            prior = items.get(item.evidence_id)
+            if item.evidence_id in record_item_ids:
                 diagnostics.append(
                     _diagnostic(
                         "duplicate_evidence_id",
-                        "evidence id occurs more than once",
+                        "evidence id occurs more than once in one response",
                         evidence_id=item.evidence_id,
                     )
                 )
                 continue
+            record_item_ids.add(item.evidence_id)
+            if prior is not None:
+                if prior != item:
+                    diagnostics.append(
+                        _diagnostic(
+                            "conflicting_evidence_id",
+                            "one evidence id identifies conflicting canonical content",
+                            evidence_id=item.evidence_id,
+                        )
+                    )
+                else:
+                    item_records[item.evidence_id].append(record)
+                continue
             items[item.evidence_id] = item
-            item_records[item.evidence_id] = record
+            item_records[item.evidence_id] = [record]
             if isinstance(item, SourceEvidenceItem):
                 item_diagnostics = _validate_source(item, binding, inventory, pinned_blobs)
             elif isinstance(item, GraphEvidenceItem):
@@ -839,17 +831,18 @@ def validate_claims(
                     )
                 )
             elif claim.assertion_kind in {AssertionKind.NEGATIVE, AssertionKind.EXHAUSTIVE}:
-                scoped_records = [
+                evidence_record_groups = [
                     item_records[evidence_id] for evidence_id in claim.evidence_scope.evidence_ids
-                ] + [
+                ]
+                scoped_invocations = [
                     invocation_records[invocation_id]
                     for invocation_id in claim.evidence_scope.invocation_ids
                 ]
                 if any(
-                    not record.response.complete
-                    or record.response.completeness not in {"complete", "complete_empty"}
-                    or bool(record.response.exclusions)
-                    for record in scoped_records
+                    not any(map(_record_supports_exhaustive_scope, records))
+                    for records in evidence_record_groups
+                ) or any(
+                    not _record_supports_exhaustive_scope(record) for record in scoped_invocations
                 ):
                     diagnostics.append(
                         _diagnostic(
