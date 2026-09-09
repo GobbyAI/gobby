@@ -112,7 +112,7 @@ async def test_startup_restraint_respects_pull_order_and_explicit_opt_out(
         event,
         session_id=SESSION_ID,
         variables={
-            "loaded_skills": ["memory", "loading-skills", "brevity"],
+            "loaded_skills": ["loading-skills", "memory", "brevity"],
             "handoff_pull_pending": pending,
             "restraint_disabled": disabled,
             "servers_listed": True,
@@ -156,7 +156,7 @@ async def test_warning_loads_follow_model_threshold_and_loaded_state(
         data={},
     )
     variables: dict[str, Any] = {
-        "loaded_skills": ["memory", "loading-skills", "brevity", "restraint"],
+        "loaded_skills": ["loading-skills", "memory", "brevity", "restraint"],
         "servers_listed": True,
     }
     engine = RuleEngine(db)

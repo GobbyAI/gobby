@@ -339,8 +339,8 @@ continuation prompt calls `get_handoff`, which consumes only the pending marker 
 by `set_handoff`. A second call is empty. Manual provider compact and `/clear`
 operations create no marker, so they also return an empty handoff. Persisted
 `handoff_markdown` remains visible in the UI after consumption. While that marker is
-pending, turn-start meta skill loads wait so the pull runs before `memory`,
-`loading-skills`, `brevity`, and `restraint` reloads.
+pending, turn-start meta skill loads wait so the pull runs before `loading-skills`,
+`memory`, `brevity`, and `restraint` reloads.
 
 For terminal sessions, the tool result reports `handoff_staged=true` and
 `delivery_pending=true` before Gobby touches provider input. The proxy strips the

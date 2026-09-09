@@ -224,7 +224,7 @@ class TestLanguageSkillWriteTargetContract:
 
 
 class TestDefaultAgentCoreSkillBootstrap:
-    CORE_SKILLS = ("memory", "loading-skills", "brevity", "restraint")
+    CORE_SKILLS = ("loading-skills", "memory", "brevity", "restraint")
 
     @staticmethod
     def _turn_event(prompt: str = "Continue.") -> HookEvent:
@@ -240,6 +240,7 @@ class TestDefaultAgentCoreSkillBootstrap:
         _sync_bundled(db)
         row = manager.get_by_name("bootstrap-default-agent-core-skills")
         assert row is not None
+        assert row.enabled is True
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "turn_start"
@@ -297,6 +298,30 @@ class TestDefaultAgentCoreSkillBootstrap:
         )
 
     @pytest.mark.asyncio
+    async def test_memory_fetch_error_skips_only_memory(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        response = await RuleEngine(db).evaluate(
+            self._turn_event(),
+            session_id=SESSION_ID,
+            variables={
+                "loaded_skills": [],
+                "skill_discovery_instructions_shown": True,
+                "_memory_initial_stop_checked": False,
+                "open_tool_errors": [_skill_tool_error_record("memory")],
+                "servers_listed": True,
+            },
+        )
+
+        context = response.context or ""
+        expected = [
+            skill_fetch_directive(skill) for skill in ("loading-skills", "brevity", "restraint")
+        ]
+        assert skill_fetch_directive("memory") not in context
+        assert [context.index(directive) for directive in expected] == sorted(
+            context.index(directive) for directive in expected
+        )
+
+    @pytest.mark.asyncio
     async def test_loaded_core_skills_stay_silent(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         response = await RuleEngine(db).evaluate(
@@ -320,7 +345,7 @@ class TestDefaultAgentCoreSkillBootstrap:
             self._turn_event("stop brevity"),
             session_id=SESSION_ID,
             variables={
-                "loaded_skills": ["memory", "loading-skills"],
+                "loaded_skills": ["loading-skills", "memory"],
                 "skill_discovery_instructions_shown": True,
                 "_memory_initial_stop_checked": True,
                 "brevity_disabled": False,
@@ -382,7 +407,7 @@ class TestListSkillHubsOncePerSession:
             }
 
         variables: dict[str, Any] = {
-            "loaded_skills": ["memory", "loading-skills", "brevity"],
+            "loaded_skills": ["loading-skills", "memory", "brevity"],
             "servers_listed": True,
         }
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
@@ -445,7 +470,7 @@ class TestListSkillHubsOncePerSession:
             return {"success": False, "result": {"error": "hub manager unavailable"}}
 
         variables: dict[str, Any] = {
-            "loaded_skills": ["memory", "loading-skills", "brevity"],
+            "loaded_skills": ["loading-skills", "memory", "brevity"],
             "servers_listed": True,
         }
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
