@@ -1200,6 +1200,7 @@ class TestWorkflowBeforeToolEnforcement:
         ("server_name", "tool_name", "is_internal"),
         [
             pytest.param("gobby-tasks", "update_task", True, id="internal-mutation"),
+            pytest.param("gobby-sessions", "get_handoff", True, id="stateful-get"),
             pytest.param("third-party", "list_records", False, id="external-read-name"),
         ],
     )

@@ -15,22 +15,6 @@ from gobby.config.url_validation import (
 )
 from gobby.mcp_proxy.transport_types import SUPPORTED_TRANSPORTS, URL_TRANSPORTS
 
-_READ_ONLY_MCP_TOOL_PREFIXES = (
-    "get_",
-    "list_",
-    "search_",
-    "find_",
-    "read_",
-    "recall_",
-    "blast_",
-    "recommend_",
-)
-
-
-def is_read_only_mcp_tool_name(tool_name: str) -> bool:
-    """Return whether a tool name follows Gobby's read-only naming contract."""
-    return any(tool_name.startswith(prefix) for prefix in _READ_ONLY_MCP_TOOL_PREFIXES)
-
 
 class ConnectionState(str, Enum):
     """MCP connection state."""

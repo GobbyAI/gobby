@@ -15,7 +15,6 @@ from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 from gobby.hooks.logging_utils import block_tool_name, log_structured_block
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
-from gobby.mcp_proxy.models import is_read_only_mcp_tool_name
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
     _PLAN_MODE_BLOCKED_TOOLS,
@@ -102,6 +101,17 @@ class ChatSessionPermissionsMixin:
     _pending_approval_decisions: dict[str, str]
     _pending_approval_events: dict[str, asyncio.Event]
     _preapproved_tool_use_ids: set[str]
+
+    _READ_ONLY_MCP_TOOL_PREFIXES = (
+        "get_",
+        "list_",
+        "search_",
+        "find_",
+        "read_",
+        "recall_",
+        "blast_",
+        "recommend_",
+    )
 
     async def _can_use_tool(
         self,
@@ -416,7 +426,9 @@ class ChatSessionPermissionsMixin:
         tool_name = input_data.get("tool_name", "")
         if not tool_name:
             return True
-        return not is_read_only_mcp_tool_name(tool_name)
+        if any(tool_name.startswith(prefix) for prefix in self._READ_ONLY_MCP_TOOL_PREFIXES):
+            return False
+        return True
 
     def _is_write_bash(self, input_data: dict[str, Any]) -> bool:
         """Check if a Bash command performs write/destructive operations (plan mode)."""

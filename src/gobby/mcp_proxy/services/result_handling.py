@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.mcp_proxy.models import ToolProxyErrorCode, is_read_only_mcp_tool_name
+from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.workflows.block_audit import audit_source_block
 from gobby.workflows.git_utils import GitStatusUnavailable
 
@@ -18,15 +18,12 @@ logger = logging.getLogger("gobby.mcp.server")
 
 BeforeToolOutcome = Literal["policy_denied", "failed_pre_dispatch"]
 
+_GIT_STATUS_FAIL_OPEN_TOOLS = frozenset({("gobby-tasks", "list_tasks")})
 
-def _is_read_only_internal_tool(service: Any, server_name: str, tool_name: str) -> bool:
-    """Fail open only for named read operations on Gobby's internal registries."""
-    internal_manager = getattr(service, "_internal_manager", None)
-    return bool(
-        internal_manager
-        and internal_manager.is_internal(server_name)
-        and is_read_only_mcp_tool_name(tool_name)
-    )
+
+def _can_fail_open_on_git_status(server_name: str, tool_name: str) -> bool:
+    """Return whether an audited pure query may run without Git status."""
+    return (server_name, tool_name) in _GIT_STATUS_FAIL_OPEN_TOOLS
 
 
 async def _evaluate_workflow_handler(workflow_handler: Any, event: "HookEvent") -> Any:
@@ -179,7 +176,7 @@ async def apply_before_tool_enforcement(
     try:
         response = await _evaluate_workflow_handler(workflow_handler, event)
     except GitStatusUnavailable:
-        if _is_read_only_internal_tool(service, server_name, tool_name):
+        if _can_fail_open_on_git_status(server_name, tool_name):
             logger.debug(
                 "Skipping workflow evaluation for read-only %s/%s: Git status unavailable",
                 server_name,
