@@ -4,7 +4,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import Worktree, WorktreeStatus
 from gobby.worktrees.executor import WorktreeDeleteExecutor
+from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.git._models import WorktreeInfo
 
 pytestmark = pytest.mark.unit
@@ -56,16 +57,27 @@ def mock_worktree_storage() -> MagicMock:
 
 @pytest.fixture
 def mock_git_manager() -> MagicMock:
-    manager = MagicMock()
+    manager: MagicMock = MagicMock(spec=WorktreeGitManager)
     manager.repo_path = "/tmp/repo"
-    manager.run_git_command.side_effect = (
-        lambda args, cwd=None, timeout=30, check=False, env=None: manager._run_git(
-            args, cwd=cwd, timeout=timeout, check=check, env=env
-        )
-    )
 
-    def get_unmerged_files(cwd: str | Path | None = None) -> list[str]:
-        result = manager._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=cwd, timeout=10)
+    async def run_git_command(
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 30,
+        check: bool = False,
+        env: Mapping[str, str] | None = None,
+    ) -> MagicMock:
+        return cast(
+            MagicMock,
+            await manager._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env),
+        )
+
+    manager.run_git_command.side_effect = run_git_command
+
+    async def get_unmerged_files(cwd: str | Path | None = None) -> list[str]:
+        result = await manager._run_git(
+            ["diff", "--name-only", "--diff-filter=U"], cwd=cwd, timeout=10
+        )
         return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
 
     manager.get_unmerged_files.side_effect = get_unmerged_files
@@ -76,7 +88,7 @@ def mock_git_manager() -> MagicMock:
 def registry(
     mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> Iterator[InternalToolRegistry]:
-    executor = WorktreeDeleteExecutor(thread_name_prefix="test-mcp-worktree-delete")
+    executor = WorktreeDeleteExecutor()
     try:
         yield create_worktrees_registry(
             worktree_storage=mock_worktree_storage,

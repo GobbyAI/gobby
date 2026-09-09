@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from gobby.workflows.git_utils import get_dirty_files
+from gobby.workflows.git_utils import get_dirty_files_async
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -56,7 +56,7 @@ def register_action_tools(
 
         session_id = get_current_session_id()
         try:
-            dirty_files = await asyncio.to_thread(get_dirty_files, project_path)
+            dirty_files = await get_dirty_files_async(project_path)
             baseline = sorted(dirty_files)
 
             # Persist baseline to session variables so it survives daemon restarts

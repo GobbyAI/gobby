@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.worktree_checkpoint import WorktreeCheckpoint, WorktreeCheckpointError
+from gobby.mcp_proxy.tools import agents_checkpoint_tools
 from gobby.mcp_proxy.tools.agents_checkpoint_tools import register_agent_checkpoint_tools
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -23,6 +24,20 @@ class _CheckpointHarness:
     agent_runs: MagicMock
     task_manager: MagicMock
     worktrees: MagicMock
+
+
+@pytest.fixture(autouse=True)
+def _linked_worktree_inspection(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def inspect(_git_manager: object, worktree_path: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            path=worktree_path,
+            branch="task-42",
+            is_bare=False,
+            is_detached=False,
+            prunable=False,
+        )
+
+    monkeypatch.setattr(agents_checkpoint_tools, "_inspect_linked_worktree", inspect)
 
 
 def _checkpoint_registry(tmp_path: Path) -> _CheckpointHarness:
@@ -100,8 +115,8 @@ async def test_parent_coordinator_checkpoints_and_releases_worktree(tmp_path: Pa
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.agents_checkpoint_tools.inspect_checkout_path_ownership",
-            return_value=ownership,
+            "gobby.mcp_proxy.tools.agents_checkpoint_tools.inspect_checkout_path_ownership_async",
+            new=AsyncMock(return_value=ownership),
         ),
         patch(
             "gobby.mcp_proxy.tools.agents_checkpoint_tools._authorized_task_paths",
@@ -109,7 +124,7 @@ async def test_parent_coordinator_checkpoints_and_releases_worktree(tmp_path: Pa
         ),
         patch(
             "gobby.mcp_proxy.tools.agents_checkpoint_tools.checkpoint_worktree",
-            return_value=checkpoint,
+            new=AsyncMock(return_value=checkpoint),
         ) as checkpoint_mock,
     ):
         result = await harness.registry._tools["checkpoint_agent_worktree"].func(run_id="run-1")
@@ -124,7 +139,7 @@ async def test_parent_coordinator_checkpoints_and_releases_worktree(tmp_path: Pa
     )
     harness.worktrees.release.assert_called_once_with("wt-1")
     harness.task_manager.release_task_claim.assert_not_called()
-    checkpoint_mock.assert_called_once()
+    checkpoint_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -217,20 +232,25 @@ async def test_path_ownership_failures_release_worktree(
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.agents_checkpoint_tools.inspect_checkout_path_ownership",
-            return_value=ownership,
+            "gobby.mcp_proxy.tools.agents_checkpoint_tools.inspect_checkout_path_ownership_async",
+            new=AsyncMock(return_value=ownership),
         ),
         patch(
             "gobby.mcp_proxy.tools.agents_checkpoint_tools._authorized_task_paths",
             return_value=authorized,
         ),
-        patch("gobby.mcp_proxy.tools.agents_checkpoint_tools.checkpoint_worktree") as checkpoint,
+        patch(
+            "gobby.mcp_proxy.tools.agents_checkpoint_tools.checkpoint_worktree",
+            new=AsyncMock(),
+        ) as checkpoint,
     ):
         result = await harness.registry._tools["checkpoint_agent_worktree"].func(run_id="run-1")
 
+    assert result["success"] is False
     assert result["error_code"] == error_code
+    harness.worktrees.claim_if_available.assert_called_once()
     harness.worktrees.release.assert_called_once_with("wt-1")
-    checkpoint.assert_not_called()
+    checkpoint.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -242,8 +262,8 @@ async def test_commit_failure_releases_worktree_without_releasing_task_claim(
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.agents_checkpoint_tools.inspect_checkout_path_ownership",
-            return_value=ownership,
+            "gobby.mcp_proxy.tools.agents_checkpoint_tools.inspect_checkout_path_ownership_async",
+            new=AsyncMock(return_value=ownership),
         ),
         patch(
             "gobby.mcp_proxy.tools.agents_checkpoint_tools._authorized_task_paths",
@@ -251,11 +271,14 @@ async def test_commit_failure_releases_worktree_without_releasing_task_claim(
         ),
         patch(
             "gobby.mcp_proxy.tools.agents_checkpoint_tools.checkpoint_worktree",
-            side_effect=WorktreeCheckpointError("commit failed"),
-        ),
+            new=AsyncMock(side_effect=WorktreeCheckpointError("commit failed")),
+        ) as checkpoint,
     ):
         result = await harness.registry._tools["checkpoint_agent_worktree"].func(run_id="run-1")
 
+    assert result["success"] is False
     assert result["error_code"] == "checkpoint_failed"
+    assert result["error"] == "commit failed"
+    checkpoint.assert_awaited_once()
     harness.worktrees.release.assert_called_once_with("wt-1")
     harness.task_manager.release_task_claim.assert_not_called()

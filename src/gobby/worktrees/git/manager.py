@@ -19,7 +19,7 @@ class WorktreeGitManager(GitRunner):
     All operations are performed relative to a base repository path.
     """
 
-    def create_worktree(
+    async def create_worktree(
         self,
         worktree_path: str | Path,
         branch_name: str,
@@ -27,7 +27,7 @@ class WorktreeGitManager(GitRunner):
         create_branch: bool = True,
         use_local: bool = False,
     ) -> GitOperationResult:
-        return _lifecycle.create_worktree(
+        return await _lifecycle.create_worktree(
             self,
             worktree_path,
             branch_name,
@@ -36,7 +36,7 @@ class WorktreeGitManager(GitRunner):
             use_local=use_local,
         )
 
-    def delete_worktree(
+    async def delete_worktree(
         self,
         worktree_path: str | Path,
         force: bool = False,
@@ -46,7 +46,7 @@ class WorktreeGitManager(GitRunner):
         base_branch: str | None = None,
         merged_into: str | None = None,
     ) -> GitOperationResult:
-        return _lifecycle.delete_worktree(
+        return await _lifecycle.delete_worktree(
             self,
             worktree_path,
             force=force,
@@ -57,7 +57,7 @@ class WorktreeGitManager(GitRunner):
             merged_into=merged_into,
         )
 
-    def sync_from_main(
+    async def sync_from_main(
         self,
         worktree_path: str | Path,
         base_branch: str = "main",
@@ -65,7 +65,7 @@ class WorktreeGitManager(GitRunner):
         source_branch: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GitOperationResult:
-        return _lifecycle.sync_from_main(
+        return await _lifecycle.sync_from_main(
             self,
             worktree_path,
             base_branch=base_branch,
@@ -74,48 +74,50 @@ class WorktreeGitManager(GitRunner):
             env=env,
         )
 
-    def get_worktree_status(
+    async def get_worktree_status(
         self,
         worktree_path: str | Path,
         comparison_ref: str | None = None,
     ) -> WorktreeStatus | None:
-        return _status.get_worktree_status(self, worktree_path, comparison_ref)
+        return await _status.get_worktree_status(self, worktree_path, comparison_ref)
 
-    def list_worktrees(self) -> list[WorktreeInfo]:
-        return _status.list_worktrees(self)
+    async def list_worktrees(self) -> list[WorktreeInfo]:
+        return await _status.list_worktrees(self)
 
-    def inspect_worktree(self, worktree_path: str | Path) -> WorktreeInfo:
-        return _lifecycle.inspect_linked_worktree(self, worktree_path)
+    async def inspect_worktree(self, worktree_path: str | Path) -> WorktreeInfo:
+        return await _lifecycle.inspect_linked_worktree(self, worktree_path)
 
-    def prune_worktrees(self) -> GitOperationResult:
-        return _status.prune_worktrees(self)
+    async def prune_worktrees(self) -> GitOperationResult:
+        return await _status.prune_worktrees(self)
 
-    def lock_worktree(
+    async def lock_worktree(
         self,
         worktree_path: str | Path,
         reason: str | None = None,
     ) -> GitOperationResult:
-        return _locking.lock_worktree(self, worktree_path, reason=reason)
+        return await _locking.lock_worktree(self, worktree_path, reason=reason)
 
-    def unlock_worktree(self, worktree_path: str | Path) -> GitOperationResult:
-        return _locking.unlock_worktree(self, worktree_path)
+    async def unlock_worktree(self, worktree_path: str | Path) -> GitOperationResult:
+        return await _locking.unlock_worktree(self, worktree_path)
 
-    def get_default_branch(self) -> str:
-        return _branch.get_default_branch(self)
+    async def get_default_branch(self) -> str:
+        return await _branch.get_default_branch(self)
 
-    def get_current_branch(self) -> str | None:
-        return _branch.get_current_branch(self)
+    async def get_current_branch(self) -> str | None:
+        return await _branch.get_current_branch(self)
 
-    def has_unpushed_commits(self, branch: str | None = None) -> tuple[bool, int]:
-        return _branch.has_unpushed_commits(self, branch=branch)
+    async def has_unpushed_commits(self, branch: str | None = None) -> tuple[bool, int]:
+        return await _branch.has_unpushed_commits(self, branch=branch)
 
-    def get_local_commit(self, branch: str) -> str | None:
-        return _branch.get_local_commit(self, branch)
+    async def get_local_commit(self, branch: str) -> str | None:
+        return await _branch.get_local_commit(self, branch)
 
-    def merge_branch(
+    async def merge_branch(
         self,
         source_branch: str,
         target_branch: str = "main",
         push: bool = False,
     ) -> GitOperationResult:
-        return _merge.merge_branch(self, source_branch, target_branch=target_branch, push=push)
+        return await _merge.merge_branch(
+            self, source_branch, target_branch=target_branch, push=push
+        )

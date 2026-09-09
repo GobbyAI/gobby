@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from gobby.app_context import get_app_context
@@ -62,7 +62,9 @@ class EventHandlersBase:
     _terminal_runtime_registry: Any | None
     _turn_lifecycle: TurnLifecycleReducer | None
     logger: logging.Logger
-    _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
+    _handler_map: dict[
+        HookEventType, Callable[[HookEvent], HookResponse | Coroutine[Any, Any, HookResponse]]
+    ]
 
     def get_session_manager(self) -> HookSessionManager | None:
         """Return the configured hook session manager, if available."""

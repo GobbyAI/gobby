@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:
     from gobby.sessions.analyzer import HandoffContext
@@ -57,46 +58,46 @@ async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
     if not paths:
         return
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "status",
-            "--short",
-            "--",
-            *paths,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+    status_result, log_result = await asyncio.gather(
+        daemon_git.status(cwd, paths, timeout=5.0),
+        daemon_git.run(
+            [
+                "--literal-pathspecs",
+                "log",
+                "--oneline",
+                "-10",
+                "--format=%H|%s",
+                "--",
+                *paths,
+            ],
             cwd=cwd,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        handoff_ctx.git_status = stdout.decode().strip() if proc.returncode == 0 else ""
-    except Exception as e:
-        logger.debug("Failed to get git status for %s: %s", cwd, e)
+            timeout=5.0,
+        ),
+    )
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "log",
-            "--oneline",
-            "-10",
-            "--format=%H|%s",
-            "--",
-            *paths,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
+    if isinstance(status_result, GitOk):
+        handoff_ctx.git_status = "\n".join(
+            f"{entry.code} {entry.path}" for entry in parse_porcelain_v1_z(status_result.stdout)
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        if proc.returncode == 0:
-            commits = []
-            for line in stdout.decode().strip().split("\n"):
-                if "|" in line:
-                    hash_val, message = line.split("|", 1)
-                    commits.append({"hash": hash_val, "message": message})
-            if commits:
-                handoff_ctx.git_commits = commits
-    except Exception as e:
-        logger.debug("Failed to get git log for %s: %s", cwd, e)
+    else:
+        detail = status_result.stderr.strip() or status_result.status
+        handoff_ctx.git_status = f"[git status unavailable: {detail}]"
+        logger.debug("Failed to get git status for %s: %s", cwd, detail)
+
+    if isinstance(log_result, GitOk):
+        commits = []
+        for line in log_result.stdout.strip().split("\n"):
+            if "|" in line:
+                hash_val, message = line.split("|", 1)
+                commits.append({"hash": hash_val, "message": message})
+        if commits:
+            handoff_ctx.git_commits = commits
+    else:
+        logger.debug(
+            "Failed to get git log for %s: %s",
+            cwd,
+            log_result.stderr.strip() or log_result.status,
+        )
 
 
 def _session_git_paths(files_modified: list[str], cwd: Path) -> tuple[str, ...]:

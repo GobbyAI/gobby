@@ -202,8 +202,10 @@ async def _prepare_worktree_with_merge_base(
 
 
 def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler, str]:
+    from gobby.worktrees.git import WorktreeGitManager
+
     worktree_path = str(tmp_path / "wt")
-    git_manager = MagicMock()
+    git_manager = MagicMock(spec=WorktreeGitManager)
     git_manager.repo_path = str(tmp_path / "repo")
     git_manager.get_current_branch.return_value = "main"
     git_manager.has_unpushed_commits.return_value = (False, 0)

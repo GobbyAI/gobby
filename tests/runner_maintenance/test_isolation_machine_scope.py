@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,7 +19,6 @@ from gobby.runner_maintenance import (
 from gobby.storage.clones import Clone, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
-from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -53,7 +54,7 @@ def _seed_cross_machine_records(
         )
 
     project = install_isolated_checkout_project(
-        temp_db, tmp_path / "repo", name=f"scope-{uuid.uuid4()}", machine_id=require_machine_id()
+        temp_db, tmp_path / "repo", name=f"scope-{uuid.uuid4()}", machine_id=local_machine_id
     ).project
     worktrees = LocalWorktreeManager(temp_db)
     clones = LocalCloneManager(temp_db)
@@ -102,6 +103,16 @@ def _seed_cross_machine_records(
     )
     monkeypatch.setattr(worktrees_module, "require_machine_id", lambda: local_machine_id)
     monkeypatch.setattr(clones_module, "require_machine_id", lambda: local_machine_id)
+    monkeypatch.setattr(
+        "gobby.storage.isolation_cleanup.require_machine_id", lambda: local_machine_id
+    )
+    monkeypatch.setattr(
+        "gobby.storage.workspace_machine_scope.require_machine_id", lambda: local_machine_id
+    )
+    monkeypatch.setattr(
+        "gobby.runner_maintenance.isolation.WorktreeGitManager.run_git_command",
+        AsyncMock(return_value=subprocess.CompletedProcess([], 1, "", "")),
+    )
     return _CrossMachineFixture(
         worktrees=worktrees,
         clones=clones,
@@ -136,7 +147,7 @@ def _assert_only_local_records_swept(
     assert fixture.remote_clone_path.is_dir()
 
 
-def test_missing_path_sweep_ignores_remote_rows(
+async def test_missing_path_sweep_ignores_remote_rows(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -144,7 +155,7 @@ def test_missing_path_sweep_ignores_remote_rows(
     """A daemon's missing-path sweep leaves another machine's records untouched."""
     fixture = _seed_cross_machine_records(temp_db, tmp_path, monkeypatch)
 
-    counts = _cleanup_missing_isolation_records(fixture.worktrees, fixture.clones)
+    counts = await _cleanup_missing_isolation_records(fixture.worktrees, fixture.clones)
 
     _assert_only_local_records_swept(temp_db, fixture, counts)
 

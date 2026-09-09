@@ -308,7 +308,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         self._log_observe_only_event("FILE_CHANGED", event)
         return HookResponse(decision="allow")
 
-    def handle_worktree_create(self, event: HookEvent) -> HookResponse:
+    async def handle_worktree_create(self, event: HookEvent) -> HookResponse:
         """Handle WORKTREE_CREATE with a git-backed default implementation."""
         worktree_name = event.data.get("name")
         if not isinstance(worktree_name, str) or not worktree_name.strip():
@@ -336,19 +336,19 @@ class MiscEventHandlerMixin(EventHandlersBase):
             if existing:
                 self._worktree_manager.delete(existing.id)
 
-        current_branch = git_manager.get_current_branch()
-        base_branch = current_branch or git_manager.get_default_branch()
+        current_branch = await git_manager.get_current_branch()
+        base_branch = current_branch or await git_manager.get_default_branch()
 
         use_local = False
         try:
-            has_unpushed, _ = git_manager.has_unpushed_commits(base_branch)
+            has_unpushed, _ = await git_manager.has_unpushed_commits(base_branch)
             use_local = has_unpushed
         except Exception as e:
             self.logger.warning("WORKTREE_CREATE refused an unsafe base: %s", e)
             return HookResponse(decision="allow")
 
         worktree_path = generate_worktree_path(worktree_name, Path(git_manager.repo_path).name)
-        result = git_manager.create_worktree(
+        result = await git_manager.create_worktree(
             worktree_path=worktree_path,
             branch_name=worktree_name,
             base_branch=base_branch,
@@ -379,7 +379,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         self.logger.info("WORKTREE_CREATE created %s", worktree_path)
         return HookResponse(worktree_path=worktree_path)
 
-    def handle_worktree_remove(self, event: HookEvent) -> HookResponse:
+    async def handle_worktree_remove(self, event: HookEvent) -> HookResponse:
         """Handle WORKTREE_REMOVE with git-backed cleanup."""
         worktree_path = event.data.get("worktree_path")
         if not isinstance(worktree_path, str) or not worktree_path.strip():
@@ -409,7 +409,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         try:
             git_manager = WorktreeGitManager(repo_path)
-            result = git_manager.delete_worktree(
+            result = await git_manager.delete_worktree(
                 worktree_path=worktree_path,
                 force=True,
                 delete_branch=True,

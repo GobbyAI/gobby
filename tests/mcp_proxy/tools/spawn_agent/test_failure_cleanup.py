@@ -11,6 +11,7 @@ import pytest
 
 from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
+from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = pytest.mark.unit
 
@@ -33,7 +34,7 @@ def _worktree_spawn_config(branch_name: str) -> SpawnConfig:
 
 @pytest.mark.asyncio
 async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
-    git_manager = MagicMock(repo_path="/repo")
+    git_manager = MagicMock(spec=WorktreeGitManager, repo_path="/repo")
     git_manager.get_current_branch.return_value = "main"
     git_manager.has_unpushed_commits.return_value = (False, 0)
     git_manager.create_worktree.return_value = SimpleNamespace(success=True)
@@ -94,7 +95,7 @@ async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_reused_worktree_survives_failure() -> None:
-    git_manager = MagicMock(repo_path="/repo")
+    git_manager = MagicMock(spec=WorktreeGitManager, repo_path="/repo")
     git_manager.get_current_branch.return_value = "main"
     worktree_storage = MagicMock(db=MagicMock())
     worktree_storage.get_by_branch.return_value = SimpleNamespace(

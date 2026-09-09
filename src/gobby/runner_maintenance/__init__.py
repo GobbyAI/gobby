@@ -25,7 +25,6 @@ from gobby.runner_maintenance.isolation import (
 from gobby.runner_maintenance.isolation import (
     _delete_missing_worktree_records as _delete_missing_worktree_records,
 )
-from gobby.runner_maintenance.isolation import _run_git_command as _run_git_command
 from gobby.runner_maintenance.isolation import (
     cleanup_expired_isolation_loop as cleanup_expired_isolation_loop,
 )

@@ -22,6 +22,7 @@ from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
+from gobby.utils.daemon_git import GitTimeout, daemon_git
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -64,15 +65,18 @@ async def _run_git(
     args: list[str], cwd: str, timeout: int = 10
 ) -> subprocess.CompletedProcess[str]:
     """Run a git command and return result (non-blocking)."""
-    import asyncio
-
-    return await asyncio.to_thread(
-        subprocess.run,  # nosec B603 B607
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+    result = await daemon_git.run(args, cwd=cwd, timeout=timeout)
+    if isinstance(result, GitTimeout):
+        raise subprocess.TimeoutExpired(
+            result.argv, result.timeout, output=result.stdout, stderr=result.stderr
+        )
+    if result.returncode is None:
+        raise OSError(result.stderr or "Git could not be started")
+    return subprocess.CompletedProcess(
+        args=result.argv,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
     )
 
 

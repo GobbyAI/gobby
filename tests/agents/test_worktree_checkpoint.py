@@ -17,6 +17,7 @@ from gobby.agents.worktree_checkpoint import (
     checkpoint_worktree,
 )
 from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
+from gobby.utils.daemon_git import GitFailed, GitResult
 from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -43,14 +44,14 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_checkpoint_commits_tracked_staged_and_untracked_content(tmp_path: Path) -> None:
+async def test_checkpoint_commits_tracked_staged_and_untracked_content(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / "tracked.txt").write_text("staged\n", encoding="utf-8")
     _git(repo, "add", "tracked.txt")
     (repo / "tracked.txt").write_text("working\n", encoding="utf-8")
     (repo / "untracked.txt").write_text("new\n", encoding="utf-8")
 
-    checkpoint = checkpoint_worktree(
+    checkpoint = await checkpoint_worktree(
         worktree_path=repo,
         expected_paths={"tracked.txt", "untracked.txt"},
         task_seq_num=21897,
@@ -70,14 +71,14 @@ def test_checkpoint_commits_tracked_staged_and_untracked_content(tmp_path: Path)
     )
 
 
-def test_checkpoint_refuses_changed_dirty_set_without_mutation(tmp_path: Path) -> None:
+async def test_checkpoint_refuses_changed_dirty_set_without_mutation(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
     old_head = _git(repo, "rev-parse", "HEAD")
     old_status = _git(repo, "status", "--porcelain=v1")
 
     with pytest.raises(WorktreeCheckpointError, match="dirty set changed") as exc_info:
-        checkpoint_worktree(
+        await checkpoint_worktree(
             worktree_path=repo,
             expected_paths={"different.txt"},
             task_seq_num=21897,
@@ -89,7 +90,7 @@ def test_checkpoint_refuses_changed_dirty_set_without_mutation(tmp_path: Path) -
     assert _git(repo, "status", "--porcelain=v1") == old_status
 
 
-def test_commit_failure_preserves_head_index_and_worktree(
+async def test_commit_failure_preserves_head_index_and_worktree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -104,26 +105,27 @@ def test_commit_failure_preserves_head_index_and_worktree(
     old_index = index_path.read_bytes()
     real_run_git = checkpoint_module._run_git
 
-    def fail_commit_tree(
+    async def fail_commit_tree(
         path: Path,
         arguments: Sequence[str],
         *,
         env: Mapping[str, str] | None = None,
         input_text: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> GitResult:
         if arguments[0] == "commit-tree":
-            return subprocess.CompletedProcess(
-                args=["git", *arguments],
+            return GitFailed(
+                "failed",
+                ("git", *arguments),
                 returncode=1,
                 stdout="",
                 stderr="forced commit failure",
             )
-        return real_run_git(path, arguments, env=env, input_text=input_text)
+        return await real_run_git(path, arguments, env=env, input_text=input_text)
 
     monkeypatch.setattr(checkpoint_module, "_run_git", fail_commit_tree)
 
     with pytest.raises(WorktreeCheckpointError, match="forced commit failure"):
-        checkpoint_worktree(
+        await checkpoint_worktree(
             worktree_path=repo,
             expected_paths={"tracked.txt", "untracked.txt"},
             task_seq_num=21897,
@@ -144,7 +146,7 @@ async def test_checkpointed_linked_worktree_is_clean_for_respawn_reuse(tmp_path:
     (worktree / "tracked.txt").write_text("recovered\n", encoding="utf-8")
     (worktree / "untracked.txt").write_text("new\n", encoding="utf-8")
 
-    checkpoint = checkpoint_worktree(
+    checkpoint = await checkpoint_worktree(
         worktree_path=str(worktree),
         expected_paths={"tracked.txt", "untracked.txt"},
         task_seq_num=42,

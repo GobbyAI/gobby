@@ -524,7 +524,7 @@ class PipelineExecutor(
                     try:
                         from gobby.worktrees.git import WorktreeGitManager
 
-                        current_branch = WorktreeGitManager(project_path).get_current_branch()
+                        current_branch = await WorktreeGitManager(project_path).get_current_branch()
                     except (ImportError, ValueError, OSError):
                         pass
 

@@ -465,7 +465,7 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
     assert artifacts.clone_id is None
 
 
-def test_successful_merge_cleanup_defers_active_agent_worktree(
+async def test_successful_merge_cleanup_defers_active_agent_worktree(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -531,7 +531,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
-        def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+        async def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
             raise AssertionError("active agent worktree must not be deleted")
 
     monkeypatch.setattr(
@@ -545,7 +545,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
 
     monkeypatch.setattr(controls, "delete_orphan_build_branches", fail_branch_cleanup)
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
         task.id,
         project_id=sample_project["id"],
@@ -562,7 +562,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
     assert stored.worktree_path == str(worktree_path)
 
 
-def test_successful_merge_cleanup_deletes_inactive_worktree(
+async def test_successful_merge_cleanup_deletes_inactive_worktree(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -604,7 +604,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
-        def delete_worktree(
+        async def delete_worktree(
             self,
             path: Path,
             *,
@@ -633,7 +633,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
     )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
         task.id,
         project_id=sample_project["id"],
@@ -664,7 +664,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
     assert stored.worktree_path is None
 
 
-def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
+async def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.build import control_artifacts, control_runtime, controls
@@ -681,6 +681,16 @@ def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     )
     deleted: list[BuildArtifactSummary] = []
 
+    async def classify(
+        _db: object, artifacts: list[BuildArtifactSummary], **_kwargs: object
+    ) -> list[BuildArtifactSummary]:
+        return artifacts
+
+    async def delete(
+        _db: object, _project_id: str, artifacts: list[BuildArtifactSummary], **_kwargs: object
+    ) -> None:
+        deleted.extend(artifacts)
+
     monkeypatch.setattr(controls, "LocalTaskManager", lambda _db: task_manager)
     monkeypatch.setattr(control_runtime, "_affected_tasks", lambda *_args: [task])
     monkeypatch.setattr(control_artifacts, "collect_clean_artifacts", lambda *_args: [artifact])
@@ -688,19 +698,19 @@ def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     monkeypatch.setattr(
         control_artifacts,
         "classify_dirty_descendant_worktree_artifacts",
-        lambda _db, artifacts, **_kwargs: artifacts,
+        classify,
     )
     monkeypatch.setattr(
         control_artifacts,
         "delete_artifacts",
-        lambda _db, _project_id, artifacts, **_kwargs: deleted.extend(artifacts),
+        delete,
     )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
     monkeypatch.setattr(
         control_artifacts, "get_project_path", lambda *_args, **_kwargs: "/tmp/build-controls"
     )
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         SimpleNamespace(),
         task.id,
         preserve_worktree_ids={"wt-1"},
@@ -712,7 +722,7 @@ def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     assert deleted == []
 
 
-def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
+async def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -755,7 +765,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
-        def delete_worktree(
+        async def delete_worktree(
             self,
             path: Path,
             *,
@@ -782,7 +792,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
         task.id,
         project_id=sample_project["id"],
@@ -796,7 +806,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     assert LocalWorktreeManager(temp_db).get(worktree.id) is None
 
 
-def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
+async def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -846,14 +856,14 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
-        def get_worktree_status(self, _path: str) -> SimpleNamespace:
+        async def get_worktree_status(self, _path: str) -> SimpleNamespace:
             return SimpleNamespace(
                 has_uncommitted_changes=True,
                 has_staged_changes=True,
                 has_untracked_files=True,
             )
 
-        def run_git_command(
+        async def run_git_command(
             self,
             args: list[str],
             *,
@@ -876,7 +886,7 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
                     return _git_result(stdout=" app.py | 2 +-\n")
             return _git_result(returncode=1, stderr=f"unexpected git command: {args}")
 
-        def delete_worktree(
+        async def delete_worktree(
             self,
             path: Path,
             *,
@@ -900,7 +910,7 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
     )
     monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
         root.id,
         project_id=sample_project["id"],
@@ -933,7 +943,7 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
     assert "scratch.txt" in body
 
 
-def test_successful_merge_cleanup_defers_open_dirty_descendant(
+async def test_successful_merge_cleanup_defers_open_dirty_descendant(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -980,19 +990,19 @@ def test_successful_merge_cleanup_defers_open_dirty_descendant(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
-        def get_worktree_status(self, _path: str) -> SimpleNamespace:
+        async def get_worktree_status(self, _path: str) -> SimpleNamespace:
             return SimpleNamespace(
                 has_uncommitted_changes=True,
                 has_staged_changes=False,
                 has_untracked_files=False,
             )
 
-        def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+        async def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
             raise AssertionError("open dirty descendant worktree must be deferred")
 
     monkeypatch.setattr(control_artifacts, "WorktreeGitManager", DirtyOpenWorktreeGitManager)
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
         root.id,
         project_id=sample_project["id"],
@@ -1005,7 +1015,7 @@ def test_successful_merge_cleanup_defers_open_dirty_descendant(
     assert LocalWorktreeManager(temp_db).get(worktree.id) is not None
 
 
-def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
+async def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -1053,14 +1063,14 @@ def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
 
-        def get_worktree_status(self, _path: str) -> SimpleNamespace:
+        async def get_worktree_status(self, _path: str) -> SimpleNamespace:
             return SimpleNamespace(
                 has_uncommitted_changes=False,
                 has_staged_changes=True,
                 has_untracked_files=False,
             )
 
-        def run_git_command(
+        async def run_git_command(
             self,
             args: list[str],
             *,
@@ -1075,7 +1085,7 @@ def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
                     return _git_result(returncode=1)
             return _git_result(returncode=1, stderr=f"unexpected git command: {args}")
 
-        def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+        async def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
             raise AssertionError("unintegrated dirty descendant worktree must be deferred")
 
     monkeypatch.setattr(
@@ -1084,7 +1094,7 @@ def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
         UnintegratedDirtyWorktreeGitManager,
     )
 
-    artifacts = controls.cleanup_successful_merge_artifacts(
+    artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
         root.id,
         project_id=sample_project["id"],

@@ -31,7 +31,7 @@ def _git(repo: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def landed_worktree(tmp_path: Path) -> tuple[Path, Worktree]:
+async def landed_worktree(tmp_path: Path) -> tuple[Path, Worktree]:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
@@ -49,7 +49,7 @@ def landed_worktree(tmp_path: Path) -> tuple[Path, Worktree]:
     _git(repo, "tag", "landed")
     _git(repo, "update-ref", "refs/remotes/origin/0.5.0", "HEAD")
     _git(repo, "symbolic-ref", "refs/heads/child-alias", "refs/heads/child")
-    removed = WorktreeGitManager(repo).delete_worktree(
+    removed = await WorktreeGitManager(repo).delete_worktree(
         parent, delete_branch=True, branch_name="parent", base_branch="0.5.0"
     )
     assert removed.success, removed.message
@@ -77,7 +77,7 @@ def deletion_registry(
     storage.resolve_reference.side_effect = lambda ref: ref
     storage.get.return_value = worktree
     storage.delete.return_value = True
-    executor = WorktreeDeleteExecutor(thread_name_prefix="test-explicit-merge-target")
+    executor = WorktreeDeleteExecutor()
     try:
         with patch("gobby.worktrees.deletion.emit_worktree_event"):
             yield (
@@ -196,7 +196,7 @@ async def test_explicit_target_requires_git_context(
     storage = MagicMock()
     storage.resolve_reference.side_effect = lambda ref: ref
     storage.get.return_value = worktree
-    executor = WorktreeDeleteExecutor(thread_name_prefix="test-missing-merge-context")
+    executor = WorktreeDeleteExecutor()
     try:
         registry = create_worktrees_registry(
             worktree_storage=storage,

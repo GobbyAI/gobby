@@ -420,14 +420,10 @@ def _baseline_updates(
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     if "baseline_dirty_files" not in variables:
-        try:
-            from gobby.workflows.git_utils import get_dirty_files_categorized
+        from gobby.workflows.git_utils import GIT_STATUS_UNAVAILABLE_MARKER
 
-            project_path = _project_path(event)
-            updates["baseline_dirty_files"] = sorted(get_dirty_files_categorized(project_path).all)
-        except Exception as exc:
-            log.debug("Could not initialize baseline dirty files: %s", exc)
-            updates["baseline_dirty_files"] = []
+        log.debug("Deferring baseline dirty-file sampling to async workflow evaluation")
+        updates["baseline_dirty_files"] = [GIT_STATUS_UNAVAILABLE_MARKER]
     if "session_edited_files" not in variables:
         updates["session_edited_files"] = []
     if "active_task_id" not in variables:

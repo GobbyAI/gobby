@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from typing import cast
@@ -86,7 +87,7 @@ class _WorkspaceServices:
             clone_storage=clone_storage,
         )
 
-    def ensure_integration(
+    async def ensure_integration(
         self,
         *,
         task: Task,
@@ -96,8 +97,10 @@ class _WorkspaceServices:
         artifacts: TaskArtifacts,
     ) -> Worktree | Clone:
         if backend == "worktree":
-            return self._ensure_worktree(task, branch_name, base_branch, artifacts)
-        return self._ensure_clone(task, branch_name, base_branch, artifacts)
+            return await self._ensure_worktree(task, branch_name, base_branch, artifacts)
+        return await asyncio.to_thread(
+            self._ensure_clone, task, branch_name, base_branch, artifacts
+        )
 
     def existing_task_workspace_branch(
         self,
@@ -116,7 +119,7 @@ class _WorkspaceServices:
                 return clone.branch_name
         return None
 
-    def _ensure_worktree(
+    async def _ensure_worktree(
         self,
         task: Task,
         branch_name: str,
@@ -142,7 +145,9 @@ class _WorkspaceServices:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
                 assert existing is not None
                 ensure_no_active_workspace_run(self.db, "worktree", existing.id)
-                _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
+                await asyncio.to_thread(
+                    _refresh_clean_git_dir, existing.worktree_path, branch_name, base_branch
+                )
                 return existing
 
         existing = self.worktree_storage.get_by_branch(self.project_id, branch_name)
@@ -164,7 +169,9 @@ class _WorkspaceServices:
                     existing = None
             if existing is not None and _is_promotable_workspace(existing, task.id, "worktree"):
                 ensure_no_active_workspace_run(self.db, "worktree", existing.id)
-                _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
+                await asyncio.to_thread(
+                    _refresh_clean_git_dir, existing.worktree_path, branch_name, base_branch
+                )
                 promoted = self.worktree_storage.update(existing.id, workspace_role="integration")
                 if promoted is None:
                     raise BuildWorkspaceError("failed to promote task worktree to integration")
@@ -172,18 +179,24 @@ class _WorkspaceServices:
             if existing is not None:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
                 ensure_no_active_workspace_run(self.db, "worktree", existing.id)
-                _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
+                await asyncio.to_thread(
+                    _refresh_clean_git_dir, existing.worktree_path, branch_name, base_branch
+                )
                 return existing
 
-        unmanaged = self._find_unmanaged_worktree(branch_name)
+        unmanaged = await self._find_unmanaged_worktree(branch_name)
         if unmanaged is not None:
             stored = self.worktree_storage.get_by_path(unmanaged.path)
             if stored is not None:
                 self._validate_record(stored, branch_name=branch_name, backend="worktree")
                 ensure_no_active_workspace_run(self.db, "worktree", stored.id)
-                _refresh_clean_git_dir(stored.worktree_path, branch_name, base_branch)
+                await asyncio.to_thread(
+                    _refresh_clean_git_dir, stored.worktree_path, branch_name, base_branch
+                )
                 return stored
-            _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
+            await asyncio.to_thread(
+                _refresh_clean_git_dir, unmanaged.path, branch_name, base_branch
+            )
             return self.worktree_storage.create(
                 project_id=self.project_id,
                 branch_name=branch_name,
@@ -193,8 +206,8 @@ class _WorkspaceServices:
                 workspace_role="integration",
             )
 
-        branch_exists = _branch_exists(self.repo_path, branch_name)
-        result = self.git_manager.create_worktree(
+        branch_exists = await asyncio.to_thread(_branch_exists, self.repo_path, branch_name)
+        result = await self.git_manager.create_worktree(
             worktree_path=path,
             branch_name=branch_name,
             base_branch=base_branch,
@@ -203,7 +216,7 @@ class _WorkspaceServices:
         )
         if not result.success:
             raise BuildWorkspaceError(result.error or result.message)
-        _refresh_clean_git_dir(path, branch_name, base_branch)
+        await asyncio.to_thread(_refresh_clean_git_dir, path, branch_name, base_branch)
         return self.worktree_storage.create(
             project_id=self.project_id,
             branch_name=branch_name,
@@ -304,8 +317,8 @@ class _WorkspaceServices:
             workspace_role="integration",
         )
 
-    def _find_unmanaged_worktree(self, branch_name: str) -> WorktreeInfo | None:
-        for worktree in self.git_manager.list_worktrees():
+    async def _find_unmanaged_worktree(self, branch_name: str) -> WorktreeInfo | None:
+        for worktree in await self.git_manager.list_worktrees():
             if worktree.branch == branch_name and Path(worktree.path).is_dir():
                 return worktree
         return None

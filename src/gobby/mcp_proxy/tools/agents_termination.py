@@ -87,7 +87,7 @@ async def _complete_self_terminated_run(
         except Exception as e:
             agents.logger.debug("Failed to read session variables for %s: %s", agent_session_id, e)
 
-    dirty_paths = agent_run_task_dirty_paths(
+    dirty_paths = await agent_run_task_dirty_paths(
         kill_db,
         session_manager or getattr(runner, "_session_manager", None),
         run,

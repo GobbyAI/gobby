@@ -11,7 +11,7 @@ from gobby.worktrees.git._runner import GitRunner
 logger = logging.getLogger(__name__)
 
 
-def get_worktree_status(
+async def get_worktree_status(
     runner: GitRunner,
     worktree_path: str | Path,
     comparison_ref: str | None = None,
@@ -32,7 +32,7 @@ def get_worktree_status(
 
     try:
         # Get current branch
-        branch_result = runner._run_git(
+        branch_result = await runner._run_git(
             ["branch", "--show-current"],
             cwd=worktree_path,
             timeout=5,
@@ -40,7 +40,7 @@ def get_worktree_status(
         branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
 
         # Get current commit
-        commit_result = runner._run_git(
+        commit_result = await runner._run_git(
             ["rev-parse", "--short", "HEAD"],
             cwd=worktree_path,
             timeout=5,
@@ -48,29 +48,33 @@ def get_worktree_status(
         commit = commit_result.stdout.strip() if commit_result.returncode == 0 else None
 
         # Get status (porcelain for parsing)
-        status_result = runner._run_git(
+        status_result = await runner._run_git(
             ["status", "--porcelain"],
             cwd=worktree_path,
             timeout=10,
         )
 
+        if status_result.returncode != 0:
+            detail = status_result.stderr.strip() or status_result.stdout.strip()
+            logger.error("Failed to inspect worktree status for %s: %s", worktree_path, detail)
+            return None
+
         has_staged = False
         has_uncommitted = False
         has_untracked = False
 
-        if status_result.returncode == 0:
-            for line in status_result.stdout.split("\n"):
-                if not line:
-                    continue
-                index_status = line[0] if len(line) > 0 else " "
-                worktree_column = line[1] if len(line) > 1 else " "
+        for line in status_result.stdout.split("\n"):
+            if not line:
+                continue
+            index_status = line[0] if len(line) > 0 else " "
+            worktree_column = line[1] if len(line) > 1 else " "
 
-                if index_status != " " and index_status != "?":
-                    has_staged = True
-                if worktree_column != " " and worktree_column != "?":
-                    has_uncommitted = True
-                if index_status == "?" or worktree_column == "?":
-                    has_untracked = True
+            if index_status != " " and index_status != "?":
+                has_staged = True
+            if worktree_column != " " and worktree_column != "?":
+                has_uncommitted = True
+            if index_status == "?" or worktree_column == "?":
+                has_untracked = True
 
         # Get ahead/behind count
         ahead = 0
@@ -78,7 +82,7 @@ def get_worktree_status(
 
         reference = comparison_ref or (f"origin/{branch}" if branch else None)
         if reference:
-            upstream_result = runner._run_git(
+            upstream_result = await runner._run_git(
                 ["rev-list", "--count", "--left-right", f"{reference}...HEAD"],
                 cwd=worktree_path,
                 timeout=10,
@@ -111,7 +115,7 @@ def get_worktree_status(
         return None
 
 
-def list_worktrees(
+async def list_worktrees(
     runner: GitRunner,
     *,
     failure_log_level: int = logging.ERROR,
@@ -126,14 +130,14 @@ def list_worktrees(
         List of WorktreeInfo objects
     """
     try:
-        result = runner._run_git(
+        result = await runner._run_git(
             ["worktree", "list", "--porcelain"],
             timeout=10,
         )
 
         if result.returncode != 0:
-            logger.log(failure_log_level, "Failed to list worktrees: %s", result.stderr)
-            return []
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+            raise RuntimeError(f"failed to list worktrees: {detail}")
 
         worktrees = []
         current: dict[str, str | bool] = {}
@@ -195,10 +199,10 @@ def list_worktrees(
 
     except Exception as e:
         logger.log(failure_log_level, "Error listing worktrees: %s", e)
-        return []
+        raise
 
 
-def prune_worktrees(runner: GitRunner) -> GitOperationResult:
+async def prune_worktrees(runner: GitRunner) -> GitOperationResult:
     """
     Prune stale worktree entries.
 
@@ -206,7 +210,7 @@ def prune_worktrees(runner: GitRunner) -> GitOperationResult:
         GitOperationResult with success status
     """
     try:
-        result = runner._run_git(["worktree", "prune"], timeout=30)
+        result = await runner._run_git(["worktree", "prune"], timeout=30)
 
         if result.returncode == 0:
             return GitOperationResult(

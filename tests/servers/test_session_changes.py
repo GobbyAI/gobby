@@ -6,6 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,8 +19,21 @@ from gobby.servers.session_changes import (
     resolve_session_workspace,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.daemon_git import GitTimeout
 
 pytestmark = pytest.mark.unit
+
+
+async def test_compute_session_changes_does_not_report_clean_when_git_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.servers.session_changes.daemon_git.run",
+        AsyncMock(return_value=GitTimeout("timeout", ("git", "diff"), 0.01)),
+    )
+    workspace = SessionWorkspace(str(tmp_path), "HEAD", "worktree")
+    with pytest.raises(RuntimeError, match="Git command failed: timeout"):
+        await compute_session_changes(workspace)
 
 
 def _git(repo: Path, *args: str) -> None:

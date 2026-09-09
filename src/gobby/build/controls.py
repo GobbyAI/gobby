@@ -154,14 +154,14 @@ async def build_clean_target(
     if delete_dirty_worktrees:
         artifacts_to_delete = artifacts
     else:
-        artifacts_to_delete = control_artifacts.classify_dirty_descendant_worktree_artifacts(
+        artifacts_to_delete = await control_artifacts.classify_dirty_descendant_worktree_artifacts(
             db,
             artifacts,
             root=root,
             tasks=tasks,
             project_path=control_artifacts.get_project_path(db, project_id),
         )
-    control_artifacts.delete_artifacts(db, project_id, artifacts_to_delete, force=force)
+    (await control_artifacts.delete_artifacts(db, project_id, artifacts_to_delete, force=force))
     delete_errors = [artifact.error for artifact in artifacts if artifact.error]
     if any(artifact.deferred for artifact in artifacts):
         branches_deleted = 0
@@ -197,7 +197,7 @@ async def build_clean_target(
     return result
 
 
-def cleanup_successful_merge_artifacts(
+async def cleanup_successful_merge_artifacts(
     db: HubDatabase,
     task_id: str,
     *,
@@ -223,7 +223,7 @@ def cleanup_successful_merge_artifacts(
             artifacts_to_delete,
             preserve_worktree_ids,
         )
-    artifacts_to_delete = control_artifacts.classify_dirty_descendant_worktree_artifacts(
+    artifacts_to_delete = await control_artifacts.classify_dirty_descendant_worktree_artifacts(
         db,
         artifacts_to_delete,
         root=root,
@@ -231,11 +231,13 @@ def cleanup_successful_merge_artifacts(
         project_path=control_artifacts.get_project_path(db, cleanup_project_id),
     )
 
-    control_artifacts.delete_artifacts(
-        db,
-        cleanup_project_id,
-        artifacts_to_delete,
-        force=True,
+    (
+        await control_artifacts.delete_artifacts(
+            db,
+            cleanup_project_id,
+            artifacts_to_delete,
+            force=True,
+        )
     )
     if any(artifact.deferred for artifact in artifacts):
         _branches_deleted = 0
