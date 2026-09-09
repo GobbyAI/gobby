@@ -458,7 +458,10 @@ def _codex_mcp_config_overrides(
     if not project_path:
         return []
     _validate_codex_gobby_tool_allowlist()
-    args = ["run", "--project", project_path, "gobby", "mcp-server"]
+    # The main environment is provisioned outside the managed sandbox. Syncing
+    # here can try to reinstall its editable package into a read-only checkout,
+    # closing stdio before the required MCP initialization response.
+    args = ["run", "--no-sync", "--project", project_path, "gobby", "mcp-server"]
     args_toml = "[" + ",".join(json.dumps(arg) for arg in args) + "]"
     overrides = [
         'mcp_servers.gobby.command="uv"',

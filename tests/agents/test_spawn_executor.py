@@ -957,7 +957,7 @@ class TestExecuteSpawn:
             assert command[3:5] == ["--disable", "guardian_approval"]
             assert 'mcp_servers.gobby.command="uv"' in command
             assert (
-                'mcp_servers.gobby.args=["run","--project","/main/repo","gobby","mcp-server"]'
+                'mcp_servers.gobby.args=["run","--no-sync","--project","/main/repo","gobby","mcp-server"]'
                 in command
             )
             assert "mcp_servers.gobby.startup_timeout_sec=120" in command
