@@ -466,6 +466,14 @@ struct ReconnectEpisode {
     attempts: usize,
     phase: ReconnectPhase,
     waiters: Vec<oneshot::Sender<Result<Generation, DaemonError>>>,
+    /// Unexpected losses spend the `RECONNECT_DELAYS` budget and then exit.
+    /// A deliberate daemon stop or restart (`DaemonError::GoingAway`) keeps
+    /// retrying at the last delay until the daemon returns (#22002).
+    bounded: bool,
+}
+
+fn reconnect_delay(attempts: usize) -> Duration {
+    RECONNECT_DELAYS[attempts.saturating_sub(1).min(RECONNECT_DELAYS.len() - 1)]
 }
 
 #[derive(Debug, Default)]
@@ -481,21 +489,28 @@ impl ReconnectSupervisor {
     pub fn request(
         &mut self,
         observed: Generation,
+        cause: &DaemonError,
     ) -> oneshot::Receiver<Result<Generation, DaemonError>> {
         let (sender, receiver) = oneshot::channel();
+        let going_away = matches!(cause, DaemonError::GoingAway);
         let episode = self.episode.get_or_insert_with(|| ReconnectEpisode {
             observed,
             attempts: 0,
             phase: ReconnectPhase::ReadyAt(Instant::now()),
             waiters: Vec::new(),
+            bounded: !going_away,
         });
+        if going_away {
+            episode.bounded = false;
+        }
         let rolled_forward = observed > episode.observed;
         episode.observed = episode.observed.max(observed);
         if rolled_forward && matches!(episode.phase, ReconnectPhase::AwaitingHandshake) {
-            let delay = RECONNECT_DELAYS
-                .get(episode.attempts.saturating_sub(1))
-                .copied()
-                .unwrap_or_default();
+            let delay = if episode.attempts == 0 {
+                Duration::ZERO
+            } else {
+                reconnect_delay(episode.attempts)
+            };
             episode.phase = ReconnectPhase::ReadyAt(Instant::now() + delay);
         }
         episode.waiters.push(sender);
@@ -547,7 +562,7 @@ impl ReconnectSupervisor {
                 let episode = self.episode.as_mut().expect("episode exists");
                 episode.observed = episode.observed.max(generation);
             }
-            if self.attempt_count() > RECONNECT_DELAYS.len() {
+            if self.budget_exhausted() {
                 let error = DaemonError::Unavailable { retry_after: None };
                 self.settle(Err(error.clone()));
                 return ReconnectAttempt::Exhausted(error);
@@ -591,19 +606,25 @@ impl ReconnectSupervisor {
         self.settle(Err(error));
     }
 
+    fn budget_exhausted(&self) -> bool {
+        self.episode
+            .as_ref()
+            .is_some_and(|episode| episode.bounded && episode.attempts > RECONNECT_DELAYS.len())
+    }
+
     fn record_failure(&mut self, error: DaemonError) -> ReconnectAttempt {
-        let Some(episode) = self.episode.as_mut() else {
-            return ReconnectAttempt::Idle;
-        };
-        if episode.attempts > RECONNECT_DELAYS.len() {
+        if self.budget_exhausted() {
             self.settle(Err(error.clone()));
             return ReconnectAttempt::Exhausted(error);
         }
+        let Some(episode) = self.episode.as_mut() else {
+            return ReconnectAttempt::Idle;
+        };
         let delay = match &error {
             DaemonError::Unavailable {
                 retry_after: Some(delay),
             } => (*delay).clamp(MIN_RETRY_AFTER, MAX_RETRY_AFTER),
-            _ => RECONNECT_DELAYS[episode.attempts - 1],
+            _ => reconnect_delay(episode.attempts),
         };
         episode.phase = ReconnectPhase::ReadyAt(Instant::now() + delay);
         ReconnectAttempt::RetryScheduled { delay }

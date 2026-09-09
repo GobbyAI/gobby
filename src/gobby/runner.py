@@ -118,6 +118,7 @@ class GobbyRunner:
     machine_id: str | None
     _shutdown_requested: bool
     _shutdown_intent: ShutdownIntent
+    _drain_terminals_on_shutdown: bool
     _metrics_cleanup_task: asyncio.Task[None] | None
     _test_schema_sweep_task: asyncio.Task[None] | None
     _tool_results_cleanup_task: asyncio.Task[None] | None
@@ -312,13 +313,23 @@ class GobbyRunner:
 
         await run_daemon(self, ownership_resolution=ownership_resolution)
 
-    def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
-        """Request daemon shutdown and optionally set the semantic intent."""
+    def request_shutdown(
+        self,
+        intent: ShutdownIntent | None = None,
+        *,
+        drain_terminals: bool = False,
+    ) -> None:
+        """Request daemon shutdown and optionally set the semantic intent.
+
+        ``drain_terminals`` is the operator's explicit opt-in to take the gterm
+        host down with the daemon; it sticks once asked (#22002).
+        """
         restart_already_requested = (
             self._shutdown_requested and self._shutdown_intent is ShutdownIntent.RESTART
         )
         if intent is not None and not (restart_already_requested and intent is ShutdownIntent.STOP):
             self._shutdown_intent = intent
+        self._drain_terminals_on_shutdown = self._drain_terminals_on_shutdown or drain_terminals
         self._shutdown_requested = True
 
 

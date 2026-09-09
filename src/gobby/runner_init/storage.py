@@ -148,6 +148,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner._shutdown_requested = False
     runner._shutdown_intent = ShutdownIntent.STOP
+    runner._drain_terminals_on_shutdown = False
     runner._metrics_cleanup_task = None
     runner._tool_results_cleanup_task = None
     runner._workflow_audit_cleanup_task = None

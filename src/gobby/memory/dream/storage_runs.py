@@ -70,6 +70,7 @@ class DreamAdmission:
 
 
 class _DreamRunHost(Protocol):
+    report_project_id: str | None
     db: HubDatabase
 
     def create_run(
@@ -225,6 +226,25 @@ class _DreamRunMixin:
             raise ValueError(
                 "Unsupported memory_dream_runs update field(s): " + ", ".join(unknown_fields)
             )
+        terminal = fields.get("status") in {"completed", "partial", "failed", "interrupted"}
+        if terminal:
+            from gobby.memory.dream.decisions import DreamDecisionStore
+
+            decisions = DreamDecisionStore(self.db)
+            decisions.interrupt_pending(run_id)
+            evidence_summary = decisions.summary(run_id)
+            if evidence_summary or self.report_project_id is not None:
+                previous = self.get_run(run_id) or {}
+                fields["summary"] = {
+                    **(previous.get("summary") or {}),
+                    **(fields.get("summary") or {}),
+                    **evidence_summary,
+                }
+            if self.report_project_id is not None:
+                fields["summary"] = {
+                    **(fields.get("summary") or {}),
+                    "report_project_id": self.report_project_id,
+                }
         fields["updated_at"] = _now()
         encoded = {
             key: _json(value) if key in _RUN_JSON_COLUMNS else value
@@ -237,6 +257,10 @@ class _DreamRunMixin:
             f"UPDATE memory_dream_runs SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(encoded.values()) + (run_id,),
         )
+        if terminal and self.report_project_id is not None:
+            from gobby.reports.storage import queue_terminal_report
+
+            queue_terminal_report(self.db, "dream", run_id, self.report_project_id)
         return self.get_run(run_id)
 
     def get_run(
@@ -307,6 +331,9 @@ class _DreamRunMixin:
         run_ids = [str(row["id"]) for row in rows]
         completed_at = _now()
         for run_id in run_ids:
+            from gobby.memory.dream.decisions import DreamDecisionStore
+
+            DreamDecisionStore(self.db).interrupt_pending(run_id)
             run = self.get_run(run_id)
             fields: dict[str, Any] = {
                 "status": "interrupted",

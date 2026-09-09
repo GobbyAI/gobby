@@ -80,9 +80,10 @@ async def launch_close_review(
     task = evaluation.task
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id
     validation_config = ctx.validation_config or TaskValidationConfig()
+    validator_timeout_seconds = validation_config.close_review_validator_timeout_seconds
     persisted_arguments = dict(close_arguments)
     persisted_arguments["_review_deadline_at"] = (
-        utc_now() + timedelta(seconds=validation_config.close_review_total_timeout_seconds)
+        utc_now() + timedelta(seconds=validator_timeout_seconds)
     ).isoformat()
     store = TaskCloseReviewStore(ctx.task_manager.db)
     try:
@@ -151,6 +152,7 @@ async def launch_close_review(
                 "parent_session_id": review.caller_session_id,
                 "project_path": evaluation.repo_path,
                 "notify_parent_on_completion": True,
+                "timeout": validator_timeout_seconds,
                 **validator_spawn_overrides(ctx.validation_config),
             },
         )

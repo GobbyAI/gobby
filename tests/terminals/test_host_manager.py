@@ -205,27 +205,83 @@ async def test_restart_adopts_host_preserving_epoch_pid_and_row(
 
 
 @pytest.mark.asyncio
-async def test_adoption_rejects_mismatch_and_stop_drains(
+async def test_start_adopts_surviving_host_with_live_terminals(
     tmp_path: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.terminals.host_protocol import write_pidfile
+    """A host that outlived the previous daemon is adopted with its terminals intact."""
+    from gobby.terminals.host_protocol import CONTROL_TOKEN_FILE_NAME, write_pidfile
 
     terminals = TerminalManager(temp_db)
-    stale_epoch = str(uuid.uuid4())
-    row = _live(terminals, sample_project["id"], stale_epoch)
-    stale = FakeControlClient(host_epoch=stale_epoch, host_pid=1)
-    write_pidfile(tmp_path, 1)
-    replacement = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=9001)
-    spawned = FakeHostProcess(pid=9001)
-    connect_calls = {"n": 0}
+    epoch = str(uuid.uuid4())
+    first = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-1")
+    second = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-2")
+    client = FakeControlClient(
+        host_epoch=epoch,
+        host_pid=7001,
+        terminals=[
+            FakeListRow(
+                terminal_id=first.id,
+                spawn_key=first.spawn_key or first.id,
+                host_terminal_id="ht-1",
+            ),
+            FakeListRow(
+                terminal_id=second.id,
+                spawn_key=second.spawn_key or second.id,
+                host_terminal_id="ht-2",
+            ),
+        ],
+    )
+    write_pidfile(tmp_path, 7001)
+    host = _host(tmp_path, terminals, client)
+    token_before = host.ensure_control_token()
+    await host.start()
 
-    async def connect() -> FakeControlClient:
-        connect_calls["n"] += 1
-        if connect_calls["n"] == 1:
-            return stale
-        return replacement
+    assert host.adopted is True
+    assert host.spawned_this_construction is False
+    assert host.running is True
+    assert host.host_pid == 7001
+    assert host.preserved_host_pid() == 7001
+    assert client.shutdown_calls == []
+    assert client.kill_calls == []
+    assert (tmp_path / CONTROL_TOKEN_FILE_NAME).read_text() == token_before
+    assert _loaded(terminals, first.id).state == "live"
+    assert _loaded(terminals, second.id).state == "live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["protocol", "token", "pid_identity"])
+async def test_protocol_mismatch_keeps_existing_host_alive(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    mismatch: str,
+) -> None:
+    """An unadoptable host degrades the daemon; it is never drained or replaced."""
+    from gobby.terminals.host_protocol import CONTROL_TOKEN_FILE_NAME, write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    epoch = str(uuid.uuid4())
+    row = _live(terminals, sample_project["id"], epoch)
+    client = FakeControlClient(
+        host_epoch=epoch,
+        host_pid=7002,
+        terminals=[FakeListRow(terminal_id=row.id, spawn_key=row.spawn_key or row.id)],
+    )
+    pid_ok = True
+    if mismatch == "protocol":
+        client.protocol_version = 2
+    elif mismatch == "token":
+        client.token = "rotated-by-someone-else"
+    else:
+        pid_ok = False
+    write_pidfile(tmp_path, 7002)
+    spawn_calls = {"n": 0}
+
+    def refuse_spawn() -> FakeHostProcess:
+        spawn_calls["n"] += 1
+        raise AssertionError("a live host must never be replaced")
 
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.terminals.host_manager import TerminalHostManager
@@ -235,21 +291,35 @@ async def test_adoption_rejects_mismatch_and_stop_drains(
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
         run_manager=FakeRunManager(),
-        connector=connect,
-        spawner=lambda: spawned,
-        pid_identity=lambda pid: pid == 9001,
+        connector=_connector_for(client),
+        spawner=refuse_spawn,
+        pid_identity=lambda _pid: pid_ok,
     )
+    token_before = host.ensure_control_token()
     await host.start()
-    assert stale.shutdown_calls, "stale host must be drained before replacement"
-    assert host.spawned_this_construction is True
-    updated = terminals.get(row.id)
-    assert updated is not None
-    assert updated.state == "orphaned"
 
-    await host.stop(preserve_host=False)
-    assert replacement.shutdown_calls, "full stop drains the replacement host"
-    await host.stop(preserve_host=True)
-    assert len(replacement.shutdown_calls) == 1, "planned restart must not drain"
+    assert host.adopted is False
+    assert host.spawned_this_construction is False
+    assert spawn_calls["n"] == 0
+    assert host.running is False
+    assert host.native_available is False
+    assert client.shutdown_calls == []
+    assert client.kill_calls == []
+    assert (tmp_path / CONTROL_TOKEN_FILE_NAME).read_text() == token_before, "no rotation"
+    health = host.health_state()
+    assert health["host_mismatch"], health
+    assert host.last_error
+    assert _loaded(terminals, row.id).state == "live", "rows are not orphaned"
+
+    await host.stop()
+    assert client.shutdown_calls == []
+
+
+def _connector_for(client: FakeControlClient) -> Any:
+    async def connect() -> FakeControlClient:
+        return client
+
+    return connect
 
 
 @pytest.mark.asyncio
@@ -261,28 +331,53 @@ async def test_adoption_requires_ping_host_pid_proof(
 
     terminals = TerminalManager(temp_db)
     epoch = str(uuid.uuid4())
-    client = FakeControlClient(host_epoch=epoch, host_pid=4242)
-
-    # Stale pidfile (dead pid) refuses adoption.
-    write_pidfile(tmp_path, 4242)
-    host = _host(tmp_path, terminals, client, pid_ok=False)
-    await host.start()
-    assert host.adopted is False
-    assert host.spawned_this_construction is True
 
     # Matching live pidfile plus matching host_pid adopts.
-    client2 = FakeControlClient(host_epoch=epoch, host_pid=4242)
+    client = FakeControlClient(host_epoch=epoch, host_pid=4242)
     write_pidfile(tmp_path, 4242)
-    host2 = _host(tmp_path, terminals, client2, pid_ok=True, process=FakeHostProcess(4242))
-    await host2.start()
-    assert host2.adopted is True
+    host = _host(tmp_path, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
+    await host.start()
+    assert host.adopted is True
 
-    # Unrelated live gterm PID (pidfile != ping.host_pid) refuses.
-    client3 = FakeControlClient(host_epoch=epoch, host_pid=9999)
+    # Unrelated live gterm PID (pidfile != ping.host_pid) refuses adoption and
+    # degrades instead of spawning over whatever answered on the socket.
+    client2 = FakeControlClient(host_epoch=epoch, host_pid=9999)
     write_pidfile(tmp_path, 1111)
-    host3 = _host(tmp_path, terminals, client3, pid_ok=True)
+    host2 = _host(tmp_path, terminals, client2, pid_ok=True)
+    await host2.start()
+    assert host2.adopted is False
+    assert host2.spawned_this_construction is False
+    assert host2.health_state()["host_mismatch"]
+
+    # Nothing answering on the socket spawns a fresh host.
+    async def refused() -> FakeControlClient:
+        raise ConnectionRefusedError("nobody listening")
+
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    fresh = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4343)
+    connects = {"n": 0}
+
+    async def connect_after_spawn() -> FakeControlClient:
+        connects["n"] += 1
+        if connects["n"] == 1:
+            return await refused()
+        return fresh
+
+    host3 = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        terminal_config=TerminalConfig(),
+        terminal_manager=terminals,
+        run_manager=FakeRunManager(),
+        connector=connect_after_spawn,
+        spawner=lambda: FakeHostProcess(pid=4343),
+        pid_identity=lambda pid: pid == 4343,
+    )
     await host3.start()
     assert host3.adopted is False
+    assert host3.spawned_this_construction is True
+    assert host3.host_pid == 4343
 
 
 @pytest.mark.asyncio

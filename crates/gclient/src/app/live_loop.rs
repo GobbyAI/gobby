@@ -500,8 +500,8 @@ fn begin_reconnect(
     error: DaemonError,
 ) {
     let generation = daemon.generation();
+    drop(supervisor.request(generation, &error));
     workspace.observe_daemon_disconnect(generation, error);
-    drop(supervisor.request(generation));
 }
 
 async fn handle_live_event(
@@ -514,8 +514,8 @@ async fn handle_live_event(
         DaemonEvent::Terminal { payload, .. }
             if payload.get("event").and_then(Value::as_str) == Some("created")
     );
-    if let DaemonEvent::Disconnected { generation, .. } = &event {
-        drop(supervisor.request(*generation));
+    if let DaemonEvent::Disconnected { generation, error } = &event {
+        drop(supervisor.request(*generation, error));
     }
     if let DaemonEvent::Message(message) = &event {
         apply_live_write_outcome(workspace, message);

@@ -11,7 +11,7 @@ use gobby_client::ui::chrome_render::{
 };
 use gobby_client::ui::dialogs::Dialog;
 use gobby_client::ui::keybind_help::{filter_help_entries, help_lines};
-use gobby_client::ui::keymap::{HelpEntry, Keymap};
+use gobby_client::ui::keymap::{HelpEntry, Keymap, HERDR_PREFIX};
 use gobby_client::ui::pane_layout;
 use gobby_client::ui::scrollbar::{
     pane_scrollbar_rect, scrollbar_offset_from_drag_row, scrollbar_offset_from_row,
@@ -1061,6 +1061,7 @@ parity_tests! {
 switch_tab = ["prefix+1..9", "alt+1..9"]
 switch_project = "ctrl+1..9"
 "#,
+                HERDR_PREFIX,
             )
             .expect("config parses");
 

@@ -320,6 +320,7 @@ class TestSendMessageBroadcast:
                 "from_session": "s-from",
                 "target": "project",
                 "content": "hello agents",
+                "brief": False,
             },
         )
 
@@ -368,6 +369,8 @@ class TestSendMessageBroadcast:
                 messages=[message],
                 recipient_session_ids=["s-to"],
                 failed_broadcasts=[mailbox_failure],
+                target="session",
+                target_id="s-to",
             )
         )
         monkeypatch.setattr(MailboxService, "send", mailbox_send)
@@ -398,11 +401,16 @@ class TestSendMessageBroadcast:
             },
         )
 
-        assert result["success"] is True
-        assert result["failed_broadcasts"] == [mailbox_failure]
-        assert result["failed_ws_broadcasts"] == [
-            {"recipient_session_id": "s-to", "error": "socket down"}
-        ]
+        assert result == {
+            "success": True,
+            "target": "session",
+            "target_id": "s-to",
+            "recipient_count": 1,
+            "delivery_status": "sent_with_failures",
+            "message_ids": ["msg-s-to"],
+            "failed_broadcasts": [mailbox_failure],
+            "failed_ws_broadcasts": [{"recipient_session_id": "s-to", "error": "socket down"}],
+        }
 
     @pytest.mark.asyncio
     async def test_no_broadcast_on_failure(

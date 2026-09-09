@@ -3,7 +3,7 @@
 mod mock_daemon;
 
 use gobby_client::app::run_loop::{ReconnectAttempt, ReconnectSupervisor};
-use gobby_client::daemon::{Daemon, DaemonEvent, LiveDaemon};
+use gobby_client::daemon::{Daemon, DaemonError, DaemonEvent, LiveDaemon};
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
@@ -210,7 +210,10 @@ async fn replay_never_rewinds_applied_state() {
     mock.drop_websockets();
     wait_disconnected(&daemon).await;
     let mut supervisor = ReconnectSupervisor::new();
-    drop(supervisor.request(daemon.generation()));
+    drop(supervisor.request(
+        daemon.generation(),
+        &DaemonError::Unavailable { retry_after: None },
+    ));
     let generation = match supervisor.attempt_when_due(&daemon).await {
         ReconnectAttempt::Reconnected(generation) => generation,
         outcome => panic!("transport reconnect failed: {outcome:?}"),
@@ -359,7 +362,10 @@ async fn lagged_subscriber_relists_and_converges() {
     );
     let activity_before_recovery = mock.activity().len();
     let mut supervisor = ReconnectSupervisor::new();
-    drop(supervisor.request(disconnected.generation));
+    drop(supervisor.request(
+        disconnected.generation,
+        &DaemonError::Unavailable { retry_after: None },
+    ));
     let generation = match supervisor.attempt_when_due(&daemon).await {
         ReconnectAttempt::Reconnected(generation) => generation,
         outcome => panic!("transport reconnect failed: {outcome:?}"),

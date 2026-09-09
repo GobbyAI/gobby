@@ -12,6 +12,7 @@ import click
 import psutil
 
 from gobby.cli.utils_runtime import facade
+from gobby.shutdown_intent import shutdown_marker_details
 from gobby.utils.env import is_test_protect_enabled
 
 
@@ -42,6 +43,7 @@ def stop_daemon(
     *,
     shutdown_intent: str = "stop",
     shutdown_source: str = "cli_stop",
+    drain_terminals: bool = False,
 ) -> bool:
     """Stop the daemon process. Returns True on success, False on failure."""
     deps = facade()
@@ -108,7 +110,11 @@ def stop_daemon(
     except ImportError as exc:
         deps.logger.debug("Failed to write shutdown source: %s", exc)
     else:
-        write_shutdown_source(shutdown_source, intent=shutdown_intent)
+        write_shutdown_source(
+            shutdown_source,
+            intent=shutdown_intent,
+            details=shutdown_marker_details(drain_terminals=drain_terminals),
+        )
 
     stop_start = time.time()
 

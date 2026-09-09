@@ -742,7 +742,8 @@ class MemoryCrudMixin(MemoryStoreBase):
     def list_vector_reindex_ids(self) -> list[str]:
         """Return memories whose stored content is newer than their vector."""
         rows = self.db.fetchall(
-            "SELECT id FROM memories WHERE vector_needs_reindex IS TRUE ORDER BY id"
+            "SELECT id FROM memories WHERE vector_needs_reindex IS TRUE "
+            "AND deleted_at IS NULL ORDER BY id"
         )
         return [str(row["id"]) for row in rows]
 

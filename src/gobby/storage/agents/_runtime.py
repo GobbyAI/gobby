@@ -33,6 +33,16 @@ class _AgentRunRuntimeHost(Protocol):
 
 
 class _AgentRunRuntimeMixin:
+    def record_spawn_error(self: _AgentRunRuntimeHost, run_id: str, error: str) -> None:
+        """Retain the originating failure before rollback can lose the terminal."""
+        self.db.execute(
+            """
+            UPDATE agent_runs SET error = %s, updated_at = %s
+            WHERE id = %s AND status IN ('pending', 'running')
+            """,
+            (error, utc_now(), run_id),
+        )
+
     def update_resume_metadata(
         self: _AgentRunRuntimeHost,
         run_id: str,

@@ -20,6 +20,19 @@ from gobby.mcp_proxy.stdio_server import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_bridge_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these tests independent of the surrounding process env.
+
+    A managed agent runs with ``GOBBY_AGENT_RUN_ID`` and ``GOBBY_DAEMON_URL``
+    set, which suppresses daemon auto-start and retargets the dial URL; tests
+    that assert either failed only when run from inside one. Tests needing these
+    variables set them explicitly, which still wins over this fixture.
+    """
+    for name in ("GOBBY_AGENT_RUN_ID", "GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_stdio_dependencies_use_runtime_access() -> None:
     startup_fields = {field.name for field in fields(DaemonStartupDependencies)}
     proxy_fields = {field.name for field in fields(DaemonProxyDependencies)}
@@ -28,8 +41,12 @@ def test_stdio_dependencies_use_runtime_access() -> None:
     assert "load_config" not in startup_fields | proxy_fields | server_fields
     assert "bootstrap" in startup_fields
     assert "runtime_factory" in proxy_fields
-    assert "runtime_factory" in server_fields
     assert "load_bootstrap" in server_fields
+    # Server construction owns no hub-facing dependency, so it cannot block the
+    # MCP initialize handshake on the control plane (#22032). The proxy keeps
+    # its runtime factory: that read is deferred to the first tool call.
+    assert "runtime_factory" not in server_fields
+    assert "setup_internal_registries" not in server_fields
 
 
 @pytest.mark.asyncio
@@ -47,8 +64,6 @@ async def test_stdio_daemon_config_boundary(
     expected_port: int,
     expected_start: bool,
 ) -> None:
-    for name in ("GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
-        monkeypatch.delenv(name, raising=False)
     if runtime_url:
         monkeypatch.setenv("GOBBY_DAEMON_URL", runtime_url)
     start_calls: list[tuple[int, int]] = []
@@ -169,24 +184,19 @@ async def test_stdio_proxy_retries_timeout_read_after_failure() -> None:
 async def test_stdio_server_takes_dial_port_from_bootstrap(
     monkeypatch: pytest.MonkeyPatch, runtime_url: str | None, with_startup_task: bool
 ) -> None:
-    for name in ("GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
-        monkeypatch.delenv(name, raising=False)
     if runtime_url:
         monkeypatch.setenv("GOBBY_DAEMON_URL", runtime_url)
-    config = DaemonConfig.model_validate({"daemon_port": 61041})
-    runtime_factory = MagicMock(return_value=CliRuntime(None, config))
-    setup_registries = MagicMock()
     proxy = MagicMock()
     proxy_factory = MagicMock(return_value=proxy)
     mcp_server = MagicMock()
+    mcp_server_factory = MagicMock(return_value=mcp_server)
+    register_proxy_tools = MagicMock()
     server_deps = StdioServerDependencies(
-        runtime_factory=runtime_factory,
         load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
-        setup_internal_registries=setup_registries,
         build_gobby_instructions=lambda: "instructions",
-        mcp_server_factory=MagicMock(return_value=mcp_server),
+        mcp_server_factory=mcp_server_factory,
         proxy_factory=proxy_factory,
-        register_proxy_tools=MagicMock(),
+        register_proxy_tools=register_proxy_tools,
     )
 
     startup_task = asyncio.create_task(asyncio.sleep(0)) if with_startup_task else None
@@ -197,12 +207,6 @@ async def test_stdio_server_takes_dial_port_from_bootstrap(
             await startup_task
 
     assert server is mcp_server
-    runtime_factory.assert_called_once_with()
-    setup_registries.assert_called_once()
-    registry_kwargs = setup_registries.call_args.kwargs
-    assert registry_kwargs["config_resolver"]() is config
-    assert registry_kwargs["session_manager"] is None
-    assert registry_kwargs["memory_manager_resolver"] is None
     # The explicit managed URL wins when the sandbox hides bootstrap.yaml.
     expected_url = runtime_url or "http://127.0.0.1:61031"
     if startup_task is None:
@@ -211,31 +215,10 @@ async def test_stdio_server_takes_dial_port_from_bootstrap(
         proxy_factory.assert_called_once_with(
             61031, base_url=expected_url, startup_task=startup_task
         )
-
-
-def test_stdio_server_starts_when_hub_is_down() -> None:
-    runtime = MagicMock()
-    runtime.require_config.side_effect = RuntimeError("hub is down")
-    setup_registries = MagicMock()
-    proxy_factory = MagicMock(return_value=MagicMock())
-    mcp_server = MagicMock()
-    server_deps = StdioServerDependencies(
-        runtime_factory=MagicMock(return_value=runtime),
-        load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
-        setup_internal_registries=setup_registries,
-        build_gobby_instructions=lambda: "instructions",
-        mcp_server_factory=MagicMock(return_value=mcp_server),
-        proxy_factory=proxy_factory,
-        register_proxy_tools=MagicMock(),
-    )
-
-    server = create_stdio_mcp_server(deps=server_deps)
-
-    assert server is mcp_server
-    runtime.close.assert_called_once_with()
-    setup_registries.assert_called_once()
-    registry_kwargs = setup_registries.call_args.kwargs
-    assert registry_kwargs["config_resolver"]() is None
-    assert registry_kwargs["session_manager"] is None
-    assert registry_kwargs["memory_manager_resolver"] is None
-    proxy_factory.assert_called_once_with(61031, base_url="http://127.0.0.1:61031")
+    # The whole server is wired from bootstrap facts alone: no hub read stands
+    # between process start and the MCP initialize handshake (#22032).
+    server_kwargs = mcp_server_factory.call_args.kwargs
+    assert mcp_server_factory.call_args.args == ("gobby",)
+    assert server_kwargs["instructions"] == "instructions"
+    assert callable(server_kwargs["lifespan"])
+    register_proxy_tools.assert_called_once_with(mcp_server, proxy)

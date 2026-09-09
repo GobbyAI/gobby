@@ -27,7 +27,7 @@ _VALID_ACTIONS = {"keep", "delete", "refresh", "review", "promote"}
 _MUTATING_ACTIONS = {"delete", "refresh", "review", "promote"}
 
 
-def validate_dream_plan(
+def _validated_actions(
     raw_plan: Any,
     candidates: list[DreamCandidate],
     *,
@@ -96,6 +96,45 @@ def validate_dream_plan(
         for memory_id in sorted(omitted)
     )
     return _dedupe_actions(actions)
+
+
+def validate_dream_plan(
+    raw_plan: Any,
+    candidates: list[DreamCandidate],
+    *,
+    min_action_confidence: float,
+    min_delete_confidence: float,
+    min_rescope_confidence: float,
+) -> list[DreamAction]:
+    """Normalize actions while retaining every original proposal for the decision ledger."""
+    actions = _validated_actions(
+        raw_plan,
+        candidates,
+        min_action_confidence=min_action_confidence,
+        min_delete_confidence=min_delete_confidence,
+        min_rescope_confidence=min_rescope_confidence,
+    )
+    raw = _extract_raw_actions(raw_plan)
+    assigned: set[int] = set()
+    candidate_ids = {candidate.id for candidate in candidates}
+    for action in actions:
+        for index, proposal in enumerate(raw):
+            refs = _referenced_candidate_ids(proposal) if isinstance(proposal, Mapping) else set()
+            if action.affected_ids().intersection(refs) or (
+                not action.affected_ids() and not refs.intersection(candidate_ids)
+            ):
+                action.proposals.append({"ordinal": index, "proposal": proposal})
+                assigned.add(index)
+    for index, proposal in enumerate(raw):
+        if index not in assigned:
+            actions.append(
+                DreamAction(
+                    action="keep",
+                    reason="proposal has no safe effective action",
+                    proposals=[{"ordinal": index, "proposal": proposal}],
+                )
+            )
+    return actions
 
 
 def _extract_raw_actions(raw_plan: Any) -> list[Any]:

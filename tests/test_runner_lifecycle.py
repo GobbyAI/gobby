@@ -3146,7 +3146,7 @@ class TestSignalHandlerBehavior:
                 captured_handler()
                 captured_handler()
 
-        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART, drain_terminals=False)
         assert shutdown_callback.call_count == 2
         assert (tmp_path / "shutdown_intent_active.json").exists()
         received_logs = [
@@ -3212,7 +3212,7 @@ class TestSignalHandlerBehavior:
             assert captured_handler is not None
             captured_handler()
 
-        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART, drain_terminals=False)
         shutdown_callback.assert_called_once_with()
         assert (tmp_path / "shutdown_intent_active.json").exists()
 
@@ -3249,7 +3249,7 @@ class TestSignalHandlerBehavior:
         with caplog.at_level(logging.ERROR, logger="gobby.runner_maintenance"):
             captured_handler()
 
-        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.STOP)
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.STOP, drain_terminals=False)
         shutdown_callback.assert_called_once_with()
         assert "Shutdown intent callback failed" in caplog.text
 
@@ -3675,8 +3675,8 @@ class TestMessageProcessorPreparedService:
             source="claude",
         )
         session_storage = MagicMock()
-        session_storage.list.side_effect = lambda status, limit: (
-            [session] if status == "active" else []
+        session_storage.list.side_effect = lambda statuses, limit: (
+            [session] if "active" in statuses else []
         )
         processors = [MagicMock(), MagicMock()]
         for processor in processors:

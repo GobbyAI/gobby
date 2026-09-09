@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import AsyncIterator, Iterator
+from typing import Any, NoReturn
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -14,10 +16,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.shared.memory import create_client_server_memory_streams
 
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.mcp_proxy.stdio import create_stdio_mcp_server
+from gobby.mcp_proxy.stdio import ensure_daemon_running as ensure_facade_daemon_running
 from gobby.mcp_proxy.stdio_daemon import DaemonStartupDependencies
 from gobby.mcp_proxy.stdio_daemon import ensure_daemon_running as ensure_stdio_daemon_running
 from gobby.mcp_proxy.stdio_daemon import main as run_stdio_bridge
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
+
+BRIDGE_BOOTSTRAP = BootstrapConfig(daemon_port=60887, websocket_port=60888)
 
 
 def _proxy_dependencies(
@@ -180,3 +186,138 @@ async def test_tool_call_after_startup_failure_returns_daemon_unavailable(
     assert result["error_code"] == "DAEMON_UNAVAILABLE"
     assert "gobby restart --verbose" in result["error"]
     client.request.assert_not_awaited()
+
+
+def _hub_is_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+    raise AssertionError("stdio bridge opened the hub while building the MCP server")
+
+
+@pytest.fixture
+def bridge_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Build the real bridge against fixed bootstrap facts and a forbidden hub."""
+    for name in (
+        "GOBBY_AGENT_RUN_ID",
+        "GOBBY_DAEMON_URL",
+        "GOBBY_DAEMON_PORT",
+        "GOBBY_PROJECT_ID",
+        "GOBBY_SESSION_ID",
+        "TMUX",
+        "TMUX_PANE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("gobby.mcp_proxy.stdio.load_bootstrap", lambda **_: BRIDGE_BOOTSTRAP)
+    monkeypatch.setattr("gobby.mcp_proxy.stdio.CliRuntime", _hub_is_forbidden)
+    yield
+
+
+@contextlib.asynccontextmanager
+async def _connected_client(mcp: MCPServer[None]) -> AsyncIterator[ClientSession]:
+    """Drive a real bridge server over in-memory streams."""
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        server_task = asyncio.create_task(
+            mcp._lowlevel_server.run(
+                *server_streams,
+                mcp._lowlevel_server.create_initialization_options(),
+            )
+        )
+        try:
+            async with ClientSession(*client_streams) as session:
+                yield session
+        finally:
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await server_task
+
+
+def _tool_payload(structured_content: dict[str, Any] | None) -> dict[str, Any]:
+    """Unwrap the proxy tool's dict result from its structured content envelope."""
+    assert structured_content is not None
+    inner = structured_content.get("result")
+    return inner if isinstance(inner, dict) else structured_content
+
+
+@pytest.mark.asyncio
+async def test_initialize_and_tools_precede_daemon_health_and_hub_config(
+    bridge_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handshake answers while daemon health stalls and the hub is unreachable.
+
+    Regression for #22032: server construction used to read the DB-backed config
+    before serving stdio, so a loaded control plane pushed ``initialize`` past
+    the client's 120s startup budget and the agent ran with no Gobby tools.
+    """
+    health_waiting = asyncio.Event()
+    release_health = asyncio.Event()
+
+    async def check_health(
+        port: int,
+        timeout: float = 2.0,
+        *,
+        base_url: str | None = None,
+    ) -> bool:
+        del port, timeout, base_url
+        health_waiting.set()
+        await release_health.wait()
+        return True
+
+    monkeypatch.setattr("gobby.mcp_proxy.stdio.is_daemon_running", lambda: True)
+    monkeypatch.setattr("gobby.mcp_proxy.stdio.check_daemon_http_health", check_health)
+
+    startup_task = asyncio.create_task(ensure_facade_daemon_running())
+    await asyncio.wait_for(health_waiting.wait(), timeout=5)
+
+    try:
+        mcp = create_stdio_mcp_server(startup_task=startup_task)
+        async with _connected_client(mcp) as session:
+            initialize_result = await asyncio.wait_for(session.initialize(), timeout=5)
+            tools_result = await asyncio.wait_for(session.list_tools(), timeout=5)
+
+        assert initialize_result.server_info.name == "gobby"
+        assert {"call_tool", "get_tool_schema", "list_tools"} <= {
+            tool.name for tool in tools_result.tools
+        }
+        # The control plane is still unresolved: nothing above waited on it.
+        assert not startup_task.done()
+    finally:
+        release_health.set()
+        await asyncio.wait_for(startup_task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_first_tool_call_reports_structured_daemon_unavailable(
+    bridge_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bridge that came up without a daemon answers tools with the typed error."""
+    monkeypatch.setattr("gobby.mcp_proxy.stdio.is_daemon_running", lambda: False)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.stdio.check_daemon_http_health",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.stdio.start_daemon_process",
+        AsyncMock(return_value={"success": False, "error": "boom"}),
+    )
+
+    startup_task = asyncio.create_task(ensure_facade_daemon_running())
+    mcp = create_stdio_mcp_server(startup_task=startup_task)
+
+    async with _connected_client(mcp) as session:
+        await asyncio.wait_for(session.initialize(), timeout=5)
+        result = await asyncio.wait_for(
+            session.call_tool(
+                "call_tool",
+                {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "get_task",
+                    "arguments": {"task_id": "#1"},
+                },
+            ),
+            timeout=10,
+        )
+    await asyncio.wait_for(startup_task, timeout=5)
+
+    payload = _tool_payload(result.structured_content)
+    assert payload["success"] is False
+    assert payload["error_code"] == "DAEMON_UNAVAILABLE"

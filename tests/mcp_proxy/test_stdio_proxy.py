@@ -94,8 +94,15 @@ async def test_request_refreshes_project_id_after_late_project_init(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A proxy started before ``gobby init`` sends project headers once the ID exists."""
-    monkeypatch.delenv("GOBBY_AGENT_RUN_ID", raising=False)
-    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    # A managed agent supplies a run token whose identity headers would preempt
+    # the project header this test is about; drop the whole managed identity.
+    for name in (
+        "GOBBY_AGENT_API_TOKEN",
+        "GOBBY_AGENT_RUN_ID",
+        "GOBBY_SESSION_ID",
+        "GOBBY_PROJECT_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(
         "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
         lambda: {"parent_pid": 4321},
@@ -259,12 +266,8 @@ async def test_requests_reuse_client_and_close_it_once() -> None:
 
 
 def _create_server_with_proxy(proxy: DaemonProxy, *, register_proxy_tools: Any = None) -> MCPServer:
-    runtime = MagicMock()
-    runtime.require_config.return_value = MagicMock(daemon_port=60887)
     dependencies = StdioServerDependencies(
-        runtime_factory=lambda: runtime,
         load_bootstrap=lambda: BootstrapConfig(daemon_port=60887),
-        setup_internal_registries=MagicMock(),
         build_gobby_instructions=lambda: "instructions",
         mcp_server_factory=_StdioMCPServer,
         proxy_factory=MagicMock(return_value=proxy),
@@ -448,7 +451,10 @@ def test_stdio_constructs_no_terminal_service_set() -> None:
     assert "WriteCoordinator(" not in source
     assert "TerminalManager(" not in source
     assert "TerminalRuntimeRegistry(" not in source
-    assert "session_manager = None" in source
+    # Nothing hub-backed is built either: the bridge proxies every tool over
+    # HTTP, so construction must not reach the control plane (#22032).
+    assert "setup_internal_registries" not in source
+    assert "require_config" not in source
     del create_stdio_mcp_server
 
 

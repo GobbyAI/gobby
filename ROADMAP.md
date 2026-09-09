@@ -300,6 +300,26 @@ dependency. It is the stability work that feeds #21547 and hosts the
 `found-work` leaves gating #19600. It is recreated nightly by title, so nothing
 may depend on it — depend on its leaves.
 
+## Experiment lab — requires further planning
+
+Deferred design work. The feedback and Dream evidence/reporting repairs do not
+implement an experiment scheduler, autonomous skill mutation, wiki integration,
+or build consolidation.
+
+Preserve these working preferences for the next planning effort: a stable
+controller, containerized candidate stacks, an unchanged baseline plus three
+candidates, paired trials, bounded campaigns, and human approval for live changes.
+The proposed roles are experiment generation, evaluation design, execution,
+synthesis, independent audit, gatekeeping, and follow-up evaluation.
+
+Failure learning must preserve rejected hypotheses, inconclusive results, scoped
+lessons, and complete attempt history. A successful retry must not erase evidence
+of failed attempts, and a lesson must retain the conditions under which it applies.
+
+Resolve runtime topology, orchestration recovery, evaluation validity, budget
+enforcement, lesson activation, and possible build/pipeline consolidation in a
+separate planning effort before implementation.
+
 ## Ports and the proxied surface
 
 - `:60887` HTTP and `:60888` WS are public and become `gdaemon`'s at S1.1;

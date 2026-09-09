@@ -646,6 +646,9 @@ class TestStartStopBarriers:
             patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
             patch("gobby.cli.daemon.init_local_storage", return_value=MagicMock()),
             patch("gobby.cli.daemon.is_port_available", return_value=True),
+            # The binary-set probe and boot-id lookup shell out; neither may see the fake Popen.
+            patch("gobby.storage.schema_divergence.binary_set_apply_refusal", return_value=None),
+            patch("gobby.runner_pid_record.current_boot_id", return_value="boot-test"),
             patch("gobby.cli.daemon.subprocess.Popen", return_value=process) as popen,
             patch("gobby.cli.daemon._wait_for_daemon_health", return_value=0.1),
             patch("gobby.cli.daemon._poll_startup_progress", return_value=True),

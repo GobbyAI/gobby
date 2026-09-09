@@ -1921,6 +1921,10 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "feedback_review_runs.observations",
+      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
+    },
+    {
       "name": "feedback_review_runs.rows_considered",
       "definition": "integer|int4|NO|0|NEVER"
     },
@@ -2519,6 +2523,50 @@
     {
       "name": "memory_crossrefs.target_id",
       "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.candidate",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.completed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.effective_action",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.ordinal",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.outcome",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.proposals",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.run_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.snapshot_id",
+      "definition": "integer|int4|YES||NEVER"
+    },
+    {
+      "name": "memory_dream_decisions.status",
+      "definition": "text|text|NO||NEVER"
     },
     {
       "name": "memory_dream_runs.checkpoint",
@@ -4753,6 +4801,102 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "synthesis_report_attempts.agent_run_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.completed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.diagnostics",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.error",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.phase",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.source_kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.source_run_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.started_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "synthesis_report_attempts.status",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "synthesis_reports.auto_retries",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "synthesis_reports.branch_name",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "synthesis_reports.commit_sha",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "synthesis_reports.content",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "synthesis_reports.content_hash",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "synthesis_reports.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "synthesis_reports.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "synthesis_reports.report_path",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "synthesis_reports.source_kind",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "synthesis_reports.source_run_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "synthesis_reports.status",
+      "definition": "text|text|NO|'pending'::text|NEVER"
+    },
+    {
+      "name": "synthesis_reports.task_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "synthesis_reports.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "synthesis_reports.worktree_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
       "name": "task_affected_files.annotation_source",
       "definition": "text|text|NO|'expansion'::text|NEVER"
     },
@@ -6848,7 +6992,7 @@
     },
     {
       "name": "feedback_review_runs.feedback_review_runs_status_vocab",
-      "definition": "CHECK (status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text]))"
+      "definition": "CHECK (status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text, 'partial'::text]))"
     },
     {
       "name": "gh_issues_triaged.gh_issues_triaged_pkey",
@@ -7029,6 +7173,26 @@
     {
       "name": "memory_crossrefs.memory_crossrefs_target_id_fkey",
       "definition": "FOREIGN KEY (target_id) REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "memory_dream_decisions.memory_dream_decisions_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "memory_dream_decisions.memory_dream_decisions_run_id_fkey",
+      "definition": "FOREIGN KEY (run_id) REFERENCES memory_dream_runs(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "memory_dream_decisions.memory_dream_decisions_run_id_ordinal_key",
+      "definition": "UNIQUE (run_id, ordinal)"
+    },
+    {
+      "name": "memory_dream_decisions.memory_dream_decisions_snapshot_id_fkey",
+      "definition": "FOREIGN KEY (snapshot_id) REFERENCES memory_dream_snapshots(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "memory_dream_decisions.memory_dream_decisions_status_check",
+      "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'planned'::text, 'applied'::text, 'noop'::text, 'skipped'::text, 'failed'::text, 'interrupted'::text]))"
     },
     {
       "name": "memory_dream_runs.memory_dream_runs_pkey",
@@ -7705,6 +7869,50 @@
     {
       "name": "step_executions.step_executions_pkey",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "synthesis_report_attempts.synthesis_report_attempts_agent_run_id_fkey",
+      "definition": "FOREIGN KEY (agent_run_id) REFERENCES agent_runs(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "synthesis_report_attempts.synthesis_report_attempts_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "synthesis_report_attempts.synthesis_report_attempts_source_kind_source_run_id_fkey",
+      "definition": "FOREIGN KEY (source_kind, source_run_id) REFERENCES synthesis_reports(source_kind, source_run_id) ON DELETE CASCADE"
+    },
+    {
+      "name": "synthesis_report_attempts.synthesis_report_attempts_status_check",
+      "definition": "CHECK (status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'interrupted'::text]))"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_auto_retries_check",
+      "definition": "CHECK (auto_retries >= 0 AND auto_retries <= 1)"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_pkey",
+      "definition": "PRIMARY KEY (source_kind, source_run_id)"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id)"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_source_kind_check",
+      "definition": "CHECK (source_kind = ANY (ARRAY['feedback'::text, 'dream'::text]))"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_status_check",
+      "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'synthesizing'::text, 'publishing'::text, 'completed'::text, 'failed'::text, 'interrupted'::text]))"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_task_id_fkey",
+      "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "synthesis_reports.synthesis_reports_worktree_id_fkey",
+      "definition": "FOREIGN KEY (worktree_id) REFERENCES worktrees(id) ON DELETE SET NULL"
     },
     {
       "name": "task_affected_files.task_affected_files_pkey",
@@ -9415,6 +9623,10 @@
       "definition": "CREATE INDEX idx_stop_signals_pending ON $schema.session_stop_signals USING btree (acknowledged_at) WHERE (acknowledged_at IS NULL)"
     },
     {
+      "name": "idx_synthesis_report_attempts_source",
+      "definition": "CREATE INDEX idx_synthesis_report_attempts_source ON $schema.synthesis_report_attempts USING btree (source_kind, source_run_id, started_at, id)"
+    },
+    {
       "name": "idx_taf_file_path",
       "definition": "CREATE INDEX idx_taf_file_path ON $schema.task_affected_files USING btree (file_path)"
     },
@@ -9679,6 +9891,14 @@
       "definition": "CREATE UNIQUE INDEX memory_crossrefs_pkey ON $schema.memory_crossrefs USING btree (source_id, target_id)"
     },
     {
+      "name": "memory_dream_decisions_pkey",
+      "definition": "CREATE UNIQUE INDEX memory_dream_decisions_pkey ON $schema.memory_dream_decisions USING btree (id)"
+    },
+    {
+      "name": "memory_dream_decisions_run_id_ordinal_key",
+      "definition": "CREATE UNIQUE INDEX memory_dream_decisions_run_id_ordinal_key ON $schema.memory_dream_decisions USING btree (run_id, ordinal)"
+    },
+    {
       "name": "memory_dream_runs_pkey",
       "definition": "CREATE UNIQUE INDEX memory_dream_runs_pkey ON $schema.memory_dream_runs USING btree (id)"
     },
@@ -9925,6 +10145,14 @@
     {
       "name": "step_executions_pkey",
       "definition": "CREATE UNIQUE INDEX step_executions_pkey ON $schema.step_executions USING btree (id)"
+    },
+    {
+      "name": "synthesis_report_attempts_pkey",
+      "definition": "CREATE UNIQUE INDEX synthesis_report_attempts_pkey ON $schema.synthesis_report_attempts USING btree (id)"
+    },
+    {
+      "name": "synthesis_reports_pkey",
+      "definition": "CREATE UNIQUE INDEX synthesis_reports_pkey ON $schema.synthesis_reports USING btree (source_kind, source_run_id)"
     },
     {
       "name": "task_affected_files_pkey",

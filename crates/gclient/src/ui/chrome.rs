@@ -12,7 +12,7 @@ use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
 use crate::ui::hit::{Hit, SidebarSection};
 use crate::ui::keybind_help::KeybindHelpState;
-use crate::ui::keymap::Keymap;
+use crate::ui::keymap::{Keymap, HERDR_PREFIX};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::pane_layout;
 use crate::ui::settings::{ClientPrefs, SettingsState};
@@ -450,6 +450,9 @@ pub struct Chrome {
     pub status_message: Option<String>,
     pub view: ViewState,
     pub keymap: Keymap,
+    /// An outer tmux owns the terminal: `keymap` was built for its shifted
+    /// prefix and the status line says so. TODO(#21357): retire with tmux.
+    pub nested_tmux: bool,
     /// Mouse selection in progress or retained, keyed by layout slot.
     pub selection: Option<Selection>,
     /// The press-and-drag in progress, if any; `route_mouse` owns it.
@@ -493,7 +496,8 @@ impl Chrome {
             toast: None,
             status_message: None,
             view: ViewState::default(),
-            keymap: Keymap::defaults(),
+            keymap: Keymap::defaults(HERDR_PREFIX),
+            nested_tmux: false,
             selection: None,
             gesture: None,
             hover: None,

@@ -13,7 +13,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot, Notify};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
-use tokio_tungstenite::tungstenite::protocol::{Message, Role};
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Message, Role};
 use tokio_tungstenite::WebSocketStream;
 
 #[derive(Debug, Clone)]
@@ -350,6 +351,15 @@ impl MockDaemon {
         });
     }
 
+    /// Close every live websocket the way the daemon does on stop/restart:
+    /// close code 1001 with the "Server shutting down" reason (#22002).
+    pub fn close_websockets_going_away(&self) {
+        let _ = self.events.send(MockEvent {
+            value: json!({"__mock_close": true, "code": 1001}),
+            delivered: None,
+        });
+    }
+
     pub async fn pause_websocket_reads(&self) -> Arc<Notify> {
         self.wait_for_websocket().await;
         let gate = Arc::new(Notify::new());
@@ -605,7 +615,15 @@ async fn serve_websocket(
             event = event_rx.recv() => {
                 if let Ok(event) = event {
                     if event.value.get("__mock_close").and_then(Value::as_bool) == Some(true) {
-                        let _ = websocket.close(None).await;
+                        let frame = event
+                            .value
+                            .get("code")
+                            .and_then(Value::as_u64)
+                            .map(|code| CloseFrame {
+                                code: CloseCode::from(code as u16),
+                                reason: "Server shutting down".into(),
+                            });
+                        let _ = websocket.close(frame).await;
                         break;
                     }
                     if event.value.get("__mock_pause_reads").and_then(Value::as_bool) == Some(true) {

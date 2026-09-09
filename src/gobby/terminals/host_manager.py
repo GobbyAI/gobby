@@ -8,6 +8,7 @@ import os
 import secrets
 import signal
 from collections.abc import Awaitable, Callable
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 Connector = Callable[[], Awaitable[Any]]
 Spawner = Callable[[], Any]
+
+
+class _Adopt(Enum):
+    """Outcome of probing the control socket for a surviving host."""
+
+    ADOPTED = "adopted"
+    ABSENT = "absent"
+    MISMATCH = "mismatch"
 
 
 class TerminalHostManager:
@@ -80,6 +89,13 @@ class TerminalHostManager:
         self.restart_count = 0
         self.backoff_seconds = 0.0
         self.last_error: str | None = None
+        # A surviving host we could reach but not adopt (protocol, token, or
+        # pid identity disagreed). It stays alive and untouched; native launches
+        # degrade until the operator drains it (#22002).
+        self.host_mismatch: str | None = None
+        # Set once `stop(drain_host=True)` took the host down, so the child
+        # reaper no longer holds its pid back.
+        self.host_drained = False
         self._stop_requested = False
         self.observation_health: dict[str, dict[str, Any]] = {}
 
@@ -106,6 +122,7 @@ class TerminalHostManager:
             "live_terminals": live,
             "orphaned_terminals": orphaned,
             "last_error": self.last_error,
+            "host_mismatch": self.host_mismatch,
         }
 
     def ensure_control_token(self) -> str:
@@ -132,12 +149,18 @@ class TerminalHostManager:
             return
         self._stop_requested = False
         try:
-            if await self._try_adopt():
+            outcome = await self._try_adopt()
+            if outcome is _Adopt.ADOPTED:
                 self.native_available = True
                 self.running = True
                 self.last_error = None
                 await self.reconcile()
                 self._arm_health()
+                return
+            if outcome is _Adopt.MISMATCH:
+                # Never race a live host: no second spawn, no token rotation.
+                self.running = False
+                self.native_available = False
                 return
             await self._spawn_and_connect()
             self.native_available = True
@@ -151,16 +174,32 @@ class TerminalHostManager:
             self.last_error = str(exc)
             logger.warning("gterm host unavailable; native launches degraded: %s", exc)
 
-    async def stop(self, *, preserve_host: bool) -> None:
+    async def stop(self, *, drain_host: bool = False) -> None:
+        """Detach from the host; drain it only on explicit opt-in.
+
+        The default leaves the gterm host and every terminal it owns running so
+        the next daemon adopts them. ``drain_host`` (or the
+        ``terminals.stop_host_on_shutdown`` config) takes the host down too.
+        """
         self._stop_requested = True
         await self.stop_producers()
-        if preserve_host:
+        if not (drain_host or self.terminal_config.stop_host_on_shutdown):
             await self.close_clients()
             return
+        self.host_drained = True
         await self._drain_if_spawned_or_stop()
         await self.close_clients()
         self.running = False
         self.host_pid = None
+
+    def preserved_host_pid(self) -> int | None:
+        """Identity-checked host pid the shutdown reaper must leave alone."""
+        if self.host_drained:
+            return None
+        pid = self.host_pid or read_pidfile(self.socket_dir)
+        if pid and self._pid_identity(pid):
+            return pid
+        return None
 
     async def stop_producers(self) -> None:
         tasks = [self._health_task, self._reconnect_task]
@@ -306,34 +345,35 @@ class TerminalHostManager:
         manager.mark_exited(terminal_id)
         self.observation_health.pop(terminal_id, None)
 
-    async def _try_adopt(self) -> bool:
+    async def _try_adopt(self) -> _Adopt:
+        """Probe the control socket; adopt a matching host, never disturb one."""
         socket_path = control_socket_path(self.socket_dir)
         if self._connector is None and not socket_path.exists():
-            return False
+            return _Adopt.ABSENT
         try:
             client = await self._connect()
+        except (OSError, ConnectionError) as exc:
+            # Nobody is listening: a stale socket file, not a live host.
+            self.last_error = str(exc)
+            return _Adopt.ABSENT
+        self.host_mismatch = None
+        try:
             token = self.ensure_control_token()
             hello = await client.hello(CONTROL_PROTOCOL_VERSION, token)
             if int(hello.protocol_version) < CONTROL_PROTOCOL_VERSION:
-                await self._shutdown_client(client)
-                self.rotate_control_token()
-                return False
+                raise HostControlError(
+                    f"host speaks control protocol {hello.protocol_version}, "
+                    f"daemon needs {CONTROL_PROTOCOL_VERSION}"
+                )
             ping = await client.ping()
             if not pid_matches_ping(
                 socket_dir=self.socket_dir,
                 host_pid=ping.host_pid,
                 identity=self._pid_identity,
             ):
-                await self._shutdown_client(client)
-                self.rotate_control_token()
-                return False
-            self._client = client
-            self.host_epoch = ping.host_epoch or hello.host_epoch
-            self.host_pid = ping.host_pid
-            self.protocol_version = int(hello.protocol_version)
-            self.adopted = True
-            self.spawned_this_construction = False
-            return True
+                raise HostControlError(
+                    f"host pid {ping.host_pid} does not match the pidfile or a live gterm"
+                )
         except (
             OSError,
             HostControlError,
@@ -341,20 +381,27 @@ class TerminalHostManager:
             PermissionError,
             ConnectionError,
         ) as exc:
+            await self._close_client(client)
+            self.host_mismatch = str(exc)
             self.last_error = str(exc)
-            return False
+            logger.warning(
+                "gterm host at %s is alive but not adoptable (%s); leaving it and its "
+                "terminals running. Drain it with `gobby stop --terminals` to replace it.",
+                socket_path,
+                exc,
+            )
+            return _Adopt.MISMATCH
+        self._client = client
+        self.host_epoch = ping.host_epoch or hello.host_epoch
+        self.host_pid = ping.host_pid
+        self.protocol_version = int(hello.protocol_version)
+        self.adopted = True
+        self.spawned_this_construction = False
+        return _Adopt.ADOPTED
 
     async def _spawn_and_connect(self) -> None:
-        stale = self._client
-        if stale is not None:
-            await self._shutdown_client(stale)
-            self._client = None
-        elif control_socket_path(self.socket_dir).exists():
-            try:
-                client = await self._connect()
-                await self._shutdown_client(client)
-            except Exception:
-                logger.debug("Could not drain stale host before spawn", exc_info=True)
+        # Only reached when nothing answered the control socket, so a fresh
+        # token cannot lock out a live host.
         self.rotate_control_token() if control_token_path(self.socket_dir).exists() else (
             self.ensure_control_token()
         )
@@ -475,15 +522,7 @@ class TerminalHostManager:
             except OSError:
                 pass
 
-    async def _shutdown_client(self, client: Any) -> None:
-        shutdown = getattr(client, "host_shutdown", None)
-        if callable(shutdown):
-            try:
-                result = shutdown(int(self.config.shutdown_grace_seconds * 1000))
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception:
-                logger.debug("stale host_shutdown failed", exc_info=True)
+    async def _close_client(self, client: Any) -> None:
         close = getattr(client, "close", None)
         if callable(close):
             result = close()

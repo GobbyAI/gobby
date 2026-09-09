@@ -85,6 +85,18 @@ pub fn wait_socket(path: &Path) {
     panic!("timed out waiting for {}", path.display());
 }
 
+/// Poll `ready` until it reports true, panicking after five seconds.
+pub fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if ready() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("timed out waiting for {what}");
+}
+
 pub fn connect(path: &Path) -> UnixStream {
     UnixStream::connect(path).unwrap_or_else(|err| {
         panic!("connect {}: {err}", path.display());

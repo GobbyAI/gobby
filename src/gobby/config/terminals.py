@@ -34,3 +34,12 @@ class TerminalConfig(BaseModel):
         le=30.0,
         description="How long shutdown drains in-flight TerminalEffectBridge tasks.",
     )
+    stop_host_on_shutdown: bool = Field(
+        default=False,
+        description=(
+            "Drain the gterm host (and every native terminal it owns) whenever the "
+            "daemon stops or restarts. Off by default: the host outlives the daemon "
+            "and is adopted again on the next start; `gobby stop --terminals` drains "
+            "it for one shutdown."
+        ),
+    )

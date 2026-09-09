@@ -344,7 +344,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
             has_unpushed, _ = git_manager.has_unpushed_commits(base_branch)
             use_local = has_unpushed
         except Exception as e:
-            self.logger.debug("WORKTREE_CREATE unpushed-commit check failed: %s", e)
+            self.logger.warning("WORKTREE_CREATE refused an unsafe base: %s", e)
+            return HookResponse(decision="allow")
 
         worktree_path = generate_worktree_path(worktree_name, Path(git_manager.repo_path).name)
         result = git_manager.create_worktree(

@@ -437,6 +437,11 @@ class MemoryDreamService:
         run = await asyncio.to_thread(self.store.get_run, run_id)
         if run is None:
             return {"success": False, "error": f"Dream run not found: {run_id}"}
+        from gobby.reports.storage import ReportStore
+
+        run["publication"] = await asyncio.to_thread(
+            ReportStore(self.store.db).get, "dream", run_id, include_content=False
+        )
         return {"success": True, "run": run}
 
     async def revert(self, run_id: str) -> dict[str, Any]:

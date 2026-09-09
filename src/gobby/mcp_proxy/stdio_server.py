@@ -7,16 +7,14 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import Tool
 
-from gobby.cli.runtime import CliRuntime
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.bootstrap import load_bootstrap as _load_bootstrap
 from gobby.mcp_proxy.instructions import build_gobby_instructions as _build_gobby_instructions
-from gobby.mcp_proxy.registries import setup_internal_registries as _setup_internal_registries
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_results import _strip_none
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools as _register_proxy_tools
@@ -24,16 +22,6 @@ from gobby.utils.daemon_url import resolve_daemon_url
 from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
-
-
-class SetupInternalRegistries(Protocol):
-    def __call__(
-        self,
-        *,
-        config_resolver: Callable[[], Any],
-        session_manager: Any,
-        memory_manager_resolver: Any,
-    ) -> Any: ...
 
 
 class ProxyFactory(Protocol):
@@ -78,9 +66,7 @@ class _StdioMCPServer(MCPServer[None]):
 
 @dataclass(frozen=True, slots=True)
 class StdioServerDependencies:
-    runtime_factory: Callable[[], CliRuntime]
     load_bootstrap: Callable[[], BootstrapConfig]
-    setup_internal_registries: SetupInternalRegistries
     build_gobby_instructions: Callable[[], str]
     mcp_server_factory: McpServerFactory
     proxy_factory: ProxyFactory
@@ -89,9 +75,7 @@ class StdioServerDependencies:
 
 def default_stdio_server_dependencies() -> StdioServerDependencies:
     return StdioServerDependencies(
-        runtime_factory=lambda: CliRuntime(None),
         load_bootstrap=lambda: _load_bootstrap(resolve_database_url=False),
-        setup_internal_registries=_setup_internal_registries,
         build_gobby_instructions=_build_gobby_instructions,
         mcp_server_factory=_StdioMCPServer,
         proxy_factory=DaemonProxy,
@@ -104,31 +88,20 @@ def create_stdio_mcp_server(
     deps: StdioServerDependencies | None = None,
     startup_task: asyncio.Task[None] | None = None,
 ) -> MCPServer:
-    """Create stdio MCP server."""
+    """Create stdio MCP server without any daemon or hub round trip.
+
+    Construction reads only process-local bootstrap facts. Every proxy tool
+    executes against the daemon's HTTP control plane, so the bridge needs no
+    hub configuration and no internal registries of its own; resolving them
+    here put a PostgreSQL connect, pool open, and config query in front of the
+    MCP ``initialize`` handshake, and a loaded control plane stalled that wait
+    past the client's startup budget (#22032).
+    """
     effective_deps = deps or default_stdio_server_dependencies()
     # The dial port is a pre-database bootstrap fact; the DB-backed config
     # projection carries only the default port and must not decide it.
     bootstrap = effective_deps.load_bootstrap()
     dial_url = resolve_daemon_url(bootstrap=bootstrap)
-    runtime = effective_deps.runtime_factory()
-    config = None
-    try:
-        config = runtime.require_config(apply_migrations=False)
-    except Exception as exc:
-        # Best-effort: lifecycle tools must register even when the hub is
-        # down; proxied calls report structured per-call errors instead.
-        logger.warning(
-            "Hub configuration is unavailable; starting stdio MCP server without it: %s", exc
-        )
-    finally:
-        runtime.close()
-
-    session_manager = None
-    _ = effective_deps.setup_internal_registries(
-        config_resolver=lambda: config,
-        session_manager=session_manager,
-        memory_manager_resolver=None,
-    )
 
     if startup_task is None:
         proxy = effective_deps.proxy_factory(bootstrap.daemon_port, base_url=dial_url)

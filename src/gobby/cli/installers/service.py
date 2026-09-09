@@ -624,9 +624,11 @@ def service_stop(
     *,
     shutdown_intent: str = "stop",
     shutdown_source: str = "service_stop",
+    drain_terminals: bool = False,
 ) -> dict[str, Any]:
     """Stop the daemon through the OS service manager."""
     from gobby.runner_maintenance import write_shutdown_source
+    from gobby.shutdown_intent import shutdown_marker_details
 
     if sys.platform == "darwin":
         stop_fn = _macos_stop
@@ -640,7 +642,11 @@ def service_stop(
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
 
     try:
-        write_shutdown_source(shutdown_source, intent=shutdown_intent)
+        write_shutdown_source(
+            shutdown_source,
+            intent=shutdown_intent,
+            details=shutdown_marker_details(drain_terminals=drain_terminals),
+        )
     except Exception as e:
         logger.warning("Failed to write shutdown source before service stop: %s", e)
     return stop_fn()

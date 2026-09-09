@@ -243,10 +243,11 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome, lines: Vec<Line<'
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::keymap::HERDR_PREFIX;
 
     #[test]
     fn filter_matches_name_description_and_keys_case_insensitively() {
-        let keymap = Keymap::defaults();
+        let keymap = Keymap::defaults(HERDR_PREFIX);
         let by_name = filtered_entries(&keymap, "SPLIT_VERT");
         assert_eq!(by_name.len(), 1);
         assert_eq!(by_name[0].name, "split_vertical");

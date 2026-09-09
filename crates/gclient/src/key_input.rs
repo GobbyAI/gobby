@@ -7,12 +7,12 @@
 //! whether the chrome consumes the key. Text commits and bracketed pastes
 //! bypass the keymap through [`text_bytes`].
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_terminal::input::{encode_terminal_key, KeyboardProtocol};
 use gobby_terminal::raw_input::RawInputEvent;
 
 use crate::ui::chrome::Mode;
-use crate::ui::keymap::{Action, Keymap};
+use crate::ui::keymap::{key_event_matches_combo, Action, KeyCombo, Keymap};
 
 /// One key press as the chrome sees it and as the focused pane receives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,12 +42,20 @@ pub enum Resolution {
     Prefix,
     /// A bound action.
     Action(Action),
-    /// Nothing bound: the focused pane receives the key.
+    /// Nothing bound: the focused pane receives the key. Inside prefix mode
+    /// the prefix chord itself resolves here (herdr's `ctrl+b ctrl+b`), so a
+    /// held pane can still be sent the literal prefix.
     Unbound,
 }
 
+/// The keyboard exit from a held pane: `ctrl+\` releases control in every
+/// mode, armed or not, before any forwarding. It needs no prefix, so an outer
+/// tmux that eats the prefix can never lock the keyboard into a pane.
+pub const RELEASE_ESCAPE: KeyCombo = (KeyCode::Char('\\'), KeyModifiers::CONTROL);
+
 /// Resolve `key` against `keymap`. Outside prefix mode the prefix chord arms
 /// and direct chords match; inside it only `prefix+` chords match.
+/// [`RELEASE_ESCAPE`] resolves first, whatever the mode.
 ///
 /// `Mode::Terminal` is the exception, and it is the whole point of taking a
 /// mode here: a focused terminal owns the keyboard, so only the prefix is
@@ -62,6 +70,9 @@ pub fn resolve_chord(
     key: &KeyEvent,
     prefix_armed: bool,
 ) -> Resolution {
+    if key_event_matches_combo(key, RELEASE_ESCAPE) {
+        return Resolution::Action(Action::ReleaseControl);
+    }
     let action = if prefix_armed {
         keymap.lookup_prefix(key)
     } else if keymap.is_prefix(key) {
@@ -86,6 +97,7 @@ pub fn text_bytes(event: &RawInputEvent) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::keymap::HERDR_PREFIX;
     use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
     use gobby_terminal::input::TerminalKey;
 
@@ -95,7 +107,7 @@ mod tests {
 
     #[test]
     fn armed_prefix_mode_ignores_direct_and_prefix_chords_alike() {
-        let keymap = Keymap::defaults();
+        let keymap = Keymap::defaults(HERDR_PREFIX);
         let up = key_input(
             &key(KeyCode::Up, KeyModifiers::NONE),
             KeyboardProtocol::Legacy,
@@ -123,7 +135,7 @@ mod tests {
 
     #[test]
     fn terminal_mode_leaves_every_direct_chord_to_the_pane() {
-        let keymap = Keymap::defaults();
+        let keymap = Keymap::defaults(HERDR_PREFIX);
         // Every bare key the default keymap binds. In a focused terminal each
         // one is an ordinary character or cursor key the shell must receive.
         for (code, action) in [
@@ -151,7 +163,7 @@ mod tests {
 
     #[test]
     fn terminal_mode_still_arms_the_prefix() {
-        let keymap = Keymap::defaults();
+        let keymap = Keymap::defaults(HERDR_PREFIX);
         let prefix = key_input(
             &key(KeyCode::Char('b'), KeyModifiers::CONTROL),
             KeyboardProtocol::Legacy,

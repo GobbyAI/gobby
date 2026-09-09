@@ -69,7 +69,7 @@ def test_embedding_switch_cli_only_calls_daemon(monkeypatch: pytest.MonkeyPatch)
         (
             "/api/embeddings/switch/start",
             "POST",
-            {"catalog_key": "qwen3-8b-q8", "provider": "ollama"},
+            {"catalog_key": "qwen3-8b-q8", "provider": "ollama", "api_base": None},
         )
     ]
 

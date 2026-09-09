@@ -516,7 +516,14 @@ async def spawn_agent_impl(
                 await handler.cleanup_environment(spawn_config)
             except Exception as cleanup_err:
                 logger.warning("Cleanup after prepare failure also failed: %s", cleanup_err)
-            return {"success": False, "error": f"Failed to prepare environment: {e}"}
+            response: dict[str, Any] = {
+                "success": False,
+                "error": f"Failed to prepare environment: {e}",
+            }
+            error_code = getattr(e, "code", None)
+            if isinstance(error_code, str):
+                response["error_code"] = error_code
+            return response
 
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)

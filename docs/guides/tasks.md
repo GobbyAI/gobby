@@ -127,11 +127,12 @@ validator already computes, so a blocked attempt followed by an unchanged retry
 serves the stored verdict and makes no second provider call. Anything that
 changes what the reviewer would see — a new task-attributed edit, a different
 commit set, edited criteria, a changed summary — moves a fingerprint and earns
-a fresh review. Each review is itself wall-clock bounded across the whole
-provider-fallback chain by
+a fresh review. The in-process criteria-review provider chain is wall-clock bounded by
 `gobby-tasks.validation.close_review_total_timeout_seconds` (120s by default);
 expiry fails closed into the same 15–120 second validation backoff as any other
-provider outage.
+provider outage. A spawned task-close validator has the separate
+`gobby-tasks.validation.close_review_validator_timeout_seconds` bound (1200s by
+default); that same bound drives its durable reconciliation deadline.
 Validation runs when the task has validation criteria. Skip-style reasons such as `duplicate`,
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.

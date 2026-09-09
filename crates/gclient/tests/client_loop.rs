@@ -11,7 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_loop::{
-    run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RENDER_TICK,
+    run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RECONNECT_DELAYS, RENDER_TICK,
 };
 use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_project,
@@ -37,7 +37,7 @@ use gobby_client::teardown::{RecordingBackend, TerminalGuard};
 use gobby_client::ui::chrome::{Mode, Tab};
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
-use gobby_client::ui::keymap::Keymap;
+use gobby_client::ui::keymap::{default_prefix, Keymap, HERDR_PREFIX};
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
@@ -330,6 +330,8 @@ fn live_entry_connects_before_running() {
             host: None,
             host_notice: None,
             prefs: gobby_client::ui::settings::ClientPrefs::default(),
+            keymap: Keymap::defaults(HERDR_PREFIX),
+            nested_tmux: false,
             gobby_home: std::path::PathBuf::new(),
         },
         &mut TerminalGuard::recording().0,
@@ -1654,7 +1656,8 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(32);
 
         let driver = async {
@@ -1852,7 +1855,8 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(16);
 
         let driver = async {
@@ -1956,7 +1960,8 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
             settle_live_event().await;
@@ -2125,7 +2130,10 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
     let unavailable = || DaemonError::Unavailable { retry_after: None };
     let daemon = ReconnectDaemon::new((0..5).map(|_| Err(unavailable())));
     let mut supervisor = ReconnectSupervisor::new();
-    let waiter = supervisor.request(Generation(7));
+    let waiter = supervisor.request(
+        Generation(7),
+        &DaemonError::Unavailable { retry_after: None },
+    );
     let mut elapsed = Vec::new();
 
     for attempt in 0..5 {
@@ -2161,7 +2169,10 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
             retry_after: Some(Duration::from_secs(30)),
         }),
     ]);
-    let cancelled = supervisor.request(Generation(8));
+    let cancelled = supervisor.request(
+        Generation(8),
+        &DaemonError::Unavailable { retry_after: None },
+    );
     assert_eq!(
         supervisor.attempt_when_due(&clamped).await,
         ReconnectAttempt::RetryScheduled {
@@ -2186,7 +2197,10 @@ async fn reconnect_supervisor_counts_delays_resets_and_cancels() {
     ));
 
     let reset = ReconnectDaemon::new([Ok(Generation(10)), Ok(Generation(11))]);
-    let first = supervisor.request(Generation(9));
+    let first = supervisor.request(
+        Generation(9),
+        &DaemonError::Unavailable { retry_after: None },
+    );
     assert_eq!(
         supervisor.attempt_when_due(&reset).await,
         ReconnectAttempt::Reconnected(Generation(10))
@@ -2349,12 +2363,18 @@ async fn reconnect_episode_rolls_generation_forward() {
     tokio::time::pause();
     let daemon = ReconnectDaemon::new([Ok(Generation(2)), Ok(Generation(3))]);
     let mut supervisor = ReconnectSupervisor::new();
-    let first = supervisor.request(Generation(1));
+    let first = supervisor.request(
+        Generation(1),
+        &DaemonError::Unavailable { retry_after: None },
+    );
     let first_attempt = supervisor
         .start_due_attempt(daemon.clone())
         .expect("first reconnect attempt");
 
-    let rolled = supervisor.request(Generation(2));
+    let rolled = supervisor.request(
+        Generation(2),
+        &DaemonError::Unavailable { retry_after: None },
+    );
     assert_eq!(
         supervisor.complete_attempt(first_attempt.await),
         ReconnectAttempt::Idle,
@@ -2912,6 +2932,139 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         websocket_requests(&mock, "terminal_take_control").len(),
         1,
         "failed reconciliation never restores writable control"
+    );
+    mock.shutdown().await;
+}
+
+/// #22002: a daemon stop or restart closes the socket with 1001. gclient must
+/// keep its panes, retry past the unexpected-loss budget, and re-attach to the
+/// same terminal ids once the daemon returns; the close frame never exits it.
+#[tokio::test]
+async fn daemon_restart_keeps_panes_and_reattaches() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    for _ in 0..4 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            json!({
+                "items": [
+                    {"terminal_id": "terminal-restart", "backend": "native", "state": "live"}
+                ],
+                "next_cursor": null,
+                "snapshot": {"daemon_epoch": "epoch-restart", "seq": 1}
+            }),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect restart daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial restart pane");
+    let pane_id = workspace
+        .pane_for_terminal("terminal-restart")
+        .expect("restart pane");
+    let old_attachment = workspace.pane(pane_id).attachment_id().to_string();
+    let observed_daemon = workspace.daemon().clone();
+    let observed_generation = observed_daemon.generation();
+    let (_, mut observed_events) = observed_daemon.subscribe();
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+    // More failed handshakes than an unexpected loss is allowed before exiting.
+    let failed_handshakes = RECONNECT_DELAYS.len() + 2;
+    let expected_handshakes = 1 + failed_handshakes + 1;
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        for _ in 0..failed_handshakes {
+            mock.fail_next_websocket();
+        }
+        mock.close_websockets_going_away();
+        let disconnected_error = timeout(Duration::from_secs(1), async {
+            loop {
+                match observed_events.recv().await.expect("restart daemon event") {
+                    DaemonEvent::Disconnected { generation, error }
+                        if generation == observed_generation =>
+                    {
+                        break error;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("restart disconnect deadline");
+        assert!(
+            matches!(disconnected_error, DaemonError::GoingAway),
+            "the daemon's shutdown close must surface as GoingAway: {disconnected_error:?}"
+        );
+
+        tokio::time::pause();
+        for _ in 0..64 {
+            if mock.websocket_handshakes() >= expected_handshakes
+                && websocket_requests(&mock, "terminal_take_control").len() >= 2
+            {
+                break;
+            }
+            tokio::time::advance(Duration::from_secs(2)).await;
+            for _ in 0..256 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("daemon restart recovery loop");
+    assert_eq!(
+        workspace.exit_reason(),
+        Some("terminal input closed"),
+        "a daemon restart must never latch the daemon-unavailable exit"
+    );
+    assert_eq!(
+        mock.websocket_handshakes(),
+        expected_handshakes,
+        "the client keeps retrying past the unexpected-loss budget"
+    );
+    assert_eq!(
+        workspace.pane_for_terminal("terminal-restart"),
+        Some(pane_id),
+        "the pane survives the restart"
+    );
+    assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
+    assert!(workspace.pane(pane_id).writable());
+    let attach_targets: Vec<String> = websocket_requests(&mock, "terminal_attach")
+        .into_iter()
+        .filter_map(|request| {
+            request
+                .get("terminal_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(
+        attach_targets,
+        vec!["terminal-restart".to_string(); 2],
+        "both attachments target the same terminal id"
     );
     mock.shutdown().await;
 }
@@ -4249,9 +4402,11 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
 
     // Tab 0: a beside b (a focused); tab 1: c. The toast points at c.
     let mut chrome = Chrome::dark();
-    chrome.keymap =
-        Keymap::from_toml("[bindings]\nlast_pane = \"prefix+i\"\nnext_attention = \"prefix+f\"\n")
-            .expect("test keymap");
+    chrome.keymap = Keymap::from_toml(
+        "[bindings]\nlast_pane = \"prefix+i\"\nnext_attention = \"prefix+f\"\n",
+        HERDR_PREFIX,
+    )
+    .expect("test keymap");
     chrome.open_pane(pane_a, "a");
     chrome.open_pane(pane_b, "b");
     chrome.open_tab(pane_c, "c");
@@ -4504,6 +4659,11 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         ..ClientPrefs::default()
     };
     save_prefs(home.path(), &light).expect("prefs for reload");
+    std::fs::write(
+        home.path().join("client").join("keymap.toml"),
+        "[bindings]\nhelp = \"prefix+f1\"\n",
+    )
+    .expect("keymap for reload");
 
     // Mirror the loop's roster split on a probe chrome to learn where each
     // pane, the first tab and the bare tab bar are drawn.
@@ -4714,6 +4874,13 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         chrome.dialog
     );
     assert_eq!(chrome.prefs.theme, "light", "reload config re-read prefs");
+    assert_eq!(
+        chrome
+            .keymap
+            .lookup_prefix(&KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)),
+        Some(gobby_client::ui::Action::Help),
+        "reload config re-read the keymap overrides"
+    );
     assert!(
         workspace.pane_for_terminal(&initial).is_none(),
         "close pane retired the terminal"
@@ -6323,6 +6490,86 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         ),
         "{:?}",
         chrome.dialog
+    );
+    mock.shutdown().await;
+}
+
+/// 4.3.2: a held pane keeps a keyboard exit under an outer tmux. `prefix
+/// prefix` writes the prefix chord itself to the pane (herdr's `ctrl+b
+/// ctrl+b`), and `ctrl+\` releases control with no prefix at all, so an outer
+/// tmux eating the prefix can never lock the keyboard into a pane.
+#[tokio::test]
+async fn held_pane_has_literal_prefix_and_keyboard_escape() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-held", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-held", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let _home = pin_tabs(&mut workspace, "project-1", &["terminal-held"]);
+    let mut chrome = Chrome::dark();
+    chrome.nested_tmux = true;
+    chrome.keymap = Keymap::defaults(default_prefix(true));
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        // Startup focus takes the lease and the mock grants it: the pane is
+        // held before the first key arrives.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        settle_live_event().await;
+        send_key(&input_tx, KeyCode::Char(']'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char(']'), KeyModifiers::CONTROL).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        send_key(&input_tx, KeyCode::Char('\\'), KeyModifiers::CONTROL).await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane = workspace
+        .pane_for_terminal("terminal-held")
+        .expect("terminal pane");
+
+    let typed: Vec<String> = websocket_requests(&mock, "terminal_input")
+        .iter()
+        .filter_map(|request| request.get("data")?.as_str().map(str::to_string))
+        .collect();
+    assert_eq!(
+        typed,
+        vec!["\u{1d}".to_string()],
+        "prefix prefix reaches the held pane as the literal chord; ctrl+\\ never does"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_release_control").len(),
+        1,
+        "ctrl+\\ releases control without the prefix"
+    );
+    assert!(
+        !workspace.pane(pane).is_held(),
+        "the pane is observed after the keyboard escape: {:?}",
+        workspace.pane(pane).control
     );
     mock.shutdown().await;
 }

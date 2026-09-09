@@ -102,12 +102,20 @@ lifecycle; set it to `false` persistently to run the daemon without the UI.
 Stop the daemon.
 
 ```bash
-gobby stop [--docker] [--wait | --force]
+gobby stop [--docker] [--terminals] [--wait | --force]
 ```
 
 Pass `--docker` to also stop the managed PostgreSQL, Qdrant, and FalkorDB
 containers with `docker compose stop`. Containers, data volumes, and their
 `unless-stopped` policy stay in place; `gobby start` brings them back.
+
+The `gterm host` process and every terminal it owns survive a stop by default:
+the daemon closes its control connection and leaves the host running, and the
+next `gobby start` adopts it, so attached `gclient` panes keep their shells.
+Pass `--terminals` to drain the host and its terminals as part of the stop.
+Setting `terminals.stop_host_on_shutdown: true` in config makes every stop
+drain; the admin `POST /shutdown?terminals=true` and
+`POST /restart?terminals=true` routes are the HTTP equivalents.
 
 A restart-protected cron run (the nightly `gobby:memory-dream` sweep, which
 runs for hours) holds a lease while it is active: `gobby stop` refuses and
@@ -122,10 +130,12 @@ after the next start so checkpointed work resumes.
 Stop and start the daemon.
 
 ```bash
-gobby restart [--verbose] [--docker] [--wait | --force]
+gobby restart [--verbose] [--docker] [--terminals] [--wait | --force]
 ```
 
-`--wait` and `--force` apply to the stop half exactly as for `gobby stop`.
+`--wait`, `--force`, and `--terminals` apply to the stop half exactly as for
+`gobby stop`: without `--terminals` the restarted daemon adopts the surviving
+`gterm host`, and attached `gclient` sessions reconnect to the same terminals.
 
 ### `gobby status`
 

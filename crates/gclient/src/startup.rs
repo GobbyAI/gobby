@@ -3,6 +3,7 @@
 use crate::frame_source::FrameDelivery;
 use crate::prefs::{load_prefs, prefs_path, PREFS_FILE};
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
+use crate::ui::keymap::{default_override_path, default_prefix, Keymap};
 use crate::ui::settings::ClientPrefs;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
 use serde::Deserialize;
@@ -31,6 +32,8 @@ pub struct CliArgs {
 pub struct ProbeEnv {
     pub daemon_url: String,
     pub token: Option<String>,
+    /// An outer tmux client owns this terminal, so its prefix eats `ctrl+b`.
+    pub nested_tmux: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +45,9 @@ pub struct Ready {
     pub host: Option<GtermHostState>,
     pub host_notice: Option<String>,
     pub prefs: ClientPrefs,
+    pub keymap: Keymap,
+    /// See [`ProbeEnv::nested_tmux`]; the keymap was built for it.
+    pub nested_tmux: bool,
     pub gobby_home: PathBuf,
 }
 
@@ -108,6 +114,11 @@ pub enum StartupError {
          Every key in the file is optional; fix or remove the offending line."
     )]
     Prefs { path: String, detail: String },
+    #[error(
+        "failed to load keymap overrides from {path}: {detail}\n\
+         Fix or remove the offending binding; a missing file is the default keymap."
+    )]
+    Keymap { path: String, detail: String },
     #[error("terminal mode: {0}")]
     Terminal(#[from] std::io::Error),
 }
@@ -303,6 +314,7 @@ pub fn resolve_probe_env_at(
     args: &CliArgs,
     default_daemon_url: &str,
     default_token_file: &Path,
+    nested_tmux: bool,
 ) -> Result<ProbeEnv, StartupError> {
     let daemon_url = args
         .daemon_url
@@ -323,6 +335,7 @@ pub fn resolve_probe_env_at(
     Ok(ProbeEnv {
         daemon_url,
         token: Some(token.to_string()),
+        nested_tmux,
     })
 }
 
@@ -337,7 +350,12 @@ fn resolve_probe_env(args: &CliArgs) -> Result<ProbeEnv, StartupError> {
             })?
             .join("local_cli_token"),
     };
-    resolve_probe_env_at(args, &default_daemon_url, &default_token_file)
+    resolve_probe_env_at(
+        args,
+        &default_daemon_url,
+        &default_token_file,
+        crate::tmux_identity::current().is_some(),
+    )
 }
 
 pub fn prepare(
@@ -371,6 +389,7 @@ pub fn prepare_at(
     if args.no_mouse {
         prefs.mouse_capture = false;
     }
+    let keymap = load_keymap(&prefs, gobby_home, env.nested_tmux)?;
     let host = health.fetch_health(&env.daemon_url)?;
     if !host
         .as_ref()
@@ -387,7 +406,36 @@ pub fn prepare_at(
         host,
         host_notice,
         prefs,
+        keymap,
+        nested_tmux: env.nested_tmux,
         gobby_home: gobby_home.to_path_buf(),
+    })
+}
+
+/// The keymap override file: `[keymap] path` from prefs when set (a relative
+/// path resolves under the gobby home), else the client-local default.
+pub fn keymap_override_path(prefs: &ClientPrefs, gobby_home: &Path) -> PathBuf {
+    if prefs.keybinds.is_empty() {
+        default_override_path(gobby_home)
+    } else {
+        gobby_home.join(&prefs.keybinds)
+    }
+}
+
+/// Load the keymap for these prefs: the defaults behind this launch's prefix
+/// (see [`ProbeEnv::nested_tmux`]) merged with the override file when it
+/// exists. A rejected file names its path and the error.
+pub fn load_keymap(
+    prefs: &ClientPrefs,
+    gobby_home: &Path,
+    nested_tmux: bool,
+) -> Result<Keymap, StartupError> {
+    let path = keymap_override_path(prefs, gobby_home);
+    Keymap::load_overrides(&path, default_prefix(nested_tmux)).map_err(|error| {
+        StartupError::Keymap {
+            path: path.display().to_string(),
+            detail: error.to_string(),
+        }
     })
 }
 

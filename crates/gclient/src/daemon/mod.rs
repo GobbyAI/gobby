@@ -38,6 +38,10 @@ pub enum DaemonError {
     NotFound,
     #[error("daemon unavailable")]
     Unavailable { retry_after: Option<Duration> },
+    /// The daemon closed the socket with 1001 (going away): a deliberate stop
+    /// or restart, not a fault. The client waits for it to come back (#22002).
+    #[error("daemon shut down; waiting for it to return")]
+    GoingAway,
     #[error("daemon protocol error: {detail}")]
     Protocol { detail: String },
     #[error("a control request is already in flight for this attachment")]
@@ -67,7 +71,7 @@ impl DaemonError {
         match self {
             Self::Unauthorized => 401,
             Self::NotFound => 404,
-            Self::Unavailable { .. } => 503,
+            Self::Unavailable { .. } | Self::GoingAway => 503,
             Self::ControlRequestInFlight | Self::ControlScopeIndeterminate => 409,
             Self::Timeout => 408,
             Self::Protocol { detail } => detail
@@ -83,6 +87,7 @@ impl DaemonError {
             Self::Unauthorized => "unauthorized",
             Self::NotFound => "not_found",
             Self::Unavailable { .. } => "unavailable",
+            Self::GoingAway => "daemon_going_away",
             Self::Protocol { detail } if detail.contains("paste_too_large") => "paste_too_large",
             Self::Protocol { .. } => "protocol",
             Self::ControlRequestInFlight => "control_request_in_flight",

@@ -565,8 +565,13 @@ def _do_stop(
     *,
     force: bool = False,
     wait: bool = False,
+    drain_terminals: bool = False,
 ) -> bool:
-    """Stop the daemon and return whether shutdown succeeded."""
+    """Stop the daemon and return whether shutdown succeeded.
+
+    ``drain_terminals`` is the only path that takes the gterm host (and its
+    native terminals) down with the daemon; by default the host survives.
+    """
     from gobby.cli.runtime import get_cli_runtime
 
     if force and wait:
@@ -599,7 +604,11 @@ def _do_stop(
     if svc.get("installed") and svc.get("running"):
         previous_pid = _get_running_daemon_pid(svc)
         click.echo("Stopping via OS service manager...")
-        result = service_stop(shutdown_intent=shutdown_intent, shutdown_source=shutdown_source)
+        result = service_stop(
+            shutdown_intent=shutdown_intent,
+            shutdown_source=shutdown_source,
+            drain_terminals=drain_terminals,
+        )
         if result.get("success"):
             if previous_pid is not None:
                 _step(f"Waiting for service-managed daemon (PID: {previous_pid}) to exit...")
@@ -635,6 +644,7 @@ def _do_stop(
         quiet=False,
         shutdown_intent=shutdown_intent,
         shutdown_source=shutdown_source,
+        drain_terminals=drain_terminals,
     )
 
     # Stop Docker containers if requested (only if not already stopped above)
@@ -664,10 +674,23 @@ def _do_stop(
     is_flag=True,
     help="Defer the stop until active restart-protected cron runs finish",
 )
+@click.option(
+    "--terminals",
+    "drain_terminals",
+    is_flag=True,
+    help="Also stop the gterm host and every native terminal it owns (they survive by default)",
+)
 @click.pass_context
-def stop(ctx: click.Context, docker_flag: bool, force: bool, wait: bool) -> None:
+def stop(
+    ctx: click.Context,
+    docker_flag: bool,
+    force: bool,
+    wait: bool,
+    drain_terminals: bool,
+) -> None:
     """Stop the Gobby daemon."""
-    sys.exit(0 if _do_stop(ctx, docker_flag, force=force, wait=wait) else 1)
+    stopped = _do_stop(ctx, docker_flag, force=force, wait=wait, drain_terminals=drain_terminals)
+    sys.exit(0 if stopped else 1)
 
 
 def _schema_restart_refusal(ctx: click.Context) -> str | None:
@@ -716,6 +739,12 @@ def _schema_restart_refusal(ctx: click.Context) -> str | None:
     is_flag=True,
     help="Defer the restart until active restart-protected cron runs finish",
 )
+@click.option(
+    "--terminals",
+    "drain_terminals",
+    is_flag=True,
+    help="Also restart the gterm host, ending every native terminal it owns",
+)
 @click.pass_context
 def restart(
     ctx: click.Context,
@@ -723,6 +752,7 @@ def restart(
     docker_flag: bool,
     force: bool,
     wait: bool,
+    drain_terminals: bool,
 ) -> None:
     """Restart the Gobby daemon (stop then start)."""
     if verbose:
@@ -738,7 +768,14 @@ def restart(
         _step("The running daemon was left alone. Reinstall gdaemon from this checkout.")
         sys.exit(1)
 
-    if not _do_stop(ctx, docker_flag, shutdown_intent="restart", force=force, wait=wait):
+    if not _do_stop(
+        ctx,
+        docker_flag,
+        shutdown_intent="restart",
+        force=force,
+        wait=wait,
+        drain_terminals=drain_terminals,
+    ):
         sys.exit(1)
 
     ctx.invoke(start, verbose=verbose)

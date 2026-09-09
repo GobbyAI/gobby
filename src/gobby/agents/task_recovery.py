@@ -446,7 +446,15 @@ class TaskRecoveryHandler:
             mutex.__exit__(None, None, None)
 
     def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> None:
-        """Remove recovered task from any agent-owned session claim variables."""
+        """Release the recovered task's claim in any agent-owned session variables.
+
+        Recovery reopens or escalates the task; it never finishes it, so the paths
+        the run edited are still that task's own. `release_claimed_task` drops the
+        claim and keeps `task_edited_files` / `task_edited_file_checkouts`, which is
+        the authoritative attribution the parent coordinator's
+        `checkpoint_agent_worktree` reads to tell the terminal child's work from
+        genuinely unattributed dirt (#21897).
+        """
         if not self._task_manager:
             return
         db = getattr(self._task_manager, "db", None)
@@ -455,7 +463,7 @@ class TaskRecoveryHandler:
 
         try:
             from gobby.workflows.state_manager import SessionVariableManager
-            from gobby.workflows.task_claim_state import remove_claimed_task
+            from gobby.workflows.task_claim_state import release_claimed_task
 
             session_var_manager = SessionVariableManager(db)
             session_ids = {
@@ -465,7 +473,7 @@ class TaskRecoveryHandler:
             }
             for session_id in session_ids:
                 session_vars = session_var_manager.get_variables(session_id)
-                merge_dict = remove_claimed_task(session_vars, task_id)
+                merge_dict = release_claimed_task(session_vars, task_id)
                 session_var_manager.merge_existing_variables(session_id, merge_dict)
         except Exception as e:
             logger.debug(

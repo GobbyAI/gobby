@@ -80,6 +80,8 @@ async def cleanup_failed_spawn(
     tmux_socket_path: str | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
+    if run_storage is not None:
+        await asyncio.to_thread(run_storage.record_spawn_error, run_id, error)
     run = await asyncio.to_thread(run_storage.get, run_id) if run_storage is not None else None
     if child_session_id is None:
         child_session_id = _string_attr(run, "child_session_id")

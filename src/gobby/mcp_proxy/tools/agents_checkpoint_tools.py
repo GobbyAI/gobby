@@ -17,7 +17,10 @@ from gobby.workflows.commit_guard import (
     inspect_checkout_path_ownership,
 )
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_claim_state import task_edited_file_set_for_checkout
+from gobby.workflows.task_claim_state import (
+    normalize_task_edited_path,
+    task_edited_file_set_for_checkout,
+)
 
 _ACTIVE_RUN_STATUSES = {"pending", "running"}
 logger = logging.getLogger(__name__)
@@ -198,6 +201,7 @@ def _checkpoint_agent_worktree(
                 task_id=task.id,
                 checkout_root=checkout_root,
                 session_ids={caller_session_id, run.child_session_id},
+                legacy_child_session_id=run.child_session_id if task_owner is None else None,
             )
             unattributed_paths = sorted(dirty_paths - authorized_paths)
             if unattributed_paths:
@@ -261,12 +265,42 @@ def _authorized_task_paths(
     task_id: str,
     checkout_root: str,
     session_ids: set[str],
+    legacy_child_session_id: str | None,
 ) -> set[str]:
+    """Return task paths, including the narrow pre-#21897 terminal recovery case.
+
+    Legacy terminal cleanup erased all task ledgers after releasing the child's
+    claim, but retained that child's session edit ledger. The caller supplies the
+    child only for an unclaimed recovered task; current or still-owned task states
+    continue to require checkout-scoped task attribution.
+    """
     variable_manager = SessionVariableManager(db)
+    variables_by_session: dict[str, dict[str, Any]] = {}
     authorized: set[str] = set()
     for session_id in session_ids:
         variables = variable_manager.get_variables(session_id)
+        variables_by_session[session_id] = variables
         authorized.update(task_edited_file_set_for_checkout(variables, task_id, checkout_root))
+
+    if legacy_child_session_id is not None:
+        legacy_variables = variables_by_session.get(legacy_child_session_id)
+        if legacy_variables is None:
+            legacy_variables = variable_manager.get_variables(legacy_child_session_id)
+        task_ledgers = (
+            legacy_variables.get("task_edited_files"),
+            legacy_variables.get("task_edited_file_checkouts"),
+            legacy_variables.get("task_edited_file_times"),
+        )
+        attribution_was_cleared = all(
+            not isinstance(ledger, dict) or task_id not in ledger for ledger in task_ledgers
+        )
+        raw_session_paths = legacy_variables.get("session_edited_files")
+        if attribution_was_cleared and isinstance(raw_session_paths, list):
+            authorized.update(
+                path
+                for value in raw_session_paths
+                if (path := normalize_task_edited_path(value)) is not None
+            )
     return authorized
 
 

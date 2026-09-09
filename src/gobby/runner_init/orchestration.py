@@ -778,6 +778,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 feedback_review_config,
                 runner.task_manager,
             )
+            runner.feedback_review_service.store.report_project_id = runner.project_id
             interrupted = runner.feedback_review_service.store.mark_running_interrupted()
             if interrupted:
                 logger.info("Marked %d orphaned feedback review run(s) interrupted", interrupted)
@@ -792,6 +793,14 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         except Exception:
             mark_service_degraded(runner, "feedback_review_cron")
             logger.exception("Failed to register feedback review cron handler")
+
+        try:
+            from gobby.runner_init.reports import init_synthesis_reports
+
+            init_synthesis_reports(runner, config, cron_executor)
+        except Exception:
+            mark_service_degraded(runner, "synthesis_reports")
+            logger.exception("Failed to initialize synthesis reporting")
 
         runner.code_index_pruner = None
         runner.code_index_nightly_repairer = None
@@ -869,7 +878,9 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         try:
             from gobby.memory.dream.cron import reconcile_interrupted_dream_runs
 
-            interrupted_runs = reconcile_interrupted_dream_runs(runner.memory_manager)
+            interrupted_runs = reconcile_interrupted_dream_runs(
+                runner.memory_manager, report_project_id=runner.project_id
+            )
             if interrupted_runs:
                 logger.info(
                     "Reconciled %d orphaned memory dream run(s) to interrupted after restart: %s",
