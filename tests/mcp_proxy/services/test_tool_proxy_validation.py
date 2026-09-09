@@ -7,7 +7,9 @@ These tests verify that the ToolProxyService:
 4. Valid parameters pass through normally
 """
 
+import logging
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +18,7 @@ from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.git_utils import GitStatusUnavailable
 
 pytestmark = pytest.mark.unit
 
@@ -1165,6 +1168,89 @@ class TestWorkflowBeforeToolEnforcement:
         )
 
     @pytest.mark.asyncio
+    async def test_read_only_internal_tool_runs_when_git_status_is_unavailable(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ) -> None:
+        """A transient Git probe failure must not block an internal read."""
+        mock_hook_manager._workflow_handler.evaluate.side_effect = GitStatusUnavailable(
+            "status timeout"
+        )
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"tasks": [], "count": 0})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        with patch(
+            "gobby.mcp_proxy.services.result_handling.audit_source_block", new_callable=AsyncMock
+        ) as audit:
+            result = await tool_proxy_with_hooks.call_tool(
+                server_name="gobby-tasks",
+                tool_name="list_tasks",
+                arguments={},
+                session_id="session-123",
+                enforce_workflow=True,
+            )
+
+        assert result == {"tasks": [], "count": 0}
+        mock_registry.call.assert_awaited_once_with("list_tasks", {})
+        audit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("server_name", "tool_name", "is_internal"),
+        [
+            pytest.param("gobby-tasks", "update_task", True, id="internal-mutation"),
+            pytest.param("third-party", "list_records", False, id="external-read-name"),
+        ],
+    )
+    async def test_git_status_unavailable_still_blocks_untrusted_tool_calls(
+        self,
+        tool_proxy_with_hooks,
+        mock_hook_manager,
+        mock_internal_manager,
+        caplog,
+        server_name: str,
+        tool_name: str,
+        is_internal: bool,
+    ) -> None:
+        """Mutations and external tools stay fail-closed without Git evidence."""
+        mock_hook_manager._workflow_handler.evaluate.side_effect = GitStatusUnavailable(
+            "status timeout"
+        )
+        mock_internal_manager.is_internal.return_value = is_internal
+
+        with (
+            patch(
+                "gobby.mcp_proxy.services.result_handling.audit_source_block",
+                new_callable=AsyncMock,
+            ) as audit,
+            caplog.at_level(logging.WARNING, logger="gobby.mcp.server"),
+        ):
+            _, _, _, error, outcome = await tool_proxy_with_hooks._apply_before_tool_enforcement(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments={},
+                session_id="session-123",
+            )
+
+        assert error == {
+            "success": False,
+            "error": "Git status is temporarily unavailable; retry the tool.",
+            "error_code": "TOOL_BLOCKED",
+            "server_name": server_name,
+            "tool_name": tool_name,
+        }
+        assert outcome == "failed_pre_dispatch"
+        audit.assert_awaited_once()
+        matching = [
+            record
+            for record in caplog.records
+            if "Workflow evaluation blocked" in record.getMessage()
+        ]
+        assert len(matching) == 1
+        assert matching[0].exc_info is None
+
+    @pytest.mark.asyncio
     async def test_workflow_block_prevents_execution(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ):
@@ -1401,6 +1487,33 @@ class TestDirectMcpAfterToolWorkflow:
             validate_arguments=False,
             hook_manager_resolver=lambda: mock_hook_manager,
         )
+
+    @pytest.mark.asyncio
+    async def test_git_status_unavailable_after_tool_logs_once_without_traceback(
+        self, tool_proxy_with_hooks, mock_hook_manager, caplog
+    ) -> None:
+        """Expected after-tool Git probe failures stay concise and non-blocking."""
+        mock_hook_manager._session_manager.get.return_value.source = "pipeline"
+        mock_hook_manager._workflow_handler.evaluate.side_effect = GitStatusUnavailable(
+            "status timeout"
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp.server"):
+            await tool_proxy_with_hooks._apply_after_tool_workflow(
+                server_name="gobby-tasks",
+                tool_name="update_task",
+                arguments={"task_id": "#123"},
+                session_id="session-123",
+                tool_output={"success": True},
+            )
+
+        matching = [
+            record
+            for record in caplog.records
+            if "Workflow after_tool evaluation skipped" in record.getMessage()
+        ]
+        assert len(matching) == 1
+        assert matching[0].exc_info is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1651,11 +1764,11 @@ class TestStripUnknownParameters:
 
     @pytest.mark.asyncio
     async def test_strip_unknown_still_fails_on_missing_required(
-        self, tool_proxy, mock_mcp_manager
-    ):
+        self, tool_proxy: Any, mock_mcp_manager: MagicMock
+    ) -> None:
         """Verify strip_unknown=True still rejects missing required parameters."""
 
-        async def mock_get_schema(server, tool):
+        async def mock_get_schema(_server: str, tool: str) -> dict[str, object]:
             return {
                 "success": True,
                 "tool": {
@@ -1686,9 +1799,9 @@ class TestStripUnknownParameters:
     @pytest.mark.asyncio
     async def test_strip_unknown_still_rejects_type_mismatch(
         self,
-        tool_proxy,
-        mock_mcp_manager,
-    ):
+        tool_proxy: Any,
+        mock_mcp_manager: MagicMock,
+    ) -> None:
         input_schema = {
             "type": "object",
             "properties": {"limit": {"type": "integer"}},
