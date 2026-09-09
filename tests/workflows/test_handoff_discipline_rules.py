@@ -16,6 +16,7 @@ from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observer_context_usage import (
+    _thresholds,
     detect_context_compact_guidance,
     detect_mid_turn_context_compact_guidance,
 )
@@ -132,20 +133,19 @@ class _Sessions:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("event_type", [HookEventType.BEFORE_AGENT, HookEventType.AFTER_TOOL])
 @pytest.mark.parametrize(
-    "window,warning,config",
+    "window,config",
     [
-        (128_000, 51_200, None),
-        (200_000, 80_000, None),
-        (256_000, 128_000, None),
-        (None, 128_000, None),
-        (1_000_000, 200_000, ContextHandoffConfig(warn_tokens=200_000)),
+        (128_000, None),
+        (200_000, None),
+        (256_000, None),
+        (None, None),
+        (1_000_000, ContextHandoffConfig(warn_tokens=200_000)),
     ],
 )
 async def test_warning_loads_follow_model_threshold_and_loaded_state(
     db: HubDatabase,
     event_type: HookEventType,
     window: int | None,
-    warning: int,
     config: ContextHandoffConfig | None,
 ) -> None:
     event = HookEvent(
@@ -160,6 +160,7 @@ async def test_warning_loads_follow_model_threshold_and_loaded_state(
         "servers_listed": True,
     }
     engine = RuleEngine(db)
+    warning, _block, _cadence = _thresholds(config, window)
     for used, expected in [(warning - 1, False), (warning, True)]:
         manager = _Sessions(used, window)
         if event_type == HookEventType.BEFORE_AGENT:
