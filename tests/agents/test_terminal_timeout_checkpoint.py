@@ -29,7 +29,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_claim_state import add_claimed_task
+from gobby.workflows.task_claim_state import add_claimed_task, remove_claimed_task
 from gobby.worktrees.git import WorktreeGitManager
 
 TRACKED_PATH = "tracked.txt"
@@ -225,14 +225,31 @@ async def _time_out_and_clean_up(harness: _TimeoutHarness) -> None:
     assert harness.worktree_owner() is None
 
 
+def _simulate_pre_fix_attribution_cleanup(harness: _TimeoutHarness) -> None:
+    """Recreate terminal cleanup before #21897 preserved task-scoped edit ledgers."""
+    variables = harness.variables.get_variables(harness.child_session_id)
+    session_paths = variables["session_edited_files"]
+    harness.variables.merge_existing_variables(
+        harness.child_session_id,
+        remove_claimed_task(variables, harness.task_id),
+    )
+
+    cleared = harness.variables.get_variables(harness.child_session_id)
+    assert cleared["session_edited_files"] == session_paths
+    assert harness.task_id not in cleared["task_edited_files"]
+    assert harness.task_id not in cleared["task_edited_file_checkouts"]
+    assert harness.task_id not in cleared["task_edited_file_times"]
+
+
 @pytest.mark.asyncio
-async def test_parent_checkpoints_timed_out_child_and_restores_worktree_reuse(
+async def test_parent_checkpoints_pre_fix_timed_out_child_and_restores_worktree_reuse(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     harness = _harness(temp_db, sample_project, tmp_path)
     await _time_out_and_clean_up(harness)
+    _simulate_pre_fix_attribution_cleanup(harness)
 
     result = await harness.checkpoint()
 
@@ -275,6 +292,29 @@ async def test_timeout_cleanup_keeps_the_child_task_edit_attribution(
 
 
 @pytest.mark.asyncio
+async def test_session_ledger_without_recovered_task_release_remains_unattributed(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, sample_project, tmp_path)
+    timed_out = harness.agent_runs.timeout(harness.run.id, error="Execution timed out")
+    assert timed_out is not None
+    _simulate_pre_fix_attribution_cleanup(harness)
+    head = _git(harness.worktree_path, "rev-parse", "HEAD")
+    status = _git(harness.worktree_path, "status", "--porcelain=v1")
+
+    result = await harness.checkpoint()
+
+    assert result["success"] is False
+    assert result["error_code"] == "unattributed_paths"
+    assert result["paths"] == [TRACKED_PATH, UNTRACKED_PATH]
+    assert _git(harness.worktree_path, "rev-parse", "HEAD") == head
+    assert _git(harness.worktree_path, "status", "--porcelain=v1") == status
+    assert harness.worktree_owner() is None
+
+
+@pytest.mark.asyncio
 async def test_unattributed_dirt_after_timeout_cleanup_leaves_the_checkout_unchanged(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -282,6 +322,7 @@ async def test_unattributed_dirt_after_timeout_cleanup_leaves_the_checkout_uncha
 ) -> None:
     harness = _harness(temp_db, sample_project, tmp_path)
     await _time_out_and_clean_up(harness)
+    _simulate_pre_fix_attribution_cleanup(harness)
     (harness.worktree_path / "stray.txt").write_text("nobody owns this\n", encoding="utf-8")
     head = _git(harness.worktree_path, "rev-parse", "HEAD")
     status = _git(harness.worktree_path, "status", "--porcelain=v1")
@@ -305,6 +346,7 @@ async def test_foreign_attributed_dirt_after_timeout_cleanup_leaves_the_checkout
     foreign_path = "foreign.txt"
     harness = _harness(temp_db, sample_project, tmp_path, extra_child_paths=(foreign_path,))
     await _time_out_and_clean_up(harness)
+    _simulate_pre_fix_attribution_cleanup(harness)
 
     # An unrelated live session owns an open task that also claims the path.
     project_id = str(sample_project["id"])
