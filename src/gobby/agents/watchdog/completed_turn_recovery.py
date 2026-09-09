@@ -1,6 +1,7 @@
 """Bounded completed-turn recovery orchestration for the idle watchdog."""
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Literal, Protocol
 
@@ -94,13 +95,20 @@ def step_progress_requires_gobby_mcp(step_context: StepWorkflowContext | None) -
 
 
 def codex_mcp_startup_error(pane_tail: str | None) -> str | None:
-    """Return the Codex MCP startup failure line visible in the pane tail."""
+    """Return the latest Codex MCP startup diagnostic, retaining wrapped cause text."""
     if pane_tail is None:
         return None
-    for raw_line in reversed(pane_tail.splitlines()):
-        line = raw_line.strip()
-        if "MCP client for" in line and "failed to start" in line:
-            return line
+    paragraphs: list[str] = re.split(r"\n\s*\n", pane_tail)
+    for paragraph in reversed(paragraphs):
+        # Codex's required-server error can wrap inside the identifying phrase
+        # and the handshake cause. Blank lines separate it from other output.
+        diagnostic = " ".join(paragraph.split())
+        if "required MCP servers failed to initialize:" in diagnostic:
+            return diagnostic
+        for raw_line in reversed(paragraph.splitlines()):
+            line = raw_line.strip()
+            if "MCP client for" in line and "failed to start" in line:
+                return line
     return None
 
 
