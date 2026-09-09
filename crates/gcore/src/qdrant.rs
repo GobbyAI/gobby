@@ -389,6 +389,16 @@ fn create_collection(
         .json(&body)
         .send()?;
     let status = resp.status();
+    if status == StatusCode::CONFLICT {
+        let conflict =
+            qdrant_http_error("create collection", status, resp, collection, request_path);
+        // Another writer may create the collection between our GET and PUT.
+        // A conflict is usable only after verifying the installed schema.
+        return match collection_schema(config, collection)? {
+            Some(found) => ensure_compatible_collection(collection, schema, &found),
+            None => Err(conflict),
+        };
+    }
     if !status.is_success() {
         return Err(qdrant_http_error(
             "create collection",
