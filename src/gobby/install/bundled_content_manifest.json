@@ -559,7 +559,7 @@
     "workflows/rules/skill-discovery/require-objc-skill.yaml": "b31a401ac04c5652884f73a172af9d0c9c15c683798360a026b8a495709761e7",
     "workflows/rules/skill-discovery/require-php-skill.yaml": "807c3af79798186c403b2a03ae8fddc488e7bc2efe260ff633f2a5fa741e3938",
     "workflows/rules/skill-discovery/require-plan-skill.yaml": "3ac4f5d13a7a49f70fbc33972a4ede2fbd06f981b87c0099efce45bd05bce016",
-    "workflows/rules/skill-discovery/require-python-skill.yaml": "f066b5bb3d1b431ad737b421bae6fa792168c4e1411f087ff87cccfcc4875985",
+    "workflows/rules/skill-discovery/require-python-skill.yaml": "96a531305f4ccb4d2ca1cf64618668ad7b0f0abf4952e15160bf5c188f3ff1d2",
     "workflows/rules/skill-discovery/require-ruby-skill.yaml": "aa4fb5f87eda99def75a3ea5e153a2af3458312dbfa81d4fc247fd47d98122e6",
     "workflows/rules/skill-discovery/require-rust-skill.yaml": "2dd0a77f35d7d8250917c51f7287161a4784fd8367983f1afbae16fce9c01f74",
     "workflows/rules/skill-discovery/require-scala-skill.yaml": "ef2ff3e0b3a4f6a0edd5f7bc2591ad99cc3436efc74c0955051e59d702dfd2f5",

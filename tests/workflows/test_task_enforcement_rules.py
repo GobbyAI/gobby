@@ -664,6 +664,55 @@ class TestRequireTaskBeforeEdit:
         assert data["canonical_repo_mutation"] is False
         assert response.decision == "allow"
 
+    @pytest.mark.parametrize("file_name", ["helper.py", "progress.png", "progress.json"])
+    @pytest.mark.asyncio
+    async def test_session_scratchpad_artifact_write_does_not_require_task(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        file_name: str,
+    ) -> None:
+        _sync_bundled(db)
+        checkout = tmp_path / "checkout"
+        common_dir = checkout / ".git"
+        scratchpad = tmp_path / "gobby-agent-scratchpad-session"
+        scratch_git_dir = common_dir / "worktrees" / "scratchpad"
+        scratch_git_dir.mkdir(parents=True)
+        scratchpad.mkdir()
+        (scratchpad / ".git").write_text(
+            f"gitdir: {scratch_git_dir}\n",
+            encoding="utf-8",
+        )
+        (scratch_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        target = scratchpad / file_name
+        data: dict[str, object] = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(target), "content": "artifact"},
+            "project_path": str(checkout),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+                "loaded_skills": ["development-discipline", "json", "restraint"],
+            },
+        )
+
+        assert data["canonical_repo_mutation"] is False
+        assert response.decision == "allow", response.reason
+
     @pytest.mark.asyncio
     async def test_registered_worktree_write_still_requires_task(
         self,
