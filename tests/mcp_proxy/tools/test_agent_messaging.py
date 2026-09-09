@@ -179,6 +179,65 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_send_message_defaults_to_compact_response(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Default responses acknowledge delivery without echoing wire diagnostics."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from"),
+            "s-to": MockSession(id="s-to"),
+        }.get(sid)
+        mock_message_manager.create_message.return_value = MockMessage(content="private body")
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "private body",
+            },
+        )
+
+        assert result == {
+            "success": True,
+            "target": "session",
+            "target_id": "s-to",
+            "recipient_count": 1,
+            "delivery_status": "sent",
+            "message_ids": ["msg-1"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_send_message_brief_false_preserves_full_diagnostics(
+        self, messaging_registry, mock_session_manager, mock_message_manager
+    ) -> None:
+        """Callers may request the existing lossless diagnostic response."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from"),
+            "s-to": MockSession(id="s-to"),
+        }.get(sid)
+        mock_message_manager.create_message.return_value = MockMessage(content="diagnostic body")
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "diagnostic body",
+                "brief": False,
+            },
+        )
+
+        assert result["recipient_session_ids"] == ["s-to"]
+        assert result["selector_metadata"] == {"target": "session", "session_id": "s-to"}
+        assert result["wake_results"] == []
+        assert result["failed_broadcasts"] == []
+        assert result["failed_ws_broadcasts"] == []
+        assert result["message"]["content"] == "diagnostic body"
+
+    @pytest.mark.asyncio
     async def test_send_message_accepts_session_target_and_metadata(
         self, messaging_registry, mock_session_manager, mock_message_manager
     ) -> None:
@@ -202,7 +261,8 @@ class TestSendMessage:
         )
 
         assert result["success"] is True
-        assert result["recipient_session_ids"] == ["s-to"]
+        assert result["target_id"] == "s-to"
+        assert result["recipient_count"] == 1
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
         assert call_kwargs["priority"] == "high"
         assert call_kwargs["message_type"] == "task_assignment"
@@ -236,8 +296,8 @@ class TestSendMessage:
             )
 
         assert result["success"] is True
-        assert result["recipient_session_ids"] == ["s-to"]
-        assert result["message"]["from_session"] == "s-from"
+        assert result["target_id"] == "s-to"
+        assert result["recipient_count"] == 1
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
         assert call_kwargs["from_session"] == "s-from"
         assert call_kwargs["to_session"] == "s-to"
@@ -329,6 +389,8 @@ class TestSendMessage:
             "build",
         ]
         assert schema["inputSchema"]["properties"]["wake"]["default"] is False
+        assert schema["inputSchema"]["properties"]["brief"]["default"] is True
+        assert "brief=false" in description
         assert "include_wakeup" not in schema["inputSchema"]["properties"]
 
     def test_no_positional_from_session_in_production_callers(self) -> None:
@@ -565,17 +627,10 @@ class TestSendMessage:
         )
 
         assert result["success"] is True
-        assert result["recipient_session_ids"] == ["s-child"]
+        assert result["recipient_count"] == 1
         assert result["broadcast_id"]
         assert wake_dispatcher.calls == ["s-child"]
-        assert result["wake_results"] == [
-            {
-                "session_id": "s-child",
-                "delivered": True,
-                "method": "fake",
-                "session_status": "active",
-            }
-        ]
+        assert "wake_results" not in result
 
     @pytest.mark.asyncio
     async def test_normal_send_queues_without_live_wake(
@@ -624,7 +679,8 @@ class TestSendMessage:
         )
 
         assert result["success"] is True
-        assert result["wake_results"] == []
+        assert result["delivery_status"] == "sent"
+        assert "wake_results" not in result
         assert wake_dispatcher.calls == []
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
         assert call_kwargs["priority"] == "normal"
@@ -819,6 +875,7 @@ class TestSendMessage:
                 "target_id": recipient.id,
                 "content": "urgent update",
                 "wake": True,
+                "brief": False,
             },
         )
 
@@ -922,6 +979,7 @@ class TestSendMessage:
                     "target": "build",
                     "target_id": "#354",
                     "content": "daemon restart warning",
+                    "brief": False,
                 },
             )
         finally:
@@ -1003,6 +1061,7 @@ class TestSendMessage:
                 "target_id": "run-1",
                 "project_id": "proj-target",
                 "content": "daemon restart warning",
+                "brief": False,
             },
         )
 
@@ -1064,8 +1123,10 @@ class TestSendMessage:
 
         assert result["success"] is True
         assert result["message_ids"] == ["msg-direct"]
-        assert result["message"]["delivered_at"] is None
-        assert result["wake_results"][0]["error_code"] == "no_tmux_pane"
+        assert result["delivery_status"] == "sent_with_failures"
+        assert result["wake_failures"][0]["error_code"] == "no_tmux_pane"
+        assert "message" not in result
+        assert "wake_results" not in result
         mock_message_manager.mark_delivered.assert_not_called()
 
         mock_message_manager.get_message.return_value = created
@@ -1100,7 +1161,8 @@ class TestSendMessage:
         )
 
         assert result["success"] is True
-        assert result["recipient_session_ids"] == ["s-to"]
+        assert result["target_id"] == "s-to"
+        assert result["recipient_count"] == 1
 
     @pytest.mark.asyncio
     async def test_send_message_auto_writes_agent_runs_result(
@@ -1303,7 +1365,9 @@ class TestGetInterSessionMessages:
     """get_inter_session_messages is a read-only message history query."""
 
     @pytest.mark.asyncio
-    async def test_returns_messages(self, messaging_registry, mock_message_manager) -> None:
+    async def test_returns_messages(
+        self, messaging_registry: Any, mock_message_manager: Any
+    ) -> None:
         """Returns messages from list_messages as dicts."""
         msg1 = MockMessage(id="msg-1", content="hello")
         msg2 = MockMessage(id="msg-2", content="world")

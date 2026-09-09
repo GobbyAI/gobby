@@ -126,7 +126,9 @@ def add_messaging_tools(
             "without daemon input. Wake-result delivery means trigger dispatch, not "
             "mailbox acknowledgement. Optional priority, message_type, metadata, and wake "
             "are keyword-only. For message_type='task_blocker', metadata.task_id must name "
-            "the blocked assigned task."
+            "the blocked assigned task. Responses are brief by default: target, recipient "
+            "count, delivery status, and message IDs. Pass brief=false for the full message, "
+            "selector, wake, and broadcast diagnostics."
         ),
     )
     async def send_message(
@@ -140,6 +142,7 @@ def add_messaging_tools(
         wake: bool = False,
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
+        brief: bool = True,
     ) -> dict[str, Any]:
         try:
             if from_session is None:
@@ -275,7 +278,35 @@ def add_messaging_tools(
             response["failed_ws_broadcasts"] = failed_ws_broadcasts
             response["success"] = send_result.success
             response["message"] = msg.to_dict() if msg is not None else None
-            return response
+            if not brief or not send_result.success:
+                return response
+
+            wake_failures = [
+                result
+                for result in send_result.wake_results
+                if result.get("delivered") is not True and "skipped" not in result
+            ]
+            has_failures = bool(
+                send_result.failed_broadcasts or failed_ws_broadcasts or wake_failures
+            )
+            brief_response: dict[str, Any] = {
+                "success": True,
+                "target": send_result.target,
+                "recipient_count": len(send_result.recipient_session_ids),
+                "delivery_status": "sent_with_failures" if has_failures else "sent",
+                "message_ids": send_result.message_ids,
+            }
+            if send_result.target_id is not None:
+                brief_response["target_id"] = send_result.target_id
+            if send_result.broadcast_id is not None:
+                brief_response["broadcast_id"] = send_result.broadcast_id
+            if send_result.failed_broadcasts:
+                brief_response["failed_broadcasts"] = send_result.failed_broadcasts
+            if failed_ws_broadcasts:
+                brief_response["failed_ws_broadcasts"] = failed_ws_broadcasts
+            if wake_failures:
+                brief_response["wake_failures"] = wake_failures
+            return brief_response
 
         except Exception as e:
             logger.error("send_message failed: %s", e)
