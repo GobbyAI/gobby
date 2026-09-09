@@ -82,6 +82,17 @@ async def test_unrelated_staged_target_file_lands_by_fast_forward(tmp_path: Path
     ctx.worktree_storage.mark_merged.assert_called_once_with("wt-real")
 
 
+async def test_target_only_history_does_not_create_false_dirty_overlap(tmp_path: Path) -> None:
+    repo, _, git_manager, ctx = _repo_with_feature(tmp_path)
+    _commit_file(repo, "target-only.txt", "committed on target\n")
+    (repo / "target-only.txt").write_text("dirty target state\n", encoding="utf-8")
+
+    result = await _merge(ctx, git_manager)
+
+    assert result["success"] is True
+    assert (repo / "target-only.txt").read_text(encoding="utf-8") == "dirty target state\n"
+
+
 @pytest.mark.asyncio
 async def test_overlapping_staged_target_file_is_rejected(tmp_path: Path) -> None:
     repo, _, git_manager, ctx = _repo_with_feature(tmp_path)

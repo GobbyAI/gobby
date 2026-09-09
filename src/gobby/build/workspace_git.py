@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from pathlib import Path
 
 from gobby.build.workspace_common import BuildWorkspaceError
 from gobby.paths import get_gobby_home
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
 
 
@@ -16,32 +18,32 @@ def _workspace_path(kind: str, project_name: str, branch_name: str) -> Path:
     return get_gobby_home() / kind / project_name / safe_branch
 
 
-def _is_git_workspace_dir(path: str | Path) -> bool:
+async def _is_git_workspace_dir(path: str | Path) -> bool:
     workspace = Path(path)
     if not workspace.is_dir():
         return False
-    result = _git(workspace, ["rev-parse", "--is-inside-work-tree"], timeout=10)
+    result = await _git(workspace, ["rev-parse", "--is-inside-work-tree"], timeout=10)
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-def _branch_exists(repo_path: Path, branch_name: str) -> bool:
-    result = _git(repo_path, ["rev-parse", "--verify", branch_name], timeout=10)
+async def _branch_exists(repo_path: Path, branch_name: str) -> bool:
+    result = await _git(repo_path, ["rev-parse", "--verify", branch_name], timeout=10)
     return result.returncode == 0
 
 
-def _ensure_source_branch(repo_path: Path, *, branch_name: str, base_branch: str) -> None:
-    if _branch_exists(repo_path, branch_name):
+async def _ensure_source_branch(repo_path: Path, *, branch_name: str, base_branch: str) -> None:
+    if await _branch_exists(repo_path, branch_name):
         return
-    result = _git(repo_path, ["branch", branch_name, base_branch], timeout=30)
+    result = await _git(repo_path, ["branch", branch_name, base_branch], timeout=30)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise BuildWorkspaceError(f"failed to create integration branch {branch_name}: {detail}")
 
 
-def _refresh_clean_git_dir(path: str | Path, branch_name: str, base_ref: str) -> None:
+async def _refresh_clean_git_dir(path: str | Path, branch_name: str, base_ref: str) -> None:
     workspace = Path(path)
-    _ensure_clean_git_dir(workspace)
-    current = _git(workspace, ["branch", "--show-current"], timeout=10)
+    await _ensure_clean_git_dir(workspace)
+    current = await _git(workspace, ["branch", "--show-current"], timeout=10)
     if current.returncode != 0:
         detail = current.stderr.strip() or current.stdout.strip()
         raise BuildWorkspaceError(f"failed to inspect integration branch {workspace}: {detail}")
@@ -50,86 +52,92 @@ def _refresh_clean_git_dir(path: str | Path, branch_name: str, base_ref: str) ->
             f"integration workspace branch mismatch: {current.stdout.strip()} != {branch_name}"
         )
 
-    if _is_ancestor(workspace, base_ref, "HEAD"):
+    if await _is_ancestor(workspace, base_ref, "HEAD"):
         return
     try:
-        if _is_ancestor(workspace, "HEAD", base_ref):
-            result = _git(workspace, ["merge", "--ff-only", base_ref], timeout=60)
+        if await _is_ancestor(workspace, "HEAD", base_ref):
+            result = await _git(workspace, ["merge", "--ff-only", base_ref], timeout=60)
         else:
-            result = _git(
+            result = await _git(
                 workspace,
                 ["merge", "--no-edit", base_ref],
                 timeout=60,
                 env={"GOBBY_MERGE": "1"},
             )
+    except asyncio.CancelledError:
+        await _abort_merge_safely(workspace)
+        raise
     except subprocess.TimeoutExpired as exc:
-        _abort_merge_safely(workspace)
+        await _abort_merge_safely(workspace)
         raise BuildWorkspaceError(
             f"failed to refresh integration workspace {workspace} from {base_ref}: "
             f"git merge timed out after {exc.timeout}s"
         ) from exc
     if result.returncode != 0:
-        _abort_merge_safely(workspace)
+        await _abort_merge_safely(workspace)
         detail = result.stderr.strip() or result.stdout.strip()
         raise BuildWorkspaceError(
             f"failed to refresh integration workspace {workspace} from {base_ref}: {detail}"
         )
-    _ensure_clean_git_dir(workspace)
+    await _ensure_clean_git_dir(workspace)
 
 
-def _merge_required_commits(
+async def _merge_required_commits(
     workspace: Path,
     *,
     commits: list[tuple[str, str]],
     source_repo_path: Path,
 ) -> None:
-    _ensure_clean_git_dir(workspace)
+    await _ensure_clean_git_dir(workspace)
     for task_ref, commit_sha in commits:
-        resolved_sha = _ensure_commit_available(workspace, commit_sha, source_repo_path)
-        if _is_ancestor(workspace, resolved_sha, "HEAD"):
+        resolved_sha = await _ensure_commit_available(workspace, commit_sha, source_repo_path)
+        if await _is_ancestor(workspace, resolved_sha, "HEAD"):
             continue
         try:
-            result = _git(
+            result = await _git(
                 workspace,
                 ["merge", "--no-ff", "--no-edit", resolved_sha],
                 timeout=120,
                 env={"GOBBY_MERGE": "1"},
             )
+        except asyncio.CancelledError:
+            await _abort_merge_safely(workspace)
+            raise
         except subprocess.TimeoutExpired as exc:
-            _abort_merge_safely(workspace)
+            await _abort_merge_safely(workspace)
             raise BuildWorkspaceError(
                 f"failed to merge closed child commit {commit_sha} from {task_ref}: "
                 f"git merge timed out after {exc.timeout}s"
             ) from exc
         if result.returncode != 0:
-            _abort_merge_safely(workspace)
+            await _abort_merge_safely(workspace)
             detail = result.stderr.strip() or result.stdout.strip()
             raise BuildWorkspaceError(
                 f"failed to merge closed child commit {commit_sha} from {task_ref}: {detail}"
             )
-        _ensure_clean_git_dir(workspace)
+        await _ensure_clean_git_dir(workspace)
 
 
-def _ensure_commit_available(
+async def _ensure_commit_available(
     workspace: Path,
     commit_sha: str,
     source_repo_path: Path,
 ) -> str:
-    resolved = _resolve_commit(workspace, commit_sha)
+    resolved = await _resolve_commit(workspace, commit_sha)
     if resolved:
         return resolved
 
-    direct_fetch = _git(workspace, ["fetch", str(source_repo_path), commit_sha], timeout=60)
-    resolved = _resolve_commit(workspace, commit_sha)
+    direct_fetch = await _git(workspace, ["fetch", str(source_repo_path), commit_sha], timeout=60)
+    resolved = await _resolve_commit(workspace, commit_sha)
     if resolved:
         return resolved
 
-    branch_fetch = _git(
+    branch_fetch = await _git(
         workspace,
         ["fetch", str(source_repo_path), "+refs/heads/*:refs/remotes/gobby-source/*"],
         timeout=120,
     )
-    resolved = _resolve_commit(workspace, commit_sha)
+    resolved = await _resolve_commit(workspace, commit_sha)
     if resolved:
         return resolved
 
@@ -143,45 +151,56 @@ def _ensure_commit_available(
     raise BuildWorkspaceError(f"closed child commit {commit_sha} is unavailable: {detail}")
 
 
-def _resolve_commit(workspace: Path, commit_sha: str) -> str | None:
-    result = _git(workspace, ["rev-parse", "--verify", f"{commit_sha}^{{commit}}"], timeout=10)
+async def _resolve_commit(workspace: Path, commit_sha: str) -> str | None:
+    result = await _git(
+        workspace, ["rev-parse", "--verify", f"{commit_sha}^{{commit}}"], timeout=10
+    )
     if result.returncode != 0:
         return None
     return result.stdout.strip()
 
 
-def _abort_merge_safely(workspace: Path) -> None:
+async def _abort_merge_safely(workspace: Path) -> None:
     try:
-        _git(workspace, ["merge", "--abort"], timeout=30)
-    except subprocess.TimeoutExpired:
+        await _git(workspace, ["merge", "--abort"], timeout=30)
+    except (OSError, subprocess.SubprocessError):
         pass
 
 
-def _is_ancestor(repo_path: Path, ancestor: str, descendant: str) -> bool:
-    result = _git(
+async def _is_ancestor(repo_path: Path, ancestor: str, descendant: str) -> bool:
+    result = await _git(
         repo_path,
         ["merge-base", "--is-ancestor", ancestor, descendant],
         timeout=30,
     )
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = result.stderr.strip() or result.stdout.strip() or "unknown Git error"
+    raise BuildWorkspaceError(
+        f"failed to compare {ancestor} with {descendant} in {repo_path}: {detail}"
+    )
 
 
-def _clone_base_ref(path: str | Path, base_branch: str) -> str:
+async def _clone_base_ref(path: str | Path, base_branch: str) -> str:
     workspace = Path(path)
-    fetch = _git(
+    fetch = await _git(
         workspace,
         ["fetch", "origin", f"{base_branch}:refs/remotes/origin/{base_branch}"],
         timeout=60,
     )
     if fetch.returncode == 0:
         remote_ref = f"origin/{base_branch}"
-        if _git(workspace, ["rev-parse", "--verify", remote_ref], timeout=10).returncode == 0:
+        if (
+            await _git(workspace, ["rev-parse", "--verify", remote_ref], timeout=10)
+        ).returncode == 0:
             return remote_ref
     return base_branch
 
 
-def _ensure_clean_git_dir(path: str | Path) -> None:
-    result = _git(Path(path), ["status", "--porcelain"], timeout=10)
+async def _ensure_clean_git_dir(path: str | Path) -> None:
+    result = await _git(Path(path), ["status", "--porcelain"], timeout=10)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise BuildWorkspaceError(f"failed to inspect integration workspace {path}: {detail}")
@@ -189,7 +208,7 @@ def _ensure_clean_git_dir(path: str | Path) -> None:
         raise BuildWorkspaceError(f"integration workspace is dirty; clean/restart: {path}")
 
 
-def _git(
+async def _git(
     repo_path: Path,
     args: list[str],
     *,
@@ -199,13 +218,24 @@ def _git(
     subprocess_env = git_subprocess_env()
     if env is not None:
         subprocess_env = {**(subprocess_env if subprocess_env is not None else os.environ), **env}
-    # The executable is fixed to Git and subprocess.run never enables a shell.
-    return subprocess.run(  # nosec B603, B607
-        ["git", *args],
+    result = await daemon_git.run(
+        args,
         cwd=repo_path,
-        capture_output=True,
-        text=True,
         timeout=timeout,
         env=subprocess_env,
-        check=False,
+    )
+    if isinstance(result, GitTimeout):
+        raise subprocess.TimeoutExpired(
+            result.argv,
+            result.timeout,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+    if result.returncode is None:
+        raise OSError(result.stderr or "Git could not be started")
+    return subprocess.CompletedProcess(
+        args=result.argv,
+        returncode=0 if isinstance(result, GitOk) else result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
     )

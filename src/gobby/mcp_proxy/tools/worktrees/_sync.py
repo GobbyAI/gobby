@@ -556,7 +556,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if dirty_paths:
                 incoming_result = await run_to_completion(
                     resolved_git_mgr.run_git_command(
-                        ["diff", "--name-only", "HEAD", source_ref],
+                        ["diff", "--name-only", f"HEAD...{source_ref}"],
                         cwd=merge_cwd,
                         timeout=10,
                     )

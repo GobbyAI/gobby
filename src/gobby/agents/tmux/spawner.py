@@ -267,7 +267,7 @@ class TmuxSpawner(TerminalSpawnerBase):
     # spawn_agent terminal orchestration
     # ------------------------------------------------------------------
 
-    def spawn_agent(
+    async def spawn_agent(
         self,
         cli: str,
         cwd: str | Path,
@@ -306,7 +306,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         sandbox_env: dict[str, str] = {}
 
         if sandbox_config and getattr(sandbox_config, "enabled", False):
-            resolved_paths = compute_sandbox_paths(sandbox_config, str(cwd))
+            resolved_paths = await compute_sandbox_paths(sandbox_config, str(cwd))
             resolver = get_sandbox_resolver(cli)
             sandbox_args, sandbox_env = resolver.resolve(sandbox_config, resolved_paths)
 

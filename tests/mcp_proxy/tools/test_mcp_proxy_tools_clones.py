@@ -11,7 +11,6 @@ Tests for the gobby-clones MCP server tools:
 
 import asyncio
 import subprocess
-import threading
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +20,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from gobby.clones.git import CloneGitManager
 from gobby.clones.git import CloneStatus as GitCloneStatus
 from gobby.storage.clones import Clone, CloneStatus
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
@@ -97,7 +97,7 @@ def mock_clone_storage() -> MagicMock:
 @pytest.fixture
 def mock_git_manager() -> MagicMock:
     """Create mock git manager."""
-    manager = MagicMock()
+    manager = MagicMock(spec=CloneGitManager)
     manager.repo_path = Path("/tmp/repo")
     manager.run_git_command.return_value = _git_result()
     return manager
@@ -233,13 +233,12 @@ class TestCreateClone:
         self, registry: Any, mock_git_manager: Any
     ) -> None:
         """A slow clone subprocess runs outside the event-loop thread."""
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def slow_clone(**_kwargs: object) -> MagicMock:
+        async def slow_clone(**_kwargs: object) -> MagicMock:
             started.set()
-            if not release.wait(timeout=2):
-                raise TimeoutError("test did not release clone operation")
+            await asyncio.wait_for(release.wait(), timeout=2)
             return MagicMock(success=False, error="expected test failure")
 
         mock_git_manager.shallow_clone.side_effect = slow_clone
@@ -255,7 +254,7 @@ class TestCreateClone:
         )
 
         try:
-            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+            await asyncio.wait_for(started.wait(), timeout=1)
             assert operation.done() is False
             progress = asyncio.Event()
             allow_progress = asyncio.Event()
@@ -283,12 +282,12 @@ class TestCreateClone:
         mock_git_manager: Any,
     ) -> None:
         """Cancellation cannot abandon a clone after filesystem mutation starts."""
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def blocking_clone(**_kwargs: object) -> MagicMock:
+        async def blocking_clone(**_kwargs: object) -> MagicMock:
             started.set()
-            assert release.wait(timeout=5)
+            await asyncio.wait_for(release.wait(), timeout=5)
             return MagicMock(success=True)
 
         mock_git_manager.shallow_clone.side_effect = blocking_clone
@@ -304,7 +303,7 @@ class TestCreateClone:
             )
         )
 
-        assert await asyncio.to_thread(started.wait, 2)
+        await asyncio.wait_for(started.wait(), timeout=2)
         operation.cancel()
         await _let_cancellation_propagate(operation)
 
@@ -784,18 +783,18 @@ class TestDeleteClone:
     ) -> None:
         """Cancellation cannot abandon an in-flight filesystem deletion."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
+        async def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
             started.set()
-            assert release.wait(timeout=5)
+            await asyncio.wait_for(release.wait(), timeout=5)
             return MagicMock(success=True)
 
         mock_git_manager.delete_clone.side_effect = blocking_delete
         operation = asyncio.create_task(registry.call("delete_clone", {"clone_id": "clone-123"}))
 
-        assert await asyncio.to_thread(started.wait, 2)
+        await asyncio.wait_for(started.wait(), timeout=2)
         operation.cancel()
         await _let_cancellation_propagate(operation)
         mock_clone_storage.delete.assert_not_called()
@@ -1216,12 +1215,12 @@ class TestSyncClone:
     ) -> None:
         """Cancellation cannot reset clone status before sync work finishes."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def blocking_sync(**_kwargs: object) -> MagicMock:
+        async def blocking_sync(**_kwargs: object) -> MagicMock:
             started.set()
-            assert release.wait(timeout=5)
+            await asyncio.wait_for(release.wait(), timeout=5)
             return MagicMock(success=True)
 
         mock_git_manager.sync_clone.side_effect = blocking_sync
@@ -1229,7 +1228,7 @@ class TestSyncClone:
             registry.call("sync_clone", {"clone_id": "clone-123", "direction": "pull"})
         )
 
-        assert await asyncio.to_thread(started.wait, 2)
+        await asyncio.wait_for(started.wait(), timeout=2)
         operation.cancel()
         await _let_cancellation_propagate(operation)
         mock_clone_storage.record_sync.assert_not_called()
@@ -1366,13 +1365,13 @@ class TestMergeCloneToTarget:
     ) -> None:
         """Fetch cancellation waits for transaction cleanup before unlocking."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        worker_started = threading.Event()
-        release_worker = threading.Event()
+        worker_started = asyncio.Event()
+        release_worker = asyncio.Event()
 
-        def blocking_fetch(args: list[str], **_kwargs: object) -> Any:
+        async def blocking_fetch(args: list[str], **_kwargs: object) -> Any:
             if args and args[0] == "fetch":
                 worker_started.set()
-                assert release_worker.wait(timeout=5)
+                await asyncio.wait_for(release_worker.wait(), timeout=5)
             return _git_result()
 
         mock_git_manager.run_git_command.side_effect = blocking_fetch
@@ -1385,7 +1384,7 @@ class TestMergeCloneToTarget:
             )
         )
 
-        assert await asyncio.to_thread(worker_started.wait, 2)
+        await asyncio.wait_for(worker_started.wait(), timeout=2)
         operation.cancel()
         contender_started = asyncio.Event()
 
@@ -1418,18 +1417,18 @@ class TestMergeCloneToTarget:
     ) -> None:
         """A cancelled stash push still completes merge cleanup and exact restore."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        worker_started = threading.Event()
-        release_worker = threading.Event()
+        worker_started = asyncio.Event()
+        release_worker = asyncio.Event()
         identity_calls = 0
 
-        def blocking_stash(args: list[str], **_kwargs: object) -> Any:
+        async def blocking_stash(args: list[str], **_kwargs: object) -> Any:
             nonlocal identity_calls
             if args == ["stash", "list", "-1", "--format=%H"]:
                 identity_calls += 1
                 return _git_result(stdout="")
             if args[:2] == ["stash", "push"]:
                 worker_started.set()
-                assert release_worker.wait(timeout=5)
+                await asyncio.wait_for(release_worker.wait(), timeout=5)
                 return _git_result()
             if args == ["stash", "list", "--format=%H%x00%gs"]:
                 return _git_result(stdout="operation-stash\x00On main: test-stash-marker")
@@ -1447,7 +1446,7 @@ class TestMergeCloneToTarget:
             )
         )
 
-        assert await asyncio.to_thread(worker_started.wait, 2)
+        await asyncio.wait_for(worker_started.wait(), timeout=2)
         operation.cancel()
         contender_started = asyncio.Event()
 
@@ -2338,13 +2337,12 @@ class TestCleanupStaleClones:
                 updated_at=STALE_TIMESTAMP,
             ),
         ]
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def slow_delete(*_args: object, **_kwargs: object) -> MagicMock:
+        async def slow_delete(*_args: object, **_kwargs: object) -> MagicMock:
             started.set()
-            if not release.wait(timeout=2):
-                raise TimeoutError("test did not release clone cleanup")
+            await asyncio.wait_for(release.wait(), timeout=2)
             return MagicMock(success=True)
 
         mock_git_manager.delete_clone.side_effect = slow_delete
@@ -2356,7 +2354,7 @@ class TestCleanupStaleClones:
         )
 
         try:
-            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+            await asyncio.wait_for(started.wait(), timeout=1)
             assert operation.done() is False
             progress = asyncio.Event()
             allow_progress = asyncio.Event()
@@ -2407,12 +2405,12 @@ class TestCleanupStaleClones:
         ]
         mock_clone_storage.cleanup_stale.return_value = stale
         mock_clone_storage.mark_cleanup.return_value = stale[0]
-        started = threading.Event()
-        release = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
+        async def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
             started.set()
-            assert release.wait(timeout=5)
+            await asyncio.wait_for(release.wait(), timeout=5)
             return MagicMock(success=True)
 
         mock_git_manager.delete_clone.side_effect = blocking_delete
@@ -2423,7 +2421,7 @@ class TestCleanupStaleClones:
             )
         )
 
-        assert await asyncio.to_thread(started.wait, 2)
+        await asyncio.wait_for(started.wait(), timeout=2)
         operation.cancel()
         await _let_cancellation_propagate(operation)
 

@@ -31,11 +31,7 @@ async def repair_isolation_environment(
 
     from gobby.utils.project_context import ensure_project_json_for_isolation
 
-    await asyncio.to_thread(
-        ensure_project_json_for_isolation,
-        main_repo_path,
-        isolated_path,
-    )
+    await ensure_project_json_for_isolation(main_repo_path, isolated_path)
     seed_result = await preseed_isolated_python_environment(isolated_path)
     if seed_result.attempted and not seed_result.success:
         logger.warning(
@@ -49,8 +45,7 @@ async def repair_isolation_environment(
         provider=provider,
     )
     try:
-        await asyncio.to_thread(
-            apply_isolation_git_hygiene,
+        await apply_isolation_git_hygiene(
             isolated_path,
             main_repo_path=main_repo_path,
         )

@@ -25,7 +25,7 @@ class ActiveWorkspaceRun:
     child_session_id: str | None
 
 
-def recover_stale_integration_artifact(
+async def recover_stale_integration_artifact(
     *,
     db: HubDatabase,
     task_manager: LocalTaskManager,
@@ -37,7 +37,7 @@ def recover_stale_integration_artifact(
     """Clear a stale integration artifact id when no active run owns it."""
     if record is not None:
         path = _record_path(record)
-        if path is not None and _is_git_workspace_dir(path):
+        if path is not None and await _is_git_workspace_dir(path):
             return False
 
     ensure_no_active_workspace_run(db, backend, workspace_id)
@@ -59,17 +59,17 @@ def ensure_no_active_workspace_run(
         raise BuildWorkspaceError(_active_workspace_message(backend, workspace_id, active_run))
 
 
-def _is_promotable_workspace(
+async def _is_promotable_workspace(
     record: Worktree | Clone | None,
     task_id: str,
     backend: WorkspaceBackend,
 ) -> bool:
-    if not _is_recoverable_workspace(record, task_id, backend):
+    if not await _is_recoverable_workspace(record, task_id, backend):
         return False
     return getattr(record, "workspace_role", "task") == "task"
 
 
-def _is_recoverable_workspace(
+async def _is_recoverable_workspace(
     record: Worktree | Clone | None,
     task_id: str,
     backend: WorkspaceBackend,
@@ -79,7 +79,7 @@ def _is_recoverable_workspace(
     if getattr(record, "workspace_role", "task") not in {"task", "integration"}:
         return False
     path = _record_path(record)
-    if path is None or not _is_git_workspace_dir(path):
+    if path is None or not await _is_git_workspace_dir(path):
         return False
     if not getattr(record, "base_branch", None):
         raise BuildWorkspaceError(f"{backend} base branch is required for integration promotion")

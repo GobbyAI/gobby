@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 from pathlib import Path
 from typing import cast
@@ -98,9 +97,7 @@ class _WorkspaceServices:
     ) -> Worktree | Clone:
         if backend == "worktree":
             return await self._ensure_worktree(task, branch_name, base_branch, artifacts)
-        return await asyncio.to_thread(
-            self._ensure_clone, task, branch_name, base_branch, artifacts
-        )
+        return await self._ensure_clone(task, branch_name, base_branch, artifacts)
 
     def existing_task_workspace_branch(
         self,
@@ -129,7 +126,7 @@ class _WorkspaceServices:
         path = _workspace_path("worktrees", self.repo_path.name, branch_name)
         if artifacts.integration_workspace_id:
             existing = self.worktree_storage.get(artifacts.integration_workspace_id)
-            recovered = recover_stale_integration_artifact(
+            recovered = await recover_stale_integration_artifact(
                 db=self.db,
                 task_manager=self.task_manager,
                 task_id=task.id,
@@ -139,23 +136,21 @@ class _WorkspaceServices:
             )
             if recovered:
                 if existing is not None:
-                    _remove_invalid_workspace_dir(existing.worktree_path, expected_path=path)
+                    await _remove_invalid_workspace_dir(existing.worktree_path, expected_path=path)
                     self.worktree_storage.delete(existing.id)
             else:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
                 assert existing is not None
                 ensure_no_active_workspace_run(self.db, "worktree", existing.id)
-                await asyncio.to_thread(
-                    _refresh_clean_git_dir, existing.worktree_path, branch_name, base_branch
-                )
+                await _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
                 return existing
 
         existing = self.worktree_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
-            if _is_invalid_integration_record(existing) or _is_stale_integration_record(
+            if await _is_invalid_integration_record(existing) or await _is_stale_integration_record(
                 existing, task.id
             ):
-                recovered = recover_stale_integration_artifact(
+                recovered = await recover_stale_integration_artifact(
                     db=self.db,
                     task_manager=self.task_manager,
                     task_id=task.id,
@@ -164,14 +159,14 @@ class _WorkspaceServices:
                     record=existing,
                 )
                 if recovered:
-                    _remove_invalid_workspace_dir(existing.worktree_path, expected_path=path)
+                    await _remove_invalid_workspace_dir(existing.worktree_path, expected_path=path)
                     self.worktree_storage.delete(existing.id)
                     existing = None
-            if existing is not None and _is_promotable_workspace(existing, task.id, "worktree"):
+            if existing is not None and await _is_promotable_workspace(
+                existing, task.id, "worktree"
+            ):
                 ensure_no_active_workspace_run(self.db, "worktree", existing.id)
-                await asyncio.to_thread(
-                    _refresh_clean_git_dir, existing.worktree_path, branch_name, base_branch
-                )
+                await _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
                 promoted = self.worktree_storage.update(existing.id, workspace_role="integration")
                 if promoted is None:
                     raise BuildWorkspaceError("failed to promote task worktree to integration")
@@ -179,9 +174,7 @@ class _WorkspaceServices:
             if existing is not None:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
                 ensure_no_active_workspace_run(self.db, "worktree", existing.id)
-                await asyncio.to_thread(
-                    _refresh_clean_git_dir, existing.worktree_path, branch_name, base_branch
-                )
+                await _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
                 return existing
 
         unmanaged = await self._find_unmanaged_worktree(branch_name)
@@ -190,13 +183,9 @@ class _WorkspaceServices:
             if stored is not None:
                 self._validate_record(stored, branch_name=branch_name, backend="worktree")
                 ensure_no_active_workspace_run(self.db, "worktree", stored.id)
-                await asyncio.to_thread(
-                    _refresh_clean_git_dir, stored.worktree_path, branch_name, base_branch
-                )
+                await _refresh_clean_git_dir(stored.worktree_path, branch_name, base_branch)
                 return stored
-            await asyncio.to_thread(
-                _refresh_clean_git_dir, unmanaged.path, branch_name, base_branch
-            )
+            await _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
             return self.worktree_storage.create(
                 project_id=self.project_id,
                 branch_name=branch_name,
@@ -206,7 +195,7 @@ class _WorkspaceServices:
                 workspace_role="integration",
             )
 
-        branch_exists = await asyncio.to_thread(_branch_exists, self.repo_path, branch_name)
+        branch_exists = await _branch_exists(self.repo_path, branch_name)
         result = await self.git_manager.create_worktree(
             worktree_path=path,
             branch_name=branch_name,
@@ -216,7 +205,7 @@ class _WorkspaceServices:
         )
         if not result.success:
             raise BuildWorkspaceError(result.error or result.message)
-        await asyncio.to_thread(_refresh_clean_git_dir, path, branch_name, base_branch)
+        await _refresh_clean_git_dir(path, branch_name, base_branch)
         return self.worktree_storage.create(
             project_id=self.project_id,
             branch_name=branch_name,
@@ -226,7 +215,7 @@ class _WorkspaceServices:
             workspace_role="integration",
         )
 
-    def _ensure_clone(
+    async def _ensure_clone(
         self,
         task: Task,
         branch_name: str,
@@ -236,7 +225,7 @@ class _WorkspaceServices:
         path = _workspace_path("clones", self.repo_path.name, branch_name)
         if artifacts.integration_clone_id:
             existing = self.clone_storage.get(artifacts.integration_clone_id)
-            recovered = recover_stale_integration_artifact(
+            recovered = await recover_stale_integration_artifact(
                 db=self.db,
                 task_manager=self.task_manager,
                 task_id=task.id,
@@ -246,25 +235,25 @@ class _WorkspaceServices:
             )
             if recovered:
                 if existing is not None:
-                    _remove_invalid_workspace_dir(existing.clone_path, expected_path=path)
+                    await _remove_invalid_workspace_dir(existing.clone_path, expected_path=path)
                     self.clone_storage.delete(existing.id)
             else:
                 self._validate_record(existing, branch_name=branch_name, backend="clone")
                 assert existing is not None
                 ensure_no_active_workspace_run(self.db, "clone", existing.id)
-                _refresh_clean_git_dir(
+                await _refresh_clean_git_dir(
                     existing.clone_path,
                     branch_name,
-                    _clone_base_ref(existing.clone_path, base_branch),
+                    await _clone_base_ref(existing.clone_path, base_branch),
                 )
                 return existing
 
         existing = self.clone_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
-            if _is_invalid_integration_record(existing) or _is_stale_integration_record(
+            if await _is_invalid_integration_record(existing) or await _is_stale_integration_record(
                 existing, task.id
             ):
-                recovered = recover_stale_integration_artifact(
+                recovered = await recover_stale_integration_artifact(
                     db=self.db,
                     task_manager=self.task_manager,
                     task_id=task.id,
@@ -273,15 +262,15 @@ class _WorkspaceServices:
                     record=existing,
                 )
                 if recovered:
-                    _remove_invalid_workspace_dir(existing.clone_path, expected_path=path)
+                    await _remove_invalid_workspace_dir(existing.clone_path, expected_path=path)
                     self.clone_storage.delete(existing.id)
                     existing = None
-            if existing is not None and _is_promotable_workspace(existing, task.id, "clone"):
+            if existing is not None and await _is_promotable_workspace(existing, task.id, "clone"):
                 ensure_no_active_workspace_run(self.db, "clone", existing.id)
-                _refresh_clean_git_dir(
+                await _refresh_clean_git_dir(
                     existing.clone_path,
                     branch_name,
-                    _clone_base_ref(existing.clone_path, base_branch),
+                    await _clone_base_ref(existing.clone_path, base_branch),
                 )
                 promoted = self.clone_storage.update(existing.id, workspace_role="integration")
                 if promoted is None:
@@ -290,15 +279,17 @@ class _WorkspaceServices:
             if existing is not None:
                 self._validate_record(existing, branch_name=branch_name, backend="clone")
                 ensure_no_active_workspace_run(self.db, "clone", existing.id)
-                _refresh_clean_git_dir(
+                await _refresh_clean_git_dir(
                     existing.clone_path,
                     branch_name,
-                    _clone_base_ref(existing.clone_path, base_branch),
+                    await _clone_base_ref(existing.clone_path, base_branch),
                 )
                 return existing
 
-        _ensure_source_branch(self.repo_path, branch_name=branch_name, base_branch=base_branch)
-        result = self.clone_manager.create_clone(
+        await _ensure_source_branch(
+            self.repo_path, branch_name=branch_name, base_branch=base_branch
+        )
+        result = await self.clone_manager.create_clone(
             clone_path=path,
             branch_name=branch_name,
             base_branch=branch_name,
@@ -307,7 +298,7 @@ class _WorkspaceServices:
         )
         if not result.success:
             raise BuildWorkspaceError(result.error or result.message)
-        _refresh_clean_git_dir(path, branch_name, _clone_base_ref(path, base_branch))
+        await _refresh_clean_git_dir(path, branch_name, await _clone_base_ref(path, base_branch))
         return self.clone_storage.create(
             project_id=self.project_id,
             branch_name=branch_name,
@@ -361,29 +352,29 @@ def _service_git_manager(services: object | None, project_id: str) -> WorktreeGi
     return manager
 
 
-def _is_stale_integration_record(record: Worktree | Clone, task_id: str) -> bool:
+async def _is_stale_integration_record(record: Worktree | Clone, task_id: str) -> bool:
     if record.task_id != task_id:
         return False
-    return _is_invalid_integration_record(record)
+    return await _is_invalid_integration_record(record)
 
 
-def _is_invalid_integration_record(record: Worktree | Clone) -> bool:
+async def _is_invalid_integration_record(record: Worktree | Clone) -> bool:
     if getattr(record, "workspace_role", "task") != "integration":
         return False
     raw_path = getattr(record, "worktree_path", None) or getattr(record, "clone_path", None)
     return (
         raw_path is not None
         and Path(str(raw_path)).is_dir()
-        and not _is_git_workspace_dir(raw_path)
+        and not await _is_git_workspace_dir(raw_path)
     )
 
 
-def _remove_invalid_workspace_dir(raw_path: str | None, *, expected_path: Path) -> None:
+async def _remove_invalid_workspace_dir(raw_path: str | None, *, expected_path: Path) -> None:
     if raw_path is None:
         return
     path = Path(raw_path)
     if path != expected_path or not path.is_dir() or path.is_symlink():
         return
-    if _is_git_workspace_dir(path):
+    if await _is_git_workspace_dir(path):
         return
     shutil.rmtree(path)

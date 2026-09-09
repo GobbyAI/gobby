@@ -328,7 +328,6 @@ async def test_sync_issue_offloads_synchronous_storage_and_manager_calls(
     assert {
         "get",
         "get_config",
-        "repositories_for",
         "fetchone",
         "create_task",
         "reconcile_task_state",
@@ -473,6 +472,23 @@ async def test_sync_only_delivery_does_not_run_triage(github_sync: GitHubSyncFix
         issue_data=None,
     )
     assert triage.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_repository_resolution_uses_async_checkout_fallback(
+    github_sync: GitHubSyncFixture,
+) -> None:
+    service, _, _, _, project_manager = github_sync
+    config = GitHubTriageConfig(project_id="project-1")
+
+    with patch(
+        "gobby.sync.github_issue_sync.resolve_project_source_repo_async",
+        new=AsyncMock(return_value="owner/from-origin"),
+    ) as resolve:
+        repositories = await service.repositories_for(project_manager.get.return_value, config)
+
+    assert repositories == ("owner/from-origin",)
+    resolve.assert_awaited_once_with(service.db, "project-1")
 
 
 @pytest.mark.asyncio

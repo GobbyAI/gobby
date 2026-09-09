@@ -443,19 +443,6 @@ def _step_completion_updates(db: Any, session_id: str, variables: dict[str, Any]
     return {"step_workflow_complete": False}
 
 
-def _project_path(event: HookEvent) -> str | None:
-    from gobby.workflows.git_utils import resolve_git_worktree_root
-
-    data = event.data if isinstance(event.data, dict) else {}
-    metadata = event.metadata if isinstance(event.metadata, dict) else {}
-    return resolve_git_worktree_root(
-        data.get("cwd"),
-        event.cwd,
-        metadata.get("project_path"),
-        data.get("project_path"),
-    )
-
-
 def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunLookup:
     run_id = getattr(session, "agent_run_id", None) or _terminal_context_value(
         event,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -328,7 +327,7 @@ def preflight_provider_native_settings(
     }
 
 
-def preflight_provider_native_settings_file(
+async def preflight_provider_native_settings_file(
     *,
     provider: str,
     settings_path: str | None,
@@ -347,7 +346,7 @@ def preflight_provider_native_settings_file(
         raise ValueError(f"{provider} emitted unreadable provider-native settings") from exc
     if not isinstance(settings, dict):
         raise ValueError(f"{provider} emitted invalid provider-native settings")
-    paths = compute_sandbox_paths(config, workspace_path, provider=provider)
+    paths = await compute_sandbox_paths(config, workspace_path, provider=provider)
     return preflight_provider_native_settings(
         provider,
         settings,
@@ -366,8 +365,7 @@ async def preflight_provider_native_settings_file_async(
     policy_hash: str | None = None,
 ) -> dict[str, Any]:
     """Verify provider-native settings without blocking the event loop."""
-    return await asyncio.to_thread(
-        preflight_provider_native_settings_file,
+    return await preflight_provider_native_settings_file(
         provider=provider,
         settings_path=settings_path,
         config=config,
@@ -376,7 +374,7 @@ async def preflight_provider_native_settings_file_async(
     )
 
 
-def materialize_claude_settings(
+async def materialize_claude_settings(
     *,
     base_settings_path: str | Path | None,
     config: SandboxConfig,
@@ -409,7 +407,7 @@ def materialize_claude_settings(
                 )
                 payload = {}
 
-    resolved_paths = compute_sandbox_paths(config, workspace_path=workspace_path)
+    resolved_paths = await compute_sandbox_paths(config, workspace_path=workspace_path)
     merged = merge_claude_settings(payload, config, resolved_paths)
     encoded = json.dumps(merged, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
@@ -438,8 +436,7 @@ async def materialize_claude_settings_async(
     name: str = "runtime",
 ) -> str | None:
     """Materialize Claude settings without blocking the event loop."""
-    return await asyncio.to_thread(
-        materialize_claude_settings,
+    return await materialize_claude_settings(
         base_settings_path=base_settings_path,
         config=config,
         workspace_path=workspace_path,

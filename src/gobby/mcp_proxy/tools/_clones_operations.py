@@ -21,7 +21,6 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import (
     get_checkout_mutation_lock,
     new_stash_marker,
-    run_thread_to_completion,
     run_to_completion,
     stash_oid_for_marker,
     stash_ref_for_oid,
@@ -90,11 +89,17 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         delete_error: str | None
         try:
-            result = await asyncio.to_thread(
-                git_manager.delete_clone,
-                clone_path,
-                force=force,
-            )
+            result = await git_manager.delete_clone(clone_path, force=force)
+        except asyncio.CancelledError:
+            try:
+                ctx.clone_storage.update(clone_id, status=previous_status)
+            except Exception:
+                logger.warning(
+                    "Failed to restore clone %s status after cancelled deletion",
+                    clone_id,
+                    exc_info=True,
+                )
+            raise
         except Exception as error:
             delete_error = str(error)
         else:
@@ -161,14 +166,10 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         if not resolved_path.is_dir():
             return {"success": False, "error": f"Clone path does not exist: {resolved_path}"}
 
-        status = await asyncio.to_thread(git_manager.get_clone_status, resolved_path)
+        status = await git_manager.get_clone_status(resolved_path)
         if status is None or (status.branch is None and status.commit is None):
             return {"success": False, "error": f"Path is not a valid Git clone: {resolved_path}"}
-        remote_url = await asyncio.to_thread(
-            git_manager.get_remote_url,
-            "origin",
-            resolved_path,
-        )
+        remote_url = await git_manager.get_remote_url("origin", resolved_path)
         base_branch = await git_manager.get_default_branch()
 
         try:
@@ -267,8 +268,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         ctx.clone_storage.mark_syncing(clone_id)
 
         try:
-            result = await asyncio.to_thread(
-                git_manager.sync_clone,
+            result = await git_manager.sync_clone(
                 clone_path=clone.clone_path,
                 direction=direction,
             )
@@ -372,8 +372,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         async def _delete_temp_branch() -> str | None:
             try:
-                delete_result = await run_thread_to_completion(
-                    git_manager.run_git_command,
+                delete_result = await git_manager.run_git_command(
                     ["branch", "-D", temp_ref],
                     cwd=git_manager.repo_path,
                     timeout=10,
@@ -399,8 +398,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             merge_succeeded = True
             merge_sha = ""
             try:
-                sha_result = await run_thread_to_completion(
-                    git_manager.run_git_command,
+                sha_result = await git_manager.run_git_command(
                     ["rev-parse", target_ref],
                     cwd=git_manager.repo_path,
                     timeout=10,
@@ -422,8 +420,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
             try:
-                fetch_result = await run_thread_to_completion(
-                    git_manager.run_git_command,
+                fetch_result = await git_manager.run_git_command(
                     [
                         "fetch",
                         str(clone.clone_path),
@@ -443,8 +440,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 }
 
             primary_result: dict[str, Any]
-            status_result = await run_thread_to_completion(
-                git_manager.run_git_command,
+            status_result = await git_manager.run_git_command(
                 ["status", "--porcelain"],
                 cwd=git_manager.repo_path,
                 timeout=10,
@@ -481,9 +477,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
             dirty_paths = _non_gobby_dirty_paths(status_result.stdout) | target_staged_paths
             if dirty_paths:
-                incoming_result = await run_thread_to_completion(
-                    git_manager.run_git_command,
-                    ["diff", "--name-only", target_ref, temp_branch_ref],
+                incoming_result = await git_manager.run_git_command(
+                    ["diff", "--name-only", f"{target_ref}...{temp_branch_ref}"],
                     cwd=git_manager.repo_path,
                     timeout=10,
                 )
@@ -518,8 +513,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     return primary_result
 
             if target_staged_paths:
-                current_branch = await run_thread_to_completion(
-                    git_manager.run_git_command,
+                current_branch = await git_manager.run_git_command(
                     ["rev-parse", "--abbrev-ref", "HEAD"],
                     cwd=git_manager.repo_path,
                     timeout=10,
@@ -549,8 +543,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 ctx.clone_storage.record_sync(clone_id)
                 try:
                     stash_marker = new_stash_marker("merge-clone")
-                    stash_head_before = await run_thread_to_completion(
-                        git_manager.run_git_command,
+                    stash_head_before = await git_manager.run_git_command(
                         ["stash", "list", "-1", "--format=%H"],
                         cwd=git_manager.repo_path,
                         timeout=10,
@@ -562,8 +555,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             output=stash_head_before.stdout,
                             stderr=stash_head_before.stderr,
                         )
-                    stash_result = await run_thread_to_completion(
-                        git_manager.run_git_command,
+                    stash_result = await git_manager.run_git_command(
                         [
                             "stash",
                             "push",
@@ -582,8 +574,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             output=stash_result.stdout,
                             stderr=stash_result.stderr,
                         )
-                    stash_head_after = await run_thread_to_completion(
-                        git_manager.run_git_command,
+                    stash_head_after = await git_manager.run_git_command(
                         ["stash", "list", "--format=%H%x00%gs"],
                         cwd=git_manager.repo_path,
                         timeout=10,
@@ -647,8 +638,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                                 }
                     else:
                         try:
-                            merge_result = await run_thread_to_completion(
-                                git_manager.merge_branch,
+                            merge_result = await git_manager.merge_branch(
                                 source_branch=temp_branch_ref,
                                 target_branch=target_branch,
                                 source_is_local=True,
@@ -691,8 +681,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
                 if stash_oid:
                     try:
-                        stash_list_result = await run_thread_to_completion(
-                            git_manager.run_git_command,
+                        stash_list_result = await git_manager.run_git_command(
                             ["stash", "list", "--format=%gd%x00%H"],
                             cwd=git_manager.repo_path,
                             timeout=10,
@@ -712,8 +701,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         stash_ref = stash_ref_for_oid(stash_list_result.stdout, stash_oid)
                         if stash_ref is None:
                             raise RuntimeError(f"exact stash {stash_oid} is no longer present")
-                        pop_result = await run_thread_to_completion(
-                            git_manager.run_git_command,
+                        pop_result = await git_manager.run_git_command(
                             ["stash", "pop", stash_ref],
                             cwd=git_manager.repo_path,
                             timeout=10,

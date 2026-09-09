@@ -5,6 +5,7 @@ Provides operations for managing full git clones, distinct from worktrees.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.utils.url_sanitize import sanitize_url
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -64,13 +66,14 @@ class CloneGitManager:
         if not self.repo_path.exists():
             raise ValueError(f"Repository path does not exist: {repo_path}")
 
-    def _run_git(
+    async def _run_git(
         self,
         args: list[str],
         cwd: str | Path | None = None,
         timeout: int = 60,
         check: bool = False,
         env: dict[str, str] | None = None,
+        display_args: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """
         Run a git command.
@@ -88,32 +91,48 @@ class CloneGitManager:
         if cwd is None:
             cwd = self.repo_path
 
-        cmd = ["git"] + args
-        logger.debug("Running: %s in %s", " ".join(cmd), cwd)
+        cmd = ["git", *args]
+        display_cmd = ["git", *(display_args if display_args is not None else args)]
+        logger.debug("Running: %s in %s", " ".join(display_cmd), cwd)
 
         run_env = None
         if env:
             run_env = {**os.environ, **env}
 
-        try:
-            result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
-                cmd,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=check,
-                env=run_env,
-            )
-            return result
-        except subprocess.TimeoutExpired:
+        outcome = await daemon_git.run(
+            args,
+            cwd=cwd,
+            timeout=timeout,
+            env=run_env,
+        )
+        if isinstance(outcome, GitTimeout):
             logger.error("Git command timed out: %s", " ".join(cmd))
-            raise
-        except subprocess.CalledProcessError as e:
-            logger.error("Git command failed: %s, stderr: %s", " ".join(cmd), e.stderr)
-            raise
+            raise subprocess.TimeoutExpired(
+                cmd,
+                outcome.timeout,
+                output=outcome.stdout,
+                stderr=outcome.stderr,
+            )
+        if outcome.returncode is None:
+            logger.error("Git command unavailable: %s, stderr: %s", " ".join(cmd), outcome.stderr)
+            raise OSError(outcome.stderr or "Git could not be started")
+        result = subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0 if isinstance(outcome, GitOk) else outcome.returncode,
+            stdout=outcome.stdout,
+            stderr=outcome.stderr,
+        )
+        if check and result.returncode != 0:
+            logger.error("Git command failed: %s, stderr: %s", " ".join(cmd), result.stderr)
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                cmd,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return result
 
-    def run_git_command(
+    async def run_git_command(
         self,
         args: list[str],
         cwd: str | Path | None = None,
@@ -143,7 +162,7 @@ class CloneGitManager:
             Delegates to ``_run_git``, which logs timed-out commands and failed
             checked commands before re-raising.
         """
-        return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
+        return await self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
     def resolve_managed_clone_path(self, clone_path: str | Path) -> Path | None:
         """Canonicalize a clone path and enforce containment under the managed root."""
@@ -154,7 +173,7 @@ class CloneGitManager:
             return None
         return resolved_path
 
-    def get_remote_url(
+    async def get_remote_url(
         self,
         remote: str = "origin",
         cwd: str | Path | None = None,
@@ -170,9 +189,9 @@ class CloneGitManager:
         """
         try:
             if cwd is None:
-                result = self._run_git(["remote", "get-url", remote], timeout=10)
+                result = await self._run_git(["remote", "get-url", remote], timeout=10)
             else:
-                result = self._run_git(
+                result = await self._run_git(
                     ["remote", "get-url", remote],
                     cwd=cwd,
                     timeout=10,
@@ -188,7 +207,7 @@ class CloneGitManager:
         """Detect the default branch of the parent repository."""
         return await WorktreeGitManager(self.repo_path).get_default_branch()
 
-    def shallow_clone(
+    async def shallow_clone(
         self,
         remote_url: str,
         clone_path: str | Path,
@@ -228,8 +247,7 @@ class CloneGitManager:
 
         try:
             # Build clone command
-            cmd = [
-                "git",
+            args = [
                 "clone",
                 "--depth",
                 str(depth),
@@ -241,20 +259,18 @@ class CloneGitManager:
             ]
 
             # Sanitize URL in command before logging to avoid exposing credentials
-            safe_cmd = cmd.copy()
-            safe_cmd[safe_cmd.index(remote_url)] = sanitize_url(remote_url)
-            logger.debug("Running: %s", " ".join(safe_cmd))
-
-            result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minutes for clone
+            safe_args = args.copy()
+            safe_args[safe_args.index(remote_url)] = sanitize_url(remote_url)
+            result = await self._run_git(
+                args,
+                cwd=self.repo_path,
+                timeout=300,
+                display_args=safe_args,
             )
 
             if result.returncode == 0:
                 # Set pull.rebase so divergent branches are handled cleanly
-                self._run_git(["config", "pull.rebase", "true"], cwd=clone_path)
+                await self._run_git(["config", "pull.rebase", "true"], cwd=clone_path)
                 return GitOperationResult(
                     success=True,
                     message=f"Successfully cloned to {clone_path}",
@@ -262,17 +278,21 @@ class CloneGitManager:
                 )
             else:
                 if clone_path.exists():
-                    shutil.rmtree(clone_path, ignore_errors=True)
+                    await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
                 return GitOperationResult(
                     success=False,
                     message=f"Clone failed: {result.stderr}",
                     error=result.stderr,
                 )
 
+        except asyncio.CancelledError:
+            if clone_path.exists():
+                await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
+            raise
         except subprocess.TimeoutExpired:
             # Clean up partial clone
             if clone_path.exists():
-                shutil.rmtree(clone_path, ignore_errors=True)
+                await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
             return GitOperationResult(
                 success=False,
                 message="Git clone timed out",
@@ -280,14 +300,14 @@ class CloneGitManager:
         except (subprocess.SubprocessError, OSError) as e:
             # Clean up partial clone
             if clone_path.exists():
-                shutil.rmtree(clone_path, ignore_errors=True)
+                await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
             return GitOperationResult(
                 success=False,
                 message=f"Error cloning repository: {e}",
                 error=str(e),
             )
 
-    def full_clone(
+    async def full_clone(
         self,
         remote_url: str,
         clone_path: str | Path,
@@ -325,8 +345,7 @@ class CloneGitManager:
 
         try:
             # Build clone command without --depth (full clone)
-            cmd = [
-                "git",
+            args = [
                 "clone",
                 "-b",
                 branch,
@@ -335,20 +354,18 @@ class CloneGitManager:
             ]
 
             # Sanitize URL in command before logging to avoid exposing credentials
-            safe_cmd = cmd.copy()
-            safe_cmd[safe_cmd.index(remote_url)] = sanitize_url(remote_url)
-            logger.debug("Running: %s", " ".join(safe_cmd))
-
-            result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 minutes for full clone
+            safe_args = args.copy()
+            safe_args[safe_args.index(remote_url)] = sanitize_url(remote_url)
+            result = await self._run_git(
+                args,
+                cwd=self.repo_path,
+                timeout=600,
+                display_args=safe_args,
             )
 
             if result.returncode == 0:
                 # Set pull.rebase so divergent branches are handled cleanly
-                self._run_git(["config", "pull.rebase", "true"], cwd=clone_path)
+                await self._run_git(["config", "pull.rebase", "true"], cwd=clone_path)
                 return GitOperationResult(
                     success=True,
                     message=f"Successfully cloned to {clone_path}",
@@ -356,17 +373,21 @@ class CloneGitManager:
                 )
             else:
                 if clone_path.exists():
-                    shutil.rmtree(clone_path, ignore_errors=True)
+                    await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
                 return GitOperationResult(
                     success=False,
                     message=f"Clone failed: {result.stderr}",
                     error=result.stderr,
                 )
 
+        except asyncio.CancelledError:
+            if clone_path.exists():
+                await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
+            raise
         except subprocess.TimeoutExpired:
             # Clean up partial clone
             if clone_path.exists():
-                shutil.rmtree(clone_path, ignore_errors=True)
+                await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
             return GitOperationResult(
                 success=False,
                 message="Git clone timed out",
@@ -374,14 +395,14 @@ class CloneGitManager:
         except (subprocess.SubprocessError, OSError) as e:
             # Clean up partial clone
             if clone_path.exists():
-                shutil.rmtree(clone_path, ignore_errors=True)
+                await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
             return GitOperationResult(
                 success=False,
                 message=f"Error cloning repository: {e}",
                 error=str(e),
             )
 
-    def sync_clone(
+    async def sync_clone(
         self,
         clone_path: str | Path,
         direction: Literal["pull", "push", "both"] = "pull",
@@ -409,7 +430,7 @@ class CloneGitManager:
         try:
             if direction in ("pull", "both"):
                 # Pull with rebase to handle divergent branches cleanly
-                pull_result = self._run_git(
+                pull_result = await self._run_git(
                     ["pull", "--rebase", remote],
                     cwd=clone_path,
                     timeout=120,
@@ -423,7 +444,7 @@ class CloneGitManager:
 
             if direction in ("push", "both"):
                 # Push changes
-                push_result = self._run_git(
+                push_result = await self._run_git(
                     ["push", remote],
                     cwd=clone_path,
                     timeout=120,
@@ -453,7 +474,7 @@ class CloneGitManager:
                 error=str(e),
             )
 
-    def delete_clone(
+    async def delete_clone(
         self,
         clone_path: str | Path,
         force: bool = False,
@@ -488,7 +509,7 @@ class CloneGitManager:
         try:
             # Check for uncommitted changes unless force
             if not force:
-                status = self.get_clone_status(clone_path)
+                status = await self.get_clone_status(clone_path)
                 if status is None or (status.branch is None and status.commit is None):
                     return GitOperationResult(
                         success=False,
@@ -502,7 +523,7 @@ class CloneGitManager:
                     )
 
             # Remove the directory
-            shutil.rmtree(clone_path)
+            await asyncio.to_thread(shutil.rmtree, clone_path)
 
             return GitOperationResult(
                 success=True,
@@ -516,7 +537,7 @@ class CloneGitManager:
                 error=str(e),
             )
 
-    def get_clone_status(
+    async def get_clone_status(
         self,
         clone_path: str | Path,
     ) -> CloneStatus | None:
@@ -536,7 +557,7 @@ class CloneGitManager:
 
         try:
             # Get current branch
-            branch_result = self._run_git(
+            branch_result = await self._run_git(
                 ["branch", "--show-current"],
                 cwd=clone_path,
                 timeout=5,
@@ -545,7 +566,7 @@ class CloneGitManager:
             branch = branch or None
 
             # Get current commit
-            commit_result = self._run_git(
+            commit_result = await self._run_git(
                 ["rev-parse", "--short", "HEAD"],
                 cwd=clone_path,
                 timeout=5,
@@ -554,7 +575,7 @@ class CloneGitManager:
             commit = commit or None
 
             # Get status (porcelain for parsing)
-            status_result = self._run_git(
+            status_result = await self._run_git(
                 ["status", "--porcelain"],
                 cwd=clone_path,
                 timeout=10,
@@ -591,7 +612,7 @@ class CloneGitManager:
             logger.error("Error getting clone status: %s", e)
             return None
 
-    def create_clone(
+    async def create_clone(
         self,
         clone_path: str | Path,
         branch_name: str,
@@ -621,14 +642,14 @@ class CloneGitManager:
             # Clone from local repo path — always full clone
             source = str(self.repo_path)
             logger.info("Cloning from local repo: %s", source)
-            result = self.full_clone(
+            result = await self.full_clone(
                 remote_url=source,
                 clone_path=clone_path,
                 branch=base_branch,
             )
         else:
             # Get remote URL from current repo
-            remote_url = self.get_remote_url()
+            remote_url = await self.get_remote_url()
             if not remote_url:
                 return GitOperationResult(
                     success=False,
@@ -638,14 +659,14 @@ class CloneGitManager:
 
             # Create clone (shallow or full based on parameter)
             if shallow:
-                result = self.shallow_clone(
+                result = await self.shallow_clone(
                     remote_url=remote_url,
                     clone_path=clone_path,
                     branch=base_branch,
                     depth=1,
                 )
             else:
-                result = self.full_clone(
+                result = await self.full_clone(
                     remote_url=remote_url,
                     clone_path=clone_path,
                     branch=base_branch,
@@ -658,7 +679,7 @@ class CloneGitManager:
         if branch_name != base_branch:
             try:
                 # Create new branch from base
-                create_result = self._run_git(
+                create_result = await self._run_git(
                     ["checkout", "-b", branch_name],
                     cwd=clone_path,
                     timeout=30,
@@ -667,7 +688,7 @@ class CloneGitManager:
                     # Clean up the clone on branch creation failure
                     try:
                         if Path(clone_path).exists():
-                            shutil.rmtree(clone_path)
+                            await asyncio.to_thread(shutil.rmtree, clone_path)
                     except Exception as cleanup_err:
                         logger.warning(
                             "Failed to clean up clone after branch creation failure: %s",
@@ -678,11 +699,15 @@ class CloneGitManager:
                         message=f"Failed to create branch {branch_name}: {create_result.stderr}",
                         error=create_result.stderr,
                     )
+            except asyncio.CancelledError:
+                if Path(clone_path).exists():
+                    await asyncio.to_thread(shutil.rmtree, clone_path, ignore_errors=True)
+                raise
             except Exception as e:
                 # Clean up the clone on exception
                 try:
                     if Path(clone_path).exists():
-                        shutil.rmtree(clone_path)
+                        await asyncio.to_thread(shutil.rmtree, clone_path)
                 except Exception as cleanup_err:
                     logger.warning(
                         "Failed to clean up clone after branch creation error: %s", cleanup_err
@@ -699,7 +724,7 @@ class CloneGitManager:
             output=result.output,
         )
 
-    def merge_branch(
+    async def merge_branch(
         self,
         source_branch: str,
         target_branch: str = "main",
@@ -733,7 +758,7 @@ class CloneGitManager:
 
         # Save current branch so we can restore on failure
         original_branch: str | None = None
-        branch_result = self._run_git(
+        branch_result = await self._run_git(
             ["rev-parse", "--abbrev-ref", "HEAD"],
             cwd=cwd,
             timeout=5,
@@ -741,7 +766,7 @@ class CloneGitManager:
         if branch_result.returncode == 0:
             original_branch = branch_result.stdout.strip()
             if original_branch == "HEAD":
-                commit_result = self._run_git(
+                commit_result = await self._run_git(
                     ["rev-parse", "HEAD"],
                     cwd=cwd,
                     timeout=5,
@@ -757,9 +782,23 @@ class CloneGitManager:
 
         checked_out_target = False
 
+        async def _best_effort_cleanup(args: list[str], operation: str) -> None:
+            try:
+                result = await self._run_git(args, cwd=cwd, timeout=10)
+            except (subprocess.SubprocessError, OSError):
+                logger.warning("Failed to %s in %s", operation, cwd, exc_info=True)
+                return
+            if result.returncode != 0:
+                logger.warning(
+                    "Failed to %s in %s: %s",
+                    operation,
+                    cwd,
+                    result.stderr.strip() or result.stdout.strip(),
+                )
+
         try:
             # Fetch latest
-            fetch_result = self._run_git(
+            fetch_result = await self._run_git(
                 ["fetch", "origin"],
                 cwd=cwd,
                 timeout=60,
@@ -772,7 +811,7 @@ class CloneGitManager:
                 )
 
             # Checkout target branch
-            checkout_result = self._run_git(
+            checkout_result = await self._run_git(
                 ["checkout", target_branch],
                 cwd=cwd,
                 timeout=30,
@@ -786,7 +825,7 @@ class CloneGitManager:
             checked_out_target = True
 
             # Pull latest on target
-            pull_result = self._run_git(
+            pull_result = await self._run_git(
                 ["pull", "origin", target_branch],
                 cwd=cwd,
                 timeout=60,
@@ -800,7 +839,7 @@ class CloneGitManager:
 
             # Attempt merge (set GOBBY_MERGE=1 so pre-merge-commit hook skips)
             source_ref = source_branch if source_is_local else f"origin/{source_branch}"
-            merge_result = self._run_git(
+            merge_result = await self._run_git(
                 ["merge", source_ref, "--no-edit"],
                 cwd=cwd,
                 timeout=60,
@@ -811,7 +850,7 @@ class CloneGitManager:
                 # Check if it's a conflict
                 if "CONFLICT" in merge_result.stdout or "CONFLICT" in merge_result.stderr:
                     # Get list of conflicted files
-                    status_result = self._run_git(
+                    status_result = await self._run_git(
                         ["diff", "--name-only", "--diff-filter=U"],
                         cwd=cwd,
                         timeout=10,
@@ -819,7 +858,7 @@ class CloneGitManager:
                     conflicted_files = [f for f in status_result.stdout.strip().split("\n") if f]
 
                     # Abort the merge to leave repo in clean state
-                    self._run_git(["merge", "--abort"], cwd=cwd, timeout=10)
+                    await _best_effort_cleanup(["merge", "--abort"], "abort merge")
 
                     return GitOperationResult(
                         success=False,
@@ -829,7 +868,7 @@ class CloneGitManager:
                     )
 
                 # Non-conflict merge failure — abort to clean up
-                self._run_git(["merge", "--abort"], cwd=cwd, timeout=10)
+                await _best_effort_cleanup(["merge", "--abort"], "abort merge")
 
                 return GitOperationResult(
                     success=False,
@@ -843,9 +882,12 @@ class CloneGitManager:
                 output=merge_result.stdout,
             )
 
+        except asyncio.CancelledError:
+            await _best_effort_cleanup(["merge", "--abort"], "abort cancelled merge")
+            raise
         except subprocess.TimeoutExpired:
             # Attempt to abort any in-progress merge
-            self._run_git(["merge", "--abort"], cwd=cwd, timeout=10)
+            await _best_effort_cleanup(["merge", "--abort"], "abort timed-out merge")
             return GitOperationResult(
                 success=False,
                 message="Merge operation timed out",
@@ -853,7 +895,7 @@ class CloneGitManager:
             )
         except Exception as e:
             # Attempt to abort any in-progress merge
-            self._run_git(["merge", "--abort"], cwd=cwd, timeout=10)
+            await _best_effort_cleanup(["merge", "--abort"], "abort failed merge")
             return GitOperationResult(
                 success=False,
                 message=f"Merge error: {e}",
@@ -862,8 +904,7 @@ class CloneGitManager:
         finally:
             # Restore original branch if we checked out the target
             if checked_out_target and original_branch and original_branch != target_branch:
-                self._run_git(
+                await _best_effort_cleanup(
                     ["checkout", original_branch],
-                    cwd=cwd,
-                    timeout=30,
+                    f"restore original branch {original_branch}",
                 )

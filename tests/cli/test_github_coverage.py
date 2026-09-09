@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.github import _gather_github_access, github
+from gobby.cli.github import _gather_github_status, github
 from gobby.storage.github_triage import GitHubTriageConfig
 from gobby.sync.github_issue_sync import GitHubRepositoryReadinessError
 
@@ -22,12 +22,12 @@ def runner() -> CliRunner:
 
 
 @pytest.mark.asyncio
-async def test_gather_github_access_isolates_per_repository_failures() -> None:
+async def test_gather_github_status_isolates_per_repository_failures() -> None:
     with patch(
-        "gobby.cli.github._check_github_access_result",
+        "gobby.cli.github._resolve_github_status_result",
         new=AsyncMock(side_effect=[RuntimeError("boom"), (("owner/repo",), None)]),
     ):
-        results = await _gather_github_access(
+        results = await _gather_github_status(
             [
                 (MagicMock(), MagicMock(), MagicMock(), MagicMock()),
                 (MagicMock(), MagicMock(), MagicMock(), MagicMock()),
@@ -83,7 +83,6 @@ class TestGithubStatus:
         mock_config_store.return_value.get_config.return_value = config
         mock_status_store.return_value.counts.return_value = (3, 0)
         mock_status_store.return_value.get.return_value = None
-        mock_sync.return_value.repositories_for.return_value = ("owner/repo",)
         mock_sync.return_value.check_access = AsyncMock(return_value=("owner/repo",))
         result = runner.invoke(github, ["status"], catch_exceptions=False)
         assert result.exit_code == 0
@@ -107,7 +106,6 @@ class TestGithubStatus:
         mock_config_store.return_value.get_config.return_value = config
         mock_status_store.return_value.counts.return_value = (0, 0)
         mock_status_store.return_value.get.return_value = None
-        mock_sync.return_value.repositories_for.return_value = ()
         mock_sync.return_value.check_access = AsyncMock(
             side_effect=GitHubRepositoryReadinessError("No token")
         )
@@ -137,7 +135,7 @@ class TestGithubStatus:
         mock_config_store.return_value.get_config.return_value = config
         mock_status_store.return_value.counts.return_value = (0, 0)
         mock_status_store.return_value.get.return_value = None
-        mock_sync.return_value.repositories_for.return_value = ("owner/repo",)
+        mock_sync.return_value.repositories_for = AsyncMock(return_value=("owner/repo",))
         check_access = AsyncMock()
         mock_sync.return_value.check_access = check_access
 
@@ -146,7 +144,7 @@ class TestGithubStatus:
         assert result.exit_code == 0
         assert "Ready: ✗" in result.output
         assert "owner/repo" in result.output
-        mock_sync.return_value.repositories_for.assert_called_once_with(
+        mock_sync.return_value.repositories_for.assert_awaited_once_with(
             pm.get.return_value,
             config,
         )
@@ -185,10 +183,6 @@ class TestGithubStatus:
         ]
         mock_status_store.return_value.counts.return_value = (0, 0)
         mock_status_store.return_value.get.return_value = None
-        mock_sync.return_value.repositories_for.side_effect = [
-            ("owner/one",),
-            ("owner/two",),
-        ]
         check_access = AsyncMock(side_effect=[("owner/one",), ("owner/two",)])
         mock_sync.return_value.check_access = check_access
         mock_mcp_type.return_value.disconnect_all = AsyncMock()
@@ -225,6 +219,36 @@ class TestGithubStatus:
 # github link / unlink
 # ---------------------------------------------------------------------------
 class TestGithubSetup:
+    @patch("gobby.cli.github.GitHubIssueSyncService")
+    @patch("gobby.cli.github.GitHubTriageStore")
+    @patch("gobby.cli.github.get_github_deps")
+    def test_setup_resolves_origin_when_sync_is_disabled(
+        self,
+        mock_deps: MagicMock,
+        mock_store_type: MagicMock,
+        mock_sync_type: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        tm, mcp, pm, pid = _mock_github_deps()
+        mock_deps.return_value = (tm, mcp, pm, pid)
+        store = mock_store_type.return_value
+        store.get_config.return_value = GitHubTriageConfig(project_id=pid)
+        store.upsert_config.side_effect = lambda config: config
+        repositories_for = AsyncMock(return_value=("owner/from-origin",))
+        mock_sync_type.return_value.repositories_for = repositories_for
+
+        result = runner.invoke(
+            github,
+            ["setup", "--no-sync", "--no-triage", "--json"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["repositories"] == ["owner/from-origin"]
+        repositories_for.assert_awaited_once_with(
+            pm.get.return_value, store.upsert_config.call_args.args[0]
+        )
+
     @patch("gobby.cli.github.GitHubIssueSyncService")
     @patch("gobby.cli.github.GitHubTriageStore")
     @patch("gobby.cli.github.get_github_deps")

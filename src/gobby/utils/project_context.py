@@ -9,13 +9,13 @@ import json
 import logging
 import os
 import stat
-import subprocess  # nosec B404 # git argv is a fixed isolation restore command.
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.env import is_test_protect_enabled
 
 if TYPE_CHECKING:
@@ -354,7 +354,7 @@ def _atomic_write_bytes(path: Path, payload: bytes, mode: int | None = None) -> 
             logger.warning("Failed to remove temporary file %s", temp_path)
 
 
-def _restore_generated_tracked_project_json(
+async def _restore_generated_tracked_project_json(
     isolated_path: Path,
     main_repo_path: Path,
 ) -> None:
@@ -363,32 +363,32 @@ def _restore_generated_tracked_project_json(
     target = isolated_path / PROJECT_JSON_RELATIVE_PATH
     if not is_generated_isolation_project_json(target, main_repo_path=main_repo_path):
         return
-    checkout = subprocess.run(
-        ["git", "checkout", "HEAD", "--", PROJECT_JSON_RELATIVE_PATH],
+    checkout = await daemon_git.run(
+        ["checkout", "HEAD", "--", PROJECT_JSON_RELATIVE_PATH],
         cwd=isolated_path,
-        capture_output=True,
-        text=True,
         timeout=10,
-        check=False,
     )
-    if checkout.returncode != 0:
+    if not isinstance(checkout, GitOk):
         logger.warning(
             "Failed to restore generated project metadata in %s: %s",
             isolated_path,
-            checkout.stderr.strip(),
+            checkout.stderr.strip() or checkout.status,
         )
         return
-    subprocess.run(
-        ["git", "update-index", "--no-skip-worktree", "--", PROJECT_JSON_RELATIVE_PATH],
+    update_index = await daemon_git.run(
+        ["update-index", "--no-skip-worktree", "--", PROJECT_JSON_RELATIVE_PATH],
         cwd=isolated_path,
-        capture_output=True,
-        text=True,
         timeout=10,
-        check=False,
     )
+    if not isinstance(update_index, GitOk):
+        logger.warning(
+            "Failed to clear skip-worktree for generated project metadata in %s: %s",
+            isolated_path,
+            update_index.stderr.strip() or update_index.status,
+        )
 
 
-def ensure_project_json_for_isolation(
+async def ensure_project_json_for_isolation(
     source_repo_path: str | Path,
     isolated_path: str | Path,
 ) -> None:
@@ -428,7 +428,7 @@ def ensure_project_json_for_isolation(
             )
 
         _atomic_write_bytes(isolated_root / ISOLATION_MARKER_RELATIVE_PATH, marker_bytes)
-        _restore_generated_tracked_project_json(isolated_root, source_root)
+        await _restore_generated_tracked_project_json(isolated_root, source_root)
         logger.info("Wrote isolation sidecar in %s", isolated_root)
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         raise IsolationProjectJsonError(

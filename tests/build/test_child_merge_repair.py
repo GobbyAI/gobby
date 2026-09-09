@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 from pathlib import Path
@@ -1145,7 +1146,7 @@ async def test_epic_integration_workspace_skips_non_automation_planning_commits(
     assert (integration_path / "feature.txt").read_text() == "feature\n"
 
 
-def test_epic_integration_workspace_refresh_aborts_timeout_merge(
+async def test_epic_integration_workspace_refresh_aborts_timeout_merge(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1164,7 +1165,7 @@ def test_epic_integration_workspace_refresh_aborts_timeout_merge(
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
-    def fake_git(
+    async def fake_git(
         repo_path: Path,
         args: list[str],
         *,
@@ -1191,12 +1192,54 @@ def test_epic_integration_workspace_refresh_aborts_timeout_merge(
     monkeypatch.setattr("gobby.build.workspace_git._git", fake_git)
 
     with pytest.raises(BuildWorkspaceError, match="git merge timed out"):
-        _refresh_clean_git_dir(workspace, branch_name, base_ref)
+        await _refresh_clean_git_dir(workspace, branch_name, base_ref)
 
     assert ("merge", "--abort") in calls
 
 
-def test_epic_integration_workspace_refuses_dirty_checkout(
+async def test_epic_integration_workspace_refresh_aborts_cancelled_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "integration"
+    workspace.mkdir()
+    branch_name = "gobby/integration/phase"
+    base_ref = "main"
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_git(
+        repo_path: Path,
+        args: list[str],
+        *,
+        timeout: int,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_path == workspace
+        calls.append(tuple(args))
+        if args == ["status", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args == ["branch", "--show-current"]:
+            return subprocess.CompletedProcess(args, 0, f"{branch_name}\n", "")
+        if args == ["merge-base", "--is-ancestor", base_ref, "HEAD"]:
+            return subprocess.CompletedProcess(args, 1, "", "")
+        if args == ["merge-base", "--is-ancestor", "HEAD", base_ref]:
+            return subprocess.CompletedProcess(args, 1, "", "")
+        if args == ["merge", "--no-edit", base_ref]:
+            assert env == {"GOBBY_MERGE": "1"}
+            raise asyncio.CancelledError
+        if args == ["merge", "--abort"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr("gobby.build.workspace_git._git", fake_git)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _refresh_clean_git_dir(workspace, branch_name, base_ref)
+
+    assert ("merge", "--abort") in calls
+
+
+async def test_epic_integration_workspace_refuses_dirty_checkout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1213,7 +1256,7 @@ def test_epic_integration_workspace_refuses_dirty_checkout(
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
-    def fake_git(
+    async def fake_git(
         repo_path: Path,
         args: list[str],
         *,
@@ -1230,7 +1273,7 @@ def test_epic_integration_workspace_refuses_dirty_checkout(
     monkeypatch.setattr("gobby.build.workspace_git._git", fake_git)
 
     with pytest.raises(BuildWorkspaceError, match="dirty"):
-        _refresh_clean_git_dir(workspace, "gobby/integration/phase", "main")
+        await _refresh_clean_git_dir(workspace, "gobby/integration/phase", "main")
 
     assert calls == [("status", "--porcelain")]
 

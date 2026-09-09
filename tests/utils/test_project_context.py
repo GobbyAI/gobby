@@ -824,10 +824,11 @@ class TestEdgeCases:
         assert context["id"] == "special"
 
 
+@pytest.mark.asyncio
 class TestEnsureProjectJsonForIsolation:
     """Tests for ensure_project_json_for_isolation."""
 
-    def test_creates_when_missing(self, tmp_path: Path) -> None:
+    async def test_creates_when_missing(self, tmp_path: Path) -> None:
         """Target has no project.json — copies from source with parent_project_path."""
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
@@ -836,7 +837,7 @@ class TestEnsureProjectJsonForIsolation:
         target = tmp_path / "worktree"
         target.mkdir()
 
-        ensure_project_json_for_isolation(repo, target)
+        await ensure_project_json_for_isolation(repo, target)
 
         result = json.loads((target / ".gobby" / "project.json").read_text())
         assert result["id"] == "proj-1"
@@ -846,7 +847,7 @@ class TestEnsureProjectJsonForIsolation:
         assert marker["parent_project_path"] == str(repo.resolve())
         assert marker["parent_project_id"] == "proj-1"
 
-    def test_augments_existing(self, tmp_path: Path) -> None:
+    async def test_augments_existing(self, tmp_path: Path) -> None:
         """Target already has project.json (git-tracked) — sidecar is written, file left alone."""
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
@@ -857,14 +858,14 @@ class TestEnsureProjectJsonForIsolation:
         original = '{"id": "proj-1", "name": "test"}'
         (target / ".gobby" / "project.json").write_text(original)
 
-        ensure_project_json_for_isolation(repo, target)
+        await ensure_project_json_for_isolation(repo, target)
 
         assert (target / ".gobby" / "project.json").read_text() == original
         marker = json.loads((target / ".gobby" / "isolation.json").read_text())
         assert marker["parent_project_path"] == str(repo.resolve())
         assert marker["parent_project_id"] == "proj-1"
 
-    def test_noop_when_source_missing(self, tmp_path: Path) -> None:
+    async def test_noop_when_source_missing(self, tmp_path: Path) -> None:
         """Source has no project.json — does nothing."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -872,11 +873,11 @@ class TestEnsureProjectJsonForIsolation:
         target = tmp_path / "worktree"
         target.mkdir()
 
-        ensure_project_json_for_isolation(repo, target)
+        await ensure_project_json_for_isolation(repo, target)
 
         assert not (target / ".gobby" / "project.json").exists()
 
-    def test_missing_source_id_raises_chained_error(self, tmp_path: Path) -> None:
+    async def test_missing_source_id_raises_chained_error(self, tmp_path: Path) -> None:
         """A malformed source project signals the isolation setup failure."""
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
@@ -886,12 +887,12 @@ class TestEnsureProjectJsonForIsolation:
         target.mkdir()
 
         with pytest.raises(IsolationProjectJsonError) as exc_info:
-            ensure_project_json_for_isolation(repo, target)
+            await ensure_project_json_for_isolation(repo, target)
 
         assert isinstance(exc_info.value.__cause__, KeyError)
         assert not (target / ".gobby" / "project.json").exists()
 
-    def test_replaces_target_atomically(self, tmp_path: Path) -> None:
+    async def test_replaces_target_atomically(self, tmp_path: Path) -> None:
         """Replacement uses a temporary file in the target directory."""
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
@@ -902,7 +903,7 @@ class TestEnsureProjectJsonForIsolation:
         target_project_json.write_text('{"id": "old"}')
 
         with patch("gobby.utils.project_context.os.replace", wraps=os.replace) as mock_replace:
-            ensure_project_json_for_isolation(repo, target)
+            await ensure_project_json_for_isolation(repo, target)
 
         sidecar = target / ".gobby" / "isolation.json"
         temp_path, replaced_path = mock_replace.call_args.args
@@ -911,7 +912,7 @@ class TestEnsureProjectJsonForIsolation:
         assert not Path(temp_path).exists()
         assert target_project_json.read_text() == '{"id": "old"}'
 
-    def test_replace_failure_preserves_existing_target(self, tmp_path: Path) -> None:
+    async def test_replace_failure_preserves_existing_target(self, tmp_path: Path) -> None:
         """A failed replace leaves existing metadata intact and signals failure."""
         repo = tmp_path / "repo"
         (repo / ".gobby").mkdir(parents=True)
@@ -926,7 +927,7 @@ class TestEnsureProjectJsonForIsolation:
             patch("gobby.utils.project_context.os.replace", side_effect=OSError("replace failed")),
             pytest.raises(IsolationProjectJsonError) as exc_info,
         ):
-            ensure_project_json_for_isolation(repo, target)
+            await ensure_project_json_for_isolation(repo, target)
 
         assert isinstance(exc_info.value.__cause__, OSError)
         assert target_project_json.read_bytes() == original

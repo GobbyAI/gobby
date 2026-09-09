@@ -7,6 +7,7 @@ import logging
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -20,6 +21,7 @@ from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.system_automation import SystemAutomationLoop
 from tests._timing import wait_for_async_condition
 from tests.config_runtime_helpers import static_cron_capture, static_runtime_capture
@@ -273,7 +275,10 @@ async def test_project_dispatch_timeout_returns_summary(
 ) -> None:
     monkeypatch.setattr("gobby.system_automation.PROJECT_DISPATCH_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("gobby.system_automation.is_project_automation_enabled", lambda *_: True)
-    monkeypatch.setattr("gobby.system_automation.recover_safe_build_claims", lambda *_: None)
+    monkeypatch.setattr(
+        "gobby.system_automation.recover_safe_build_claims",
+        AsyncMock(return_value=None),
+    )
     loop = SystemAutomationLoop(
         db=temp_db,
         capture_bundle=static_runtime_capture(DaemonConfig()),
@@ -727,7 +732,11 @@ async def test_queued_project_dispatch_callback_does_no_work_after_stop(
 
 
 @pytest.mark.asyncio
-async def test_user_cron_jobs_still_create_cron_runs(temp_db: HubDatabase) -> None:
+async def test_user_cron_jobs_still_create_cron_runs(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
@@ -750,11 +759,68 @@ async def test_user_cron_jobs_still_create_cron_runs(temp_db: HubDatabase) -> No
         executor=CronExecutor(storage),
         capture_bundle=static_cron_capture(DaemonConfig().cron),
     )
+    LocalProjectCheckoutManager(temp_db).register(
+        scheduler._machine_id,
+        job.project_id,
+        str(tmp_path),
+    )
+    dispatched_tasks: list[asyncio.Task[None]] = []
+    track_run_task = scheduler._track_run_task
+
+    def capture_run_task(task: asyncio.Task[None], run_id: str) -> None:
+        dispatched_tasks.append(task)
+        track_run_task(task, run_id)
+
+    monkeypatch.setattr(scheduler, "_track_run_task", capture_run_task)
 
     await scheduler._check_due_jobs(scheduler._capture_config())
-    if scheduler._active_tasks:
-        await asyncio.gather(*list(scheduler._active_tasks), return_exceptions=True)
+    assert len(dispatched_tasks) == 1
+    assert await asyncio.gather(*dispatched_tasks) == [None]
 
     runs = storage.list_runs(job.id)
     assert len(runs) == 1
     assert runs[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_cron_context_failure_terminalizes_run(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_project(temp_db)
+    storage = CronJobStorage(temp_db)
+    job = storage.create_job(
+        project_id="11111111-1111-4111-8111-111111110001",
+        name="missing-checkout",
+        schedule_type="interval",
+        interval_seconds=60,
+        action_type="shell",
+        action_config={"command": sys.executable, "args": ["-c", "print('unreachable')"]},
+    )
+    storage.update_job(
+        job.id,
+        next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+    )
+    scheduler = CronScheduler(
+        storage=storage,
+        executor=CronExecutor(storage),
+        capture_bundle=static_cron_capture(DaemonConfig().cron),
+    )
+    dispatched_tasks: list[asyncio.Task[None]] = []
+    track_run_task = scheduler._track_run_task
+
+    def capture_run_task(task: asyncio.Task[None], run_id: str) -> None:
+        dispatched_tasks.append(task)
+        track_run_task(task, run_id)
+
+    monkeypatch.setattr(scheduler, "_track_run_task", capture_run_task)
+
+    await scheduler._check_due_jobs(scheduler._capture_config())
+    assert len(dispatched_tasks) == 1
+    assert await asyncio.gather(*dispatched_tasks) == [None]
+
+    runs = storage.list_runs(job.id)
+    assert len(runs) == 1
+    assert runs[0].status == "failed"
+    assert runs[0].error is not None
+    assert "no checkout" in runs[0].error

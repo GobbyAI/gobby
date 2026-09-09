@@ -355,7 +355,7 @@ class SystemAutomationLoop:
         max_active_agents: int | None = None,
         explicit_task_ids: tuple[str, ...] | None = None,
     ) -> DispatcherTickSummary:
-        await self._run_db_call(recover_safe_build_claims, self.db, project_id)
+        await recover_safe_build_claims(self.db, project_id)
         summary = DispatcherTickSummary()
         for _ in range(max_ticks or DEFAULT_DIRECT_TICK_BURST):
             result = await run_heartbeat(
@@ -650,7 +650,7 @@ class SystemAutomationLoop:
                 task.cancel()
 
     async def _run_pre_dispatch_maintenance(self) -> AutomationMaintenanceSummary:
-        safe_claims = await self._run_db_call(recover_safe_build_claims, self.db, None)
+        safe_claims = await recover_safe_build_claims(self.db, None)
         stale_claims = await self._run_db_call(sweep_stale_claims, self.db)
         mutex_storage = TaskDispatchMutexManager(self.db)
         orphan_mutexes = await self._run_db_call(
