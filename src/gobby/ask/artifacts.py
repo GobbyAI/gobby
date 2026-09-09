@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +36,25 @@ class AskArtifactStore:
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(path, 0o700)
 
-    def write_body(self, kind: str, body: dict[str, Any]) -> dict[str, Any]:
+    def write_body(
+        self,
+        kind: str,
+        body: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         """Durably publish an immutable body and append its pointer to the manifest."""
+        cutoff = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+
+        def deadline_remaining() -> float | None:
+            if cutoff is None:
+                return None
+            value = cutoff - time.monotonic()
+            if value <= 0:
+                raise TimeoutError("Ask artifact deadline exceeded")
+            return value
+
+        deadline_remaining()
         safe = "abcdefghijklmnopqrstuvwxyz0123456789-_"
         if not kind or any(character not in safe for character in kind):
             raise ValueError("artifact kind must be a non-empty safe identifier")
@@ -54,12 +72,12 @@ class AskArtifactStore:
         published = False
         try:
             os.fchmod(descriptor, 0o600)
-            remaining = memoryview(payload)
-            while remaining:
-                written = os.write(descriptor, remaining)
+            payload_remaining = memoryview(payload)
+            while payload_remaining:
+                written = os.write(descriptor, payload_remaining)
                 if written <= 0:
                     raise OSError(f"failed to write Ask artifact {body_path}")
-                remaining = remaining[written:]
+                payload_remaining = payload_remaining[written:]
             os.fsync(descriptor)
             os.close(descriptor)
             descriptor = -1
@@ -89,12 +107,13 @@ class AskArtifactStore:
             "relative_path": relative_path.as_posix(),
             "size_bytes": len(payload),
         }
-        with exclusive_file_lock(self.manifest_path):
+        with exclusive_file_lock(self.manifest_path, timeout_seconds=deadline_remaining()):
             manifest = self._read_manifest_unlocked()
             known = {item["relative_path"] for item in manifest["artifacts"]}
             if pointer["relative_path"] not in known:
                 manifest["artifacts"].append(pointer)
                 durable_replace(self.manifest_path, _canonical_json(manifest), mode=0o600)
+        deadline_remaining()
         return pointer
 
     def read_body(self, pointer: dict[str, Any]) -> dict[str, Any]:

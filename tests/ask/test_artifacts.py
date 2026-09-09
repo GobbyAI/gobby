@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gobby.ask.artifacts import AskArtifactStore
+from gobby.utils.durable_file import exclusive_file_lock
 
 pytestmark = pytest.mark.unit
 
@@ -49,3 +50,13 @@ def test_artifact_pointer_is_bound_to_project_and_run(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="does not belong"):
         second.read_body(pointer)
+
+
+def test_artifact_manifest_lock_obeys_operation_deadline(tmp_path: Path) -> None:
+    store = AskArtifactStore(tmp_path, "project", "run")
+
+    with exclusive_file_lock(store.manifest_path):
+        with pytest.raises(TimeoutError, match="deadline"):
+            store.write_body("evidence-result", {"status": "succeeded"}, timeout_seconds=0.05)
+
+    assert not store.manifest_path.exists()

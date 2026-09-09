@@ -212,7 +212,7 @@ class TestEnsureIsolationCodeIndex:
         assert "--allow-stale" in calls[2].args[0]
         assert "--no-freshness" not in calls[2].args[0]
         assert calls[0].kwargs["cwd"] == str(tmp_path)
-        assert proc.communicate_timeouts == [5.0, 120.0, 10.0]
+        assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 10.0], abs=0.01)
 
     @pytest.mark.asyncio
     async def test_scoped_credential_creates_gcode_wrapper_runtime(
@@ -261,7 +261,9 @@ class TestEnsureIsolationCodeIndex:
         runtime_token = Path(result.runtime_home) / "local_cli_token"
         assert not runtime_token.exists()
         assert not runtime_token.is_symlink()
-        assert self._gcode_calls(popen)[0].args[0][0] == str(wrapper)
+        preflight = self._gcode_calls(popen)[0]
+        assert preflight.args[0][0] == "/tmp/gcode"
+        assert preflight.kwargs["env"]["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(grant_path)
         status = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=workspace,

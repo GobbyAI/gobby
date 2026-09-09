@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import fcntl
+import math
 import os
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -15,14 +17,28 @@ class DurableFileError(OSError):
 
 
 @contextmanager
-def exclusive_file_lock(path: Path) -> Iterator[None]:
+def exclusive_file_lock(path: Path, *, timeout_seconds: float | None = None) -> Iterator[None]:
     """Hold an owner-only sidecar flock for ``path``."""
+    if timeout_seconds is not None and (not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+        raise TimeoutError("durable file lock deadline exceeded")
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(f".{path.name}.lock")
     lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         os.fchmod(lock_fd, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if timeout_seconds is None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        else:
+            cutoff = time.monotonic() + timeout_seconds
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = cutoff - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("durable file lock deadline exceeded") from None
+                    time.sleep(min(0.01, remaining))
         yield
     finally:
         os.close(lock_fd)

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import hmac
 import json
 import math
 import os
 import re
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
@@ -18,6 +20,11 @@ from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import EvidenceReference, RetrievalMode
 from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
+from gobby.code_index.eligibility import code_index_id_for_root
+from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
+from gobby.runtime_grants.signing import payload_checksum
+from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.terminal_output import redact_terminal_output
 
 _MAX_PAGE_SIZE = 1024 * 1024
@@ -38,6 +45,7 @@ _SENSITIVE_NAMES = {
 }
 _SENSITIVE_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
 _URI_PASSWORD = re.compile(r"([a-z][a-z0-9+.-]*://[^:/\s]+:)[^@\s]+(@)", re.IGNORECASE)
+_TERMINAL_CHECKPOINT_SECONDS = 2.0
 
 
 class EvidenceAdmissionError(RuntimeError):
@@ -54,6 +62,23 @@ def _content_hash(value: object) -> str:
 
 def _redact_output(value: str) -> str:
     return _URI_PASSWORD.sub(r"\1<redacted>\2", redact_terminal_output(value))
+
+
+def _sanitize(value: Any) -> Any:
+    if isinstance(value, str):
+        return _redact_output(value)
+    if isinstance(value, dict):
+        return {str(key): _sanitize(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_sanitize(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize(child) for child in value)
+    return value
+
+
+def _contains_credential(value: object) -> bool:
+    serialized = _canonical_json(value)
+    return _redact_output(serialized) != serialized
 
 
 class EvidenceAdmission:
@@ -79,6 +104,7 @@ class EvidenceAdmission:
         self.page_size = page_size
         self.artifacts = artifacts
         self.storage = storage
+        self.runtime = runtime
         (
             self.source_root,
             self.snapshot_binding,
@@ -158,9 +184,7 @@ class EvidenceAdmission:
         inventory = identity.get("inventory")
         if not isinstance(binding, dict) or not isinstance(inventory, dict):
             raise EvidenceAdmissionError("snapshot identity is missing its native payload")
-        if binding.get("project_id") != record.binding.project_id or (
-            binding.get("commit_oid") != record.binding.commit_oid
-        ):
+        if binding.get("commit_oid") != record.binding.commit_oid:
             raise EvidenceAdmissionError(
                 "native snapshot binding differs from the persisted Ask run"
             )
@@ -177,6 +201,8 @@ class EvidenceAdmission:
         expected_source = (self.artifacts.run_root / "source").resolve()
         if source_root != expected_source or not source_root.is_dir():
             raise EvidenceAdmissionError("current snapshot source root is unavailable")
+        if binding.get("project_id") != code_index_id_for_root(source_root):
+            raise EvidenceAdmissionError("native snapshot index scope identity changed")
         executable_value = runtime_value.get("executable")
         argv_prefix_value = runtime_value.get("argv_prefix")
         if (
@@ -204,6 +230,7 @@ class EvidenceAdmission:
             for key, value in env.items()
         ):
             raise EvidenceAdmissionError("current snapshot runtime environment is not admissible")
+        self._validate_runtime_environment(env, runtime, record.binding.project_id, deadline_at)
         return (
             source_root,
             json.loads(_canonical_json(binding)),
@@ -214,6 +241,130 @@ class EvidenceAdmission:
             env,
         )
 
+    @staticmethod
+    def _validate_runtime_environment(
+        env: Mapping[str, str],
+        runtime: SnapshotIndexRuntime,
+        project_id: str,
+        deadline_at: datetime,
+    ) -> None:
+        if "DATABASE_URL" in env:
+            raise EvidenceAdmissionError("direct database credentials are not admissible")
+        expected_identity = {
+            "GOBBY_AGENT_RUN_ID": runtime.managed_execution_id,
+            "GOBBY_PROJECT_ID": project_id,
+        }
+        for key, expected in expected_identity.items():
+            if env.get(key) != expected:
+                raise EvidenceAdmissionError(f"managed runtime {key} identity does not match")
+        if not env.get("GOBBY_MACHINE_ID") or not env.get("GOBBY_SESSION_ID"):
+            raise EvidenceAdmissionError("managed runtime machine or session identity is missing")
+        grant_value = env.get(MANAGED_EXECUTION_BOOTSTRAP_ENV)
+        if not grant_value:
+            raise EvidenceAdmissionError("managed runtime grant is missing")
+        try:
+            grant = GrantBundle.model_validate_json(Path(grant_value).read_bytes())
+        except (OSError, ValueError) as error:
+            raise EvidenceAdmissionError("managed runtime grant is invalid") from error
+        if not hmac.compare_digest(grant.payload_checksum, payload_checksum(grant)):
+            raise EvidenceAdmissionError("managed runtime grant checksum does not match")
+        if len(grant.signature) != 64:
+            raise EvidenceAdmissionError("managed runtime grant signature is invalid")
+        principal = grant.principal
+        if (
+            principal.execution_id != runtime.managed_execution_id
+            or principal.project_id != project_id
+            or principal.machine_id != env["GOBBY_MACHINE_ID"]
+            or principal.session_id != env["GOBBY_SESSION_ID"]
+        ):
+            raise EvidenceAdmissionError("managed runtime grant principal does not match")
+        postgres = grant.capabilities.postgres
+        if (
+            not isinstance(postgres, PostgresDirect)
+            or postgres.credential_generation != runtime.credential_generation
+        ):
+            raise EvidenceAdmissionError("managed runtime credential generation does not match")
+        if grant.expires_at < int(deadline_at.timestamp()):
+            raise EvidenceAdmissionError("managed runtime grant expires before the Ask deadline")
+
+    def _refresh_authority(self) -> None:
+        remaining = self._remaining_seconds()
+        with database_operation_deadline(
+            timeout_seconds=remaining,
+            operation_timeout_seconds=remaining,
+        ):
+            (
+                self.source_root,
+                self.snapshot_binding,
+                self.retrieval_mode,
+                self.deadline_at,
+                self.executable,
+                self.argv_prefix,
+                self.env,
+            ) = self._load_authority(self.runtime)
+
+    def _remaining_seconds(self, deadline_at: datetime | None = None) -> float:
+        deadline = deadline_at or self.deadline_at
+        remaining = (deadline.astimezone(UTC) - datetime.now(UTC)).total_seconds()
+        if not math.isfinite(remaining) or remaining <= 0:
+            raise TimeoutError("evidence deadline exceeded")
+        return remaining
+
+    async def _owned_thread(self, function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(task)
+            raise
+
+    async def _write_artifact(
+        self,
+        kind: str,
+        body: dict[str, Any],
+        *,
+        deadline_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        deadline = deadline_at or self.deadline_at
+        pointer: dict[str, Any] = await self._owned_thread(
+            self.artifacts.write_body,
+            kind,
+            body,
+            timeout_seconds=self._remaining_seconds(deadline),
+        )
+        self._remaining_seconds(deadline)
+        return pointer
+
+    async def _spawn_process(self, *argv: str, **kwargs: Any) -> Any:
+        spawn_task = asyncio.create_task(asyncio.create_subprocess_exec(*argv, **kwargs))
+        try:
+            async with asyncio.timeout(self._remaining_seconds()):
+                return await asyncio.shield(spawn_task)
+        except (asyncio.CancelledError, TimeoutError):
+            spawn_task.cancel()
+            process = None
+            try:
+                async with asyncio.timeout(_TERMINAL_CHECKPOINT_SECONDS):
+                    process = await asyncio.shield(spawn_task)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            if process is not None:
+                await self._terminate_process(process)
+            raise
+
+    @staticmethod
+    async def _terminate_process(process: Any) -> tuple[bytes, bytes]:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+        try:
+            async with asyncio.timeout(_TERMINAL_CHECKPOINT_SECONDS):
+                output: tuple[bytes, bytes] = await process.communicate()
+                return output
+        except TimeoutError:
+            return b"", b"process cleanup exceeded its bounded terminal window"
+
     async def query(
         self,
         operation: str,
@@ -222,11 +373,16 @@ class EvidenceAdmission:
         continuation: str | None = None,
     ) -> dict[str, Any]:
         """Invoke one admitted gcode request and durably checkpoint its outcome."""
+        try:
+            self._refresh_authority()
+        except TimeoutError:
+            raise EvidenceAdmissionError("evidence deadline exceeded before invocation") from None
         invocation_id = str(uuid4())
         operation_body = self._normalize_selector(operation, selector)
         request: dict[str, Any] = {
             "schema_version": 1,
             "binding": self.snapshot_binding,
+            "operation": operation,
             **operation_body,
             "max_bytes": self.page_size,
         }
@@ -246,23 +402,43 @@ class EvidenceAdmission:
             "--request-json",
             _canonical_json(request),
         ]
+        stored_request = _sanitize(request)
+        stored_argv = _sanitize(argv)
         invocation_body = {
             "schema_version": 1,
             "run_id": self.run_id,
             "invocation_id": invocation_id,
             "operation": operation,
-            "request": request,
+            "request": stored_request,
             "request_hash": _content_hash(request),
             "snapshot_inventory_digest": self.snapshot_binding["inventory_digest"],
             "retrieval_mode": self.retrieval_mode.value,
             "deadline_at": self.deadline_at.isoformat().replace("+00:00", "Z"),
-            "argv": argv,
+            "argv": stored_argv,
         }
-        invocation_pointer = await asyncio.to_thread(
-            self.artifacts.write_body,
-            "evidence-invocation",
-            invocation_body,
-        )
+        try:
+            invocation_pointer = await self._write_artifact(
+                "evidence-invocation",
+                invocation_body,
+            )
+        except TimeoutError:
+            cleanup_deadline = datetime.now(UTC) + timedelta(seconds=_TERMINAL_CHECKPOINT_SECONDS)
+            invocation_pointer = await self._write_artifact(
+                "evidence-invocation",
+                invocation_body,
+                deadline_at=cleanup_deadline,
+            )
+            await self._checkpoint_timeout(
+                operation,
+                invocation_id,
+                invocation_pointer,
+                request,
+                stored_argv,
+                deadline_at=cleanup_deadline,
+            )
+            raise EvidenceAdmissionError(
+                "evidence deadline exceeded during invocation publication"
+            ) from None
 
         try:
             self._admit(operation, operation_body)
@@ -272,7 +448,7 @@ class EvidenceAdmission:
                 "run_id": self.run_id,
                 "invocation_id": invocation_id,
                 "status": "denied",
-                "argv": argv,
+                "argv": stored_argv,
                 "error": {"code": "policy_denied", "message": str(error)},
             }
             await self._checkpoint(
@@ -291,7 +467,7 @@ class EvidenceAdmission:
                 invocation_id,
                 invocation_pointer,
                 request,
-                argv,
+                stored_argv,
             )
             raise EvidenceAdmissionError("evidence deadline exceeded before invocation")
 
@@ -302,20 +478,31 @@ class EvidenceAdmission:
         }
         child_env.update(self.env)
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await self._spawn_process(
                 *argv,
                 cwd=self.source_root,
                 env=child_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+        except TimeoutError:
+            await self._checkpoint_timeout(
+                operation,
+                invocation_id,
+                invocation_pointer,
+                request,
+                stored_argv,
+            )
+            raise EvidenceAdmissionError(
+                "evidence deadline exceeded during process start"
+            ) from None
         except OSError as error:
             result = {
                 "schema_version": 1,
                 "run_id": self.run_id,
                 "invocation_id": invocation_id,
                 "status": "failed",
-                "argv": argv,
+                "argv": stored_argv,
                 "error": {"code": "process_start_failed", "message": _redact_output(str(error))},
             }
             await self._checkpoint(
@@ -324,34 +511,35 @@ class EvidenceAdmission:
                 invocation_pointer=invocation_pointer,
                 request=request,
                 result=result,
+                deadline_at=datetime.now(UTC) + timedelta(seconds=_TERMINAL_CHECKPOINT_SECONDS),
             )
             raise EvidenceAdmissionError(
                 "process_start_failed: gcode evidence did not start"
             ) from error
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), remaining)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(), self._remaining_seconds()
+            )
         except TimeoutError:
-            process.kill()
-            stdout_bytes, stderr_bytes = await process.communicate()
+            stdout_bytes, stderr_bytes = await self._terminate_process(process)
             await self._checkpoint_timeout(
                 operation,
                 invocation_id,
                 invocation_pointer,
                 request,
-                argv,
+                stored_argv,
                 stdout=stdout_bytes.decode(errors="replace"),
                 stderr=stderr_bytes.decode(errors="replace"),
             )
             raise EvidenceAdmissionError("evidence deadline exceeded during invocation") from None
         except asyncio.CancelledError:
-            process.kill()
-            stdout_bytes, stderr_bytes = await process.communicate()
+            stdout_bytes, stderr_bytes = await self._terminate_process(process)
             result = {
                 "schema_version": 1,
                 "run_id": self.run_id,
                 "invocation_id": invocation_id,
                 "status": "cancelled",
-                "argv": argv,
+                "argv": stored_argv,
                 "returncode": process.returncode,
                 "stdout": _redact_output(stdout_bytes.decode(errors="replace")),
                 "stderr": _redact_output(stderr_bytes.decode(errors="replace")),
@@ -362,6 +550,7 @@ class EvidenceAdmission:
                 invocation_pointer=invocation_pointer,
                 request=request,
                 result=result,
+                deadline_at=datetime.now(UTC) + timedelta(seconds=_TERMINAL_CHECKPOINT_SECONDS),
             )
             raise
 
@@ -374,7 +563,7 @@ class EvidenceAdmission:
                 "run_id": self.run_id,
                 "invocation_id": invocation_id,
                 "status": "failed",
-                "argv": argv,
+                "argv": stored_argv,
                 "returncode": process.returncode,
                 "stdout": _redact_output(stdout),
                 "stderr": _redact_output(stderr),
@@ -388,7 +577,8 @@ class EvidenceAdmission:
                 result=result,
             )
             code = error_body.get("code", "gcode_failed")
-            raise EvidenceAdmissionError(f"{code}: gcode evidence invocation failed")
+            message = error_body.get("message", "gcode evidence invocation failed")
+            raise EvidenceAdmissionError(f"{code}: {message}")
 
         try:
             response = self._validate_response(request, json.loads(stdout))
@@ -398,7 +588,7 @@ class EvidenceAdmission:
                 "run_id": self.run_id,
                 "invocation_id": invocation_id,
                 "status": "invalid_response",
-                "argv": argv,
+                "argv": stored_argv,
                 "returncode": process.returncode,
                 "stdout": _redact_output(stdout),
                 "stderr": _redact_output(stderr),
@@ -418,19 +608,29 @@ class EvidenceAdmission:
             "run_id": self.run_id,
             "invocation_id": invocation_id,
             "status": "succeeded",
-            "argv": argv,
+            "argv": stored_argv,
             "returncode": process.returncode,
             "stderr": _redact_output(stderr),
             "response": response,
         }
-        await self._checkpoint(
-            operation=operation,
-            invocation_id=invocation_id,
-            invocation_pointer=invocation_pointer,
-            request=request,
-            result=result,
-            response=response,
-        )
+        try:
+            await self._checkpoint(
+                operation=operation,
+                invocation_id=invocation_id,
+                invocation_pointer=invocation_pointer,
+                request=request,
+                result=result,
+                response=response,
+            )
+        except TimeoutError:
+            await self._checkpoint_timeout(
+                operation,
+                invocation_id,
+                invocation_pointer,
+                request,
+                stored_argv,
+            )
+            raise EvidenceAdmissionError("evidence deadline exceeded during publication") from None
         return response
 
     def _normalize_selector(
@@ -466,6 +666,8 @@ class EvidenceAdmission:
             raise EvidenceAdmissionError(
                 f"operation is not permitted for this Ask run: {operation}"
             )
+        if _contains_credential(selector):
+            raise EvidenceAdmissionError("credential-bearing evidence selector is not admissible")
         search = selector.get("search")
         if self.retrieval_mode is RetrievalMode.DETERMINISTIC and isinstance(search, dict):
             lane = search.get("lane")
@@ -536,6 +738,7 @@ class EvidenceAdmission:
         *,
         stdout: str = "",
         stderr: str = "",
+        deadline_at: datetime | None = None,
     ) -> None:
         result = {
             "schema_version": 1,
@@ -553,6 +756,8 @@ class EvidenceAdmission:
             invocation_pointer=invocation_pointer,
             request=request,
             result=result,
+            deadline_at=deadline_at
+            or datetime.now(UTC) + timedelta(seconds=_TERMINAL_CHECKPOINT_SECONDS),
         )
 
     async def _checkpoint(
@@ -564,11 +769,13 @@ class EvidenceAdmission:
         request: dict[str, Any],
         result: dict[str, Any],
         response: dict[str, Any] | None = None,
+        deadline_at: datetime | None = None,
     ) -> None:
-        result_pointer = await asyncio.to_thread(
-            self.artifacts.write_body,
+        deadline = deadline_at or self.deadline_at
+        result_pointer = await self._write_artifact(
             "evidence-result",
-            result,
+            _sanitize(result),
+            deadline_at=deadline,
         )
         items = response.get("items", []) if response is not None else []
         evidence_ids = tuple(
@@ -595,7 +802,13 @@ class EvidenceAdmission:
             contract=contract,
             usage=usage,
         )
-        await asyncio.to_thread(self.storage.append_evidence_reference, self.run_id, reference)
+        await self._owned_thread(
+            self.storage.append_evidence_reference,
+            self.run_id,
+            reference,
+            deadline_at=deadline,
+        )
+        self._remaining_seconds(deadline)
 
     def _validate_response(
         self,
@@ -662,6 +875,8 @@ class EvidenceAdmission:
         total_items = bounds.get("total_items")
         if not isinstance(total_items, int) or total_items < len(items):
             raise EvidenceAdmissionError("response total item bound is invalid")
+        if _contains_credential(response):
+            raise EvidenceAdmissionError("response contains credential-bearing content")
         return response
 
     @staticmethod

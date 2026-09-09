@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 from gobby.ask.contracts import (
     AskBinding,
     AskRequest,
@@ -354,38 +356,62 @@ class AskRunStorage:
             return None
         return SnapshotGeneration.model_validate(ask_output["snapshot"])
 
-    def append_evidence_reference(self, run_id: str, reference: EvidenceReference) -> None:
+    def append_evidence_reference(
+        self,
+        run_id: str,
+        reference: EvidenceReference,
+        *,
+        deadline_at: datetime,
+    ) -> None:
         """Serialize one evidence checkpoint through the pipeline row transaction."""
-        with self.manager.db.transaction() as connection:
-            row = connection.execute(
-                """
-                SELECT outputs_json, project_id FROM pipeline_executions
-                WHERE id = %s AND pipeline_name = %s
-                FOR UPDATE
-                """,
-                (run_id, self.pipeline_name),
-            ).fetchone()
-            if row is None or (
-                self.manager.project_id is not None
-                and str(row["project_id"]) != self.manager.project_id
+        remaining = (deadline_at.astimezone(UTC) - datetime.now(UTC)).total_seconds()
+        if not math.isfinite(remaining) or remaining <= 0:
+            raise TimeoutError("Ask evidence checkpoint deadline exceeded")
+        try:
+            with (
+                database_operation_deadline(
+                    timeout_seconds=remaining,
+                    operation_timeout_seconds=remaining,
+                ),
+                self.manager.db.transaction() as connection,
             ):
-                raise ValueError(f"Ask run not found: {run_id}")
-            outputs = json.loads(row["outputs_json"] or "{}")
-            if not isinstance(outputs, dict):
-                raise RuntimeError(f"invalid pipeline outputs for Ask run {run_id}")
-            ask_output = outputs.setdefault("ask", {})
-            if not isinstance(ask_output, dict):
-                raise RuntimeError(f"invalid Ask outputs for run {run_id}")
-            evidence = ask_output.setdefault("evidence", [])
-            if not isinstance(evidence, list):
-                raise RuntimeError(f"invalid Ask evidence checkpoint for run {run_id}")
-            body = reference.model_dump(mode="json")
-            if not any(item.get("invocation_id") == reference.invocation_id for item in evidence):
-                evidence.append(body)
-                connection.execute(
-                    "UPDATE pipeline_executions SET outputs_json = %s, updated_at = NOW() WHERE id = %s",
-                    (_canonical_json(outputs), run_id),
-                )
+                row = connection.execute(
+                    """
+                    SELECT outputs_json, project_id FROM pipeline_executions
+                    WHERE id = %s AND pipeline_name = %s
+                    FOR UPDATE
+                    """,
+                    (run_id, self.pipeline_name),
+                ).fetchone()
+                if row is None or (
+                    self.manager.project_id is not None
+                    and str(row["project_id"]) != self.manager.project_id
+                ):
+                    raise ValueError(f"Ask run not found: {run_id}")
+                outputs = json.loads(row["outputs_json"] or "{}")
+                if not isinstance(outputs, dict):
+                    raise RuntimeError(f"invalid pipeline outputs for Ask run {run_id}")
+                ask_output = outputs.setdefault("ask", {})
+                if not isinstance(ask_output, dict):
+                    raise RuntimeError(f"invalid Ask outputs for run {run_id}")
+                evidence = ask_output.setdefault("evidence", [])
+                if not isinstance(evidence, list):
+                    raise RuntimeError(f"invalid Ask evidence checkpoint for run {run_id}")
+                body = reference.model_dump(mode="json")
+                if not any(
+                    item.get("invocation_id") == reference.invocation_id for item in evidence
+                ):
+                    evidence.append(body)
+                    connection.execute(
+                        """
+                        UPDATE pipeline_executions
+                        SET outputs_json = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (_canonical_json(outputs), run_id),
+                    )
+        except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable) as error:
+            raise TimeoutError("Ask evidence checkpoint deadline exceeded") from error
 
     def _resolve_commit(
         self, project_root: Path, commit_ref: str, *, timeout: float

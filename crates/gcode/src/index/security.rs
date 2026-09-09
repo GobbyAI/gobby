@@ -2,6 +2,9 @@
 //! Ports logic from src/gobby/code_index/security.py.
 
 use std::path::Path;
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 const SECRET_EXTENSIONS: &[&str] = &[
     ".env",
@@ -175,6 +178,33 @@ pub fn is_sensitive_evidence_path(path: &Path) -> bool {
             let name = component.as_os_str().to_string_lossy().to_lowercase();
             SENSITIVE_PATH_COMPONENTS.contains(&name.as_str()) || name.starts_with(".env.")
         })
+}
+
+/// Return whether source bytes contain a credential shape that must never be evidence.
+///
+/// Evidence excludes the whole blob instead of rewriting it, preserving the invariant
+/// that every citeable source ID and hash names exact Git bytes.
+pub fn contains_known_credential(content: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(content) else {
+        return false;
+    };
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    PATTERNS
+        .get_or_init(|| {
+            [
+                r"(?i)[a-z][a-z0-9+.-]*://[^:/\s]+:[^@\s]+@",
+                r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}",
+                r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})",
+                r"\bAKIA[0-9A-Z]{16}\b",
+                r"(?i)\bbearer\s+[A-Za-z0-9._-]{16,}",
+                r#"(?i)\b(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*[\"']?[^\s\"']{12,}"#,
+            ]
+            .into_iter()
+            .map(|pattern| Regex::new(pattern).expect("credential patterns are valid"))
+            .collect()
+        })
+        .iter()
+        .any(|pattern| pattern.is_match(text))
 }
 
 fn is_plaintext_secret_name(stem: &str) -> bool {

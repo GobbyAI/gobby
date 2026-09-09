@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
-from datetime import datetime
+import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 import pytest
 
 from gobby.ask import snapshots as snapshot_module
 from gobby.ask.artifacts import AskArtifactStore
-from gobby.ask.contracts import AskRequest, ProfileSnapshot
-from gobby.ask.snapshots import AskSnapshotManager, SnapshotDriftError, SnapshotIndexRuntime
+from gobby.ask.contracts import AskRequest, ProfileSnapshot, SnapshotGeneration
+from gobby.ask.snapshots import (
+    AskSnapshotManager,
+    SnapshotCleanupError,
+    SnapshotDriftError,
+    SnapshotIndexRuntime,
+)
 from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -331,6 +342,278 @@ def test_snapshot_creation_and_index_faults_leave_no_worktree(
     source_root = artifacts.run_root / "source"
     assert not source_root.exists()
     assert worktrees.get_by_path(str(source_root)) is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cancellation_waits_for_worktree_creation_before_cleanup(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = str(sample_project["id"])
+    repo = tmp_path / "caller"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "source.py").write_text("VALUE = 'pinned'\n", encoding="utf-8")
+    commit_oid = _commit(repo, "pinned")
+    storage, run_id = _run_storage(temp_db, project_id, repo, commit_oid)
+    artifacts = AskArtifactStore(tmp_path / "cancel-worktree-state", project_id, run_id)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    real_git = snapshot_module._git
+
+    def slow_git(
+        root: Path,
+        *arguments: str,
+        timeout: float,
+        input_bytes: bytes | None = None,
+    ) -> bytes:
+        if arguments[:2] == ("worktree", "add"):
+            entered.set()
+            assert release.wait(timeout=2)
+            try:
+                return real_git(
+                    root,
+                    *arguments,
+                    timeout=timeout,
+                    input_bytes=input_bytes,
+                )
+            finally:
+                finished.set()
+        return real_git(root, *arguments, timeout=timeout, input_bytes=input_bytes)
+
+    async def unexpected_index(_path: Path, _deadline: datetime) -> SnapshotIndexRuntime:
+        raise AssertionError("cancelled worktree creation must not prepare an index")
+
+    monkeypatch.setattr(snapshot_module, "_git", slow_git)
+    manager = AskSnapshotManager(
+        worktree_storage=LocalWorktreeManager(temp_db),
+        index_preparer=unexpected_index,
+        index_releaser=lambda _runtime: None,
+        run_storage=storage,
+        snapshot_executable=_branch_gcode(),
+    )
+    task = asyncio.create_task(
+        manager.prepare_async(run_id=run_id, repository_root=repo, artifacts=artifacts)
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(finished.wait, 2)
+    source_root = artifacts.run_root / "source"
+    assert not source_root.exists()
+    assert manager.worktree_storage.get_by_path(str(source_root)) is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cancellation_revokes_grant_issued_in_blocking_call(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    project_id = str(sample_project["id"])
+    repo = tmp_path / "caller"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "source.py").write_text("VALUE = 'pinned'\n", encoding="utf-8")
+    commit_oid = _commit(repo, "pinned")
+    storage, _run_id = _run_storage(temp_db, project_id, repo, commit_oid)
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    session_id = uuid4()
+    execution_id = uuid4()
+    entered = threading.Event()
+    release = threading.Event()
+    revoked: list[tuple[UUID, int | None, str]] = []
+
+    class BlockingCredentialManager:
+        def issue_tool_request(self, **_kwargs: object) -> SimpleNamespace:
+            entered.set()
+            assert release.wait(timeout=2)
+            credential = SimpleNamespace(
+                managed_execution_id=execution_id,
+                credential_generation=1,
+            )
+            return SimpleNamespace(
+                project_path=str(source_root),
+                project_id=project_id,
+                credential=credential,
+            )
+
+        def revoke(
+            self,
+            managed_execution_id: UUID,
+            *,
+            generation: int | None = None,
+            reason: str,
+        ) -> None:
+            revoked.append((managed_execution_id, generation, reason))
+
+    manager = AskSnapshotManager(
+        worktree_storage=LocalWorktreeManager(temp_db),
+        run_storage=storage,
+        credential_manager=cast("ManagedCredentialManager", BlockingCredentialManager()),
+        session_id=session_id,
+        snapshot_executable=_branch_gcode(),
+    )
+    task = asyncio.create_task(
+        manager._prepare_index(source_root, datetime.now(UTC) + timedelta(seconds=10))
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert revoked == [(execution_id, 1, "ask_snapshot_preparation_failed")]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cancellation_after_generation_commit_preserves_authority(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = str(sample_project["id"])
+    repo = tmp_path / "caller"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "source.py").write_text("VALUE = 'pinned'\n", encoding="utf-8")
+    commit_oid = _commit(repo, "pinned")
+    storage, run_id = _run_storage(temp_db, project_id, repo, commit_oid)
+    artifacts = AskArtifactStore(tmp_path / "commit-cancel-state", project_id, run_id)
+    prepared_count = 0
+    released: list[str] = []
+
+    async def prepare_index(_path: Path, _deadline: datetime) -> SnapshotIndexRuntime:
+        nonlocal prepared_count
+        prepared_count += 1
+        return SnapshotIndexRuntime(
+            executable=_branch_gcode(),
+            env={},
+            managed_execution_id=f"managed-{prepared_count}",
+            credential_generation=prepared_count,
+        )
+
+    manager = AskSnapshotManager(
+        worktree_storage=LocalWorktreeManager(temp_db),
+        index_preparer=prepare_index,
+        index_releaser=lambda runtime: released.append(runtime.managed_execution_id),
+        run_storage=storage,
+        snapshot_executable=_branch_gcode(),
+    )
+    real_publish = storage.publish_snapshot_generation
+    published = threading.Event()
+    release = threading.Event()
+
+    def publish_then_pause(
+        target_run_id: str,
+        *,
+        generation: int,
+        lifecycle_artifact: dict[str, Any],
+        expected_previous_generation: int | None,
+        deadline_at: datetime,
+    ) -> SnapshotGeneration:
+        result = real_publish(
+            target_run_id,
+            generation=generation,
+            lifecycle_artifact=lifecycle_artifact,
+            expected_previous_generation=expected_previous_generation,
+            deadline_at=deadline_at,
+        )
+        published.set()
+        assert release.wait(timeout=2)
+        return result
+
+    monkeypatch.setattr(storage, "publish_snapshot_generation", publish_then_pause)
+    task = asyncio.create_task(
+        manager.prepare_async(run_id=run_id, repository_root=repo, artifacts=artifacts)
+    )
+    assert await asyncio.to_thread(published.wait, 2)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    current = storage.get_snapshot_generation(run_id)
+    assert current is not None
+    assert current.generation == 1
+    source_root = artifacts.run_root / "source"
+    assert source_root.exists()
+    assert manager.worktree_storage.get_by_path(str(source_root)) is not None
+    assert released == []
+
+    monkeypatch.setattr(storage, "publish_snapshot_generation", real_publish)
+    recovered = await manager.recover_async(run_id=run_id, artifacts=artifacts)
+    assert recovered.generation == 2
+    assert released == ["managed-1"]
+    manager.release(recovered, artifacts=artifacts)
+
+
+def test_snapshot_failed_git_cleanup_retains_worktree_owner(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = str(sample_project["id"])
+    repo = tmp_path / "caller"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "source.py").write_text("VALUE = 'pinned'\n", encoding="utf-8")
+    commit_oid = _commit(repo, "pinned")
+    storage, run_id = _run_storage(temp_db, project_id, repo, commit_oid, timeout_seconds=120)
+    artifacts = AskArtifactStore(tmp_path / "cleanup-state", project_id, run_id)
+
+    async def prepare_index(_path: Path, _deadline: datetime) -> SnapshotIndexRuntime:
+        return SnapshotIndexRuntime(
+            executable=_branch_gcode(),
+            env={},
+            managed_execution_id="managed-cleanup",
+            credential_generation=1,
+        )
+
+    manager = AskSnapshotManager(
+        worktree_storage=LocalWorktreeManager(temp_db),
+        index_preparer=prepare_index,
+        index_releaser=lambda _runtime: None,
+        run_storage=storage,
+        snapshot_executable=_branch_gcode(),
+    )
+    snapshot = manager.prepare(run_id=run_id, repository_root=repo, artifacts=artifacts)
+    real_git = snapshot_module._git
+    observed_timeouts: list[float] = []
+
+    def fail_cleanup(
+        root: Path,
+        *arguments: str,
+        timeout: float,
+        input_bytes: bytes | None = None,
+    ) -> bytes:
+        observed_timeouts.append(timeout)
+        if arguments[:2] in {("worktree", "remove"), ("worktree", "prune")}:
+            raise subprocess.TimeoutExpired(["git", *arguments], timeout)
+        return real_git(root, *arguments, timeout=timeout, input_bytes=input_bytes)
+
+    monkeypatch.setattr(snapshot_module, "_git", fail_cleanup)
+    with pytest.raises(SnapshotCleanupError, match="ownership retained"):
+        manager.release(snapshot, artifacts=artifacts)
+    assert snapshot.source_root.exists()
+    assert manager.worktree_storage.get(snapshot.worktree_id) is not None
+    assert len(observed_timeouts) == 2
+    assert 0 < observed_timeouts[1] <= observed_timeouts[0] <= 10
+
+    monkeypatch.setattr(snapshot_module, "_git", real_git)
+    manager._delete_worktree(
+        snapshot.repository_root,
+        snapshot.source_root,
+        snapshot.worktree_id,
+    )
+    assert manager.worktree_storage.get(snapshot.worktree_id) is None
 
 
 def test_hostile_git_environment_filters_and_hooks_cannot_change_snapshot(
