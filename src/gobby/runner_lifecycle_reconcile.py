@@ -35,10 +35,11 @@ async def _reconcile_agent_runs_after_restart(
     *,
     include_fenced: bool = False,
     resolved_run_ids: set[str] | None = None,
+    run_ids: frozenset[str] | None = None,
 ) -> int:
-    """Reconnect active terminal-backed agent runs after daemon restart."""
+    """Reconnect startup runs, or only the captured periodic recovery subset."""
     credential_manager = getattr(runner, "managed_credential_manager", None)
-    if credential_manager is not None:
+    if credential_manager is not None and run_ids is None:
         try:
             await _run_db(runner, credential_manager.reconcile)
             await _run_db(runner, credential_manager.rotate_due)
@@ -54,8 +55,11 @@ async def _reconcile_agent_runs_after_restart(
         runner,
         include_fenced=include_fenced,
         resolved_run_ids=resolved_run_ids,
+        run_ids=run_ids,
     )
-    reconciled += await _recover_agent_runs_after_restart(runner, include_fenced=include_fenced)
+    reconciled += await _recover_agent_runs_after_restart(
+        runner, include_fenced=include_fenced, run_ids=run_ids
+    )
     active_runs = await _run_db(
         runner,
         _list_active_agent_runs_once,
@@ -67,6 +71,8 @@ async def _reconcile_agent_runs_after_restart(
     tmux_runs: list[tuple[Any, Terminal | None]] = []
     native_runs: list[tuple[Any, Terminal]] = []
     for run in active_runs:
+        if run_ids is not None and str(run.id) not in run_ids:
+            continue
         terminal_id = getattr(run, "terminal_id", None)
         if not terminal_id:
             reconciled += await _refresh_surviving_run(runner, run, resolved_run_ids)
@@ -376,6 +382,7 @@ async def _resolve_provisional_daemon_resumes(
     *,
     include_fenced: bool = False,
     resolved_run_ids: set[str] | None = None,
+    run_ids: frozenset[str] | None = None,
 ) -> int:
     """Resolve every durable resume phase before normal run classification."""
     if runner.agent_runner is None:
@@ -395,6 +402,8 @@ async def _resolve_provisional_daemon_resumes(
     live_by_name = {session.name: session for session in live_sessions}
     resolved = 0
     for run in provisional:
+        if run_ids is not None and str(run.id) not in run_ids:
+            continue
         if not include_fenced and is_reconciliation_pending(run):
             continue
         try:
@@ -431,6 +440,9 @@ async def _reclassify_reconciliation_pending_runs(runner: GobbyRunner) -> int:
         # Nothing is fenced: running the replay barrier here would fence
         # healthy runs whenever transient inbox residue trips its timeout.
         return 0
+    # Capture before yielding to inbox replay: fresh runs admitted during the
+    # barrier belong to the live monitor, not daemon-restart reconciliation.
+    run_ids = frozenset(str(run.id) for run in pending)
     settled = await _run_agent_hook_replay_barrier(
         runner,
         timeout_seconds=_RECLASSIFY_SETTLE_TIMEOUT_SECONDS,
@@ -442,6 +454,7 @@ async def _reclassify_reconciliation_pending_runs(runner: GobbyRunner) -> int:
         runner,
         include_fenced=True,
         resolved_run_ids=resolved_run_ids,
+        run_ids=run_ids,
     )
     for run in pending:
         if str(run.id) not in resolved_run_ids:

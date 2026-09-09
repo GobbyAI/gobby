@@ -324,6 +324,7 @@ async def _recover_agent_runs_after_restart(
     runner: GobbyRunner,
     *,
     include_fenced: bool = False,
+    run_ids: frozenset[str] | None = None,
 ) -> int:
     """Rehydrate completion events for active agent rows after daemon restart."""
     if runner.agent_runner is None or runner.completion_registry is None:
@@ -343,6 +344,8 @@ async def _recover_agent_runs_after_restart(
         if not batch:
             break
         for run in batch:
+            if run_ids is not None and str(run.id) not in run_ids:
+                continue
             if not include_fenced and is_reconciliation_pending(run):
                 continue
             if run.id in seen_ids:
