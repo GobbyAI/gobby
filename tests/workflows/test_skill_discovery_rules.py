@@ -156,7 +156,9 @@ BREVITY_RULES = {
 class TestSkillDiscoverySync:
     """Test that skill-discovery rules sync correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All skill-discovery rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -168,7 +170,7 @@ class TestSkillDiscoverySync:
         )
         assert REPLACED_SKILL_RULES.isdisjoint(rule_names)
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All rules should have group='skill-discovery'."""
         _sync_bundled(db)
 
@@ -204,12 +206,15 @@ class TestLanguageSkillWriteTargetContract:
 
         assert "event.data.get('canonical_write_file_path'" in condition
 
-    def test_reset_skill_injection_clears_only_skill_ledgers(self, db, manager) -> None:
+    def test_reset_skill_injection_clears_only_skill_ledgers(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-skill-injection")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.effects is not None
 
         set_variables = {
             effect.variable: effect.value
@@ -236,7 +241,9 @@ class TestDefaultAgentCoreSkillBootstrap:
             data={"prompt": prompt},
         )
 
-    def test_structure_preserves_core_order(self, db, manager) -> None:
+    def test_structure_preserves_core_order(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("bootstrap-default-agent-core-skills")
         assert row is not None
@@ -362,7 +369,7 @@ class TestDefaultAgentCoreSkillBootstrap:
 class TestListSkillHubsOncePerSession:
     """Verify the once-per-session skill hub discovery rule."""
 
-    def test_structure(self, db, manager) -> None:
+    def test_structure(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("list-skill-hubs-once-per-session")
         assert row is not None
@@ -381,11 +388,13 @@ class TestListSkillHubsOncePerSession:
         assert getattr(body.effects[0], "delivery", None) == "on_receipt"
 
     @pytest.mark.asyncio
-    async def test_injects_listing_once_and_sets_guard_after_success(self, db) -> None:
+    async def test_injects_listing_once_and_sets_guard_after_success(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         calls = 0
 
-        async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict[str, Any]:
+        async def dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             nonlocal calls
             calls += 1
             assert server == "gobby-skills"
@@ -501,7 +510,9 @@ class TestBrevityRules:
             "servers_listed": True,
         }
 
-    def test_brevity_rules_sync_and_retired_loaders_are_absent(self, db, manager) -> None:
+    def test_brevity_rules_sync_and_retired_loaders_are_absent(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         rule_names = {r.name for r in manager.list_all()}
@@ -510,13 +521,16 @@ class TestBrevityRules:
         assert "inject-brevity-on-first-turn" not in rule_names
         assert "load-brevity-on-turn-start" not in rule_names
 
-    def test_reinforce_brevity_structure(self, db, manager) -> None:
+    def test_reinforce_brevity_structure(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         reminder_row = manager.get_by_name("remind-brevity-on-turn-start")
         assert reminder_row is not None
         reminder_body = RuleDefinitionBody.model_validate(reminder_row.definition_json)
         assert reminder_body.event.value == "turn_start"
+        assert reminder_body.effects is not None
         assert reminder_body.effects[0].type == "inject_context"
 
     @pytest.mark.asyncio
@@ -538,7 +552,9 @@ class TestBrevityRules:
 
         assert skill_fetch_directive("brevity") not in (response.context or "")
 
-    def test_detect_brevity_contrastive_rule_uses_allowed_regex_patterns(self, db, manager) -> None:
+    def test_detect_brevity_contrastive_rule_uses_allowed_regex_patterns(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("detect-brevity-contrastive-drift")
         assert row is not None
@@ -591,7 +607,9 @@ class TestBrevityRules:
         assert second.context is None or reminder not in second.context
 
     @pytest.mark.asyncio
-    async def test_opt_out_prompt_disables_and_suppresses_brevity_rules(self, db) -> None:
+    async def test_opt_out_prompt_disables_and_suppresses_brevity_rules(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = self._turn_variables(loaded=False)
@@ -609,7 +627,7 @@ class TestBrevityRules:
         assert response.context is None or "brevity" not in response.context.lower()
 
     @pytest.mark.asyncio
-    async def test_brevity_drift_persists_then_clears_on_next_turn(self, db) -> None:
+    async def test_brevity_drift_persists_then_clears_on_next_turn(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = self._turn_variables(loaded=True)
@@ -643,7 +661,7 @@ class TestBrevityRules:
         assert variables["brevity_last_violation_rule"] == ""
 
     @pytest.mark.asyncio
-    async def test_opt_out_suppresses_drift_detection(self, db) -> None:
+    async def test_opt_out_suppresses_drift_detection(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = self._turn_variables(loaded=True, disabled=True)
@@ -666,7 +684,7 @@ class TestBrevityRules:
 class TestRequirePythonSkillStructure:
     """Verify require-python-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-python-skill")
         assert row is not None
@@ -678,11 +696,15 @@ class TestRequirePythonSkillStructure:
         assert ".pyi" in body.when
         assert "pyproject.toml" in body.when
 
-    def test_has_block_effect_with_short_reason(self, db, manager) -> None:
+    def test_has_block_effect_with_short_reason(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-python-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("python")
@@ -812,7 +834,7 @@ class TestRequirePythonSkillCondition:
 class TestRequireRustSkillStructure:
     """Verify require-rust-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-rust-skill")
         assert row is not None
@@ -822,11 +844,15 @@ class TestRequireRustSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('rust')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-rust-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("rust")
@@ -932,7 +958,7 @@ class TestRequireRustSkillCondition:
 class TestRequireJavaScriptSkillStructure:
     """Verify require-javascript-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-javascript-skill")
         assert row is not None
@@ -942,11 +968,15 @@ class TestRequireJavaScriptSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('javascript')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-javascript-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("javascript")
@@ -1054,7 +1084,7 @@ class TestRequireJavaScriptSkillCondition:
 class TestRequireDartSkillStructure:
     """Verify require-dart-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-dart-skill")
         assert row is not None
@@ -1064,11 +1094,15 @@ class TestRequireDartSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('dart')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-dart-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("dart")
@@ -1180,7 +1214,7 @@ class TestRequireDartSkillCondition:
 class TestRequireCSkillStructure:
     """Verify require-c-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-c-skill")
         assert row is not None
@@ -1190,11 +1224,15 @@ class TestRequireCSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('c')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-c-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("c")
@@ -1323,7 +1361,7 @@ class TestRequireCSkillCondition:
 class TestRequireCppSkillStructure:
     """Verify require-cpp-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-cpp-skill")
         assert row is not None
@@ -1333,11 +1371,15 @@ class TestRequireCppSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('cpp')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-cpp-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("cpp")
@@ -1486,7 +1528,7 @@ class TestRequireCppSkillCondition:
 class TestRequireElixirSkillStructure:
     """Verify require-elixir-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-elixir-skill")
         assert row is not None
@@ -1496,11 +1538,15 @@ class TestRequireElixirSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('elixir')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-elixir-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("elixir")
@@ -1627,7 +1673,7 @@ class TestRequireElixirSkillCondition:
 class TestRequireRubySkillStructure:
     """Verify require-ruby-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-ruby-skill")
         assert row is not None
@@ -1637,11 +1683,15 @@ class TestRequireRubySkillStructure:
         assert body.when is not None
         assert "not skill_loaded('ruby')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-ruby-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("ruby")
@@ -1789,7 +1839,7 @@ class TestRequireRubySkillCondition:
 class TestRequireCSharpSkillStructure:
     """Verify require-csharp-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-csharp-skill")
         assert row is not None
@@ -1799,11 +1849,15 @@ class TestRequireCSharpSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('csharp')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-csharp-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("csharp")
@@ -1922,7 +1976,7 @@ class TestRequireCSharpSkillCondition:
 class TestRequireGoSkillStructure:
     """Verify require-go-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-go-skill")
         assert row is not None
@@ -1932,11 +1986,15 @@ class TestRequireGoSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('go')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-go-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("go")
@@ -2044,7 +2102,7 @@ class TestRequireGoSkillCondition:
 class TestRequireJavaSkillStructure:
     """Verify require-java-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-java-skill")
         assert row is not None
@@ -2054,11 +2112,15 @@ class TestRequireJavaSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('java')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-java-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("java")
@@ -2174,7 +2236,7 @@ class TestRequireJavaSkillCondition:
 class TestRequireKotlinSkillStructure:
     """Verify require-kotlin-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-kotlin-skill")
         assert row is not None
@@ -2184,11 +2246,15 @@ class TestRequireKotlinSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('kotlin')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-kotlin-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("kotlin")
@@ -2308,7 +2374,7 @@ class TestRequireKotlinSkillCondition:
 class TestRequireScalaSkillStructure:
     """Verify require-scala-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-scala-skill")
         assert row is not None
@@ -2318,11 +2384,15 @@ class TestRequireScalaSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('scala')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-scala-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("scala")
@@ -2433,7 +2503,7 @@ class TestRequireScalaSkillCondition:
 class TestRequireLuaSkillStructure:
     """Verify require-lua-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-lua-skill")
         assert row is not None
@@ -2443,11 +2513,15 @@ class TestRequireLuaSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('lua')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-lua-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("lua")
@@ -2557,7 +2631,7 @@ class TestRequireLuaSkillCondition:
 class TestRequireObjcSkillStructure:
     """Verify require-objc-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-objc-skill")
         assert row is not None
@@ -2567,11 +2641,15 @@ class TestRequireObjcSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('objc')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-objc-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("objc")
@@ -2661,7 +2739,7 @@ class TestRequireObjcSkillCondition:
 class TestRequireSwiftSkillStructure:
     """Verify require-swift-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-swift-skill")
         assert row is not None
@@ -2671,11 +2749,15 @@ class TestRequireSwiftSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('swift')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-swift-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("swift")
@@ -2800,7 +2882,7 @@ class TestRequireSwiftSkillCondition:
 class TestRequireYamlSkillStructure:
     """Verify require-yaml-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-yaml-skill")
         assert row is not None
@@ -2810,11 +2892,15 @@ class TestRequireYamlSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('yaml')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-yaml-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("yaml")
@@ -3089,7 +3175,7 @@ class TestRequirePlanSkillCondition:
 class TestRequireJsonSkillStructure:
     """Verify require-json-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-json-skill")
         assert row is not None
@@ -3099,11 +3185,15 @@ class TestRequireJsonSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('json')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-json-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("json")
@@ -3215,7 +3305,7 @@ class TestRequireJsonSkillCondition:
 class TestRequirePhpSkillStructure:
     """Verify require-php-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-php-skill")
         assert row is not None
@@ -3225,11 +3315,15 @@ class TestRequirePhpSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('php')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-php-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("php")
@@ -3352,7 +3446,7 @@ class TestRequirePhpSkillCondition:
 class TestRequireTypeScriptSkillStructure:
     """Verify require-typescript-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-typescript-skill")
         assert row is not None
@@ -3362,11 +3456,15 @@ class TestRequireTypeScriptSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('typescript')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-typescript-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("typescript")
@@ -3472,7 +3570,7 @@ class TestRequireTypeScriptSkillCondition:
 class TestRequireImpeccableSkillStructure:
     """Verify require-impeccable-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-impeccable-skill")
         assert row is not None
@@ -3482,11 +3580,15 @@ class TestRequireImpeccableSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('impeccable')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-impeccable-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert body.effects[0].reason == _skill_fetch_template("impeccable")
@@ -3598,7 +3700,7 @@ class TestDesignDetectorPredicate:
 class TestRequireBashSkillStructure:
     """Verify require-bash-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-bash-skill")
         assert row is not None
@@ -3608,9 +3710,12 @@ class TestRequireBashSkillStructure:
         assert body.when is not None
         assert "not skill_loaded('bash')" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-bash-skill")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert len(body.resolved_effects) == 1
@@ -3837,7 +3942,9 @@ class TestRequireCodeIndexSkillStructure:
         assert "switch lanes" in reason
         assert "list_tools" not in reason
 
-    def test_code_index_navigation_rules_sync(self, db, manager) -> None:
+    def test_code_index_navigation_rules_sync(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         expected = {
             "reset-code-index-navigation",
@@ -3851,7 +3958,9 @@ class TestRequireCodeIndexSkillStructure:
         rules = {row.name for row in manager.list_all()}
         assert expected.issubset(rules)
 
-    def test_code_index_block_rules_are_repo_scoped(self, db, manager) -> None:
+    def test_code_index_block_rules_are_repo_scoped(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         for rule_name in (
             "require-code-index-skill",
@@ -3866,7 +3975,9 @@ class TestRequireCodeIndexSkillStructure:
             assert "canonical_code_navigation_repo_scope" in body.when
             assert "is not False" in body.when
 
-    def test_code_index_recovery_allowlist_names_installed_rules(self, db, manager) -> None:
+    def test_code_index_recovery_allowlist_names_installed_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         rules = {row.name for row in manager.list_all()}
 
@@ -3927,7 +4038,7 @@ class TestCodeIndexNavigationRules:
         return primary, linked
 
     @pytest.mark.asyncio
-    async def test_first_rg_requires_code_index_skill(self, db) -> None:
+    async def test_first_rg_requires_code_index_skill(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=False)
         event = self._event(
@@ -3979,7 +4090,7 @@ class TestCodeIndexNavigationRules:
     @pytest.mark.asyncio
     async def test_code_index_skill_proxy_error_fails_open_until_matching_success(
         self,
-        db,
+        db: HubDatabase,
     ) -> None:
         _sync_bundled(db)
         project_id = "22222222-2222-4222-8222-222222222222"
@@ -4073,7 +4184,9 @@ class TestCodeIndexNavigationRules:
         assert unrelated.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_loaded_code_index_blocks_rg_with_gcode_grep_guidance(self, db) -> None:
+    async def test_loaded_code_index_blocks_rg_with_gcode_grep_guidance(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
         event = self._event(
             HookEventType.BEFORE_TOOL,
@@ -4145,7 +4258,9 @@ class TestCodeIndexNavigationRules:
         assert variables["code_index_preflight_note_shown"] is True
 
     @pytest.mark.asyncio
-    async def test_log_search_bypasses_code_index_rules(self, db, tmp_path, monkeypatch) -> None:
+    async def test_log_search_bypasses_code_index_rules(
+        self, db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         gobby_home = tmp_path / "gobby-home"
@@ -4311,7 +4426,7 @@ class TestCodeIndexNavigationRules:
 
     @pytest.mark.asyncio
     async def test_unexpanded_home_search_bypasses_code_index_rule(
-        self, db, tmp_path, monkeypatch
+        self, db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _sync_bundled(db)
         home = tmp_path / "home"
@@ -4518,7 +4633,7 @@ class TestCodeIndexNavigationRules:
             assert blocked.decision == "block", command
 
     @pytest.mark.asyncio
-    async def test_gcode_fail_open_allows_fallback_search(self, db) -> None:
+    async def test_gcode_fail_open_allows_fallback_search(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
         variables["gcode_fail_open"] = True
@@ -4602,7 +4717,7 @@ class TestCodeIndexNavigationRules:
         assert ordinary_response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_gcode_fail_open_bypasses_skill_requirement(self, db) -> None:
+    async def test_gcode_fail_open_bypasses_skill_requirement(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=False)
         variables["gcode_fail_open"] = True
@@ -4622,7 +4737,9 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_gcode_prefixed_compound_read_is_allowed(self, db, tmp_path) -> None:
+    async def test_gcode_prefixed_compound_read_is_allowed(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
@@ -4736,7 +4853,9 @@ class TestCodeIndexNavigationRules:
             assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_normalized_repo_search_still_blocks(self, db, tmp_path) -> None:
+    async def test_normalized_repo_search_still_blocks(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
@@ -4755,7 +4874,9 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_all_gcode_with_echo_separator_is_allowed(self, db, tmp_path) -> None:
+    async def test_all_gcode_with_echo_separator_is_allowed(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
@@ -4774,7 +4895,9 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_gcode_with_stderr_suppression_is_allowed(self, db, tmp_path) -> None:
+    async def test_gcode_with_stderr_suppression_is_allowed(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
@@ -4793,7 +4916,9 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_gcode_search_with_python_formatter_is_allowed(self, db, tmp_path) -> None:
+    async def test_gcode_search_with_python_formatter_is_allowed(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
@@ -4819,7 +4944,9 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_shell_search_with_stderr_suppression_still_blocks(self, db, tmp_path) -> None:
+    async def test_shell_search_with_stderr_suppression_still_blocks(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         event = self._normalized_bash_event(
