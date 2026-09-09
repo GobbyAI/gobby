@@ -189,7 +189,12 @@ async def test_open_delivery_pr_awaits_git_helpers(
     async def push_branch(**_kwargs: Any) -> None:
         helper_calls.append("push")
 
+    async def resolve_source_repo(*_args: Any) -> str:
+        helper_calls.append("repo")
+        return "test/test-project"
+
     monkeypatch.setattr(delivery_tools, "_repo_path", lambda *_args: "/repo")
+    monkeypatch.setattr(delivery_tools, "resolve_project_source_repo_async", resolve_source_repo)
     monkeypatch.setattr(delivery_tools, "_resolve_source_branch", resolve_source_branch)
     monkeypatch.setattr(delivery_tools, "_push_branch", push_branch)
 
@@ -197,7 +202,7 @@ async def test_open_delivery_pr_awaits_git_helpers(
 
     assert result["ok"] is True
     assert result["pushed"] is True
-    assert helper_calls == ["resolve", "push"]
+    assert helper_calls == ["repo", "resolve", "push"]
 
 
 @pytest.mark.asyncio

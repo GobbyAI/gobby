@@ -141,6 +141,7 @@ async def push_dry_run_probe(
     error: str | None,
 ) -> dict[str, Any]:
     command = ["push", "--dry-run", "origin", f"HEAD:{branch}"]
+    returncode: int | None
     if git_manager is not None:
         result = await git_manager.run_git_command(
             command,

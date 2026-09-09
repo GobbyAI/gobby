@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import psycopg
 
-from gobby.build.delivery import normalize_github_repo, resolve_project_source_repo
+from gobby.build.delivery import normalize_github_repo, resolve_project_source_repo_async
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
@@ -179,11 +179,12 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
         state = delivery.get_state(resolved_id)
         campaign = state["campaign"] or {}
         try:
-            effective_source_repo = normalize_github_repo(
-                source_repo
-                or campaign.get("source_repo")
-                or resolve_project_source_repo(ctx.task_manager.db, project_id)
-            )
+            resolved_source_repo = source_repo or campaign.get("source_repo")
+            if not resolved_source_repo:
+                resolved_source_repo = await resolve_project_source_repo_async(
+                    ctx.task_manager.db, project_id
+                )
+            effective_source_repo = normalize_github_repo(resolved_source_repo)
             effective_target_repo = normalize_github_repo(
                 target_repo or campaign.get("target_repo") or effective_source_repo
             )

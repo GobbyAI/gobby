@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from mcp.types import CallToolResult, TextContent
@@ -38,6 +39,11 @@ def _helper(result: object) -> GitHubMCPHelper:
         project_id=None,
     )
     return GitHubMCPHelper(manager, "/tmp/repo", "owner/repo")
+
+
+def _call_tool_mock(helper: GitHubMCPHelper) -> AsyncMock:
+    get_client_session = cast(AsyncMock, helper.mcp_manager.get_client_session)
+    return cast(AsyncMock, get_client_session.return_value.call_tool)
 
 
 def test_github_page_limit_accepts_api_range() -> None:
@@ -150,7 +156,7 @@ def _github_commit(index: int) -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_list_issues_paginates_past_one_hundred() -> None:
     helper = _helper([])
-    call_tool = helper.mcp_manager.get_client_session.return_value.call_tool
+    call_tool = _call_tool_mock(helper)
     first_page = [{"id": index} for index in range(100)]
     second_page = [{"id": index} for index in range(100, 125)]
     call_tool.side_effect = [first_page, second_page]
@@ -168,7 +174,7 @@ async def test_list_issues_paginates_past_one_hundred() -> None:
 @pytest.mark.asyncio
 async def test_list_commits_paginates_and_preserves_requested_limit() -> None:
     helper = _helper([])
-    call_tool = helper.mcp_manager.get_client_session.return_value.call_tool
+    call_tool = _call_tool_mock(helper)
     call_tool.side_effect = [
         [_github_commit(index) for index in range(100)],
         [_github_commit(index) for index in range(100, 130)],
@@ -245,22 +251,20 @@ async def test_ref_arguments_reject_option_injection_before_external_calls(
     arguments: tuple[str | None, ...],
 ) -> None:
     helper = _helper([])
-    call_tool = helper.mcp_manager.get_client_session.return_value.call_tool
+    call_tool = _call_tool_mock(helper)
     helper._run_git_async = AsyncMock()
-    helper._run_git = MagicMock()
 
     with pytest.raises(ValueError, match="valid Git ref"):
         await getattr(helper, operation)(*arguments)
 
     call_tool.assert_not_awaited()
     helper._run_git_async.assert_not_awaited()
-    helper._run_git.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_push_files_rejects_option_like_branch_before_mcp_call() -> None:
     helper = _helper([])
-    call_tool = helper.mcp_manager.get_client_session.return_value.call_tool
+    call_tool = _call_tool_mock(helper)
 
     with pytest.raises(ValueError, match="valid Git ref"):
         await helper.push_files("--help", [], "No-op")

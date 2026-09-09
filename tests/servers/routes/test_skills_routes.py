@@ -100,7 +100,7 @@ def skill_project(skill_checkout: IsolatedCheckoutProject) -> Project:
 @pytest.mark.parametrize(
     ("source", "loader_method", "project_scoped"),
     [
-        ("github:user/repo", "load_from_github", False),
+        ("github:user/repo", "load_from_github_async", False),
         ("skill.zip", "load_from_zip", True),
         (".", "load_skill", True),
     ],
@@ -161,7 +161,12 @@ def test_import_distinguishes_duplicate_from_validation_failure(
     skill_manager.create_skill_with_files.side_effect = publication_results()
 
     with patch("gobby.skills.loader.SkillLoader") as loader_class:
-        setattr(loader_class.return_value, loader_method, MagicMock(return_value=parsed_skills))
+        loader_mock = (
+            AsyncMock(return_value=parsed_skills)
+            if loader_method == "load_from_github_async"
+            else MagicMock(return_value=parsed_skills)
+        )
+        setattr(loader_class.return_value, loader_method, loader_mock)
         payload: dict[str, object] = {"source": source}
         if project_scoped:
             payload["project_id"] = skill_project.id
@@ -389,7 +394,7 @@ class TestImportSkill:
         parsed_mock.source_ref = "ref"
         parsed_mock.always_apply = False
         parsed_mock.injection_format = "format"
-        mock_loader.load_from_github.return_value = parsed_mock
+        mock_loader.load_from_github_async = AsyncMock(return_value=parsed_mock)
 
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"name": "git-skill"}
@@ -469,7 +474,7 @@ class TestImportSkill:
         )
 
         assert response.status_code == 200
-        mock_loader.load_from_github.assert_not_called()
+        mock_loader.load_from_github_async.assert_not_called()
         mock_loader.load_skill.assert_called_once_with(str(local_skill.resolve()), validate=True)
 
     @patch("gobby.skills.loader.SkillLoader")
@@ -483,7 +488,7 @@ class TestImportSkill:
         response = client.post("/api/skills/import", json={"source": "owner/repo/path"})
 
         assert response.status_code == 400
-        mock_loader.load_from_github.assert_not_called()
+        mock_loader.load_from_github_async.assert_not_called()
 
     @patch("gobby.skills.loader.SkillLoader")
     def test_import_error(self, MockLoader, client: TestClient, skill_project) -> None:
@@ -515,7 +520,7 @@ class TestImportSkill:
             content=UNSAFE_SKILL_CONTENT,
             loaded_files=[],
         )
-        MockLoader.return_value.load_from_github.return_value = parsed_mock
+        MockLoader.return_value.load_from_github_async = AsyncMock(return_value=parsed_mock)
 
         response = client.post("/api/skills/import", json={"source": "github:user/repo"})
 

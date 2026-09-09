@@ -198,7 +198,7 @@ class TaskTransitionsMixin:
     ) -> Task:
         """Link a commit and close the task in one transaction."""
         with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
-            _link_commit(self.db, task_id, commit_sha, cwd)
+            _link_commit(self.db, task_id, commit_sha)
             _close_task(
                 self.db,
                 task_id=task_id,

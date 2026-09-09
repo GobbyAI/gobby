@@ -13,9 +13,10 @@ import tarfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
-from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, GitTimeout, daemon_git
+if TYPE_CHECKING:
+    from gobby.utils.daemon_git import GitResult
 
 MANIFEST_FILENAME = "bundled_content_manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -405,6 +406,8 @@ def _git_bytes(repo_root: Path, *args: str) -> bytes:
 
 
 async def _git_bytes_async(repo_root: Path, *args: str) -> bytes:
+    from gobby.utils.daemon_git import GitOk, daemon_git
+
     result = await daemon_git.run(args, cwd=repo_root, timeout=10.0)
     if not isinstance(result, GitOk):
         raise OSError(_daemon_git_error_text(result))
@@ -412,6 +415,8 @@ async def _git_bytes_async(repo_root: Path, *args: str) -> bytes:
 
 
 def _daemon_git_error_text(result: GitResult) -> str:
+    from gobby.utils.daemon_git import GitFailed, GitTimeout
+
     if isinstance(result, GitTimeout):
         return f"git {' '.join(result.argv[1:])} timed out after {result.timeout:g}s"
     if isinstance(result, GitFailed):

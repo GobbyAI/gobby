@@ -176,7 +176,7 @@ Updated content.
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("update_skill")
 
-        result = tool(name="updatable-skill")
+        result = await tool(name="updatable-skill")
 
         assert result["success"] is True
         assert result["updated"] is True
@@ -208,7 +208,7 @@ Content.
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("update_skill")
 
-        result = tool(skill_id=skill_id)
+        result = await tool(skill_id=skill_id)
 
         assert result["success"] is True
 
@@ -220,7 +220,7 @@ Content.
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("update_skill")
 
-        result = tool(name="nonexistent")
+        result = await tool(name="nonexistent")
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
@@ -233,7 +233,7 @@ Content.
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("update_skill")
 
-        result = tool(name="git-commit")
+        result = await tool(name="git-commit")
 
         # Should still succeed but indicate no update happened
         assert result["success"] is True
@@ -248,7 +248,7 @@ Content.
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("update_skill")
 
-        result = tool()
+        result = await tool()
 
         assert result["success"] is False
         assert "name or skill_id" in result["error"].lower()
@@ -271,7 +271,7 @@ Content.
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("update_skill")
 
-        result = tool(name="updatable-skill")
+        result = await tool(name="updatable-skill")
 
         assert result["success"] is True
         assert result["updated"] is False

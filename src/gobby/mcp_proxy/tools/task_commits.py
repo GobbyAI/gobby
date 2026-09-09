@@ -11,7 +11,7 @@ Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -75,7 +75,7 @@ def create_commit_registry(
     task_manager: "LocalTaskManager | None" = None,
     project_manager: "LocalProjectManager | None" = None,
     auto_link_commits_fn: Callable[..., Any] | None = None,
-    get_task_diff_page_fn: Callable[..., DiffPage] | None = None,
+    get_task_diff_page_fn: Callable[..., DiffPage | Awaitable[DiffPage]] | None = None,
     git_timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
     session_manager: Any | None = None,
 ) -> InternalToolRegistry:

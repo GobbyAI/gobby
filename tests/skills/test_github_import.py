@@ -1,7 +1,7 @@
 """Tests for GitHub import support in SkillLoader (TDD - written before implementation)."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -290,6 +290,64 @@ class TestCloneSkillRepo:
                 clone_skill_repo(ref, cache_dir=tmp_path / "cache")
 
         mock_run.assert_not_called()
+
+
+class TestCloneSkillRepoAsync:
+    @pytest.mark.asyncio
+    async def test_clone_uses_daemon_git(self, tmp_path: Path) -> None:
+        from gobby.skills.loader import clone_skill_repo_async, parse_github_url
+        from gobby.utils.daemon_git import GitOk, daemon_git
+
+        cache_dir = tmp_path / "skill-cache"
+        result = GitOk("ok", ("git", "clone"), "", "")
+
+        with patch.object(daemon_git, "run", new=AsyncMock(return_value=result)) as run:
+            repo_path = await clone_skill_repo_async(
+                parse_github_url("owner/repo"), cache_dir=cache_dir
+            )
+
+        assert repo_path == cache_dir / "owner" / "repo"
+        run.assert_awaited_once_with(
+            [
+                "clone",
+                "--depth",
+                "1",
+                "https://github.com/owner/repo.git",
+                str(repo_path),
+            ],
+            cwd=cache_dir / "owner",
+            timeout=120.0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_clone_timeout_is_an_error(self, tmp_path: Path) -> None:
+        from gobby.skills.loader import SkillLoadError, clone_skill_repo_async, parse_github_url
+        from gobby.utils.daemon_git import GitTimeout, daemon_git
+
+        timeout = GitTimeout("timeout", ("git", "clone"), 120.0)
+        with (
+            patch.object(daemon_git, "run", new=AsyncMock(return_value=timeout)),
+            pytest.raises(SkillLoadError, match="timed out after 120s"),
+        ):
+            await clone_skill_repo_async(
+                parse_github_url("owner/repo"), cache_dir=tmp_path / "skill-cache"
+            )
+
+    @pytest.mark.asyncio
+    async def test_pull_failure_is_an_error(self, tmp_path: Path) -> None:
+        from gobby.skills.loader import SkillLoadError, clone_skill_repo_async, parse_github_url
+        from gobby.utils.daemon_git import GitFailed, daemon_git
+
+        cache_dir = tmp_path / "skill-cache"
+        repo_path = cache_dir / "owner" / "repo"
+        (repo_path / ".git").mkdir(parents=True)
+        failure = GitFailed("failed", ("git", "pull"), 1, "", "pull rejected")
+
+        with (
+            patch.object(daemon_git, "run", new=AsyncMock(return_value=failure)),
+            pytest.raises(SkillLoadError, match="pull rejected"),
+        ):
+            await clone_skill_repo_async(parse_github_url("owner/repo"), cache_dir=cache_dir)
 
 
 class TestSkillLoaderGitHubIntegration:

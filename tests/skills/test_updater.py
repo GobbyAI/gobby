@@ -1,7 +1,7 @@
 """Tests for SkillUpdater (TDD - written before implementation)."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -161,7 +161,8 @@ Same content.
 class TestSkillUpdaterGitHubUpdate:
     """Tests for updating skills from GitHub."""
 
-    def test_update_github_skill(self, storage, tmp_path) -> None:
+    @pytest.mark.asyncio
+    async def test_update_github_skill(self, storage, tmp_path) -> None:
         """Test updating a skill from GitHub."""
         from gobby.skills.updater import SkillUpdater
 
@@ -192,8 +193,10 @@ Updated from GitHub.
 
         updater = SkillUpdater(storage)
 
-        with patch("gobby.skills.updater.clone_skill_repo") as mock_clone:
-            mock_clone.return_value = repo_dir
+        with patch(
+            "gobby.skills.updater.clone_skill_repo_async",
+            new=AsyncMock(return_value=repo_dir),
+        ):
             with patch("gobby.skills.updater.parse_github_url") as mock_parse:
                 mock_parse.return_value = Mock(
                     owner="owner",
@@ -201,7 +204,7 @@ Updated from GitHub.
                     branch="main",
                     path=None,
                 )
-                result = updater.update_skill(skill.id, cache_dir=cache_dir)
+                result = await updater.update_skill_async(skill.id, cache_dir=cache_dir)
 
         assert result.success is True
         assert result.updated is True

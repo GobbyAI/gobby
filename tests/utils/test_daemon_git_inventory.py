@@ -30,6 +30,13 @@ class SyncGitUse:
     mechanism: str
 
 
+@dataclass(frozen=True, order=True)
+class SyncFacadeCall:
+    path: str
+    scope: str
+    facade: str
+
+
 class _SyncGitVisitor(ast.NodeVisitor):
     def __init__(self, path: str) -> None:
         self.path = path
@@ -183,7 +190,151 @@ def _sync_git_inventory() -> list[SyncGitUse]:
     return sorted(uses)
 
 
-_ALLOWED_SYNC_GIT_BOUNDARIES: set[tuple[str, str]] = set()
+_SYNC_GIT_FACADES = {
+    "_init_no_marker",
+    "check_committed_bundled_content_manifest",
+    "check_linked_committed_bundled_manifest",
+    "clone_skill_repo",
+    "committable_task_paths",
+    "get_dirty_files",
+    "get_dirty_files_categorized",
+    "get_file_changes",
+    "get_git_diff_summary",
+    "get_git_status",
+    "get_recent_git_commits",
+    "has_committable_edits",
+    "initialize_project",
+    "load_from_github",
+    "resolve_evidence",
+    "resolve_git_worktree_root",
+    "task_dirty_paths",
+    "verify_bundled_integrity",
+}
+
+
+class _SyncFacadeCallVisitor(ast.NodeVisitor):
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.scopes: list[str] = []
+        self.async_aliases: set[str] = set()
+        self.calls: set[SyncFacadeCall] = set()
+
+    @property
+    def scope(self) -> str:
+        return ".".join(self.scopes) or "<module>"
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._visit_scope(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_scope(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_scope(node)
+
+    def _visit_scope(self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.scopes.append(node.name)
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name.endswith("_async"):
+                self.async_aliases.add(alias.asname or alias.name)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name = self._call_name(node.func)
+        if name not in self.async_aliases and (
+            name in _SYNC_GIT_FACADES or self._is_skill_updater_call(node.func, name)
+        ):
+            self.calls.add(SyncFacadeCall(self.path, self.scope, name))
+        self.generic_visit(node)
+
+    @staticmethod
+    def _call_name(node: ast.expr) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return ""
+
+    @staticmethod
+    def _is_skill_updater_call(node: ast.expr, name: str) -> bool:
+        if name not in {"update_all", "update_skill"} or not isinstance(node, ast.Attribute):
+            return False
+        receiver = node.value
+        if isinstance(receiver, ast.Name):
+            return receiver.id == "updater"
+        return isinstance(receiver, ast.Attribute) and receiver.attr == "updater"
+
+
+def _sync_facade_calls() -> list[SyncFacadeCall]:
+    calls: set[SyncFacadeCall] = set()
+    for path in sorted(_SOURCE_ROOT.rglob("*.py")):
+        relative = path.relative_to(_REPO_ROOT).as_posix()
+        visitor = _SyncFacadeCallVisitor(relative)
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=relative))
+        calls.update(visitor.calls)
+    return sorted(calls)
+
+
+_ALLOWED_SYNC_GIT_BOUNDARIES = {
+    # Offline Click commands and build-time verification entry points.
+    ("src/gobby/cli/init.py", "_git_toplevel"),
+    ("src/gobby/cli/plan.py", "_CliEvidenceContext.get_commit_range_diff"),
+    ("src/gobby/cli/sessions.py", "summarize_session"),
+    ("src/gobby/cli/tasks/commits.py", "link_commit"),
+    ("src/gobby/cli/tasks/commits.py", "unlink_commit"),
+    ("src/gobby/install/manifest.py", "_git_bytes"),
+    ("src/gobby/plans/evidence.py", "_run_git"),
+    ("src/gobby/sync/integrity.py", "verify_bundled_integrity"),
+    ("src/gobby/utils/project_init.py", "_init_no_marker"),
+    # Explicit synchronous facades. Daemon callers use the adjacent async APIs.
+    ("src/gobby/skills/_loader_github.py", "clone_skill_repo"),
+    ("src/gobby/workflows/git_utils.py", "get_dirty_files_categorized"),
+    ("src/gobby/workflows/git_utils.py", "get_file_changes"),
+    ("src/gobby/workflows/git_utils.py", "get_git_diff_summary"),
+    ("src/gobby/workflows/git_utils.py", "get_git_status"),
+    ("src/gobby/workflows/git_utils.py", "get_recent_git_commits"),
+    ("src/gobby/workflows/git_utils.py", "resolve_git_worktree_root"),
+    ("src/gobby/workflows/task_dirty_state.py", "committable_task_paths"),
+    ("src/gobby/workflows/task_dirty_state.py", "task_dirty_paths"),
+}
+
+_ALLOWED_SYNC_FACADE_CALLERS = {
+    (
+        "src/gobby/install/manifest.py",
+        "check_linked_committed_bundled_manifest",
+        "check_committed_bundled_content_manifest",
+    ),
+    (
+        "src/gobby/install/manifest.py",
+        "main",
+        "check_committed_bundled_content_manifest",
+    ),
+    ("src/gobby/skills/loader.py", "SkillLoader.load_from_github", "clone_skill_repo"),
+    (
+        "src/gobby/skills/updater.py",
+        "SkillUpdater._fetch_from_github",
+        "clone_skill_repo",
+    ),
+    ("src/gobby/utils/project_init.py", "_initialize_project", "_init_no_marker"),
+    (
+        "src/gobby/workflows/git_utils.py",
+        "get_dirty_files",
+        "get_dirty_files_categorized",
+    ),
+    (
+        "src/gobby/workflows/git_utils.py",
+        "get_dirty_files_categorized",
+        "resolve_git_worktree_root",
+    ),
+    (
+        "src/gobby/workflows/task_dirty_state.py",
+        "has_committable_edits",
+        "task_dirty_paths",
+    ),
+}
 
 
 def test_runtime_git_has_no_unapproved_synchronous_boundaries() -> None:
@@ -199,4 +350,23 @@ def test_runtime_git_has_no_unapproved_synchronous_boundaries() -> None:
     stale = sorted(_ALLOWED_SYNC_GIT_BOUNDARIES - observed_boundaries)
     assert not stale, "Stale synchronous Git allowlist entries:\n" + "\n".join(
         f"- {path}:{scope}" for path, scope in stale
+    )
+
+
+def test_daemon_runtime_does_not_call_synchronous_git_facades() -> None:
+    calls = _sync_facade_calls()
+    unapproved = [
+        call
+        for call in calls
+        if not call.path.startswith("src/gobby/cli/")
+        and (call.path, call.scope, call.facade) not in _ALLOWED_SYNC_FACADE_CALLERS
+    ]
+    assert not unapproved, "Daemon callers of synchronous Git facades:\n" + "\n".join(
+        f"- {call.path}:{call.scope} ({call.facade})" for call in unapproved
+    )
+
+    observed = {(call.path, call.scope, call.facade) for call in calls}
+    stale = sorted(_ALLOWED_SYNC_FACADE_CALLERS - observed)
+    assert not stale, "Stale synchronous Git facade callers:\n" + "\n".join(
+        f"- {path}:{scope} ({facade})" for path, scope, facade in stale
     )

@@ -32,7 +32,7 @@ from gobby.storage.machines import LocalMachineManager, MachineNotRegisteredErro
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.utils.daemon_git import GitOk
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout
 from tests._timing import wait_for_condition
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
@@ -409,17 +409,15 @@ class TestGetCommitCount:
             lambda _db, _project_id, _machine_id: "/tmp/repo",
         )
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "5\n"
-            mock_sp.run.return_value = mock_result
-
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "rev-list"), "5\n", "")),
+        ) as mock_run:
             count = await _get_commit_count(db, session)
 
         assert count == 5
-        mock_sp.run.assert_called_once()
-        call_kwargs = mock_sp.run.call_args
+        mock_run.assert_awaited_once()
+        call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs["cwd"] == "/tmp/repo"
 
     async def test_returns_zero_without_project_id(self) -> None:
@@ -468,21 +466,18 @@ class TestGetCommitCount:
             lambda _db, _project_id, _machine_id: "/tmp/repo",
         )
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
-            mock_result = MagicMock()
-            mock_result.returncode = 1
-            mock_sp.run.return_value = mock_result
-
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitFailed("failed", ("git", "rev-list"), 1, "", "failure")),
+        ) as mock_run:
             count = await _get_commit_count(db, session)
 
         assert count == 0
-        mock_sp.run.assert_called_once()
-        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
+        mock_run.assert_awaited_once()
+        assert mock_run.call_args.kwargs["cwd"] == "/tmp/repo"
 
     async def test_returns_zero_on_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns 0 when git command times out."""
-        import subprocess
-
         db = MagicMock()
         session = _make_session(
             project_id="proj-1",
@@ -496,12 +491,14 @@ class TestGetCommitCount:
         )
 
         with patch(
-            "gobby.servers.routes.sessions.core.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="git", timeout=5),
-        ):
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitTimeout("timeout", ("git", "rev-list"), 5)),
+        ) as mock_run:
             count = await _get_commit_count(db, session)
 
         assert count == 0
+        mock_run.assert_awaited_once()
+        assert mock_run.call_args.kwargs["cwd"] == "/tmp/repo"
 
     async def test_handles_datetime_objects(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Handles created_at/updated_at as datetime objects instead of strings."""
@@ -517,16 +514,14 @@ class TestGetCommitCount:
             lambda _db, _project_id, _machine_id: "/tmp/repo",
         )
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "3\n"
-            mock_sp.run.return_value = mock_result
-
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "rev-list"), "3\n", "")),
+        ) as mock_run:
             count = await _get_commit_count(db, session)
 
         assert count == 3
-        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
+        assert mock_run.call_args.kwargs["cwd"] == "/tmp/repo"
 
     async def test_handles_none_updated_at(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Uses current time when updated_at is None."""
@@ -542,20 +537,18 @@ class TestGetCommitCount:
             lambda _db, _project_id, _machine_id: "/tmp/repo",
         )
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "1\n"
-            mock_sp.run.return_value = mock_result
-
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "rev-list"), "1\n", "")),
+        ) as mock_run:
             count = await _get_commit_count(db, session)
 
         assert count == 1
-        mock_sp.run.assert_called_once()
-        command = mock_sp.run.call_args.args[0]
+        mock_run.assert_awaited_once()
+        command = mock_run.call_args.args[0]
         assert "--since=2026-02-10T10:00:00+0000" in command
         assert any(argument.startswith("--until=") for argument in command)
-        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
+        assert mock_run.call_args.kwargs["cwd"] == "/tmp/repo"
 
     async def test_handles_db_exception_for_repo_path(
         self, monkeypatch: pytest.MonkeyPatch
@@ -587,16 +580,14 @@ class TestGetCommitCount:
             lambda _db, _project_id, _machine_id: "/tmp/repo",
         )
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "2\n"
-            mock_sp.run.return_value = mock_result
-
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "rev-list"), "2\n", "")),
+        ) as mock_run:
             count = await _get_commit_count(db, session)
 
         assert count == 2
-        assert mock_sp.run.call_args.kwargs["cwd"] == "/tmp/repo"
+        assert mock_run.call_args.kwargs["cwd"] == "/tmp/repo"
 
     async def test_get_commit_count_uses_session_machine_checkout(  # tdd-red window
         self,
@@ -614,15 +605,14 @@ class TestGetCommitCount:
             updated_at="2026-02-10T12:00:00+00:00",
         )
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "5\n"
-            mock_sp.run.return_value = mock_result
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "rev-list"), "5\n", "")),
+        ) as mock_run:
             count = await _get_commit_count(temp_db, session)
 
         assert count == 5
-        assert mock_sp.run.call_args.kwargs["cwd"] == isolated.root_path
+        assert mock_run.call_args.kwargs["cwd"] == isolated.root_path
 
     async def test_get_commit_count_zero_without_checkout(  # tdd-red window
         self,
@@ -634,11 +624,14 @@ class TestGetCommitCount:
         project = LocalProjectManager(temp_db).create(name="commits-no-checkout")
         session = _make_session(project_id=project.id, machine_id=machine_id)
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new_callable=AsyncMock,
+        ) as mock_run:
             count = await _get_commit_count(temp_db, session)
 
         assert count == 0
-        mock_sp.run.assert_not_called()
+        mock_run.assert_not_awaited()
 
     async def test_get_commit_count_zero_without_machine(  # tdd-red window
         self,
@@ -651,11 +644,14 @@ class TestGetCommitCount:
         )
         session = _make_session(project_id=isolated.project.id, machine_id=None)
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new_callable=AsyncMock,
+        ) as mock_run:
             count = await _get_commit_count(temp_db, session)
 
         assert count == 0
-        mock_sp.run.assert_not_called()
+        mock_run.assert_not_awaited()
 
     async def test_get_commit_count_zero_foreign_machine(  # tdd-red window
         self,
@@ -669,11 +665,14 @@ class TestGetCommitCount:
         foreign = insert_isolated_machine(temp_db)
         session = _make_session(project_id=isolated.project.id, machine_id=foreign)
 
-        with patch("gobby.servers.routes.sessions.core.subprocess") as mock_sp:
+        with patch(
+            "gobby.servers.routes.sessions.core.daemon_git.run",
+            new_callable=AsyncMock,
+        ) as mock_run:
             count = await _get_commit_count(temp_db, session)
 
         assert count == 0
-        mock_sp.run.assert_not_called()
+        mock_run.assert_not_awaited()
 
 
 # =============================================================================
