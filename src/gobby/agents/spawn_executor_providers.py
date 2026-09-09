@@ -248,7 +248,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         cli="claude",
         prompt=None,
         session_id=gobby_session_id,
-        auto_approve=True,
+        auto_approve=request.auto_approve,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
         disallowed_tools=_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
@@ -279,6 +279,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     if launch.enforced and launch.backend == "srt":
         cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
     cmd.extend(launch.provider_args)
+    cmd.extend(request.provider_args)
     if request.prompt:
         cmd.append(request.prompt)
     await asyncio.to_thread(
@@ -292,7 +293,8 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         strict_mcp=strict_mcp,
         sandbox_launch=launch,
     )
-    await asyncio.to_thread(pre_approve_directory, "claude", request.cwd)
+    if request.auto_approve:
+        await asyncio.to_thread(pre_approve_directory, "claude", request.cwd)
     finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,

@@ -29,7 +29,7 @@ from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
-from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
+from gobby.agents.spawn_models import ManagedRuntimeProfile, SpawnRequest, resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -144,6 +144,8 @@ async def spawn_agent_impl(
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
     terminal_backend: Literal["tmux", "native"] | None = None,
+    managed_runtime_profile: ManagedRuntimeProfile | None = None,
+    prelaunch_authority: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     if agent_body is not None:
@@ -202,6 +204,14 @@ async def spawn_agent_impl(
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
+    if managed_runtime_profile is not None:
+        if effective_isolation != "none":
+            return {"success": False, "error": "managed runtime requires isolation='none'"}
+        if managed_runtime_profile.provider != effective_provider:
+            return {
+                "success": False,
+                "error": "managed runtime provider does not match resolved provider",
+            }
     if effective_provider == "agy":
         # Gate on the published support record before any isolation, slot,
         # session, or agent-run side effect exists to clean up.
@@ -323,6 +333,15 @@ async def spawn_agent_impl(
 
     if not resolved_project_path or not isinstance(resolved_project_path, str):
         return {"success": False, "error": "Could not resolve project_path from context"}
+    if managed_runtime_profile is not None:
+        if (
+            Path(resolved_project_path).resolve()
+            != Path(managed_runtime_profile.scratch_root).resolve()
+        ):
+            return {
+                "success": False,
+                "error": "managed runtime project path does not match immutable scratch root",
+            }
 
     target_clone_manager = clone_manager
     if target_git_manager is not None and (effective_isolation == "clone" or clone_id):
@@ -352,7 +371,11 @@ async def spawn_agent_impl(
     effective_base_branch = effective_base_branch or "main"
 
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
-    effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
+    effective_sandbox_config: SandboxConfig = (
+        managed_runtime_profile.sandbox_config
+        if managed_runtime_profile is not None
+        else agent_sandbox_config(daemon_config)
+    )
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
 
     # 3. Validate parent_session_id and spawn depth
@@ -524,6 +547,17 @@ async def spawn_agent_impl(
             if isinstance(error_code, str):
                 response["error_code"] = error_code
             return response
+
+    if (
+        managed_runtime_profile is not None
+        and Path(isolation_ctx.cwd).resolve()
+        != Path(managed_runtime_profile.scratch_root).resolve()
+    ):
+        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
+        return {
+            "success": False,
+            "error": "managed runtime cwd does not match immutable scratch root",
+        }
 
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
@@ -739,6 +773,28 @@ async def spawn_agent_impl(
             "worktree_id": isolation_ctx.worktree_id,
             "branch_name": isolation_ctx.branch_name,
         }
+        if prelaunch_authority is not None:
+            try:
+                await asyncio.to_thread(prelaunch_authority, prepared_spawn.agent_run_id)
+            except Exception as exc:
+                await asyncio.to_thread(task_spawn_lease.release_unattached)
+                await cleanup_failed_spawn(
+                    runner,
+                    run_id,
+                    str(exc),
+                    handler,
+                    spawn_config,
+                    completion_registry=completion_registry,
+                    cleanup_isolation=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
+                    child_session_id=prepared_spawn.session_id,
+                )
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    **spawn_identity,
+                    "reasoning": reasoning.to_dict(),
+                }
         attach_error = await asyncio.to_thread(task_spawn_lease.attach, run_id)
         if attach_error is not None:
             await asyncio.to_thread(task_spawn_lease.release_unattached)
@@ -820,6 +876,14 @@ async def spawn_agent_impl(
             reasoning_required=reasoning.reasoning_required,
             reasoning_status=reasoning.status,
             reasoning_message=reasoning.message,
+            auto_approve=(
+                managed_runtime_profile.auto_approve
+                if managed_runtime_profile is not None
+                else True
+            ),
+            provider_args=(
+                managed_runtime_profile.provider_args if managed_runtime_profile is not None else ()
+            ),
             sandbox_config=effective_sandbox_config,
             extra_env={
                 **(endpoint_resolution.child_env or {}),
@@ -906,6 +970,7 @@ async def spawn_agent_impl(
                     run_id=run_id,
                     subscriber_session_id=parent_session_id,
                     db=db,
+                    strict=managed_runtime_profile is not None,
                 )
             except Exception:
                 logger.warning(
