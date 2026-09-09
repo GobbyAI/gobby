@@ -564,7 +564,8 @@ def test_renew_loop_routes_rowcount_mismatch_to_reacquisition(
     db.renew_rowcount = 0
     reacquisitions: list[object] = []
 
-    def stop_after_reacquire(handle: object) -> bool:
+    def stop_after_reacquire(handle: object, *, after_sleep: bool = False) -> bool:
+        assert after_sleep is False
         reacquisitions.append(handle)
         return False
 
@@ -592,11 +593,54 @@ def test_renew_loop_routes_rowcount_mismatch_to_reacquisition(
         record for record in caplog.records if "attempting re-acquisition" in record.message
     ]
     assert len(recovery_records) == 1
+    assert recovery_records[0].levelno == logging.WARNING
     # The lease context rides in ``extra`` only; the formatter renders it once (#20981).
     assert "expected_generation=" not in recovery_records[0].getMessage()
     recovery_context = vars(recovery_records[0])
     assert recovery_context["expected_generation"] == "run-1"
     assert recovery_context["expected_revision"] == 7
+
+
+def test_renew_loop_downgrades_rowcount_mismatch_after_host_sleep(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
+    events: list[str] = []
+
+    def lease_lost(
+        _lease: object,
+        *,
+        stop_event: threading.Event,
+        sleep_wake: object,
+    ) -> bool:
+        raise EmbeddingGenerationLeaseLost("Embedding generation lease no longer matches")
+
+    def stop_after_reacquire(handle: object, *, after_sleep: bool = False) -> bool:
+        assert after_sleep is True
+        events.append("reacquire")
+        return False
+
+    monkeypatch.setattr(embedding_lease, "_renew_with_backoff", lease_lost)
+    monkeypatch.setattr(
+        embedding_lease, "_reacquire_lease_from_renewal_thread", stop_after_reacquire
+    )
+    wake_tracker = MagicMock()
+    wake_tracker.observe_resume.return_value = True
+    monkeypatch.setattr(embedding_lease, "HostSleepTracker", lambda: wake_tracker)
+    lease = MagicMock()
+    lease.generation = "run-1"
+    lease.revision = 7
+    lease.fence.side_effect = lambda: events.append("fence")
+    handle = cast(Any, SimpleNamespace(lease=lease, renewal_stop=threading.Event()))
+
+    with caplog.at_level(logging.DEBUG, logger=embedding_lease.__name__):
+        embedding_lease._renew_embedding_lease(handle)
+
+    assert events == ["fence", "reacquire"]
+    recovery = [r for r in caplog.records if "lost after host sleep" in r.message]
+    assert len(recovery) == 1
+    assert recovery[0].levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio

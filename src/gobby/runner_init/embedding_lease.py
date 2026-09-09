@@ -94,9 +94,12 @@ def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
                 return
             continue
         except EmbeddingGenerationLeaseLost:
+            after_sleep = after_sleep or sleep_wake.observe_resume()
             handle.lease.fence()
-            logger.warning(
-                "Managed embedding generation lease was lost; attempting re-acquisition",
+            log = logger.debug if after_sleep else logger.warning
+            log(
+                "Managed embedding generation lease was lost%s; attempting re-acquisition",
+                " after host sleep" if after_sleep else "",
                 extra={
                     "expected_generation": handle.lease.generation,
                     "expected_revision": handle.lease.revision,
@@ -104,7 +107,7 @@ def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
             )
             if handle.renewal_stop.is_set():
                 return
-            if not _reacquire_lease_from_renewal_thread(handle):
+            if not _reacquire_lease_from_renewal_thread(handle, after_sleep=after_sleep):
                 return
             continue
         if handle.renewal_stop.is_set():

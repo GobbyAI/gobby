@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::super::overlay::{
-    IndexedFileState, OverlayReconcileAction, overlay_reconcile_action,
+    IndexedFileState, OverlayReconcileAction, explicit_overlay_file_maps, overlay_reconcile_action,
     overlay_reconcile_candidates,
 };
 use super::super::types::IndexRequest;
@@ -18,6 +18,32 @@ fn incremental_request(root: &Path) -> IndexRequest {
         require_cpp_semantics: false,
         sync_projections: false,
     }
+}
+
+#[test]
+fn explicit_overlay_file_maps_route_only_requested_files() {
+    let root = tempfile::tempdir().expect("create root");
+    write_file(root.path(), "src/requested.py", b"VALUE = 1\n");
+    write_file(root.path(), "src/unrequested.py", b"VALUE = 2\n");
+    write_file(root.path(), "docs/requested.md", b"# Requested\n");
+
+    let mut request = incremental_request(root.path());
+    request.explicit_files = vec![
+        PathBuf::from("src/requested.py"),
+        PathBuf::from("docs/requested.md"),
+    ];
+
+    let (ast_by_rel, content_by_rel) = explicit_overlay_file_maps(&request, root.path(), &[], true);
+
+    assert_eq!(
+        ast_by_rel.keys().collect::<Vec<_>>(),
+        vec![&"src/requested.py".to_string()]
+    );
+    assert_eq!(
+        content_by_rel.keys().collect::<Vec<_>>(),
+        vec![&"docs/requested.md".to_string()]
+    );
+    assert!(!ast_by_rel.contains_key("src/unrequested.py"));
 }
 
 #[test]
