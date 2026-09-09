@@ -63,7 +63,7 @@ async def test_deadline_and_stage_boundary_recovery(
         attempt=0,
         boundary_id="investigator:0:reserved",
     )
-    stages.bind_agent(
+    bound = stages.bind_agent(
         record.run_id,
         stage=AskStage.INVESTIGATOR,
         attempt=0,
@@ -74,7 +74,10 @@ async def test_deadline_and_stage_boundary_recovery(
     recovered = AskStageStore(manager).get(record.run_id)
     assert recovered is not None
     assert recovered.deadline_at == original_deadline == admitted_at + timedelta(seconds=120)
-    assert recovered.attempts == (attempt.model_copy(update={"agent_run_id": "agent-original"}),)
+    assert recovered.attempts == (bound,)
+    assert bound.status.value == "running"
+    assert bound.agent_run_id == "agent-original"
+    assert bound.attempt == attempt.attempt
     duplicate = stages.reserve_attempt(
         record.run_id,
         stage=AskStage.INVESTIGATOR,

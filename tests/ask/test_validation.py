@@ -25,7 +25,9 @@ def _blob_oid(content: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
 
 
-def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
+def _valid_case(
+    *, run_id: str = "run-1", project_id: str = "project"
+) -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
     from gobby.ask.claims import (
         AnswerDraft,
         AnswerSection,
@@ -57,7 +59,7 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
     }
     changed_paths = [changed_path]
     binding = {
-        "project_id": "project",
+        "project_id": project_id,
         "commit_oid": "a" * 40,
         "tree_oid": "d" * 40,
         "inventory_digest": "",
@@ -143,7 +145,7 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
     }
     evidence = EvidenceManifest.model_validate(
         {
-            "run_id": "run-1",
+            "run_id": run_id,
             "snapshot_binding": binding,
             "inventory": {
                 "schema_version": 1,
@@ -153,7 +155,7 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
             },
             "records": [
                 {
-                    "run_id": "run-1",
+                    "run_id": run_id,
                     "invocation_id": "invocation-1",
                     "snapshot_inventory_digest": binding["inventory_digest"],
                     "request_hash": _json_hash(request),
@@ -164,7 +166,7 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
         }
     )
     citation = SourceCitation(
-        run_id="run-1",
+        run_id=run_id,
         evidence_id=source_id,
         path="src/app.py",
         blob_oid=blob_oid,
@@ -194,7 +196,7 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
         ),
     )
     draft = AnswerDraft(
-        run_id="run-1",
+        run_id=run_id,
         investigator_run_id="investigator-1",
         question="What does alpha return?",
         question_parts=(QuestionPart(id="behavior", text="Return behavior"),),
@@ -208,7 +210,7 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
         ),
     )
     review = ReviewerResult(
-        run_id="run-1",
+        run_id=run_id,
         reviewer_run_id="reviewer-1",
         draft_hash=draft.content_hash,
         evidence_manifest_hash=evidence.content_hash,

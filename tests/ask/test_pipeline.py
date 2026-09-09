@@ -35,24 +35,6 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
     )
 
 
-def _replace_identity(value: object, *, run_id: str, project_id: str) -> object:
-    if isinstance(value, dict):
-        return {
-            key: _replace_identity(child, run_id=run_id, project_id=project_id)
-            for key, child in value.items()
-        }
-    if isinstance(value, list):
-        return [
-            _replace_identity(child, run_id=run_id, project_id=project_id)
-            for child in value
-        ]
-    if value == "run-1":
-        return run_id
-    if value == "project":
-        return project_id
-    return value
-
-
 @dataclass(frozen=True)
 class _PreparedSnapshot:
     generation: int
@@ -76,14 +58,7 @@ class _SnapshotManager:
         artifacts: object,
     ) -> _PreparedSnapshot:
         del repository_root, artifacts
-        _draft, evidence, blobs, _review = _valid_case()
-        evidence = EvidenceManifest.model_validate(
-            _replace_identity(
-                evidence.model_dump(mode="json", by_alias=True),
-                run_id=run_id,
-                project_id=self.project_id,
-            )
-        )
+        _draft, evidence, blobs, _review = _valid_case(run_id=run_id, project_id=self.project_id)
         self.by_run[run_id] = evidence
         source_root = self.root / run_id / "source"
         source_root.mkdir(parents=True)
@@ -215,13 +190,10 @@ class _NativeAgents:
         assert timeout > 0
         spec = self.specs[agent_run_id]
         if spec.stage in {AskAgentStage.INVESTIGATOR, AskAgentStage.REPAIR}:
-            template, _evidence, _blobs, _review = _valid_case()
-            body = _replace_identity(
-                template.model_dump(mode="json"),
-                run_id=spec.run_id,
-                project_id=spec.project_id,
+            template, _evidence, _blobs, _review = _valid_case(
+                run_id=spec.run_id, project_id=spec.project_id
             )
-            assert isinstance(body, dict)
+            body = template.model_dump(mode="json")
             body["investigator_run_id"] = agent_run_id
             draft = AnswerDraft.model_validate(body)
             token = set_current_agent_run_id(agent_run_id)

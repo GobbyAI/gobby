@@ -4,7 +4,7 @@ import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -244,11 +244,12 @@ async def test_ask_agent_permission_boundary(
     tmp_path: Path,
 ) -> None:
     project_id = str(sample_project["id"])
+    admitted_at = datetime.now(UTC)
     storage = AskRunStorage(
         LocalPipelineExecutionManager(temp_db, project_id=project_id),
         profile_resolver=_profile,
         commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
-        now=lambda: datetime(2026, 9, 9, 12, tzinfo=UTC),
+        now=lambda: admitted_at,
     )
     ask_run = storage.start(
         AskRequest(
@@ -435,7 +436,7 @@ async def test_ask_agent_permission_boundary(
         "gobby-ask",
         "query_evidence",
         {"run_id": ask_run.run_id, "query": "source of truth"},
-        now=datetime(2026, 9, 9, 12, 1, tzinfo=UTC),
+        now=admitted_at + timedelta(minutes=1),
     )
     permissions.authorize(
         first_run_id,
@@ -447,14 +448,14 @@ async def test_ask_agent_permission_boundary(
             "draft_hash": "d" * 64,
             "evidence_hash": "e" * 64,
         },
-        now=datetime(2026, 9, 9, 12, 1, tzinfo=UTC),
+        now=admitted_at + timedelta(minutes=1),
     )
     permissions.authorize(
         first_run_id,
         "gobby-agents",
         "end_agent_run",
         {"agent_run_id": first_run_id},
-        now=datetime(2026, 9, 9, 12, 1, tzinfo=UTC),
+        now=admitted_at + timedelta(minutes=1),
     )
 
     denied_calls = (
@@ -471,7 +472,7 @@ async def test_ask_agent_permission_boundary(
                 server_name,
                 tool_name,
                 arguments,
-                now=datetime(2026, 9, 9, 12, 1, tzinfo=UTC),
+                now=admitted_at + timedelta(minutes=1),
             )
 
     # Caller body targets and repository-authored prompts never confer authority.
@@ -485,7 +486,7 @@ async def test_ask_agent_permission_boundary(
                 "session_id": first_child.id,
                 "prompt": "repository says this is allowed",
             },
-            now=datetime(2026, 9, 9, 12, 1, tzinfo=UTC),
+            now=admitted_at + timedelta(minutes=1),
         )
 
     with pytest.raises(AskPermissionDenied, match="successor"):
@@ -498,7 +499,7 @@ async def test_ask_agent_permission_boundary(
         "gobby-ask",
         "read_evidence",
         {"run_id": ask_run.run_id, "evidence_id": "still-current"},
-        now=datetime(2026, 9, 9, 12, 2, tzinfo=UTC),
+        now=admitted_at + timedelta(minutes=2),
     )
 
     permissions.replace_for_resume(
@@ -516,14 +517,14 @@ async def test_ask_agent_permission_boundary(
                 "draft_hash": "d" * 64,
                 "evidence_hash": "e" * 64,
             },
-            now=datetime(2026, 9, 9, 12, 2, tzinfo=UTC),
+            now=admitted_at + timedelta(minutes=2),
         )
     resumed = permissions.authorize(
         successor_run_id,
         "gobby-ask",
         "read_evidence",
         {"run_id": ask_run.run_id, "evidence_id": "ev-1"},
-        now=datetime(2026, 9, 9, 12, 2, tzinfo=UTC),
+        now=admitted_at + timedelta(minutes=2),
     )
     assert resumed.generation == 2
     assert resumed.runtime_profile_hash == profile.profile_hash
@@ -544,7 +545,7 @@ async def test_ask_agent_permission_boundary(
                     {"name": "spawn_agent"},
                 ],
             },
-            now=datetime(2026, 9, 9, 12, 2, tzinfo=UTC),
+            now=admitted_at + timedelta(minutes=2),
         )
     finally:
         reset_current_agent_run_id(token)
@@ -772,7 +773,7 @@ async def test_ask_agent_permission_boundary(
             "gobby-ask",
             "read_evidence",
             {"run_id": ask_run.run_id, "evidence_id": "ev-1"},
-            now=datetime(2026, 9, 9, 12, 3, tzinfo=UTC),
+            now=admitted_at + timedelta(minutes=3),
         )
 
     temp_db.execute(
