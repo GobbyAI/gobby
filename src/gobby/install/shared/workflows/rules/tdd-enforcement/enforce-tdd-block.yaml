@@ -16,3 +16,4 @@ rules:
         tools: [Write, Bash]
         reason: |
           Use a test-first flow. Write {% if variables.get('claimed_task_acceptance_test_paths') %}one of the claimed task's acceptance tests: {{ variables.get('claimed_task_acceptance_test_paths') | join(', ') }}{% else %}any test-convention file under the task's targets{% endif %}, then retry writing {{ first_tdd_code_path(event.data, tool_input) }}.
+          For Rust, follow the `test-driven-development` skill's `Rust Stub-First RED` sequence.
