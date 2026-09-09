@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.agents import terminal_cleanup
 from gobby.agents.terminal_cleanup import cleanup_merged_task_artifacts_after_agent_exit
+from gobby.storage.hub import operation_deadline
+from gobby.storage.hub.operation_deadline import database_operation_deadline
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from tests.agents.cleanup_test_support import (
     AcknowledgingCompletionRegistry,
     RecordingCompletionRegistry,
@@ -371,6 +378,60 @@ async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
     session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
     assert artifact_calls == [(db, "task-1")]
     assert db.executed == []
+
+
+@pytest.mark.integration
+async def test_exhausted_inherited_deadline_still_releases_the_dispatch_mutex(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#22016: a spent deadline must not strand the same-task spawn mutex."""
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Terminal run holding a spawn mutex",
+        validation_criteria="The dispatch mutex is released after terminal cleanup.",
+    )
+    run_id = "dddddddd-dddd-4ddd-8ddd-dddddddd2197"
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder=f"spawn-agent:{run_id}",
+        kind="spawn_agent",
+        ttl_seconds=600,
+        run_id=run_id,
+    )
+    handler = _handler(
+        temp_db,
+        completion_registry=_FailingNotifyRegistry(),
+        session_coordinator=MagicMock(),
+    )
+    run = replace(_run(task_id=task.id), id=run_id)
+
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with database_operation_deadline(timeout_seconds=0.04):
+        now += 0.06
+        await handler.post_terminal_cleanup(
+            run,
+            allow_parent_session_fallback=False,
+            notification_result={"status": "completed"},
+            notification_message="done",
+        )
+
+    assert mutexes.get_mutex(task.id) is None
+    assert mutexes.get_mutex_by_run_id(run_id) is None
+    # The replacement spawn takes the mutex without needing kill_agent first.
+    replacement_run_id = "dddddddd-dddd-4ddd-8ddd-dddddddd2198"
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder=f"spawn-agent:{replacement_run_id}",
+        kind="spawn_agent",
+        ttl_seconds=600,
+        run_id=replacement_run_id,
+    )
 
 
 async def test_post_terminal_cleanup_missing_child_does_not_target_parent_session(
