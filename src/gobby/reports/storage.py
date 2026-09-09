@@ -338,6 +338,32 @@ class ReportStore:
             (phase, attempt_id),
         )
 
+    def recovery_agent(self, report: dict[str, Any]) -> str | None:
+        """Find the last linked reporter that could have written this checkout."""
+        row = self.db.fetchone(
+            """SELECT a.id FROM synthesis_report_attempts p
+            JOIN agent_runs a ON a.id = p.agent_run_id
+            WHERE p.source_kind = %s AND p.source_run_id = %s
+              AND a.task_id = %s AND a.worktree_id = %s
+              AND a.child_session_id IS NOT NULL
+            ORDER BY p.started_at DESC, p.id DESC LIMIT 1""",
+            (
+                report["source_kind"],
+                report["source_run_id"],
+                report["task_id"],
+                report["worktree_id"],
+            ),
+        )
+        return str(row["id"]) if row else None
+
+    def record_checkpoint(self, attempt_id: str, result: dict[str, Any]) -> None:
+        """Retain checkpoint evidence even when the subsequent launch fails."""
+        self.db.execute(
+            """UPDATE synthesis_report_attempts
+            SET diagnostics = diagnostics || %s::jsonb WHERE id = %s AND status = 'running'""",
+            (json_dumps({"checkpoint": result}), attempt_id),
+        )
+
     def interrupted_coordinator(self, attempt_id: str) -> None:
         self.db.execute(
             """UPDATE synthesis_report_attempts SET diagnostics = diagnostics ||
