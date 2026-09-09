@@ -39,7 +39,13 @@ logger = logging.getLogger(__name__)
 
 WRITE_FAULT_NAME = "terminal_write_fault"
 
+# Clients reconnect the moment HTTP serves, before the gterm host is adopted or
+# spawned; an attach waits this long for that decision. It matches gclient's
+# request deadline, so a longer wait would only outlive the client (#22002).
+HOST_STARTUP_ATTACH_WAIT_SECONDS = 5.0
+
 PROXY_ATTACH_FAILURE_REASONS: dict[str, str] = {
+    "host_not_ready": "terminal host has not finished starting",
     "runtime_unavailable": "no terminal runtime for backend",
     "proxy_unavailable": "proxy frame opener is not available",
     "locator_failed": "attach_locator raised",
@@ -91,6 +97,7 @@ class TerminalWsMixin:
     terminal_runtime_registry: Any
     terminal_config: Any
     terminal_services: Any | None = None
+    terminal_host_manager: Any | None = None
     open_proxy_frame: Any | None = None
 
     if TYPE_CHECKING:
@@ -769,6 +776,11 @@ class TerminalWsMixin:
         return runtime
 
     async def _resolve_attach_locator(self, row: Any) -> tuple[AttachLocator | None, str | None]:
+        host = self.terminal_host_manager
+        if host is not None and not await host.wait_startup_settled(
+            HOST_STARTUP_ATTACH_WAIT_SECONDS
+        ):
+            return None, _log_proxy_attach_failure(row.id, "host_not_ready")
         runtime = self._runtime_for(row.backend)
         if runtime is None:
             return None, _log_proxy_attach_failure(row.id, "runtime_unavailable")

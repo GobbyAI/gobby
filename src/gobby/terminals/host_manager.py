@@ -97,6 +97,10 @@ class TerminalHostManager:
         # reaper no longer holds its pid back.
         self.host_drained = False
         self._stop_requested = False
+        # Set once `start()` has finished, adopted, spawned, or degraded, so
+        # attach paths that race daemon startup wait for a decided host
+        # instead of handshaking against an unset epoch (#22002).
+        self._startup_settled = asyncio.Event()
         self.observation_health: dict[str, dict[str, Any]] = {}
 
     @property
@@ -144,6 +148,20 @@ class TerminalHostManager:
         atomic_replace_text(control_token_path(self.socket_dir), token, 0o600)
 
     async def start(self) -> None:
+        try:
+            await self._start_host()
+        finally:
+            self._startup_settled.set()
+
+    async def wait_startup_settled(self, timeout: float) -> bool:
+        """True once ``start()`` has decided the host; False if that takes longer."""
+        try:
+            await asyncio.wait_for(self._startup_settled.wait(), timeout)
+        except TimeoutError:
+            return False
+        return True
+
+    async def _start_host(self) -> None:
         if not self.enabled:
             self.native_available = False
             return

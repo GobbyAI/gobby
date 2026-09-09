@@ -170,6 +170,33 @@ async def test_degraded_startup_without_host(tmp_path: Path, temp_db: HubDatabas
 
 
 @pytest.mark.asyncio
+async def test_startup_settles_after_start_even_when_degraded(
+    tmp_path: Path, temp_db: HubDatabase
+) -> None:
+    """Attach paths wait on startup settling, so a degraded start settles too (#22002)."""
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    async def boom() -> FakeControlClient:
+        raise ConnectionRefusedError("no socket")
+
+    def missing() -> FakeHostProcess:
+        raise FileNotFoundError("gterm")
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(enabled=True, socket_dir=str(tmp_path)),
+        terminal_config=TerminalConfig(),
+        terminal_manager=TerminalManager(temp_db),
+        connector=boom,
+        spawner=missing,
+    )
+    assert await host.wait_startup_settled(0.01) is False
+    await host.start()
+    assert host.native_available is False
+    assert await host.wait_startup_settled(0.01) is True
+
+
+@pytest.mark.asyncio
 async def test_restart_adopts_host_preserving_epoch_pid_and_row(
     tmp_path: Path,
     temp_db: HubDatabase,

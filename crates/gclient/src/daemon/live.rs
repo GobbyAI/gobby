@@ -659,25 +659,21 @@ impl Daemon for LiveDaemon {
     }
 
     async fn reconnect(&self, observed: Generation) -> Result<Generation, DaemonError> {
-        let (mut joiner, owner) = {
+        let (mut joiner, owner, observed) = {
             let mut state = self.inner.state();
             if state.closed {
                 return Err(DaemonError::Unavailable { retry_after: None });
             }
-            if state.generation != observed {
-                if state.ready {
-                    return Ok(state.generation);
-                }
-                if let Some(flight) = &state.reconnect {
-                    (Some(flight.result_rx.clone()), None)
-                } else {
-                    return Err(state
-                        .last_error
-                        .clone()
-                        .unwrap_or(DaemonError::Unavailable { retry_after: None }));
-                }
-            } else if let Some(flight) = &state.reconnect {
-                (Some(flight.result_rx.clone()), None)
+            if state.generation != observed && state.ready {
+                return Ok(state.generation);
+            }
+            // A stale caller with no ready connection and no flight still needs
+            // a connection: a handshake that failed after rolling the generation
+            // forward would otherwise strand every later attempt on the cached
+            // error (#22002).
+            let observed = state.generation;
+            if let Some(flight) = &state.reconnect {
+                (Some(flight.result_rx.clone()), None, observed)
             } else {
                 let (result_tx, result_rx) = watch::channel(None);
                 let done = Arc::new(Notify::new());
@@ -689,7 +685,7 @@ impl Daemon for LiveDaemon {
                     done: Arc::clone(&done),
                     abort,
                 });
-                (None, Some((result_tx, done, registration)))
+                (None, Some((result_tx, done, registration)), observed)
             }
         };
         if let Some(receiver) = joiner.as_ref() {

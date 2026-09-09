@@ -141,6 +141,7 @@ class WebSocketServer(
         self.terminal_manager: Any | None = None
         self.terminal_runtime_registry: Any | None = None
         self.terminal_config: Any | None = None
+        self.terminal_host_manager: Any | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:
             lifecycle = TurnLifecycleReducer(
@@ -211,12 +212,14 @@ class WebSocketServer(
         runtime_registry: Any,
         terminal_config: Any | None = None,
         terminal_services: Any | None = None,
+        host_manager: Any | None = None,
     ) -> None:
         """Attach composition-root terminal services after construction."""
         self.terminal_manager = terminal_manager
         self.terminal_runtime_registry = runtime_registry
         self.terminal_config = terminal_config
         self.terminal_services = terminal_services
+        self.terminal_host_manager = host_manager
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
 
