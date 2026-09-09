@@ -260,8 +260,20 @@ impl CodeSymbolVectorLifecycle {
             .json(&body)
             .send()
             .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(qdrant_http_error("create collection", resp.status(), resp));
+        let status = resp.status();
+        if status == StatusCode::CONFLICT {
+            let conflict = qdrant_http_error("create collection", status, resp);
+            // Another sync process may have created the collection after our GET.
+            // Reuse it only after verifying the installed schema.
+            return match self.get_collection_schema()? {
+                Some(found) => self
+                    .ensure_compatible_schema(schema.clone(), found)
+                    .map(|_| ()),
+                None => Err(conflict),
+            };
+        }
+        if !status.is_success() {
+            return Err(qdrant_http_error("create collection", status, resp));
         }
         Ok(())
     }

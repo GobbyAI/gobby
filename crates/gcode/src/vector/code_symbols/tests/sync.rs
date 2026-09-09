@@ -2,6 +2,106 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn sync_recovers_from_collection_creation_conflict() {
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]}),
+    )]);
+    let (url, handle) = spawn_http_responses(vec![
+        (404, json!({"status": "not found"})),
+        (409, json!({"status": {"error": "already exists"}})),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+        ),
+        (200, json!({"result": {"status": "completed"}})),
+    ]);
+    let mut lifecycle = conflict_test_lifecycle(url, embedding_url);
+    let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
+    let requests = handle.join();
+    let embedding_requests = embedding_handle.join();
+    assert_eq!(result.expect("recover creation race").vectors_upserted, 1);
+    let requests = requests.expect("qdrant requests");
+    assert_eq!(requests.len(), 4);
+    assert!(requests[0].starts_with("GET /collections/"));
+    assert!(requests[1].starts_with("PUT /collections/"));
+    assert!(requests[2].starts_with("GET /collections/"));
+    assert!(requests[3].contains("/points?wait=true"));
+    assert_eq!(embedding_requests.expect("embedding requests").len(), 1);
+}
+
+#[test]
+fn collection_creation_conflict_rejects_unusable_collection() {
+    for (status, body, expected_error) in [
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 4, "distance": "Cosine"}}}}}),
+            "dimension",
+        ),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Dot"}}}}}),
+            "dimension",
+        ),
+        (200, json!({"result": {}}), "409"),
+        (404, json!({"status": "not found"}), "409"),
+        (503, json!({"status": "unavailable"}), "503"),
+    ] {
+        let (url, handle) = spawn_http_responses(vec![
+            (404, json!({"status": "not found"})),
+            (409, json!({"status": {"error": "already exists"}})),
+            (status, body),
+        ]);
+        let mut lifecycle = conflict_test_lifecycle(url, "http://127.0.0.1:9".to_string());
+        let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
+        let requests = handle.join();
+        let error = result.expect_err("unusable collection must fail");
+        if expected_error == "dimension" {
+            assert!(matches!(
+                error,
+                VectorLifecycleError::DimensionMismatch { .. }
+            ));
+        } else {
+            assert!(error.to_string().contains(expected_error), "{error}");
+        }
+        let requests = requests.expect("qdrant requests");
+        assert_eq!(requests.len(), 3);
+        assert!(requests.iter().all(|request| !request.contains("/points")));
+    }
+}
+
+#[test]
+fn collection_creation_preserves_non_conflict_errors() {
+    let (url, handle) = spawn_http_responses(vec![
+        (404, json!({"status": "not found"})),
+        (503, json!({"status": "unavailable"})),
+    ]);
+    let mut lifecycle = conflict_test_lifecycle(url, "http://127.0.0.1:9".to_string());
+    let error = lifecycle.ensure_collection().expect_err("creation fails");
+    assert!(error.to_string().contains("503"), "{error}");
+    assert_eq!(handle.join().expect("qdrant requests").len(), 2);
+}
+
+fn conflict_test_lifecycle(qdrant_url: String, embedding_url: String) -> CodeSymbolVectorLifecycle {
+    CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle")
+}
+
+#[test]
 fn sync_rejects_embedding_vectors_with_wrong_dimension() {
     let (embedding_url, embedding_handle) =
         spawn_http_responses(vec![(200, json!({"data": [{"embedding": [0.1, 0.2]}]}))]);
