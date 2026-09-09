@@ -9,6 +9,7 @@ import pytest
 
 from gobby.agents.watchdog.completed_turn_recovery import (
     CompletedTurnRecoveryHost,
+    codex_mcp_startup_error,
     recover_completed_turn,
     step_progress_requires_gobby_mcp,
     step_requires_gobby_proxy,
@@ -199,21 +200,52 @@ async def test_all_tools_step_with_non_mcp_route_keeps_reprompt_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_entry_mcp_gated_step_without_mcp_calls_fails_fast() -> None:
+@pytest.mark.parametrize(
+    "startup_error",
+    [
+        "MCP client for gobby failed to start: MCP startup failed: "
+        "handshaking with MCP server failed",
+        "Error: required MCP servers failed to initialize: gobby: "
+        "handshaking with MCP server failed: connection closed: initialize response",
+        "Error: required\n MCP servers failed to initialize: gobby: "
+        "handshaking with MCP server failed:\n connection closed: initialize response",
+        "Error: required MCP servers failed to\n initialize: gobby: "
+        "handshaking with MCP server failed: connection closed: initialize response",
+    ],
+)
+async def test_non_entry_mcp_gated_step_without_mcp_calls_fails_fast(startup_error: str) -> None:
     host = _FakeHost(
         step_context=_step_context("all", mcp_progress_only=True, is_entry_step=False),
         made_call=False,
-    )
-    startup_error = (
-        "MCP client for gobby failed to start: MCP startup failed: "
-        "handshaking with MCP server failed"
     )
 
     assert await _recover(host, pane_tail=startup_error) == 1
     assert len(host.failures) == 1
     assert "MCP-gated step 'load_skill'" in host.failures[0]
-    assert startup_error in host.failures[0]
+    assert " ".join(startup_error.split()) in host.failures[0]
     assert host.reprompts == []
+
+
+@pytest.mark.parametrize(
+    "pane_tail",
+    [None, "", "MCP startup complete", "required MCP servers initialized: gobby"],
+)
+def test_startup_error_ignores_unrelated_pane_output(pane_tail: str | None) -> None:
+    assert codex_mcp_startup_error(pane_tail) is None
+
+
+def test_startup_error_retains_latest_wrapped_diagnostic_without_other_paragraphs() -> None:
+    pane_tail = (
+        "MCP client for old-server failed to start: old failure\n\n"
+        "Error: required\n MCP servers failed to initialize: gobby: handshaking failed:\n"
+        " connection closed: initialize response\n \n"
+        "Press enter to exit"
+    )
+
+    assert codex_mcp_startup_error(pane_tail) == (
+        "Error: required MCP servers failed to initialize: gobby: handshaking failed: "
+        "connection closed: initialize response"
+    )
 
 
 @pytest.mark.asyncio
