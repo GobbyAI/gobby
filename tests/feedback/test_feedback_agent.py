@@ -163,6 +163,25 @@ async def test_named_reviewer_reports_launch_failure(monkeypatch: pytest.MonkeyP
     assert registry.waits == []
 
 
+@pytest.mark.parametrize(
+    ("detail", "retryable"),
+    [("tmux: message too long", True), ("invalid provider configuration", False)],
+)
+async def test_serialized_launch_error_preserves_retry_classification(
+    monkeypatch: pytest.MonkeyPatch, detail: str, retryable: bool
+) -> None:
+    reviewer, registry, _captured = _reviewer(
+        monkeypatch,
+        spawn_result={"success": False, "run_id": "agent-run-1", "error": detail},
+    )
+    with pytest.raises(FeedbackReviewerLaunchError) as error:
+        await reviewer.review("frozen run", timeout_seconds=20.0)
+    assert isinstance(error.value.__cause__, OSError) is retryable
+    assert error.value.agent_run_id == "agent-run-1"
+    assert detail in str(error.value)
+    assert registry.waits == []
+
+
 @pytest.mark.asyncio
 async def test_named_reviewer_reports_terminal_agent_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -246,4 +265,8 @@ def test_feedback_reviewer_agent_requires_both_methodology_skills() -> None:
             "when": "vars.restraint_loaded and vars.proportionality_loaded",
         }
     ]
-    assert review_step["allowed_mcp_tools"] == ["gobby-agents:end_agent_run"]
+    assert review_step["allowed_mcp_tools"] == [
+        "gobby-feedback:get_review_observations",
+        "gobby-feedback:get_review_results",
+        "gobby-agents:end_agent_run",
+    ]

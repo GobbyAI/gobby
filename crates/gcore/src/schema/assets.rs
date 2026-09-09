@@ -86,6 +86,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/429_add_transcript_processing_failures.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 430,
+        filename: "430_add_run_evidence_and_reports.sql",
+        checksum: "7f8eeeeb60bc13f2a5be9b6fdca99eafcd927c03090ae8f147eba4bf78b8736e",
+        sql: include_str!("../../assets/schema/migrations/430_add_run_evidence_and_reports.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

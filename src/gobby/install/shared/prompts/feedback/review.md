@@ -1,8 +1,8 @@
 ---
 description: Cluster session feedback and propose deduplicated follow-up tasks
-version: "3.0"
+version: "4.0"
 required_variables:
-  - observations
+  - run_id
   - max_tasks
 ---
 You are reviewing structured feedback that coding agents recorded about the Gobby
@@ -33,9 +33,11 @@ ref after `send_message`;
 Unlabeled or unclaimed filings, plus every other defect disposition, are shirked
 found work.
 
-```json
-{{ observations }}
-```
+Frozen review run: `{{ run_id }}`.
+
+Read `gobby-feedback:get_review_observations(run_id="{{ run_id }}", offset=0, limit=50)`.
+Follow every `next_offset` until null. Review only this frozen batch; new feedback
+belongs to later runs. The reader is the authoritative source of observation IDs.
 
 ## Instructions
 

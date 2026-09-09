@@ -15,6 +15,10 @@ from uuid import uuid4
 import pytest
 
 from gobby.config.sessions import FeedbackReviewConfig
+from gobby.feedback.actions import (
+    _RECENT_CLOSED_TASK_LIMIT,
+    FINDINGS_EPIC_TITLE,
+)
 from gobby.feedback.agent import (
     FeedbackReviewerLaunchError,
     FeedbackReviewerResult,
@@ -22,11 +26,7 @@ from gobby.feedback.agent import (
     FeedbackReviewerRunError,
     FeedbackReviewerTimeoutError,
 )
-from gobby.feedback.service import (
-    _RECENT_CLOSED_TASK_LIMIT,
-    FINDINGS_EPIC_TITLE,
-    FeedbackReviewService,
-)
+from gobby.feedback.service import FeedbackReviewService
 from gobby.feedback.storage import FeedbackReviewStore
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
@@ -238,6 +238,74 @@ def _insert_feedback(
     return feedback_id
 
 
+@pytest.mark.parametrize("invalid", ["missing", "unknown", "duplicate"])
+async def test_invalid_observation_coverage_does_not_consume_or_file(
+    temp_db: HubDatabase, session_id: str, invalid: str
+) -> None:
+    first = _insert_feedback(temp_db, session_id)
+    second = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=1))
+    ids = [first] if invalid == "missing" else [first, second, str(uuid4())]
+    clusters = [_cluster(ids, title="Never file this")]
+    if invalid == "duplicate":
+        clusters = [_cluster([first, second], title="Never file this"), _cluster([first])]
+    task_manager = _FakeTaskManager()
+    service = _service(temp_db, _FakeLLM(response={"clusters": clusters}), task_manager)
+    with pytest.raises(FeedbackReviewerResultError, match="coverage"):
+        await service.run_review()
+    assert not task_manager.created
+    assert {row.id for row in service.store.list_unreviewed(10)} == {first, second}
+
+
+async def test_launch_retry_preserves_attempt_and_files_once(temp_db: HubDatabase, session_id: str) -> None:
+    first = _insert_feedback(temp_db, session_id)
+
+    class TransientReviewer(_FakeLLM):
+        async def review(self, prompt: str, *, timeout_seconds: float) -> FeedbackReviewerResult:
+            if not self.calls:
+                self.calls.append({"prompt": prompt, "timeout_seconds": timeout_seconds})
+                raise FeedbackReviewerLaunchError("temporary launch failure") from OSError("socket unavailable")
+            return await super().review(prompt, timeout_seconds=timeout_seconds)
+
+    reviewer = TransientReviewer(response={"clusters": [_cluster([first], title="Fix transport")]})
+    manager = _FakeTaskManager()
+    service = _service(temp_db, reviewer, manager)
+    result = await service.run_review()
+    run = service.store.get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    attempts = run.actions["review_attempts"]
+    assert [attempt["status"] for attempt in attempts] == ["failed", "completed"]
+    assert attempts[0]["phase"] == "launch" and attempts[0]["error"] == "temporary launch failure"
+    assert len(manager.created) == 1
+    assert reviewer.calls[0]["prompt"] == reviewer.calls[1]["prompt"]
+
+
+async def test_partial_task_filing_keeps_only_failed_observations_retryable(
+    temp_db: HubDatabase, session_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _insert_feedback(temp_db, session_id)
+    second = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=1))
+    reviewer = _FakeLLM(response={"clusters": [_cluster([first], title="First fix", theme="tmux launch"), _cluster([second], title="Second fix", theme="vector restore")]})
+    manager = _FakeTaskManager()
+    create = manager.create_task
+
+    def flaky_create(*args: Any, **kwargs: Any) -> Any:
+        title = kwargs.get("title", args[1] if len(args) > 1 else None)
+        if title is not None and "Second fix" in str(title):
+            raise OSError("task database disconnected")
+        return create(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "create_task", flaky_create)
+    service = _service(temp_db, reviewer, manager)
+    result = await service.run_review()
+    assert result["status"] == "partial" and result["tasks_filed"] == 1
+    assert [row.id for row in service.store.list_unreviewed(10)] == [second]
+    run = service.store.get_run(result["run_id"])
+    assert run is not None and run.actions is not None
+    assert run.actions["filed"][0]["observation_ids"] == [first]
+    assert run.actions["failed"][0]["observation_ids"] == [second]
+    assert run.actions["failed"][0]["error"] == "task database disconnected"
+
+
 def _cluster(
     observation_ids: list[str],
     *,
@@ -348,12 +416,14 @@ async def test_run_review_files_tasks_marks_rows_and_renders_digest(
 
     assert result["reviewer_agent_run_id"] == "reviewer-agent-run-1"
 
-    # The reviewer call carries the rendered observation batch and deadline.
+    # The reviewer receives a run reference and reads the immutable batch.
     call = llm.calls[0]
     assert call["timeout_seconds"] == 900.0
-    # The bundled prompt rendered the observation payload verbatim.
-    assert "close gate re-ran validation" in call["prompt"]
-    assert first in call["prompt"]
+    assert result["run_id"] in call["prompt"]
+    assert "close gate re-ran validation" not in call["prompt"]
+    page = service.store.observations_page(result["run_id"])
+    assert [row["id"] for row in page["observations"]] == [first, second]
+    assert first not in call["prompt"]
 
     task = task_manager.created[0]
     assert task.title == "Stop re-running validation at close"
@@ -780,11 +850,12 @@ async def test_run_review_respects_task_cap_and_notes_overflow(
     temp_db: HubDatabase, session_id: str
 ) -> None:
     first = _insert_feedback(temp_db, session_id)
+    second = _insert_feedback(temp_db, session_id)
     llm = _FakeLLM(
         response={
             "clusters": [
                 _cluster([first], title="First proposal"),
-                _cluster([first], title="Second proposal"),
+                _cluster([second], title="Second proposal"),
             ]
         }
     )
@@ -835,11 +906,12 @@ async def test_run_review_noise_and_praise_never_file(
     temp_db: HubDatabase, session_id: str
 ) -> None:
     first = _insert_feedback(temp_db, session_id)
+    second = _insert_feedback(temp_db, session_id)
     llm = _FakeLLM(
         response={
             "clusters": [
                 _cluster([first], classification="noise", title="Should be ignored"),
-                _cluster([first], classification="praise", title="Also ignored"),
+                _cluster([second], classification="praise", title="Also ignored"),
             ]
         }
     )
@@ -855,7 +927,7 @@ async def test_run_review_noise_and_praise_never_file(
     assert row is not None and row["reviewed"] is True
 
 
-async def test_run_review_without_gobby_project_degrades_to_digest_only(
+async def test_run_review_without_gobby_project_keeps_failed_inputs_retryable(
     temp_db: HubDatabase, session_id: str
 ) -> None:
     temp_db.execute("UPDATE projects SET name = 'not-gobby' WHERE name = 'gobby'")
@@ -871,7 +943,9 @@ async def test_run_review_without_gobby_project_degrades_to_digest_only(
     run = FeedbackReviewStore(temp_db).get_run(result["run_id"])
     assert run is not None
     assert run.actions is not None
-    assert run.actions["skipped"] == ["no project named 'gobby'; digest only"]
+    assert run.status == "partial"
+    assert run.actions["failed"][0]["error"] == "no project named 'gobby'"
+    assert [row.id for row in service.store.list_unreviewed(10)] == [first]
 
 
 @pytest.mark.parametrize(
@@ -918,7 +992,10 @@ async def test_run_review_agent_error_finalizes_run_failed_and_keeps_rows_retrya
     assert run is not None
     assert run.status == "failed"
     assert run.error == str(error)
-    assert run.actions == {"reviewer_agent_run_id": agent_run_id}
+    assert run.actions is not None
+    assert run.actions["reviewer_agent_run_id"] == agent_run_id
+    assert len(run.actions["review_attempts"]) == 1
+    assert run.actions["review_attempts"][0]["error"] == str(error)
     # The batch stays unreviewed so the next run re-picks it.
     row = temp_db.fetchone("SELECT reviewed FROM session_feedback WHERE id = %s", (first,))
     assert row is not None and row["reviewed"] is False
@@ -939,7 +1016,10 @@ async def test_run_review_rejects_malformed_agent_result_before_actions(
     run = FeedbackReviewStore(temp_db).latest_run()
     assert run is not None
     assert run.status == "failed"
-    assert run.actions == {"reviewer_agent_run_id": "reviewer-agent-run-1"}
+    assert run.actions is not None
+    assert run.actions["reviewer_agent_run_id"] == "reviewer-agent-run-1"
+    assert run.actions["review_attempts"][0]["phase"] == "validation"
+    assert run.actions["review_attempts"][0]["status"] == "failed"
     assert task_manager.created == []
     row = temp_db.fetchone("SELECT reviewed FROM session_feedback WHERE id = %s", (first,))
     assert row is not None and row["reviewed"] is False

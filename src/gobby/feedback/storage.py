@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -45,6 +45,8 @@ class FeedbackReviewRun:
     error: str | None
     created_at: datetime
     completed_at: datetime | None
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    publication: dict[str, Any] = field(default_factory=dict)
 
 
 _ROW_COLUMNS = (
@@ -53,15 +55,36 @@ _ROW_COLUMNS = (
 )
 _RUN_COLUMNS = (
     "id, status, dry_run, window_start, window_end, rows_considered, "
-    "findings, actions, digest_md, error, created_at, completed_at"
+    "findings, actions, digest_md, error, created_at, completed_at, observations"
 )
 
 
 class FeedbackReviewStore:
     """Hub-transaction storage for the session-feedback review loop."""
 
-    def __init__(self, db: HubDatabase) -> None:
+    def __init__(self, db: HubDatabase, *, report_project_id: str | None = None) -> None:
         self.db = db
+        self.report_project_id = report_project_id
+
+    def freeze_batch(self, limit: int, *, dry_run: bool) -> tuple[str, list[FeedbackRow]] | None:
+        """Admit one review and freeze exactly its inputs before launching a reader."""
+        with self.db.transaction() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('feedback-review', 0))")
+            if conn.execute(
+                "SELECT 1 FROM feedback_review_runs WHERE status = 'running' LIMIT 1"
+            ).fetchone():
+                return None
+            rows = self.list_unreviewed(limit)
+            if not rows:
+                return None
+            run_id = self.create_run(
+                dry_run=dry_run,
+                window_start=rows[0].created_at,
+                window_end=rows[-1].created_at,
+                rows_considered=len(rows),
+                observations=rows,
+            )
+            return run_id, rows
 
     def list_unreviewed(self, limit: int) -> list[FeedbackRow]:
         """Return the oldest unreviewed feedback rows, bounded by *limit*."""
@@ -84,6 +107,7 @@ class FeedbackReviewStore:
         window_start: datetime | None,
         window_end: datetime | None,
         rows_considered: int,
+        observations: list[FeedbackRow] | None = None,
     ) -> str:
         """Insert a `running` run row and return its id."""
         run_id = str(uuid4())
@@ -91,13 +115,85 @@ class FeedbackReviewStore:
             """
             INSERT INTO feedback_review_runs (
                 id, status, dry_run, window_start, window_end,
-                rows_considered, created_at
+                rows_considered, created_at, observations
             )
-            VALUES (%s, 'running', %s, %s, %s, %s, %s)
+            VALUES (%s, 'running', %s, %s, %s, %s, %s, %s)
             """,
-            (run_id, dry_run, window_start, window_end, rows_considered, _now()),
+            (
+                run_id,
+                dry_run,
+                window_start,
+                window_end,
+                rows_considered,
+                _now(),
+                json_dumps([asdict(row) for row in observations or []]),
+            ),
         )
         return run_id
+
+    def save_progress(self, run_id: str, findings: dict[str, Any], actions: dict[str, Any]) -> None:
+        """Checkpoint accepted findings and every completed action before consuming inputs."""
+        self.db.execute(
+            "UPDATE feedback_review_runs SET findings = %s, actions = %s WHERE id = %s",
+            (_json(findings), _json(actions), run_id),
+        )
+
+    def observations_page(self, run_id: str, *, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        """Read frozen observations; concurrent feedback never enters this batch."""
+        _validate_page(offset, limit)
+        row = self.db.fetchone(
+            "SELECT jsonb_array_length(observations) AS total FROM feedback_review_runs WHERE id = %s",
+            (run_id,),
+        )
+        if row is None:
+            raise ValueError(f"Unknown feedback review run: {run_id}")
+        rows = self.db.fetchall(
+            """SELECT item FROM feedback_review_runs,
+                jsonb_array_elements(observations) WITH ORDINALITY AS frozen(item, ordinal)
+                WHERE id = %s ORDER BY ordinal LIMIT %s OFFSET %s""",
+            (run_id, limit, offset),
+        )
+        items = [
+            json.loads(item["item"]) if isinstance(item["item"], str) else item["item"]
+            for item in rows
+        ]
+        total = int(row["total"])
+        return {
+            "run_id": run_id,
+            "observations": items,
+            "total": total,
+            "next_offset": offset + len(items) if offset + len(items) < total else None,
+            "historical_inputs_missing": total == 0,
+        }
+
+    def results_page(self, run_id: str, *, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        """Read accepted clusters with their actual daemon action outcomes."""
+        _validate_page(offset, limit)
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Unknown feedback review run: {run_id}")
+        clusters = (run.findings or {}).get("clusters", [])
+        items = clusters[offset : offset + limit]
+        ids = {value for cluster in items for value in cluster.get("observation_ids", [])}
+        actions = run.actions or {}
+        outcomes = {
+            key: [
+                item
+                for item in actions.get(key, [])
+                if ids.intersection(item.get("observation_ids", []))
+            ]
+            for key in ("filed", "suppressed", "deferred", "failed", "retained")
+        }
+        return {
+            "run_id": run_id,
+            "status": run.status,
+            "error": run.error,
+            "clusters": items,
+            "outcomes": outcomes,
+            "review_attempts": actions.get("review_attempts", []),
+            "total": len(clusters),
+            "next_offset": offset + len(items) if offset + len(items) < len(clusters) else None,
+        }
 
     def finalize_run(
         self,
@@ -110,6 +206,8 @@ class FeedbackReviewStore:
         error: str | None = None,
     ) -> None:
         """Move a run to a terminal status with its outputs."""
+        if self.report_project_id is not None:
+            actions = {**(actions or {}), "report_project_id": self.report_project_id}
         self.db.execute(
             """
             UPDATE feedback_review_runs
@@ -119,6 +217,10 @@ class FeedbackReviewStore:
             """,
             (status, _json(findings), _json(actions), digest_md, error, _now(), run_id),
         )
+        if self.report_project_id is not None:
+            from gobby.reports.storage import queue_terminal_report
+
+            queue_terminal_report(self.db, "feedback", run_id, self.report_project_id)
 
     def mark_running_interrupted(self) -> int:
         """Finalize orphaned running runs as interrupted.
@@ -131,10 +233,18 @@ class FeedbackReviewStore:
             result = conn.execute(
                 """
                 UPDATE feedback_review_runs
-                SET status = 'interrupted', completed_at = %s
+                SET status = 'interrupted', completed_at = %s,
+                    actions = COALESCE(actions, '{}'::jsonb) || %s::jsonb
                 WHERE status = 'running'
                 """,
-                (_now(),),
+                (
+                    _now(),
+                    json.dumps(
+                        {"report_project_id": self.report_project_id}
+                        if self.report_project_id
+                        else {}
+                    ),
+                ),
             )
             return int(result.rowcount or 0)
 
@@ -158,13 +268,19 @@ class FeedbackReviewStore:
             f"SELECT {_RUN_COLUMNS} FROM feedback_review_runs WHERE id = %s",
             (run_id,),
         )
-        return _run_from_row(row) if row else None
+        return self._with_publication(_run_from_row(row)) if row else None
 
     def latest_run(self) -> FeedbackReviewRun | None:
         row = self.db.fetchone(
             f"SELECT {_RUN_COLUMNS} FROM feedback_review_runs ORDER BY created_at DESC LIMIT 1"
         )
-        return _run_from_row(row) if row else None
+        return self._with_publication(_run_from_row(row)) if row else None
+
+    def _with_publication(self, run: FeedbackReviewRun) -> FeedbackReviewRun:
+        from gobby.reports.storage import ReportStore
+
+        publication = ReportStore(self.db).get("feedback", run.id, include_content=False)
+        return replace(run, publication=publication)
 
 
 def _run_from_row(row: Any) -> FeedbackReviewRun:
@@ -172,6 +288,10 @@ def _run_from_row(row: Any) -> FeedbackReviewRun:
     # The hub row boundary serializes JSONB values to JSON strings.
     data["findings"] = _decode_json(data["findings"])
     data["actions"] = _decode_json(data["actions"])
+    observations = data.get("observations", [])
+    data["observations"] = (
+        json.loads(observations) if isinstance(observations, str) else observations
+    )
     return FeedbackReviewRun(**data)
 
 
@@ -190,3 +310,8 @@ def _now() -> datetime:
 
 def _json(value: dict[str, Any] | None) -> str | None:
     return None if value is None else json_dumps(value)
+
+
+def _validate_page(offset: int, limit: int) -> None:
+    if offset < 0 or not 1 <= limit <= 100:
+        raise ValueError("offset must be nonnegative and limit must be between 1 and 100")

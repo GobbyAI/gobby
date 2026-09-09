@@ -201,6 +201,7 @@ class _AggregateDreamRunner:
                         "success": True,
                         "run_id": _result_run_id(result),
                         "mutations": target_mutations,
+                        "decision_summary": (result.get("run") or {}).get("summary") or {},
                     }
                 )
             except Exception as exc:
@@ -229,6 +230,7 @@ class _AggregateDreamRunner:
             "runs": runs,
             "passes": 1,
             "stop_reason": stop_reason,
+            **_merge_decision_counts(runs),
         }
 
     async def _run_round_robin(
@@ -406,6 +408,7 @@ class _AggregateDreamRunner:
             "runs": runs,
             "passes": passes,
             "stop_reason": stop_reason,
+            **_merge_decision_counts(runs),
         }
         if dependency_failure is not None:
             result["dependency_failure"] = dependency_failure
@@ -462,7 +465,7 @@ class _AggregateDreamRunner:
         with suppress(Exception):
             await sweep.related_session.aclose()
         try:
-            await asyncio.to_thread(
+            persisted = await asyncio.to_thread(
                 self._host.store.update_run,
                 sweep.run_id,
                 status=status,
@@ -471,6 +474,9 @@ class _AggregateDreamRunner:
                 summary=summary,
                 error=error,
             )
+            if persisted is not None:
+                summary = persisted.get("summary") or summary
+                mutations = int((summary or {}).get("mutations", mutations))
         except Exception:
             logger.warning(
                 "Failed to persist memory dream scope run %s", sweep.run_id, exc_info=True
@@ -482,6 +488,7 @@ class _AggregateDreamRunner:
             "run_id": sweep.run_id,
             "mutations": mutations,
             "status": status,
+            "decision_summary": summary or {},
         }
         if error is not None:
             entry["error"] = error
@@ -564,6 +571,7 @@ class _AggregateDreamRunner:
                     "mutations": aggregate.get("mutations", 0),
                     "passes": aggregate.get("passes", 0),
                     "stop_reason": stop_reason,
+                    **_merge_decision_counts(aggregate.get("runs", [])),
                 },
                 error=error,
             )
@@ -676,3 +684,16 @@ def _completed_mutation_count(result: object) -> int:
         )
         mutations = 0
     return mutations
+
+
+def _merge_decision_counts(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    totals: dict[str, Any] = {"noops": 0, "skipped": 0, "errors": 0, "proposed_actions": {}}
+    for run in runs:
+        summary = run.get("decision_summary") or {}
+        for key in ("noops", "skipped", "errors"):
+            totals[key] += int(summary.get(key, 0))
+        for action, count in summary.get("proposed_actions", {}).items():
+            totals["proposed_actions"][action] = totals["proposed_actions"].get(action, 0) + int(
+                count
+            )
+    return totals

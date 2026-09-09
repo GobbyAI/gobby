@@ -225,6 +225,10 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
     class RunStorage:
         db = object()
 
+        def record_spawn_error(self, run_id: str, error: str) -> None:
+            assert (run_id, error) == ("run-1", "spawn failed")
+            events.append("record-error")
+
         def get(self, _run_id: str) -> None:
             return None
 
@@ -263,7 +267,7 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
             task_manager=task_manager,
         )
 
-    assert events == ["terminalize", "cleanup-isolation", "delete-child"]
+    assert events == ["record-error", "terminalize", "cleanup-isolation", "delete-child"]
     assert terminalize_arguments == {
         "runner": runner,
         "run_id": "run-1",

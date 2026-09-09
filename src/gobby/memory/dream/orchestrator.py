@@ -88,6 +88,9 @@ class SweepTotals:
     mutations: int = 0
     snapshots: int = 0
     errors: int = 0
+    noops: int = 0
+    skipped: int = 0
+    proposed_actions: dict[str, int] = field(default_factory=dict)
     action_counts: dict[str, int] = field(default_factory=dict)
     error_details: list[dict[str, Any]] = field(default_factory=list)
     planner_errors: list[str] = field(default_factory=list)
@@ -106,6 +109,10 @@ class SweepTotals:
         self.mutations += int(page_summary.get("mutations", 0))
         self.snapshots += int(page_summary.get("snapshots", 0))
         self.errors += int(page_summary.get("errors", 0))
+        self.noops += int(page_summary.get("noops", 0))
+        self.skipped += int(page_summary.get("skipped", 0))
+        for name, count in page_summary.get("proposed_actions", {}).items():
+            self.proposed_actions[name] = self.proposed_actions.get(name, 0) + int(count)
         for name, count in page_summary.get("actions", {}).items():
             self.action_counts[name] = self.action_counts.get(name, 0) + int(count)
         for detail in page_summary.get("error_details", []):
@@ -125,6 +132,9 @@ class SweepTotals:
             "mutations": self.mutations,
             "snapshots": self.snapshots,
             "errors": self.errors,
+            "noops": self.noops,
+            "skipped": self.skipped,
+            "proposed_actions": dict(self.proposed_actions),
             "error_details": self.error_details,
             "candidates_reviewed": self.candidates_reviewed,
             "pages": self.pages,

@@ -49,6 +49,29 @@ def session_id(temp_db: HubDatabase, tmp_path: Path) -> str:
     return str(row["id"])
 
 
+def test_frozen_pages_exclude_concurrent_feedback_and_later_edits(temp_db: HubDatabase, session_id: str) -> None:
+    first = _insert_feedback(temp_db, session_id)
+    second = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=1))
+    store = FeedbackReviewStore(temp_db)
+    batch = store.freeze_batch(2, dry_run=False)
+    assert batch is not None
+    run_id, _ = batch
+    new = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=2))
+    temp_db.execute("UPDATE session_feedback SET evidence = 'edited later' WHERE id = %s", (first,))
+    page = store.observations_page(run_id, limit=1)
+    assert page["total"] == 2 and page["next_offset"] == 1
+    assert page["observations"][0]["id"] == first
+    assert page["observations"][0]["evidence"] == "evidence text"
+    last = store.observations_page(run_id, offset=1, limit=1)
+    assert last["observations"][0]["id"] == second and last["next_offset"] is None
+    assert new not in {row["id"] for row in page["observations"] + last["observations"]}
+    assert store.freeze_batch(2, dry_run=False) is None
+    store.save_progress(run_id, {"clusters": [{"observation_ids": [first]}, {"observation_ids": [second]}]}, {"filed": [{"observation_ids": [first], "task_ref": "#123"}]})
+    results = store.results_page(run_id, limit=1)
+    assert results["outcomes"]["filed"][0]["task_ref"] == "#123"
+    assert store.results_page(run_id, offset=1, limit=1)["outcomes"]["filed"] == []
+
+
 def _insert_feedback(
     db: HubDatabase,
     session_id: str,

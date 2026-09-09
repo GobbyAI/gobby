@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.memory.dream.decisions import DreamDecisionStore
 from gobby.memory.dream.options import DreamRunOptions
 
 if TYPE_CHECKING:
@@ -75,6 +77,23 @@ def register_memory_dream_tools(
         if coordinator is None:
             return {"success": False, "error": _COORDINATOR_UNAVAILABLE}
         return await coordinator.service.status(run_id)
+
+    @registry.tool(
+        name="memory_dream_decisions",
+        description="Read a page of proposed Dream decisions, effective actions, snapshots and outcomes.",
+    )
+    async def memory_dream_decisions(
+        run_id: str, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        coordinator = coordinator_resolver()
+        if coordinator is None:
+            return {"success": False, "error": _COORDINATOR_UNAVAILABLE}
+        return await asyncio.to_thread(
+            DreamDecisionStore(coordinator.service.store.db).page,
+            run_id,
+            offset=offset,
+            limit=limit,
+        )
 
     @registry.tool(
         name="memory_dream_revert",

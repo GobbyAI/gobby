@@ -47,18 +47,18 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
         ]
     );
     assert_eq!(identity["baseline_version"], 420);
-    assert_eq!(identity["latest_version"], 429);
+    assert_eq!(identity["latest_version"], 430);
     assert_eq!(
         identity["baseline_checksum"],
         "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"
     );
     assert_eq!(
         identity["latest_checksum"],
-        "39669edef7481e864653433ccb075dfb6ea21340168b3bf81c8465e314ea23d1"
+        "7f8eeeeb60bc13f2a5be9b6fdca99eafcd927c03090ae8f147eba4bf78b8736e"
     );
     assert_eq!(
         identity["assets_root_hash"],
-        "76921f1bf360fa4249e2f18e0dad9e944d52851766d7c0ce45471cbd8bfc62b6"
+        "cc8fc07bd5a97ba7822abe2daaf2f9144cc6d74d40c62471d138754f4bb05d89"
     );
     assert_eq!(identity["runner_protocol"], 1);
     assert_eq!(
