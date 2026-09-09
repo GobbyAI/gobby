@@ -740,7 +740,7 @@ class TestRegisterTerminalTools:
         assert result == {"success": True, "output": "live output", "via": "tmux"}
         tmux_manager.capture_pane.assert_awaited_once_with("%12", 20)
 
-    def test_capture_output_falls_back_to_transcript_tail(self, tmp_path) -> None:
+    def test_capture_output_falls_back_to_transcript_tail(self, tmp_path: Path) -> None:
         """When no tmux target exists, capture_output returns a transcript tail."""
         registry = _TestRegistry(name="test", description="test")
         transcript = tmp_path / "codex.jsonl"

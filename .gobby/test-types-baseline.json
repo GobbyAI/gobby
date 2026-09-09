@@ -631,36 +631,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_spawn_executor.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 329,
-      "message": "Argument \"session_manager\" to \"SpawnRequest\" has incompatible type \"SimpleNamespace\"; expected \"ChildSessionManager | None\"",
-      "occurrences": 1,
-      "path": "tests/agents/test_spawn_executor.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/test_spawn_executor.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 900,
-      "message": "\"append\" of \"list\" does not return a value (it only ever returns None)",
-      "occurrences": 4,
-      "path": "tests/agents/test_spawn_executor.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/test_spawn_executor.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 555,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 11,
-      "path": "tests/agents/test_spawn_executor.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_task_recovery.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 58,
@@ -1241,36 +1211,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/test_agents_coverage.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 491,
-      "message": "Module \"gobby.cli.agents\" does not explicitly export attribute \"get_daemon_url\"",
-      "occurrences": 1,
-      "path": "tests/cli/test_agents_coverage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/cli/test_cli_agents.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 1611,
-      "message": "Module \"gobby.cli.agents\" does not explicitly export attribute \"get_daemon_url\"",
-      "occurrences": 1,
-      "path": "tests/cli/test_cli_agents.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/cli/test_cli_agents.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 54,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 3,
-      "path": "tests/cli/test_cli_agents.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/test_cli_extensions.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 37,
@@ -1487,16 +1427,6 @@
       "message": "Function is missing a type annotation",
       "occurrences": 59,
       "path": "tests/cli/test_install_setup.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/cli/test_install_setup_srt.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 83,
-      "message": "Module \"gobby.cli.install_setup_srt\" does not explicitly export attribute \"hashlib\"",
-      "occurrences": 2,
-      "path": "tests/cli/test_install_setup_srt.py",
       "severity": "high",
       "test_name": ""
     },
@@ -2621,16 +2551,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/fixtures/test_postgres_safety.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 74,
-      "message": "\"_enforce_safe_test_schema\" does not return a value (it only ever returns None)",
-      "occurrences": 1,
-      "path": "tests/fixtures/test_postgres_safety.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/github_triage/test_issue_index.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 37,
@@ -3421,16 +3341,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/integration/sandbox/test_srt_host_runtime.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 31,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 1,
-      "path": "tests/integration/sandbox/test_srt_host_runtime.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/integration/test_edit_history.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 53,
@@ -3957,16 +3867,6 @@
       "message": "Function is missing a return type annotation",
       "occurrences": 7,
       "path": "tests/mcp_proxy/tools/sessions/test_capture_baseline.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/sessions/test_terminal.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 384,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/mcp_proxy/tools/sessions/test_terminal.py",
       "severity": "high",
       "test_name": ""
     },
@@ -4851,16 +4751,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_lifecycle_coverage.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 76,
-      "message": "Argument \"created_at\" to \"Task\" has incompatible type \"str\"; expected \"datetime\"",
-      "occurrences": 6,
-      "path": "tests/mcp_proxy/tools/test_task_lifecycle_coverage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_task_readiness.py::::mypy:misc",
       "issue_code": "mypy:misc",
       "line": 37,
@@ -5297,26 +5187,6 @@
       "message": "Missing type parameters for generic type \"dict\"",
       "occurrences": 2,
       "path": "tests/memory/test_maintenance_cleanup.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/memory/test_maintenance_update.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 45,
-      "message": "Call to untyped function \"_make_storage\" in typed context",
-      "occurrences": 12,
-      "path": "tests/memory/test_maintenance_update.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/memory/test_maintenance_update.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 14,
-      "message": "Function is missing a type annotation",
-      "occurrences": 2,
-      "path": "tests/memory/test_maintenance_update.py",
       "severity": "high",
       "test_name": ""
     },
@@ -6721,16 +6591,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/routes/test_wiki_routes.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 290,
-      "message": "Argument 1 to \"create_wiki_router\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 2,
-      "path": "tests/servers/routes/test_wiki_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/test_app_factory_ui_modes.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 77,
@@ -6937,16 +6797,6 @@
       "message": "Item \"None\" of \"ClaudeSDKClient | None\" has no attribute \"receive_response\"",
       "occurrences": 32,
       "path": "tests/servers/test_chat_session_send_message.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_fire_lifecycle_parity.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 581,
-      "message": "Cannot assign to a method",
-      "occurrences": 1,
-      "path": "tests/servers/test_fire_lifecycle_parity.py",
       "severity": "high",
       "test_name": ""
     },
@@ -7181,36 +7031,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/test_tmux_mixin.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 88,
-      "message": "Function does not return a value (it only ever returns None)",
-      "occurrences": 1,
-      "path": "tests/servers/test_tmux_mixin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_tmux_mixin.py::::mypy:no-any-return",
-      "issue_code": "mypy:no-any-return",
-      "line": 34,
-      "message": "Returning Any from function declared to return \"dict[Any, Any]\"",
-      "occurrences": 1,
-      "path": "tests/servers/test_tmux_mixin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_tmux_mixin.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 33,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 3,
-      "path": "tests/servers/test_tmux_mixin.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/test_websocket_chat.py::::mypy:type-arg",
       "issue_code": "mypy:type-arg",
       "line": 25,
@@ -7307,26 +7127,6 @@
       "message": "Item \"None\" of \"_Call | None\" has no attribute \"args\"",
       "occurrences": 1,
       "path": "tests/servers/websocket/chat/test_droid_backend.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/websocket/chat/test_local_openai_warmup.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 42,
-      "message": "Argument \"response\" to \"HTTPStatusError\" has incompatible type \"_FakeResponse\"; expected \"Response\"",
-      "occurrences": 1,
-      "path": "tests/servers/websocket/chat/test_local_openai_warmup.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/websocket/chat/test_local_openai_warmup.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 290,
-      "message": "Module \"gobby.servers.websocket.chat.local_openai_warmup\" does not explicitly export attribute \"httpx\"",
-      "occurrences": 4,
-      "path": "tests/servers/websocket/chat/test_local_openai_warmup.py",
       "severity": "high",
       "test_name": ""
     },
@@ -8011,16 +7811,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/sessions/test_metadata_content_exclusion.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 75,
-      "message": "Argument 1 to \"compute_message_stats\" has incompatible type \"list[ParsedMessage]\"; expected \"Sequence[MessageProtocol]\"",
-      "occurrences": 2,
-      "path": "tests/sessions/test_metadata_content_exclusion.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/sessions/test_orphan_tool_result_rendering.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 31,
@@ -8077,16 +7867,6 @@
       "message": "Item \"None\" of \"WebSocketServer | None\" has no attribute \"broadcast\"",
       "occurrences": 4,
       "path": "tests/sessions/test_processor_renderer.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/sessions/test_session_wiki_file.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 53,
-      "message": "Module \"gobby.sessions.session_wiki_file\" does not explicitly export attribute \"Path\"",
-      "occurrences": 1,
-      "path": "tests/sessions/test_session_wiki_file.py",
       "severity": "high",
       "test_name": ""
     },
@@ -10291,26 +10071,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/test_gwiki_gateway.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 870,
-      "message": "Argument 1 to \"_kill_process\" of \"GwikiGateway\" has incompatible type \"StubbornProcess\"; expected \"Process\"",
-      "occurrences": 1,
-      "path": "tests/test_gwiki_gateway.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_gwiki_gateway.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 842,
-      "message": "Cannot assign to a method",
-      "occurrences": 1,
-      "path": "tests/test_gwiki_gateway.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/test_runner_bin_freshness.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 119,
@@ -10701,46 +10461,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/wiki/test_prune_job.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 96,
-      "message": "Value of type \"object\" is not indexable",
-      "occurrences": 14,
-      "path": "tests/wiki/test_prune_job.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/wiki/test_scheduled_jobs.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 20,
-      "message": "Module \"gobby.wiki.scheduled_jobs\" does not explicitly export attribute \"create_wiki_exports_handler\"",
-      "occurrences": 1,
-      "path": "tests/wiki/test_scheduled_jobs.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/wiki/test_watcher.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 335,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 1,
-      "path": "tests/wiki/test_watcher.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/wiki/test_watcher_lifecycle.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 319,
-      "message": "Argument 1 to \"_cancel_periodic_tasks\" has incompatible type \"SimpleNamespace\"; expected \"GobbyRunner\"",
-      "occurrences": 3,
-      "path": "tests/wiki/test_watcher_lifecycle.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/conftest.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 96,
@@ -10921,16 +10641,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/workflows/test_claimed_task_skills.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 206,
-      "message": "Argument 2 to \"_task_files\" has incompatible type \"SimpleNamespace\"; expected \"LocalTaskManager\"",
-      "occurrences": 3,
-      "path": "tests/workflows/test_claimed_task_skills.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/test_condition_helpers_task_state.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 14,
@@ -11051,36 +10761,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/workflows/test_hooks.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 227,
-      "message": "Cannot assign to a method",
-      "occurrences": 3,
-      "path": "tests/workflows/test_hooks.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hooks.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 92,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 68,
-      "path": "tests/workflows/test_hooks.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_hooks.py::::mypy:operator",
-      "issue_code": "mypy:operator",
-      "line": 1584,
-      "message": "Unsupported right operand type for in (\"str | None\")",
-      "occurrences": 3,
-      "path": "tests/workflows/test_hooks.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/test_mcp_step.py::::mypy:call-arg",
       "issue_code": "mypy:call-arg",
       "line": 55,
@@ -11127,26 +10807,6 @@
       "message": "Item \"None\" of \"MCPStepConfig | None\" has no attribute \"arguments\"",
       "occurrences": 1,
       "path": "tests/workflows/test_mcp_step.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_memory_lifecycle_rules.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 166,
-      "message": "Value of type \"list[RuleEffect] | None\" is not indexable",
-      "occurrences": 10,
-      "path": "tests/workflows/test_memory_lifecycle_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_memory_lifecycle_rules.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 89,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 8,
-      "path": "tests/workflows/test_memory_lifecycle_rules.py",
       "severity": "high",
       "test_name": ""
     },
@@ -11551,66 +11211,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/workflows/test_skill_discovery_rules.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 529,
-      "message": "Argument 1 to \"len\" has incompatible type \"list[RuleEffect] | None\"; expected \"Sized\"",
-      "occurrences": 21,
-      "path": "tests/workflows/test_skill_discovery_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_skill_discovery_rules.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 222,
-      "message": "Value of type \"list[RuleEffect] | None\" is not indexable",
-      "occurrences": 52,
-      "path": "tests/workflows/test_skill_discovery_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_skill_discovery_rules.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 151,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 72,
-      "path": "tests/workflows/test_skill_discovery_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_skill_discovery_rules.py::::mypy:operator",
-      "issue_code": "mypy:operator",
-      "line": 3668,
-      "message": "Unsupported right operand type for in (\"str | None\")",
-      "occurrences": 3,
-      "path": "tests/workflows/test_skill_discovery_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_skill_discovery_rules.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 234,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 1,
-      "path": "tests/workflows/test_skill_discovery_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_skill_discovery_rules.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 195,
-      "message": "Item \"None\" of \"list[RuleEffect] | None\" has no attribute \"__iter__\" (not iterable)",
-      "occurrences": 2,
-      "path": "tests/workflows/test_skill_discovery_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/workflows/test_step_enforcement_audit.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 226,
@@ -11697,46 +11297,6 @@
       "message": "Item \"None\" of \"list[RuleEffect] | None\" has no attribute \"__iter__\" (not iterable)",
       "occurrences": 2,
       "path": "tests/workflows/test_task_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_tdd_enforcement_rules.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 290,
-      "message": "Value of type \"list[RuleEffect] | None\" is not indexable",
-      "occurrences": 4,
-      "path": "tests/workflows/test_tdd_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_tdd_enforcement_rules.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 72,
-      "message": "Call to untyped function \"_sync_bundled\" in typed context",
-      "occurrences": 13,
-      "path": "tests/workflows/test_tdd_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_tdd_enforcement_rules.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 35,
-      "message": "Function is missing a type annotation",
-      "occurrences": 1,
-      "path": "tests/workflows/test_tdd_enforcement_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_tdd_enforcement_rules.py::::mypy:operator",
-      "issue_code": "mypy:operator",
-      "line": 153,
-      "message": "Unsupported right operand type for in (\"dict[str, Any] | None\")",
-      "occurrences": 2,
-      "path": "tests/workflows/test_tdd_enforcement_rules.py",
       "severity": "high",
       "test_name": ""
     },

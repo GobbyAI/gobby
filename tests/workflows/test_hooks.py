@@ -27,6 +27,7 @@ from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.git_utils import (
     DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
@@ -34,6 +35,7 @@ from gobby.workflows.git_utils import (
     GitStatusUnavailable,
 )
 from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -93,7 +95,7 @@ class TestWorkflowHookHandlerDisabled:
     """Tests for when the handler is disabled."""
 
     @pytest.fixture
-    def event(self):
+    def event(self) -> HookEvent:
         """Create a sample hook event."""
         return HookEvent(
             event_type=HookEventType.SESSION_START,
@@ -103,7 +105,7 @@ class TestWorkflowHookHandlerDisabled:
             data={},
         )
 
-    def test_disabled_evaluate(self, event) -> None:
+    def test_disabled_evaluate(self, event: HookEvent) -> None:
         """Test evaluate returns allow when disabled."""
         handler = WorkflowHookHandler(enabled=False)
 
@@ -111,7 +113,7 @@ class TestWorkflowHookHandlerDisabled:
 
         assert result.decision == "allow"
 
-    def test_disabled_handle(self, event) -> None:
+    def test_disabled_handle(self, event: HookEvent) -> None:
         """Test handle returns allow when disabled."""
         handler = WorkflowHookHandler(enabled=False)
 
@@ -124,7 +126,7 @@ class TestHandleAllLifecycles:
     """Tests for the evaluate method."""
 
     @pytest.fixture
-    def event(self):
+    def event(self) -> HookEvent:
         """Create a sample hook event."""
         return HookEvent(
             event_type=HookEventType.SESSION_START,
@@ -134,23 +136,23 @@ class TestHandleAllLifecycles:
             data={},
         )
 
-    def test_evaluate_without_runtime_raises(self, event) -> None:
+    def test_evaluate_without_runtime_raises(self, event: HookEvent) -> None:
         """Test that synchronous evaluation requires a runtime."""
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler()
             with pytest.raises(RuntimeError, match="requires a runtime"):
                 handler.evaluate(event)
 
-    def test_evaluate_thread_safe_with_external_loop(self, event) -> None:
+    def test_evaluate_thread_safe_with_external_loop(self, event: HookEvent) -> None:
         """Test thread-safe execution with the workflow runtime."""
         runtime = WorkflowEvaluationRuntime()
 
         try:
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
-            result_holder = {}
+            result_holder: dict[str, HookResponse] = {}
 
-            def run_handle():
+            def run_handle() -> None:
                 result_holder["res"] = handler.evaluate(event)
 
             t_worker = threading.Thread(target=run_handle)
@@ -166,7 +168,7 @@ class TestHandleAllLifecycles:
             runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_evaluate_main_thread_with_running_loop(self, event):
+    async def test_evaluate_main_thread_with_running_loop(self, event: HookEvent) -> None:
         """Test that allow is returned when on main thread with running loop.
 
         This tests the main thread guard that prevents deadlock.
@@ -180,7 +182,7 @@ class TestHandleAllLifecycles:
         else:
             pytest.skip("Test must run on main thread")
 
-    def test_evaluate_loop_running_but_no_stored_loop(self, event) -> None:
+    def test_evaluate_loop_running_but_no_stored_loop(self, event: HookEvent) -> None:
         """Test when a loop is running but not stored in handler.
 
         Tests the case where we detect a running loop but didn't have one stored.
@@ -194,7 +196,7 @@ class TestHandleAllLifecycles:
 
             assert result.decision == "allow"
 
-    def test_evaluate_exception_handling(self, event) -> None:
+    def test_evaluate_exception_handling(self, event: HookEvent) -> None:
         """Test exception handling in evaluate.
 
         Exceptions now propagate (not swallowed) so the caller
@@ -208,7 +210,7 @@ class TestHandleAllLifecycles:
             with pytest.raises(Exception, match="Test error"):
                 handler.evaluate(event)
 
-    def test_evaluate_timeout_exception(self, event) -> None:
+    def test_evaluate_timeout_exception(self, event: HookEvent) -> None:
         """Test timeout exception in thread-safe execution.
 
         TimeoutError propagates (not swallowed) so the caller can handle it.
@@ -228,19 +230,18 @@ class TestHandleAllLifecycles:
                 await wait_forever()
                 return HookResponse(decision="allow")
 
-            handler._evaluate_rules = slow_coroutine
+            error_holder: dict[str, Exception] = {}
 
-            error_holder = {}
-
-            def run_handle():
+            def run_handle() -> None:
                 try:
                     handler.evaluate(event)
                 except Exception as e:
                     error_holder["error"] = e
 
-            t_worker = threading.Thread(target=run_handle)
-            t_worker.start()
-            t_worker.join(timeout=2)
+            with patch.object(handler, "_evaluate_rules", new=slow_coroutine):
+                t_worker = threading.Thread(target=run_handle)
+                t_worker.start()
+                t_worker.join(timeout=2)
 
             # TimeoutError should propagate
             assert "error" in error_holder
@@ -254,7 +255,7 @@ class TestHandle:
     """Tests for the handle method."""
 
     @pytest.fixture
-    def event(self):
+    def event(self) -> HookEvent:
         """Create a sample hook event."""
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -264,14 +265,14 @@ class TestHandle:
             data={"tool_name": "Edit"},
         )
 
-    def test_handle_without_runtime_raises(self, event) -> None:
+    def test_handle_without_runtime_raises(self, event: HookEvent) -> None:
         """Test that synchronous evaluation requires an isolated runtime."""
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler()
             with pytest.raises(RuntimeError, match="requires a runtime"):
                 handler.handle(event)
 
-    def test_handle_thread_safe_with_external_loop(self, event) -> None:
+    def test_handle_thread_safe_with_external_loop(self, event: HookEvent) -> None:
         """Test thread-safe execution with the workflow runtime.
 
         handle() delegates to evaluate() which calls _evaluate_rules().
@@ -284,7 +285,7 @@ class TestHandle:
 
             result_holder = {}
 
-            def run_handle():
+            def run_handle() -> None:
                 result_holder["res"] = handler.handle(event)
 
             t_worker = threading.Thread(target=run_handle)
@@ -299,7 +300,7 @@ class TestHandle:
             runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_handle_main_thread_with_running_loop(self, event):
+    async def test_handle_main_thread_with_running_loop(self, event: HookEvent) -> None:
         """Test that code path goes through main thread guard."""
         handler = WorkflowHookHandler()
 
@@ -309,7 +310,7 @@ class TestHandle:
         else:
             pytest.skip("Test must run on main thread")
 
-    def test_handle_loop_running_but_no_stored_loop(self, event) -> None:
+    def test_handle_loop_running_but_no_stored_loop(self, event: HookEvent) -> None:
         """Test when a loop is running but not stored in handler."""
         handler = WorkflowHookHandler()
 
@@ -319,7 +320,7 @@ class TestHandle:
 
             assert result.decision == "allow"
 
-    def test_handle_exception_handling(self, event) -> None:
+    def test_handle_exception_handling(self, event: HookEvent) -> None:
         """Test exception handling in handle.
 
         Exceptions now propagate so the caller (_evaluate_workflow_rules)
@@ -338,7 +339,7 @@ class TestEdgeCases:
     """Tests for edge cases and special scenarios."""
 
     @pytest.fixture
-    def event(self):
+    def event(self) -> HookEvent:
         """Create a sample hook event."""
         return HookEvent(
             event_type=HookEventType.STOP,
@@ -378,7 +379,7 @@ class TestEdgeCases:
             result = handler.evaluate(event)
             assert result.decision == "allow"
 
-    def test_concurrent_handler_calls(self, event) -> None:
+    def test_concurrent_handler_calls(self, event: HookEvent) -> None:
         """Test multiple concurrent calls to the handler."""
         runtime = WorkflowEvaluationRuntime()
 
@@ -387,7 +388,7 @@ class TestEdgeCases:
             results = []
             threads = []
 
-            def make_call(index):
+            def make_call(index: int) -> None:
                 result = handler.evaluate(event)
                 results.append((index, result))
 
@@ -408,7 +409,7 @@ class TestEdgeCases:
         finally:
             runtime.shutdown()
 
-    def test_response_passthrough(self, event) -> None:
+    def test_response_passthrough(self, event: HookEvent) -> None:
         """Test that response attributes are correctly passed through."""
         mock_response = HookResponse(
             decision="block",
@@ -432,7 +433,7 @@ class TestEdgeCases:
             assert result.system_message == "User visible message"
             assert result.reason == "Blocked for testing"
 
-    def test_handler_reuse(self, event) -> None:
+    def test_handler_reuse(self, event: HookEvent) -> None:
         """Test that a handler can be reused for multiple calls."""
         runtime = MagicMock()
         runtime.run.return_value = HookResponse(decision="allow")
@@ -451,7 +452,7 @@ class TestThreadingScenarios:
     """Tests specifically for threading edge cases."""
 
     @pytest.fixture
-    def event(self):
+    def event(self) -> HookEvent:
         """Create a sample hook event."""
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -461,14 +462,14 @@ class TestThreadingScenarios:
             data={},
         )
 
-    def test_missing_runtime_in_worker_thread(self, event) -> None:
+    def test_missing_runtime_in_worker_thread(self, event: HookEvent) -> None:
         """Test behavior when synchronous evaluation has no runtime."""
         handler = WorkflowHookHandler()
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             with pytest.raises(RuntimeError, match="requires a runtime"):
                 handler.handle(event)
 
-    def test_worker_thread_with_stopped_runtime(self, event) -> None:
+    def test_worker_thread_with_stopped_runtime(self, event: HookEvent) -> None:
         """Test worker thread after the evaluation runtime has stopped."""
         runtime = WorkflowEvaluationRuntime()
         runtime.shutdown()
@@ -487,7 +488,7 @@ class TestThreadingScenarios:
 
         assert isinstance(error_holder.get("error"), RuntimeError)
 
-    def test_multiple_handlers_same_runtime(self, event) -> None:
+    def test_multiple_handlers_same_runtime(self, event: HookEvent) -> None:
         """Test multiple handlers sharing the same evaluation runtime."""
         runtime = WorkflowEvaluationRuntime()
 
@@ -497,10 +498,10 @@ class TestThreadingScenarios:
 
             results = []
 
-            def call_handler1():
+            def call_handler1() -> None:
                 results.append(("h1", handler1.handle(event)))
 
-            def call_handler2():
+            def call_handler2() -> None:
                 results.append(("h2", handler2.handle(event)))
 
             t1 = threading.Thread(target=call_handler1)
@@ -672,31 +673,34 @@ class TestVariablePersistence:
     """
 
     @pytest.fixture
-    def db(self, temp_db: HubDatabase):
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
         """Create a real database with migrations."""
         database = temp_db
         return database
 
     @pytest.fixture
-    def rule_engine(self, db):
+    def rule_engine(self, db: HubDatabase) -> RuleEngine:
         """Create a real RuleEngine backed by the test DB."""
-        from gobby.workflows.engine.core import RuleEngine
-
         return RuleEngine(db=db)
 
     @pytest.fixture
-    def session_var_manager(self, db):
+    def session_var_manager(self, db: HubDatabase) -> SessionVariableManager:
         """Create a SessionVariableManager for the test DB."""
-        from gobby.workflows.state_manager import SessionVariableManager
-
         return SessionVariableManager(db=db)
 
     @pytest.fixture
-    def handler(self, rule_engine):
+    def handler(self, rule_engine: RuleEngine) -> WorkflowHookHandler:
         """Create a WorkflowHookHandler with a real rule engine."""
         return WorkflowHookHandler(rule_engine=rule_engine)
 
-    def _insert_set_variable_rule(self, db, name: str, event: str, variable: str, value: str):
+    def _insert_set_variable_rule(
+        self,
+        db: HubDatabase,
+        name: str,
+        event: str,
+        variable: str,
+        value: str,
+    ) -> None:
         """Insert a test rule that does set_variable."""
         definition = {
             "event": event,
@@ -744,7 +748,10 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_set_variable_persisted_to_session_variables(
-        self, db, handler, session_var_manager
+        self,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """set_variable effects should be persisted to session_variables table."""
         self._insert_set_variable_rule(
@@ -801,7 +808,7 @@ class TestVariablePersistence:
         self,
         db: HubDatabase,
         handler: WorkflowHookHandler,
-        session_var_manager: Any,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, take_worker_staging
 
@@ -830,7 +837,7 @@ class TestVariablePersistence:
         self,
         db: HubDatabase,
         handler: WorkflowHookHandler,
-        session_var_manager: Any,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 
@@ -875,7 +882,7 @@ class TestVariablePersistence:
         self,
         db: HubDatabase,
         handler: WorkflowHookHandler,
-        session_var_manager: Any,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 
@@ -919,7 +926,10 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_variables_accumulate_across_evaluations(
-        self, db, handler, session_var_manager
+        self,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Variables should persist and accumulate across multiple evaluations."""
         self._insert_set_variable_rule(
@@ -938,7 +948,10 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_session_variables_visible_to_rule_conditions(
-        self, db, handler, session_var_manager
+        self,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Variables set via SessionVariableManager should be visible to rule when conditions."""
         # Insert a block rule that only fires when my_flag is true
@@ -977,11 +990,11 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_observer_changes_persisted_to_session_variables(
-        self, db, session_var_manager
+        self,
+        db: HubDatabase,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Observer variable changes (e.g. task_claimed) should be persisted to DB."""
-        from gobby.workflows.engine.core import RuleEngine
-
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.id = "task-uuid-observer"
@@ -1025,11 +1038,11 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_observer_failure_does_not_drop_later_changes(
-        self, db, session_var_manager
+        self,
+        db: HubDatabase,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """One observer failure must not stop later observers or persistence."""
-        from gobby.workflows.engine.core import RuleEngine
-
         handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db))
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
@@ -1063,11 +1076,11 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_turn_end_reconciles_claimed_tasks_for_after_agent(
-        self, db, session_var_manager
+        self,
+        db: HubDatabase,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """AFTER_AGENT should run turn-end reconciliation before rule evaluation."""
-        from gobby.workflows.engine.core import RuleEngine
-
         mock_task_manager = MagicMock()
         mock_task_manager.list_tasks.return_value = []
 
@@ -1094,11 +1107,11 @@ class TestVariablePersistence:
 
     @pytest.mark.asyncio
     async def test_turn_end_rebuilds_review_claims_for_after_agent(
-        self, db, session_var_manager
+        self,
+        db: HubDatabase,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """AFTER_AGENT should rebuild claimed review work from DB assignment state."""
-        from gobby.workflows.engine.core import RuleEngine
-
         mock_task_manager = MagicMock()
         review_task = MagicMock()
         review_task.id = "task-uuid-review"
@@ -1129,10 +1142,10 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
     @pytest.mark.asyncio
-    async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(self, db) -> None:
+    async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(
+        self, db: HubDatabase
+    ) -> None:
         """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill directive."""
-        from gobby.workflows.engine.core import RuleEngine
-        from gobby.workflows.state_manager import SessionVariableManager
         from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
@@ -1194,10 +1207,12 @@ class TestVariablePersistence:
         assert after_event.metadata["_codex_tool_context_rehydrated"] is True
 
     @pytest.mark.asyncio
-    async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
+    async def test_observer_and_rule_changes_both_persisted(
+        self,
+        db: HubDatabase,
+        session_var_manager: SessionVariableManager,
+    ) -> None:
         """Both observer changes and rule set_variable effects should persist."""
-        from gobby.workflows.engine.core import RuleEngine
-
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.id = "task-uuid-both"
@@ -1258,24 +1273,20 @@ class TestBaselineDirtyFilesSubtraction:
     """
 
     @pytest.fixture
-    def db(self, temp_db: HubDatabase):
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
         database = temp_db
         return database
 
     @pytest.fixture
-    def rule_engine(self, db):
-        from gobby.workflows.engine.core import RuleEngine
-
+    def rule_engine(self, db: HubDatabase) -> RuleEngine:
         return RuleEngine(db=db)
 
     @pytest.fixture
-    def session_var_manager(self, db):
-        from gobby.workflows.state_manager import SessionVariableManager
-
+    def session_var_manager(self, db: HubDatabase) -> SessionVariableManager:
         return SessionVariableManager(db=db)
 
     @pytest.fixture
-    def handler(self, rule_engine):
+    def handler(self, rule_engine: RuleEngine) -> WorkflowHookHandler:
         return WorkflowHookHandler(rule_engine=rule_engine)
 
     @pytest.fixture(autouse=True)
@@ -1298,7 +1309,7 @@ class TestBaselineDirtyFilesSubtraction:
             metadata={"_platform_session_id": session_id, "project_path": "/tmp"},
         )
 
-    def _insert_block_on_dirty_rule(self, db) -> None:
+    def _insert_block_on_dirty_rule(self, db: HubDatabase) -> None:
         """Insert a rule that blocks when has_dirty_files is true."""
         definition = {
             "event": "before_tool",
@@ -1317,7 +1328,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_all_files_in_baseline(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should not block when all dirty files are in the baseline."""
         mock_get_dirty.return_value = DirtyFiles({"file_a.py", "file_b.py"}, set())
@@ -1334,7 +1349,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_new_files_but_no_session_edits(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should allow when files beyond baseline exist but session has no edits."""
         mock_get_dirty.return_value = DirtyFiles({"file_a.py", "file_b.py", "new_file.py"}, set())
@@ -1352,7 +1371,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_no_baseline_lazy_init(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should NOT block when no baseline is stored — lazy-init captures current dirty files."""
         mock_get_dirty.return_value = DirtyFiles({"file_a.py"}, set())
@@ -1367,7 +1390,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_no_dirty_files(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should not block when there are no dirty files at all."""
         mock_get_dirty.return_value = DirtyFiles(set(), set())
@@ -1383,7 +1410,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_scoped_to_session_edits_ignores_other_dirty(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should block only when session's own edited files are dirty."""
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py", "c.py"}, set())
@@ -1399,7 +1430,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_other_session_files_not_visible(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should allow when session's edited files are not dirty (committed)."""
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
@@ -1415,7 +1450,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_session_edits_override_baseline(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Should block when session edited a file that was already in baseline."""
         mock_get_dirty.return_value = DirtyFiles({"a.py"}, set())
@@ -1437,7 +1476,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_concurrent_sessions_isolated(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Two sessions sharing a repo should only see their own edits."""
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
@@ -1460,7 +1503,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_concurrent_session_not_blocked_by_other(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Session should not be blocked by files only another session edited."""
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
@@ -1481,7 +1528,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_lazy_init_baseline_persisted_to_session_variables(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Lazy-init baseline should be persisted so future evaluations have it."""
         mock_get_dirty.return_value = DirtyFiles({"pre_existing.py", "other.py"}, set())
@@ -1498,7 +1549,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_lazy_init_then_new_file_allows_without_session_edits(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """After lazy-init baseline, new dirty files should NOT block without session edits."""
         # First evaluation: captures baseline
@@ -1520,7 +1575,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_untracked_files_ignored_when_not_session_edited(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Untracked files not created by this session should not trigger has_dirty_files."""
         # Untracked screenshots/docs that existed before session
@@ -1537,7 +1596,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_untracked_files_block_when_session_created_them(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Untracked files created by this session should trigger has_dirty_files."""
         mock_get_dirty.return_value = DirtyFiles(set(), {"new_module.py"})
@@ -1553,7 +1616,11 @@ class TestBaselineDirtyFilesSubtraction:
     @pytest.mark.asyncio
     @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_untracked_ignored_without_session_edits(
-        self, mock_get_dirty, db, handler, session_var_manager
+        self,
+        mock_get_dirty: AsyncMock,
+        db: HubDatabase,
+        handler: WorkflowHookHandler,
+        session_var_manager: SessionVariableManager,
     ) -> None:
         """Untracked files should not trigger has_dirty_files without session edits."""
         mock_get_dirty.return_value = DirtyFiles(set(), {"random_file.txt"})
@@ -1571,14 +1638,12 @@ class TestStopFailsClosedOnVariableLoadError:
     """Test that STOP events fail closed when session variables can't be loaded."""
 
     @pytest.fixture
-    def db(self, temp_db: HubDatabase):
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
         database = temp_db
         return database
 
     @pytest.fixture
-    def rule_engine(self, db):
-        from gobby.workflows.engine.core import RuleEngine
-
+    def rule_engine(self, db: HubDatabase) -> RuleEngine:
         return RuleEngine(db=db)
 
     def _make_stop_event(self, session_id: str = SESSION_ID) -> HookEvent:
@@ -1601,7 +1666,7 @@ class TestStopFailsClosedOnVariableLoadError:
         )
 
     @pytest.mark.asyncio
-    async def test_stop_blocked_when_get_variables_fails(self, rule_engine) -> None:
+    async def test_stop_blocked_when_get_variables_fails(self, rule_engine: RuleEngine) -> None:
         """STOP should be blocked when session variables can't be loaded."""
         from unittest.mock import MagicMock
 
@@ -1610,19 +1675,20 @@ class TestStopFailsClosedOnVariableLoadError:
 
         handler = WorkflowHookHandler(rule_engine=rule_engine)
         handler._session_var_manager = mock_var_manager
-        rule_engine.workflow_audit.log_rule_eval = MagicMock(return_value=1)
 
         event = self._make_stop_event()
-        response = await handler._evaluate_rules(event)
+        with patch.object(rule_engine.workflow_audit, "log_rule_eval", return_value=1) as log:
+            response = await handler._evaluate_rules(event)
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "Could not load session state" in response.reason
-        assert rule_engine.workflow_audit.log_rule_eval.call_args.kwargs["rule_id"] == (
-            "variable-load-failure"
-        )
+        assert log.call_args.kwargs["rule_id"] == "variable-load-failure"
 
     @pytest.mark.asyncio
-    async def test_non_stop_is_read_only_when_get_variables_fails(self, rule_engine) -> None:
+    async def test_non_stop_is_read_only_when_get_variables_fails(
+        self, rule_engine: RuleEngine
+    ) -> None:
         """Non-STOP events should evaluate without persisting incomplete state."""
         from unittest.mock import MagicMock
 
@@ -1640,25 +1706,26 @@ class TestStopFailsClosedOnVariableLoadError:
         mock_var_manager.merge_variables.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_stop_blocked_when_claim_reconciliation_fails(self, rule_engine: Any) -> None:
+    async def test_stop_blocked_when_claim_reconciliation_fails(
+        self, rule_engine: RuleEngine
+    ) -> None:
         """STOP should be blocked when claimed tasks cannot be listed."""
         import psycopg
 
         task_manager = MagicMock()
         task_manager.list_tasks.side_effect = psycopg.OperationalError("DB locked")
         handler = WorkflowHookHandler(rule_engine=rule_engine, task_manager=task_manager)
-        rule_engine.workflow_audit.log_rule_eval = MagicMock(return_value=1)
 
-        response = await handler._evaluate_rules(self._make_stop_event())
+        with patch.object(rule_engine.workflow_audit, "log_rule_eval", return_value=1) as log:
+            response = await handler._evaluate_rules(self._make_stop_event())
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "Could not reconcile claimed tasks" in response.reason
-        assert rule_engine.workflow_audit.log_rule_eval.call_args.kwargs["rule_id"] == (
-            "reconciliation-failure"
-        )
+        assert log.call_args.kwargs["rule_id"] == "reconciliation-failure"
 
     @pytest.mark.asyncio
-    async def test_stop_blocked_when_claim_lookup_fails(self, rule_engine: Any) -> None:
+    async def test_stop_blocked_when_claim_lookup_fails(self, rule_engine: RuleEngine) -> None:
         """STOP should be blocked when an existing claim cannot be loaded."""
         import psycopg
 
@@ -1672,6 +1739,7 @@ class TestStopFailsClosedOnVariableLoadError:
         response = await handler._evaluate_rules(self._make_stop_event())
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "Could not reconcile claimed tasks" in response.reason
 
 
@@ -2089,9 +2157,6 @@ class TestHookBlockingWorkOffload:
             collaborator_threads["observers"] = threading.get_ident()
             return set()
 
-        handler._resolve_project_path = MagicMock(side_effect=resolve_project)
-        handler._run_observers = MagicMock(side_effect=run_observers)
-
         async def dirty_files(
             _project_path: str | None,
             *,
@@ -2110,9 +2175,13 @@ class TestHookBlockingWorkOffload:
             metadata={"_platform_session_id": SESSION_ID},
         )
 
-        with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
-            side_effect=dirty_files,
+        with (
+            patch.object(handler, "_resolve_project_path", side_effect=resolve_project),
+            patch.object(handler, "_run_observers", side_effect=run_observers),
+            patch(
+                "gobby.workflows.git_utils.get_dirty_files_categorized_async",
+                side_effect=dirty_files,
+            ),
         ):
             response = await handler._evaluate_rules(event)
 
