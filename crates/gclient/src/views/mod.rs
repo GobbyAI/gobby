@@ -60,6 +60,7 @@ pub fn run_ready(
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
             chrome.apply_prefs(ready.prefs);
             chrome.keymap = ready.keymap;
+            chrome.nested_tmux = ready.nested_tmux;
             if let Some(session) = load_session(&ready.gobby_home)? {
                 apply_sidebar_snapshot(&mut chrome.sidebar, &session.sidebar);
             }

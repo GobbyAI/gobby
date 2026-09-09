@@ -30,7 +30,7 @@ fn single_key(bytes: &[u8]) -> KeyInput {
 
 #[test]
 fn raw_input_events_drive_the_keymap_and_pane_bytes() {
-    let keymap = Keymap::defaults();
+    let keymap = Keymap::defaults(gobby_client::ui::keymap::HERDR_PREFIX);
 
     let prefix = single_key(b"\x02");
     assert_eq!(prefix.key.code, KeyCode::Char('b'));

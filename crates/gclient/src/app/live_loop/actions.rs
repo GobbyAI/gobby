@@ -671,7 +671,7 @@ fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     let path = prefs_path(&home);
     match load_prefs(&home) {
         Ok(prefs) => {
-            match load_keymap(&prefs, &home) {
+            match load_keymap(&prefs, &home, chrome.nested_tmux) {
                 Ok(keymap) => chrome.keymap = keymap,
                 Err(error) => {
                     chrome.toast = Some(Toast {

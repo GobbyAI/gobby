@@ -345,6 +345,13 @@ pub fn render_status_line<W: WorkspaceView>(
     if let Some(name) = mode_name(chrome.mode) {
         spans.push(Span::styled(format!(" │ {name}"), base.fg(p.accent)));
     }
+    if chrome.nested_tmux {
+        // The outer tmux owns ctrl+b, so say which chord is the prefix here.
+        spans.push(Span::styled(
+            format!(" │ prefix {}", chrome.keymap.prefix_label),
+            base.fg(p.subtext0),
+        ));
+    }
     if !ws.daemon_ready() {
         spans.push(Span::styled(" │ daemon unreachable", base.fg(p.red)));
     }
@@ -360,6 +367,7 @@ pub fn render_status_line<W: WorkspaceView>(
 mod tests {
     use super::*;
     use crate::app::Workspace;
+    use crate::ui::keymap::{default_prefix, Keymap};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use serde_json::json;
@@ -422,6 +430,24 @@ mod tests {
             assert!(text.contains(needle), "status lacks {needle:?}: {text}");
         }
         assert!(!text.contains('!'));
+        assert!(
+            !text.contains("prefix"),
+            "no prefix cue outside tmux: {text}"
+        );
+
+        // Under an outer tmux the shifted prefix is named.
+        chrome.nested_tmux = true;
+        chrome.keymap = Keymap::defaults(default_prefix(true));
+        terminal
+            .draw(|frame| {
+                render_status_line(frame, frame.area(), &ws, &chrome);
+            })
+            .unwrap();
+        let text = screen(&terminal);
+        assert!(
+            text.contains("│ prefix ctrl+]"),
+            "status lacks the prefix cue: {text}"
+        );
     }
 
     #[test]

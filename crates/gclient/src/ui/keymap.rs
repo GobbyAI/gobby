@@ -2,7 +2,8 @@
 //! Keymap: herdr's v0.8.0 default bindings for the keep-set, Gobby's
 //! control bindings, and client-local overrides from
 //! `~/.gobby/client/keymap.toml`, merged by action name and rejected on any
-//! chord collision.
+//! chord collision. The prefix chord comes from the caller (see the `prefix`
+//! module) unless the override file's `prefix` key names another.
 //!
 //! Chord grammar (herdr): `prefix+<key>` binds inside prefix mode, anything
 //! else binds directly; modifiers `ctrl`, `alt`, `shift`, `super`, `hyper`,
@@ -19,16 +20,16 @@ use thiserror::Error;
 
 pub type KeyCombo = (KeyCode, KeyModifiers);
 
-pub const DEFAULT_PREFIX: &str = "ctrl+b";
-
 /// Where client-local overrides live when prefs name no other file.
 pub fn default_override_path(gobby_home: &Path) -> PathBuf {
     gobby_home.join("client").join("keymap.toml")
 }
 
 mod names;
+pub mod prefix;
 
 pub use names::{Action, BindingSpec, BINDINGS};
+pub use prefix::{default_prefix, HERDR_PREFIX};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Trigger {
@@ -117,17 +118,19 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    /// herdr v0.8.0 defaults for the keep-set plus Gobby's control bindings.
-    pub fn defaults() -> Self {
+    /// herdr v0.8.0 defaults for the keep-set plus Gobby's control bindings,
+    /// behind `prefix` (one of the `prefix` module's chords).
+    pub fn defaults(prefix: &str) -> Self {
         // The static table is validated by tests/keymap.rs; a bad default
         // chord is a build defect, not a runtime condition.
-        Self::build(DEFAULT_PREFIX, &Overrides::new())
+        Self::build(prefix, &Overrides::new())
             .expect("BINDINGS holds only parseable, collision-free chords")
     }
 
     /// Parse an override document and merge it by action name over the
-    /// defaults. Any error leaves the caller on the unmodified defaults.
-    pub fn from_toml(text: &str) -> Result<Self, KeymapError> {
+    /// defaults; its `prefix` key wins over `default_prefix`. Any error
+    /// leaves the caller on the unmodified defaults.
+    pub fn from_toml(text: &str, default_prefix: &str) -> Result<Self, KeymapError> {
         let file: OverrideFile =
             toml::from_str(text).map_err(|err| KeymapError::Parse(err.to_string()))?;
         let overrides: Overrides<'_> = file
@@ -135,14 +138,16 @@ impl Keymap {
             .iter()
             .map(|(name, chords)| (name.as_str(), chords.values()))
             .collect();
-        Self::build(file.prefix.as_deref().unwrap_or(DEFAULT_PREFIX), &overrides)
+        Self::build(file.prefix.as_deref().unwrap_or(default_prefix), &overrides)
     }
 
     /// Load overrides from `path`; a missing file yields the defaults.
-    pub fn load_overrides(path: &Path) -> Result<Self, KeymapError> {
+    pub fn load_overrides(path: &Path, default_prefix: &str) -> Result<Self, KeymapError> {
         match fs::read_to_string(path) {
-            Ok(text) => Self::from_toml(&text),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::defaults()),
+            Ok(text) => Self::from_toml(&text, default_prefix),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self::defaults(default_prefix))
+            }
             Err(err) => Err(KeymapError::Parse(err.to_string())),
         }
     }
@@ -640,9 +645,11 @@ mod tests {
 
     #[test]
     fn indexed_override_takes_single_chords_in_order() {
-        let keymap =
-            Keymap::from_toml("[bindings]\nswitch_project = [\"prefix+f5\", \"prefix+f6\"]\n")
-                .unwrap();
+        let keymap = Keymap::from_toml(
+            "[bindings]\nswitch_project = [\"prefix+f5\", \"prefix+f6\"]\n",
+            HERDR_PREFIX,
+        )
+        .unwrap();
         let chords = &keymap.binding("switch_project").unwrap().chords;
         assert_eq!(chords[0].action, Action::SwitchProject(1));
         assert_eq!(chords[1].action, Action::SwitchProject(2));
@@ -653,7 +660,7 @@ mod tests {
         let unset = help.iter().find(|e| e.name == "last_pane").unwrap();
         assert_eq!(unset.keys, "unset");
         assert!(matches!(
-            Keymap::from_toml("[bindings]\nzoom = \"prefix+1..9\"\n"),
+            Keymap::from_toml("[bindings]\nzoom = \"prefix+1..9\"\n", HERDR_PREFIX),
             Err(KeymapError::InvalidChord { .. })
         ));
     }

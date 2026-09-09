@@ -8,7 +8,7 @@ use gobby_client::startup::{
     StartupError,
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
-use gobby_client::ui::keymap::{Action, Keymap};
+use gobby_client::ui::keymap::{Action, Keymap, HERDR_PREFIX};
 use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs};
 use gobby_client::ui::Chrome;
 use gobby_client::FrameDelivery;
@@ -150,7 +150,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     ])
     .expect("parse explicit discovery overrides");
     let missing_default = root.path().join("missing-default-token");
-    let env = resolve_probe_env_at(&args, "http://bootstrap.invalid", &missing_default)
+    let env = resolve_probe_env_at(&args, "http://bootstrap.invalid", &missing_default, false)
         .expect("explicit token file");
     assert_eq!(env.daemon_url, url);
     assert_eq!(env.token.as_deref(), Some("task-token"));
@@ -158,13 +158,13 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     let default_token = root.path().join("local_cli_token");
     std::fs::write(&default_token, "default-token\n").expect("write default token");
     let args = parse_args(["gclient"]).expect("parse defaults");
-    let env = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &default_token)
+    let env = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &default_token, false)
         .expect("default token file");
     assert_eq!(env.daemon_url, "http://bootstrap.test:60887");
     assert_eq!(env.token.as_deref(), Some("default-token"));
 
     let missing = root.path().join("missing-token");
-    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &missing)
+    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &missing, false)
         .expect_err("missing default token succeeded");
     let message = error.to_string();
     assert!(message.contains(&missing.display().to_string()));
@@ -172,7 +172,7 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
 
     let unreadable = root.path().join("token-directory");
     std::fs::create_dir(&unreadable).expect("create unreadable token path");
-    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &unreadable)
+    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &unreadable, false)
         .expect_err("directory token path succeeded");
     assert!(error.to_string().contains("--token-file"));
 }
@@ -340,6 +340,7 @@ fn env_at(url: &str) -> ProbeEnv {
     ProbeEnv {
         daemon_url: url.to_string(),
         token: None,
+        nested_tmux: false,
     }
 }
 
@@ -412,7 +413,8 @@ fn test_reports_degraded_host_state() {
         } else {
             &url
         };
-        let env = resolve_probe_env_at(&args, fallback, &token_file).expect("resolve host env");
+        let env =
+            resolve_probe_env_at(&args, fallback, &token_file, false).expect("resolve host env");
         assert_eq!(env.daemon_url, url);
         let (backend, enters) = CountingBackend::new();
         let (ready, guard) = start_session(args, env, &HttpHealthClient::new(), backend)
@@ -454,7 +456,8 @@ fn test_reports_degraded_host_state() {
             } else {
                 &url
             };
-            let env = resolve_probe_env_at(&args, fallback, &token_file).expect("resolve host env");
+            let env = resolve_probe_env_at(&args, fallback, &token_file, false)
+                .expect("resolve host env");
             let (backend, enters) = CountingBackend::new();
             let error = match start_session(args, env, &HttpHealthClient::new(), backend) {
                 Err(error) => error,
@@ -816,7 +819,7 @@ fn keymap_overrides_load_or_fail_loud() {
     assert_eq!(ready.keymap.lookup_prefix(&ch('?')), Some(Action::Help));
     assert_eq!(
         ready.keymap.active_chords(),
-        Keymap::defaults().active_chords()
+        Keymap::defaults(HERDR_PREFIX).active_chords()
     );
 
     // The client-local file rebinds help and new_project; the replaced

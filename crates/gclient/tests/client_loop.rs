@@ -37,7 +37,7 @@ use gobby_client::teardown::{RecordingBackend, TerminalGuard};
 use gobby_client::ui::chrome::{Mode, Tab};
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
-use gobby_client::ui::keymap::Keymap;
+use gobby_client::ui::keymap::{default_prefix, Keymap, HERDR_PREFIX};
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
@@ -330,7 +330,8 @@ fn live_entry_connects_before_running() {
             host: None,
             host_notice: None,
             prefs: gobby_client::ui::settings::ClientPrefs::default(),
-            keymap: Keymap::defaults(),
+            keymap: Keymap::defaults(HERDR_PREFIX),
+            nested_tmux: false,
             gobby_home: std::path::PathBuf::new(),
         },
         &mut TerminalGuard::recording().0,
@@ -1655,7 +1656,8 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(32);
 
         let driver = async {
@@ -1853,7 +1855,8 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(16);
 
         let driver = async {
@@ -1957,7 +1960,8 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n").expect("test keymap");
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
             settle_live_event().await;
@@ -4250,9 +4254,11 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
 
     // Tab 0: a beside b (a focused); tab 1: c. The toast points at c.
     let mut chrome = Chrome::dark();
-    chrome.keymap =
-        Keymap::from_toml("[bindings]\nlast_pane = \"prefix+i\"\nnext_attention = \"prefix+f\"\n")
-            .expect("test keymap");
+    chrome.keymap = Keymap::from_toml(
+        "[bindings]\nlast_pane = \"prefix+i\"\nnext_attention = \"prefix+f\"\n",
+        HERDR_PREFIX,
+    )
+    .expect("test keymap");
     chrome.open_pane(pane_a, "a");
     chrome.open_pane(pane_b, "b");
     chrome.open_tab(pane_c, "c");
@@ -6336,6 +6342,86 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         ),
         "{:?}",
         chrome.dialog
+    );
+    mock.shutdown().await;
+}
+
+/// 4.3.2: a held pane keeps a keyboard exit under an outer tmux. `prefix
+/// prefix` writes the prefix chord itself to the pane (herdr's `ctrl+b
+/// ctrl+b`), and `ctrl+\` releases control with no prefix at all, so an outer
+/// tmux eating the prefix can never lock the keyboard into a pane.
+#[tokio::test]
+async fn held_pane_has_literal_prefix_and_keyboard_escape() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-held", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-held", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let _home = pin_tabs(&mut workspace, "project-1", &["terminal-held"]);
+    let mut chrome = Chrome::dark();
+    chrome.nested_tmux = true;
+    chrome.keymap = Keymap::defaults(default_prefix(true));
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        // Startup focus takes the lease and the mock grants it: the pane is
+        // held before the first key arrives.
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        settle_live_event().await;
+        send_key(&input_tx, KeyCode::Char(']'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char(']'), KeyModifiers::CONTROL).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        send_key(&input_tx, KeyCode::Char('\\'), KeyModifiers::CONTROL).await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane = workspace
+        .pane_for_terminal("terminal-held")
+        .expect("terminal pane");
+
+    let typed: Vec<String> = websocket_requests(&mock, "terminal_input")
+        .iter()
+        .filter_map(|request| request.get("data")?.as_str().map(str::to_string))
+        .collect();
+    assert_eq!(
+        typed,
+        vec!["\u{1d}".to_string()],
+        "prefix prefix reaches the held pane as the literal chord; ctrl+\\ never does"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_release_control").len(),
+        1,
+        "ctrl+\\ releases control without the prefix"
+    );
+    assert!(
+        !workspace.pane(pane).is_held(),
+        "the pane is observed after the keyboard escape: {:?}",
+        workspace.pane(pane).control
     );
     mock.shutdown().await;
 }
