@@ -82,14 +82,9 @@ class TestCreateStdioMcpServer:
 
         with (
             patch("gobby.mcp_proxy.stdio._StdioMCPServer") as mock_server,
-            patch("gobby.mcp_proxy.stdio.CliRuntime") as mock_runtime,
             patch("gobby.mcp_proxy.stdio.DaemonProxy"),
-            patch("gobby.mcp_proxy.stdio.setup_internal_registries"),
         ):
             mock_server.return_value = MagicMock()
-            runtime = MagicMock()
-            runtime.require_config.return_value = MagicMock(daemon_port=8787)
-            mock_runtime.return_value = runtime
 
             # Import and call after patching
             from gobby.mcp_proxy.stdio import create_stdio_mcp_server
