@@ -38,6 +38,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.checkout_root import MarkerMismatchError
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.utils.project_init import initialize_project
+from gobby.workflows.git_utils import GitStatusUnavailable
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     insert_overlay,
@@ -1075,6 +1076,23 @@ class TestEvaluateWorkflowRules:
         assert context is None
         assert blocking is None
 
+    def test_advisory_git_status_unavailable_fails_open_without_error_log(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._workflow_handler.handle.side_effect = GitStatusUnavailable("status timeout")
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT)
+        with caplog.at_level(logging.DEBUG):
+            context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
     @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
     def test_stop_workflow_evaluation_exception_fails_closed(
         self,
@@ -1096,6 +1114,33 @@ class TestEvaluateWorkflowRules:
             reason="Workflow evaluation failed; blocking stop for safety.",
         )
         audit.assert_called_once()
+
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
+    def test_stop_git_status_unavailable_has_concise_typed_block(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+        event_type: HookEventType,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._workflow_handler.handle.side_effect = GitStatusUnavailable("status timeout")
+
+        event = make_event(event_type=event_type)
+        with (
+            patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit,
+            caplog.at_level(logging.WARNING),
+        ):
+            context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking == HookResponse(
+            decision="block",
+            reason="Git status is temporarily unavailable; retry the stop.",
+        )
+        audit.assert_called_once()
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+        assert all(record.exc_info is None for record in caplog.records)
 
 
 class TestShutdown:
@@ -1556,11 +1601,12 @@ class TestResolveSessionRefsInToolInput:
         assert "_session_refs_resolved" not in event.metadata
 
     def test_numeric_string_without_hash(
-        self, manager_with_mocks: HookManager, make_event: Callable
+        self, manager_with_mocks: HookManager, make_event: Callable[..., HookEvent]
     ) -> None:
         """Variable tools preserve plain numeric refs for internal resolution."""
         manager = manager_with_mocks
-        manager._session_manager.resolve_session_reference.return_value = "uuid-789"
+        mocks = cast(Any, manager)
+        mocks._session_manager.resolve_session_reference.return_value = "uuid-789"
 
         event = make_event(
             event_type=HookEventType.BEFORE_TOOL,
@@ -1575,7 +1621,7 @@ class TestResolveSessionRefsInToolInput:
 
         assert event.data["tool_input"]["session_id"] == "3"
         assert "_session_refs_resolved" not in event.metadata
-        manager._session_manager.resolve_session_reference.assert_not_called()
+        mocks._session_manager.resolve_session_reference.assert_not_called()
 
 
 class TestRecordSessionActivityPulse:
@@ -1584,7 +1630,7 @@ class TestRecordSessionActivityPulse:
     def test_non_session_start_records_activity_after_session_lookup(
         self,
         manager_with_mocks: HookManager,
-        make_event: Callable,
+        make_event: Callable[..., HookEvent],
     ) -> None:
         from gobby.sessions import activity as session_activity
 
@@ -1668,6 +1714,7 @@ class TestTerminalIngressGate:
         mocks = cast(Any, manager)
         mocks._session_manager.get.return_value = SimpleNamespace(
             agent_run_id=self._RUN_ID,
+            source=SessionSource.CLAUDE,
         )
         mocks._agent_run_manager.get.return_value = SimpleNamespace(
             id=self._RUN_ID,
@@ -1877,6 +1924,7 @@ def test_grok_preserve_original_gate_flushes_pending_context(
         response = manager_with_mocks._handle_after_daemon_ready(event)
 
     assert response is gate
+    assert isinstance(response, HookResponse)
     assert response.decision == "deny"
     assert response.reason == f"briefing\n\nturn context\n\n{gate_kind} gate"
     assert (

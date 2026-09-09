@@ -33,7 +33,7 @@ from gobby.workflows.found_work_gate import (
     capture_turn_prompt,
     is_found_work_deferral,
 )
-from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS
+from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, GitStatusUnavailable
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
 
@@ -888,7 +888,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         eval_lock_state,
                         cleanup=event.event_type == HookEventType.SESSION_END,
                     )
-        except _DATABASE_TIMEOUTS:
+        except (DatabaseOperationDeadlineExceeded, QueryCanceled, GitStatusUnavailable):
             raise
         except Exception as e:
             logger.exception("RuleEngine evaluation failed: %s", e)
@@ -965,7 +965,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
-        except WorkflowEvaluationTimeout:
+        except (WorkflowEvaluationTimeout, GitStatusUnavailable):
             raise
         except TimeoutError as exc:
             # The runtime never scheduled the coroutine, so it raised nothing of

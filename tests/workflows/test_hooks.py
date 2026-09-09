@@ -28,7 +28,11 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, DirtyFiles
+from gobby.workflows.git_utils import (
+    DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+    DirtyFiles,
+    GitStatusUnavailable,
+)
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests._timing import wait_forever
 
@@ -560,6 +564,23 @@ class TestCancelledErrorHandling:
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
             result = handler.evaluate(event)
             assert result.decision == "allow"
+
+    def test_git_status_unavailable_propagates_without_duplicate_error_log(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        event = self._make_event(HookEventType.STOP)
+        runtime = MagicMock()
+        runtime.run.side_effect = GitStatusUnavailable("status timeout")
+
+        with (
+            patch("asyncio.get_running_loop", side_effect=RuntimeError),
+            caplog.at_level(logging.ERROR, logger="gobby.workflows.hooks"),
+            pytest.raises(GitStatusUnavailable, match="status timeout"),
+        ):
+            WorkflowHookHandler(evaluation_runtime=runtime).evaluate(event)
+
+        assert not caplog.records
 
     def test_cancelled_error_blocks_stop_handle(self) -> None:
         """CancelledError on STOP event should block in handle()."""
