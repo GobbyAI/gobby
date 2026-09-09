@@ -1584,10 +1584,10 @@ class TestShutdownDaemonServices:
             wait_for_overall_deadline,
         )
 
-        def blocked_delete(boundary: DestructiveBoundary) -> None:
+        async def blocked_delete(boundary: DestructiveBoundary) -> None:
             assert boundary.begin_mutation()
             worker_started.set()
-            release_worker.wait()
+            await asyncio.to_thread(release_worker.wait)
 
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
         runner.worktree_delete_executor = WorktreeDeleteExecutor(max_workers=1)
@@ -3146,7 +3146,9 @@ class TestSignalHandlerBehavior:
                 captured_handler()
                 captured_handler()
 
-        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART, drain_terminals=False)
+        shutdown_intent_callback.assert_called_once_with(
+            ShutdownIntent.RESTART, drain_terminals=False
+        )
         assert shutdown_callback.call_count == 2
         assert (tmp_path / "shutdown_intent_active.json").exists()
         received_logs = [
@@ -3212,7 +3214,9 @@ class TestSignalHandlerBehavior:
             assert captured_handler is not None
             captured_handler()
 
-        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART, drain_terminals=False)
+        shutdown_intent_callback.assert_called_once_with(
+            ShutdownIntent.RESTART, drain_terminals=False
+        )
         shutdown_callback.assert_called_once_with()
         assert (tmp_path / "shutdown_intent_active.json").exists()
 
@@ -5369,3 +5373,102 @@ class TestRuleDispositionStartup:
 
         servers.assert_not_called()
         assert get_app_context() is None
+
+
+class TestAgentOutputReaderShutdown:
+    @pytest.mark.asyncio
+    async def test_output_readers_drain_before_database_close(self) -> None:
+        runner = TestShutdownDaemonServices._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        drain_started = asyncio.Event()
+        release_drain = asyncio.Event()
+        events: list[str] = []
+
+        async def drain_output_readers() -> None:
+            events.append("reader-drain-start")
+            drain_started.set()
+            await release_drain.wait()
+            events.append("reader-drain-finished")
+
+        runner.database.close.side_effect = lambda: events.append("database-close")
+        critical_grace = AsyncMock()
+        shutdown_websocket = AsyncMock()
+        reap_children = AsyncMock()
+        shutdown_telemetry = MagicMock()
+        cleanup_pid_file = MagicMock()
+
+        async def completed_server() -> None:
+            return None
+
+        with patch.object(
+            runner_lifecycle_shutdown,
+            "shutdown_agent_event_broadcasting",
+            side_effect=drain_output_readers,
+        ):
+            shutdown_task = asyncio.create_task(
+                runner_lifecycle_shutdown.shutdown_daemon_services(
+                    cast(GobbyRunner, runner),
+                    cast(Any, SimpleNamespace(should_exit=False)),
+                    asyncio.create_task(completed_server()),
+                    1,
+                    await_critical_stop_hook_grace_window=critical_grace,
+                    shutdown_websocket_server=shutdown_websocket,
+                    reap_remaining_child_processes=reap_children,
+                    shutdown_telemetry=shutdown_telemetry,
+                    cleanup_pid_file=cleanup_pid_file,
+                )
+            )
+
+            await asyncio.wait_for(drain_started.wait(), timeout=1.0)
+            runner.database.close.assert_not_called()
+
+            release_drain.set()
+            await asyncio.wait_for(shutdown_task, timeout=1.0)
+
+        assert events == [
+            "reader-drain-start",
+            "reader-drain-finished",
+            "database-close",
+        ]
+        assert critical_grace.await_count == 0
+        assert shutdown_websocket.await_args == call(runner)
+        assert reap_children.await_count == 1
+        assert shutdown_telemetry.call_count == 1
+        assert cleanup_pid_file.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_shutdown_drains_both_readers_and_propagates_failures(self) -> None:
+        import gobby.runner_broadcasting as rb
+
+        mock_ws_server = MagicMock()
+        pty_reader = MagicMock()
+        pty_reader.stop_all = AsyncMock(side_effect=RuntimeError("PTY drain failed"))
+        tmux_reader = MagicMock()
+        tmux_reader.stop_all = AsyncMock()
+        old_callback = rb._agent_event_callback
+        old_readers = rb._agent_output_readers
+        try:
+            with (
+                patch(
+                    "gobby.agents.pty_reader.get_pty_reader_manager",
+                    return_value=pty_reader,
+                ),
+                patch(
+                    "gobby.agents.tmux.get_tmux_output_reader",
+                    return_value=tmux_reader,
+                ),
+            ):
+                rb.setup_agent_event_broadcasting(mock_ws_server)
+
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await rb.shutdown_agent_event_broadcasting()
+
+            assert str(exc_info.value.exceptions[0]) == "PTY drain failed"
+            pty_reader.stop_all.assert_awaited_once_with()
+            tmux_reader.stop_all.assert_awaited_once_with()
+            pty_reader.set_output_callback.assert_called_with(None)
+            tmux_reader.set_output_callback.assert_called_with(None)
+            assert rb._agent_event_callback is None
+            assert rb._agent_output_readers is None
+        finally:
+            rb._agent_event_callback = old_callback
+            rb._agent_output_readers = old_readers
