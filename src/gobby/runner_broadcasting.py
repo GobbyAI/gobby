@@ -89,6 +89,7 @@ class CronCommunicationsRouter(Protocol):
 # from spawn and completion paths without going through the registry.
 _agent_event_callback: Any | None = None
 _agent_broadcast_tasks: set[asyncio.Task[None]] = set()
+_agent_output_readers: tuple[Any, Any] | None = None
 
 
 def _schedule_agent_broadcast(
@@ -177,6 +178,8 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
     """Set up WebSocket broadcasting for agent lifecycle events, PTY reading, and tmux streaming."""
     from gobby.agents.pty_reader import get_pty_reader_manager
     from gobby.agents.tmux import get_tmux_output_reader
+
+    global _agent_event_callback, _agent_output_readers
 
     pty_manager = get_pty_reader_manager()
     tmux_reader = get_tmux_output_reader()
@@ -312,10 +315,37 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
         )
 
     # Store module-level reference for direct invocation from spawn/completion paths
-    global _agent_event_callback
     _agent_event_callback = broadcast_agent_event
+    _agent_output_readers = (pty_manager, tmux_reader)
 
     logger.debug("Agent event broadcasting and PTY reading enabled")
+
+
+async def shutdown_agent_event_broadcasting() -> None:
+    """Stop output callbacks before their daemon-owned dependencies close."""
+    global _agent_event_callback, _agent_output_readers
+    _agent_event_callback = None
+    readers = _agent_output_readers
+    _agent_output_readers = None
+    if readers is None:
+        return
+
+    try:
+        results = await asyncio.gather(
+            *(reader.stop_all() for reader in readers),
+            return_exceptions=True,
+        )
+    finally:
+        for reader in readers:
+            reader.set_output_callback(None)
+    failures: list[Exception] = []
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, Exception):
+            failures.append(result)
+    if failures:
+        raise ExceptionGroup("Agent output reader shutdown failed", failures)
 
 
 def reset_agent_event_broadcasting() -> None:
@@ -323,8 +353,9 @@ def reset_agent_event_broadcasting() -> None:
     from gobby.agents.pty_reader import reset_pty_output_callback
     from gobby.agents.tmux import reset_tmux_output_callback
 
-    global _agent_event_callback
+    global _agent_event_callback, _agent_output_readers
     _agent_event_callback = None
+    _agent_output_readers = None
     reset_pty_output_callback()
     reset_tmux_output_callback()
 

@@ -16,6 +16,7 @@ from gobby.agents.terminal_delivery import (
 )
 from gobby.ai._text_generation_adapters import shutdown_cli_text_generation_calls
 from gobby.mcp_proxy.tools.spawn_agent._health import cancel_and_await_health_checks
+from gobby.runner_broadcasting import shutdown_agent_event_broadcasting
 from gobby.runner_http_shutdown import (
     begin_uvicorn_http_shutdown,
     force_terminate_uvicorn_http_server,
@@ -406,6 +407,10 @@ async def _run_terminal_delivery_finalizers(runner: GobbyRunner) -> None:
     """Settle delivery scopes and revoke/join their owned executor."""
     from gobby.sessions.compact_continuation import shutdown_compact_continuations
 
+    await _best_effort(
+        shutdown_agent_event_broadcasting,
+        "Agent output reader drain",
+    )
     await shutdown_compact_continuations()
     await _settle_terminal_delivery_barrier()
     await _shutdown_database_concurrency(runner)

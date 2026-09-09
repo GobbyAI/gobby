@@ -277,7 +277,6 @@ class TmuxOutputReader:
             stop_event.set()
 
         if task:
-            task.cancel()
             try:
                 await asyncio.wait_for(task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
@@ -299,8 +298,18 @@ class TmuxOutputReader:
         """Stop all active readers."""
         async with self._lock:
             run_ids = list(self._reader_tasks.keys())
-        for run_id in run_ids:
-            await self.stop_reader(run_id)
+        results = await asyncio.gather(
+            *(self.stop_reader(run_id) for run_id in run_ids),
+            return_exceptions=True,
+        )
+        failures: list[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                failures.append(result)
+        if failures:
+            raise ExceptionGroup("Tmux output reader shutdown failed", failures)
 
     # ------------------------------------------------------------------
     # Read loop
