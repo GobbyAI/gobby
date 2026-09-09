@@ -8,6 +8,7 @@ use crate::copy_mode::copy_selection;
 use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
 use crate::prefs::{load_prefs, prefs_path};
+use crate::startup::load_keymap;
 use crate::ui::chrome::attention_pane;
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
@@ -660,8 +661,8 @@ async fn jump_live_attention(
     Ok(())
 }
 
-/// Re-read the prefs file (1.1); a bad file keeps the current values and
-/// names itself. The keymap reloads in 4.3.
+/// Re-read the prefs file (1.1) and the keymap override file it names
+/// (4.2); a bad file keeps the current values and names itself.
 fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     let home = workspace
         .gobby_home()
@@ -670,6 +671,17 @@ fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     let path = prefs_path(&home);
     match load_prefs(&home) {
         Ok(prefs) => {
+            match load_keymap(&prefs, &home) {
+                Ok(keymap) => chrome.keymap = keymap,
+                Err(error) => {
+                    chrome.toast = Some(Toast {
+                        kind: ToastKind::Warning,
+                        title: "Keymap overrides kept as loaded".to_string(),
+                        body: Some(error.to_string()),
+                        target: None,
+                    })
+                }
+            }
             chrome.apply_prefs(prefs);
             chrome.status_message = Some(format!("Reloaded {}", path.display()));
         }

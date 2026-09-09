@@ -330,6 +330,7 @@ fn live_entry_connects_before_running() {
             host: None,
             host_notice: None,
             prefs: gobby_client::ui::settings::ClientPrefs::default(),
+            keymap: Keymap::defaults(),
             gobby_home: std::path::PathBuf::new(),
         },
         &mut TerminalGuard::recording().0,
@@ -4504,6 +4505,11 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         ..ClientPrefs::default()
     };
     save_prefs(home.path(), &light).expect("prefs for reload");
+    std::fs::write(
+        home.path().join("client").join("keymap.toml"),
+        "[bindings]\nhelp = \"prefix+f1\"\n",
+    )
+    .expect("keymap for reload");
 
     // Mirror the loop's roster split on a probe chrome to learn where each
     // pane, the first tab and the bare tab bar are drawn.
@@ -4714,6 +4720,13 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         chrome.dialog
     );
     assert_eq!(chrome.prefs.theme, "light", "reload config re-read prefs");
+    assert_eq!(
+        chrome
+            .keymap
+            .lookup_prefix(&KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)),
+        Some(gobby_client::ui::Action::Help),
+        "reload config re-read the keymap overrides"
+    );
     assert!(
         workspace.pane_for_terminal(&initial).is_none(),
         "close pane retired the terminal"

@@ -1,5 +1,6 @@
 //! 3.5 gclient starts independently of the Python CLI.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_client::prefs::{load_prefs, save_prefs};
 use gobby_client::startup::{
     parse_args, prepare_at, resolve_probe_env_at, resolve_project_at, start_session,
@@ -7,6 +8,7 @@ use gobby_client::startup::{
     StartupError,
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
+use gobby_client::ui::keymap::{Action, Keymap};
 use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs};
 use gobby_client::ui::Chrome;
 use gobby_client::FrameDelivery;
@@ -793,4 +795,76 @@ fn start_session_arms_mouse_capture_from_prefs() {
         "prefs file keeps capture off"
     );
     drop(guard);
+}
+
+/// 4.2.1: the keymap override file is resolved and loaded before the health
+/// probe. A malformed file fails loud naming its path, a missing one is the
+/// default keymap, and `[keymap] path` in prefs redirects the lookup.
+#[test]
+fn keymap_overrides_load_or_fail_loud() {
+    let project_id = "66666666-6666-4666-8666-666666666666";
+    let args = parse_args(["gclient", "--project", project_id]).expect("parse args");
+    let home = tempfile::tempdir().expect("temp gobby home");
+    let cwd = tempfile::tempdir().expect("temp current dir");
+    let env = || env_at("http://unused");
+    let f = |n: u8| KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
+    let ch = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+
+    // No override file: the defaults.
+    let ready = prepare_at(&args, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("missing keymap file yields defaults");
+    assert_eq!(ready.keymap.lookup_prefix(&ch('?')), Some(Action::Help));
+    assert_eq!(
+        ready.keymap.active_chords(),
+        Keymap::defaults().active_chords()
+    );
+
+    // The client-local file rebinds help and new_project; the replaced
+    // chords are released.
+    let client_dir = home.path().join("client");
+    std::fs::create_dir_all(&client_dir).expect("create client dir");
+    std::fs::write(
+        client_dir.join("keymap.toml"),
+        "[bindings]\nhelp = \"prefix+f1\"\nnew_project = \"prefix+f2\"\n",
+    )
+    .expect("write keymap");
+    let ready = prepare_at(&args, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("override file loads");
+    assert_eq!(ready.keymap.lookup_prefix(&f(1)), Some(Action::Help));
+    assert_eq!(ready.keymap.lookup_prefix(&f(2)), Some(Action::NewProject));
+    assert_eq!(ready.keymap.lookup_prefix(&ch('?')), None);
+    assert_eq!(
+        ready
+            .keymap
+            .lookup_prefix(&KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT)),
+        None
+    );
+
+    // `[keymap] path` in prefs redirects the lookup; a relative path lands
+    // under the gobby home and the client-local file is no longer consulted.
+    std::fs::write(
+        client_dir.join("prefs.toml"),
+        "[keymap]\npath = \"keys/mine.toml\"\n",
+    )
+    .expect("write prefs");
+    let custom = home.path().join("keys").join("mine.toml");
+    std::fs::create_dir_all(custom.parent().expect("keys parent")).expect("create keys dir");
+    std::fs::write(&custom, "[bindings]\nhelp = \"prefix+f3\"\n").expect("write custom keymap");
+    let ready = prepare_at(&args, env(), &HealthyHost, cwd.path(), home.path())
+        .expect("prefs keymap path loads");
+    assert_eq!(ready.keymap.lookup_prefix(&f(3)), Some(Action::Help));
+    assert_eq!(ready.keymap.lookup_prefix(&f(1)), None);
+    assert_eq!(ready.keymap.lookup_prefix(&f(2)), None);
+
+    // A malformed file fails before the health probe and names the path and
+    // the parse error.
+    std::fs::write(&custom, "[bindings\nhelp = 1\n").expect("write malformed keymap");
+    let (health, health_calls) = CountingHealth::new();
+    let error = prepare_at(&args, env(), &health, cwd.path(), home.path())
+        .expect_err("malformed keymap file succeeded");
+    assert_eq!(health_calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(error, StartupError::Keymap { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains(&custom.display().to_string()), "{message}");
+    assert!(message.contains("not valid TOML"), "{message}");
 }
