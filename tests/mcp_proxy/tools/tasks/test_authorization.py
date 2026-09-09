@@ -287,11 +287,12 @@ def _build_affected_files_tool(manager: MagicMock, stack: ExitStack) -> BuildRes
     af_cls = stack.enter_context(
         patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager")
     )
-    af_cls.return_value.set_files.return_value = []
+    # `source="manual"` — the spec's source below — replaces the declared set.
+    af_cls.return_value.replace_declared_files.return_value = []
     registry = create_ops_affected_files_registry(RegistryContext(task_manager=manager))
     tool = registry.get_tool("set_affected_files")
     assert tool is not None
-    return tool, af_cls.return_value.set_files
+    return tool, af_cls.return_value.replace_declared_files
 
 
 def _build_artifact_tool(

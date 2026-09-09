@@ -1228,10 +1228,19 @@ class TestTerminalizeCancelledRun:
         )
         mock_task_mgr.get_task.return_value = task
 
+        # Terminal delivery and claim-variable release both read rows that fail
+        # closed on a non-Mapping payload; this run owns neither a close review
+        # nor a session-variables row, so every lookup finds nothing.
+        mock_db = MagicMock()
+        mock_db.fetchone.return_value = None
+        for transaction in (mock_db.transaction, mock_db.transaction_immediate):
+            conn = transaction.return_value.__enter__.return_value
+            conn.execute.return_value.fetchone.return_value = None
+
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
-            db=MagicMock(),
+            db=mock_db,
             session_manager=mock_session_mgr,
             completion_registry=mock_completion_registry,
             task_manager=mock_task_mgr,
@@ -1258,6 +1267,7 @@ class TestTerminalizeCancelledRun:
                 "run_id": "run-cancel",
             },
             message="Agent run-cancel cancelled",
+            durable_subscriber_count=0,
         )
         assert mock_completion_registry.notify.await_count == 1
         assert mock_completion_registry.notify.await_args is not None
