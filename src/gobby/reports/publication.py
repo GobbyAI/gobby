@@ -22,9 +22,15 @@ def verify_publication(
         raise ValueError("Publication branch does not belong to the report")
 
     def git(*args: str) -> bytes:
-        result = subprocess.run(
-            ["git", "-C", str(repo_path), *args], capture_output=True, timeout=30, check=False
-        )
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo_path), *args], capture_output=True, timeout=30, check=False
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise OSError(
+                f"Git command timed out after {exc.timeout}s: {exc.cmd!r}; "
+                f"stdout={exc.stdout!r}; stderr={exc.stderr!r}"
+            ) from exc
         if result.returncode:
             error = result.stderr.decode(errors="replace").strip()
             if transient_publication_error(error):

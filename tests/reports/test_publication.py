@@ -150,13 +150,29 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
         verify_publication(store, {**report, "content_hash": "wrong"}, tmp_path, attempt)
     # A restart after commit/task close verifies the saved draft directly;
     # no second synthesis agent is needed to finish publication.
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, Mock
 
     from tests.reports.test_service import _reporter
 
     reporter = _reporter(temp_db, tmp_path)
     spawn = AsyncMock()
     monkeypatch.setattr(reporter, "_spawn", spawn)
+    source_before = MemoryDreamStore(temp_db).get_run(run_id)
+    command = ["git", "-C", str(tmp_path), "rev-parse", "--verify", report["branch_name"]]
+    timeout = subprocess.TimeoutExpired(
+        command, 30, output=b"partial output", stderr=b"transport stalled"
+    )
+    with monkeypatch.context() as patcher:
+        patcher.setattr("gobby.reports.publication.subprocess.run", Mock(side_effect=timeout))
+        await reporter.publish("dream", run_id)
+    interrupted = store.get("dream", run_id)
+    assert interrupted["status"] == "pending"
+    assert interrupted["auto_retries"] == 1
+    assert interrupted["content"] == content
+    failure = store.attempts("dream", run_id)["attempts"][0]
+    assert failure["phase"] == "verification" and failure["status"] == "failed"
+    assert "rev-parse" in failure["error"]
+    assert "partial output" in failure["error"] and "transport stalled" in failure["error"]
     await reporter.publish("dream", run_id)
     spawn.assert_not_called()
     completed = store.get("dream", run_id)
@@ -164,7 +180,9 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     assert completed["content_hash"] == hashlib.sha256(content.encode()).hexdigest()
     assert not path.exists()
     assert _git(tmp_path, "rev-parse", report["branch_name"]) == sha
-    assert store.attempts("dream", run_id)["attempts"][0]["status"] == "completed"
+    attempts = store.attempts("dream", run_id)["attempts"]
+    assert len(attempts) == 2 and attempts[1]["status"] == "completed"
+    assert MemoryDreamStore(temp_db).get_run(run_id) == source_before
 
 
 def test_nonterminal_source_rejected(temp_db: HubDatabase) -> None:

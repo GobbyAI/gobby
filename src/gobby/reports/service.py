@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.launcher_session import get_or_create_launcher_session
+from gobby.agents.worktree_checkpoint import checkpoint_agent_worktree
 from gobby.events.completion_registry import CompletionResultEvictedError
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.reports.publication import verify_publication
 from gobby.reports.storage import ReportStore, transient_publication_error
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.workflows.agent_resolver import resolve_agent
 
 if TYPE_CHECKING:
@@ -135,6 +137,8 @@ class SynthesisReporter:
             "synthesis-report",
         )
         await asyncio.to_thread(self.store.phase, attempt_id, "launch")
+        if report.get("worktree_id"):
+            await self._checkpoint_report(report, attempt_id, parent)
         result = await spawn_agent_impl(
             f"Publish the {report['source_kind']} synthesis report for source run {report['source_run_id']}. Read gobby-reports:get_report first; resume its persisted draft if present.",
             self.runner,
@@ -174,3 +178,24 @@ class SynthesisReporter:
             self.store.phase, attempt_id, "publication" if report.get("content") else "synthesis"
         )
         return agent_run_id
+
+    async def _checkpoint_report(
+        self, report: dict[str, Any], attempt_id: str, parent: str
+    ) -> None:
+        previous_run = await asyncio.to_thread(self.store.recovery_agent, report)
+        if previous_run is None:
+            return  # No prior writer; ordinary spawn validation still requires a clean tree.
+        result = await checkpoint_agent_worktree(
+            agent_run_manager=LocalAgentRunManager(self.store.db),
+            task_manager=self.task_manager,
+            worktree_storage=self.worktree_storage,
+            db=self.store.db,
+            run_id=previous_run,
+            caller_session_id=parent,
+            allowed_paths={str(report["report_path"])},
+        )
+        await asyncio.to_thread(
+            self.store.record_checkpoint, attempt_id, {"run_id": previous_run, **result}
+        )
+        if not result.get("success") and result.get("error_code") != "worktree_clean":
+            raise ValueError(f"Report worktree recovery failed: {result.get('error')}")

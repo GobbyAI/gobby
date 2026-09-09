@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from copy import copy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
@@ -27,6 +28,7 @@ from gobby.runner_lifecycle_reconcile import (
     _resolve_provisional_daemon_resumes,
 )
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -52,7 +54,9 @@ class TestAgentRestartReconciliation:
             managed_credential_manager=credential_manager,
         )
 
-        reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+        reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(
+            cast(GobbyRunner, runner)
+        )
 
         assert reconciled == 0
         credential_manager.reconcile.assert_called_once_with()
@@ -75,7 +79,9 @@ class TestAgentRestartReconciliation:
         )
 
         with caplog.at_level(logging.ERROR):
-            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(
+                cast(GobbyRunner, runner)
+            )
 
         # Startup carried on rather than failing the daemon.
         assert reconciled == 0
@@ -234,7 +240,9 @@ class TestAgentRestartReconciliation:
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_reconcile_uses_configured_tmux_socket_for_live_agent(self, tmp_path) -> None:
+    async def test_reconcile_uses_configured_tmux_socket_for_live_agent(
+        self, tmp_path: Path
+    ) -> None:
         config = TmuxConfig(
             socket_name="unused-name",
             socket_path=str(tmp_path / "gobby-test-reconcile-configured.sock"),
@@ -432,7 +440,7 @@ class TestAgentRestartReconciliation:
 
     @pytest.mark.asyncio
     async def test_reconcile_active_run_refreshes_expired_dispatch_mutex(
-        self, temp_db, sample_project
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
     ) -> None:
         task = LocalTaskManager(temp_db).create_task(
             sample_project["id"],
@@ -455,8 +463,9 @@ class TestAgentRestartReconciliation:
             run_id="ac314d27-4314-5fe3-a0ab-01645086e137",
             task_id=task.id,
         )
-        run = run_storage.start(run.id)
-        assert run is not None
+        started_run = run_storage.start(run.id)
+        assert started_run is not None
+        run = started_run
         past = datetime.now(UTC) - timedelta(minutes=20)
         mutexes = TaskDispatchMutexManager(temp_db)
         mutexes.acquire_mutex(
@@ -482,7 +491,7 @@ class TestAgentRestartReconciliation:
 
     @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_run_does_not_refresh_expired_mutex(
-        self, temp_db, sample_project
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
     ) -> None:
         task = LocalTaskManager(temp_db).create_task(
             sample_project["id"],
@@ -552,6 +561,108 @@ class TestAgentRestartReconciliation:
 
         with pytest.raises(RuntimeError, match="runner.agent_runner is not configured"):
             _list_active_agent_runs_once(runner)
+
+    @pytest.mark.asyncio
+    async def test_periodic_recovery_excludes_unrelated_provisional_resume(self) -> None:
+        fenced = SimpleNamespace(id="fenced-resume", resume_metadata_json={})
+        unrelated = SimpleNamespace(id="unrelated-resume", resume_metadata_json={})
+        metadata: dict[str, dict[str, bool]] = {}
+        storage = SimpleNamespace(
+            list_reconciliation_pending=lambda **kwargs: [fenced],
+            list_active_for_machine=lambda *args, **kwargs: [],
+            list_provisional_daemon_resumes=lambda **kwargs: [fenced, unrelated],
+            merge_resume_metadata=lambda run_id, values: metadata.update({run_id: values}),
+        )
+        runner = self._runner(storage)
+        runtime = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
+        with (
+            patch(
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier", return_value=True
+            ),
+            patch("gobby.runner_lifecycle_reconcile._tmux_runtime", return_value=runtime),
+            patch(
+                "gobby.runner_lifecycle_reconcile._resolve_provisional_daemon_resume_row",
+                return_value=True,
+            ) as resolve,
+        ):
+            count = await _reclassify_reconciliation_pending_runs(runner)
+
+        assert count == 1
+        resolve.assert_awaited_once_with(runner, fenced, {})
+        assert metadata == {fenced.id: {"reconciliation_pending": False}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fresh_pane_dead", [False, True])
+    async def test_periodic_recovery_only_reconciles_captured_fenced_runs(
+        self, fresh_pane_dead: bool
+    ) -> None:
+        fenced = SimpleNamespace(
+            id="fenced-run",
+            terminal_id="fenced-pane",
+            pid=111,
+            task_id=None,
+            child_session_id="fenced-child",
+            resume_metadata_json={"reconciliation_pending": True, "parent_session_id": "parent"},
+        )
+        fresh = SimpleNamespace(
+            id="fresh-run",
+            terminal_id="fresh-pane",
+            pid=333,
+            task_id=None,
+            child_session_id="fresh-child",
+            resume_metadata_json={"parent_session_id": "parent"},
+        )
+        active = [fenced]
+        runtime_updates: dict[str, dict[str, Any]] = {}
+        metadata_updates: dict[str, dict[str, bool]] = {}
+        storage = SimpleNamespace(
+            list_reconciliation_pending=lambda **kwargs: [fenced],
+            list_active_for_machine=lambda *args, **kwargs: list(active),
+            update_runtime=lambda run_id, **values: runtime_updates.update({run_id: values}),
+            merge_resume_metadata=lambda run_id, values: metadata_updates.update({run_id: values}),
+        )
+        runner = self._runner(storage)
+
+        async def settle(*args: Any, **kwargs: Any) -> bool:
+            # This run is admitted while the periodic pass awaits inbox replay.
+            active.append(fresh)
+            return True
+
+        runtime = SimpleNamespace(
+            list_sessions=AsyncMock(
+                return_value=[
+                    SimpleNamespace(name="fenced-pane", pane_pid=222, pane_dead=False),
+                    SimpleNamespace(name="fresh-pane", pane_pid=444, pane_dead=fresh_pane_dead),
+                ]
+            )
+        )
+        reader = SimpleNamespace(start_reader=AsyncMock(return_value=True))
+        with (
+            patch(
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
+                side_effect=settle,
+            ),
+            patch("gobby.runner_lifecycle_reconcile._tmux_runtime", return_value=runtime),
+            patch("gobby.agents.tmux.get_tmux_output_reader", return_value=reader),
+            patch("gobby.agents.resume_finalization.notify_parent_of_recovery") as notify,
+            patch(
+                "gobby.runner_lifecycle_reconcile._cleanup_missing_terminal_agent_run",
+                new_callable=AsyncMock,
+            ) as cleanup,
+        ):
+            await _reclassify_reconciliation_pending_runs(runner)
+
+        runner.completion_registry.register.assert_called_once_with(
+            fenced.id,
+            subscribers=[],
+            continuation_prompt=None,
+        )
+        assert runtime_updates == {fenced.id: {"pid": 222, "terminal_id": "fenced-pane"}}
+        reader.start_reader.assert_awaited_once_with(fenced.id, "fenced-pane")
+        notify.assert_called_once()
+        assert notify.call_args.kwargs["run_id"] == fenced.id
+        cleanup.assert_not_awaited()
+        assert metadata_updates == {fenced.id: {"reconciliation_pending": False}}
 
     def _runner(
         self,
@@ -915,7 +1026,9 @@ class TestReclassifyReconciliationPendingRuns:
             *,
             include_fenced: bool,
             resolved_run_ids: set[str],
+            run_ids: frozenset[str],
         ) -> int:
+            assert run_ids == frozenset({self._RUN_ID, self._OTHER_RUN_ID})
             order.append(f"reconcile:include_fenced={include_fenced}")
             resolved_run_ids.update({self._RUN_ID, self._OTHER_RUN_ID})
             return 2
@@ -941,6 +1054,7 @@ class TestReclassifyReconciliationPendingRuns:
             runner,
             include_fenced=True,
             resolved_run_ids={self._RUN_ID, self._OTHER_RUN_ID},
+            run_ids=frozenset({self._RUN_ID, self._OTHER_RUN_ID}),
         )
         assert order == [
             "reconcile:include_fenced=True",
@@ -969,9 +1083,11 @@ class TestReclassifyReconciliationPendingRuns:
             *,
             include_fenced: bool,
             resolved_run_ids: set[str],
+            run_ids: frozenset[str],
         ) -> int:
             assert target is runner
             assert include_fenced is True
+            assert run_ids == frozenset({self._RUN_ID, self._OTHER_RUN_ID})
             resolved_run_ids.add(self._RUN_ID)
             return 1
 

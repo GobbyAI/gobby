@@ -10381,36 +10381,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/test_runner_lifecycle_restart_replay.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 55,
-      "message": "Argument 1 to \"_reconcile_agent_runs_after_restart\" has incompatible type \"SimpleNamespace\"; expected \"GobbyRunner\"",
-      "occurrences": 2,
-      "path": "tests/test_runner_lifecycle_restart_replay.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_lifecycle_restart_replay.py::::mypy:assignment",
-      "issue_code": "mypy:assignment",
-      "line": 458,
-      "message": "Incompatible types in assignment (expression has type \"AgentRun | None\", variable has type \"AgentRun\")",
-      "occurrences": 1,
-      "path": "tests/test_runner_lifecycle_restart_replay.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_lifecycle_restart_replay.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 237,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 3,
-      "path": "tests/test_runner_lifecycle_restart_replay.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/test_runner_lifecycle_subsystems.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 60,
