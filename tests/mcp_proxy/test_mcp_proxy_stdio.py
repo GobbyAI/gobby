@@ -28,6 +28,19 @@ from tests.mcp_proxy.tool_capture import async_tool_capture_mock
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _isolate_bridge_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep bridge startup tests independent of the surrounding process env.
+
+    A managed agent runs with ``GOBBY_AGENT_RUN_ID`` set, which makes
+    ``ensure_daemon_running`` refuse to auto-start a daemon; tests asserting the
+    auto-start path failed only when run from inside one. Tests that need those
+    variables set them explicitly, which still wins over this fixture.
+    """
+    for name in ("GOBBY_AGENT_RUN_ID", "GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _runtime_with_config(config: object) -> MagicMock:
     runtime = MagicMock()
     runtime.require_config.return_value = config
@@ -604,14 +617,11 @@ class TestCreateStdioMcpServer:
     @pytest.mark.asyncio
     async def test_creates_mcp_server(self) -> None:
         """Test creates an MCPServer exposing the proxy tools."""
-        # Use simple patching here since we don't need capture
-        with patch("gobby.mcp_proxy.stdio.CliRuntime") as mock_runtime:
-            mock_runtime.return_value = _runtime_with_config(MagicMock(daemon_port=60887))
-            with patch("gobby.mcp_proxy.stdio.setup_internal_registries"):
-                mcp = create_stdio_mcp_server()
-                assert mcp is not None
-                tool_names = {tool.name for tool in await mcp.list_tools()}
-                assert "list_mcp_servers" in tool_names
+        # No hub patching: construction reads bootstrap facts only (#22032).
+        mcp = create_stdio_mcp_server()
+        assert mcp is not None
+        tool_names = {tool.name for tool in await mcp.list_tools()}
+        assert "list_mcp_servers" in tool_names
 
 
 class TestEnsureDaemonRunning:
@@ -712,9 +722,14 @@ class TestEnsureDaemonRunning:
     async def test_starts_daemon_on_resolved_gobby_port(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Loaded config controls the stdio wrapper's local daemon dial target."""
-        monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
-        monkeypatch.setenv("GOBBY_PORT", "60000")
+        """Loaded config controls the stdio wrapper's local daemon dial target.
+
+        Since #21752 the dial target routes through ``resolve_daemon_url``, whose
+        contract puts ``GOBBY_PORT``/``GOBBY_DAEMON_PORT`` ahead of the bootstrap
+        port. The autouse fixture clears both, so this pins the loaded-config
+        branch rather than the env-override branch.
+        """
+        del monkeypatch
         with patch("gobby.mcp_proxy.stdio.load_bootstrap") as mock_config:
             mock_config.return_value = BootstrapConfig(
                 daemon_port=61999,

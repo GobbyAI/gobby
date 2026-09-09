@@ -29,7 +29,6 @@ from gobby.mcp_proxy.daemon_control import (
     stop_daemon_process,
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
-from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.stdio_daemon import (
     DaemonStartupDependencies,
 )
@@ -104,7 +103,6 @@ __all__ = [
     "prepare_client_guard",
     "register_proxy_tools",
     "restart_daemon_process",
-    "setup_internal_registries",
     "start_daemon_process",
     "stop_daemon_process",
     "time",
@@ -155,9 +153,7 @@ def register_proxy_tools(mcp: MCPServer, proxy: _DaemonProxy) -> None:
 
 def _server_dependencies() -> StdioServerDependencies:
     return StdioServerDependencies(
-        runtime_factory=lambda: CliRuntime(None),
         load_bootstrap=lambda: load_bootstrap(resolve_database_url=False),
-        setup_internal_registries=setup_internal_registries,
         build_gobby_instructions=build_gobby_instructions,
         mcp_server_factory=_StdioMCPServer,
         proxy_factory=DaemonProxy,
