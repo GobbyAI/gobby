@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import subprocess  # nosec B404 # required for git clone/pull operations with validated input
 from pathlib import Path
 
 from gobby.skills._loader_models import GitHubRef, SkillLoadError
+from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, GitTimeout, daemon_git
 
 # Default cache directory for cloned GitHub repos
 DEFAULT_CACHE_DIR = Path.home() / ".gobby" / "skill-cache"
@@ -196,3 +198,63 @@ def clone_skill_repo(
         )
 
     return repo_path
+
+
+async def clone_skill_repo_async(
+    ref: GitHubRef,
+    cache_dir: Path | None = None,
+) -> Path:
+    """Clone or update a GitHub repository through the daemon Git service."""
+    _validate_github_ref(ref)
+
+    cache_dir = cache_dir or DEFAULT_CACHE_DIR
+    await asyncio.to_thread(cache_dir.mkdir, parents=True, exist_ok=True)
+
+    repo_path = cache_dir / ref.owner / ref.repo
+    is_existing = await asyncio.to_thread(
+        lambda: repo_path.exists() and (repo_path / ".git").exists()
+    )
+    if is_existing:
+        if ref.branch:
+            checkout = await daemon_git.run(
+                ["checkout", ref.branch],
+                cwd=repo_path,
+                timeout=60.0,
+            )
+            if not isinstance(checkout, GitOk):
+                raise SkillLoadError(
+                    f"Failed to checkout branch {ref.branch}: {_git_result_error(checkout)}",
+                    ref.clone_url,
+                )
+        pull = await daemon_git.run(
+            ["pull", "--ff-only"],
+            cwd=repo_path,
+            timeout=120.0,
+        )
+        if not isinstance(pull, GitOk):
+            raise SkillLoadError(
+                f"Failed to pull repository updates: {_git_result_error(pull)}",
+                ref.clone_url,
+            )
+        return repo_path
+
+    await asyncio.to_thread(repo_path.parent.mkdir, parents=True, exist_ok=True)
+    args = ["clone", "--depth", "1"]
+    if ref.branch:
+        args.extend(["--branch", ref.branch])
+    args.extend([ref.clone_url, str(repo_path)])
+    clone = await daemon_git.run(args, cwd=repo_path.parent, timeout=120.0)
+    if not isinstance(clone, GitOk):
+        raise SkillLoadError(
+            f"Failed to clone repository: {_git_result_error(clone)}",
+            ref.clone_url,
+        )
+    return repo_path
+
+
+def _git_result_error(result: GitResult) -> str:
+    if isinstance(result, GitTimeout):
+        return f"git command timed out after {result.timeout:g}s"
+    if isinstance(result, GitFailed):
+        return result.stderr.strip() or f"git exited {result.returncode}"
+    return "git returned no usable result"

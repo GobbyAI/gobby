@@ -62,6 +62,12 @@ def _committed_manifest_is_current() -> Iterator[None]:
     with (
         patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None),
         patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
+        patch.object(
+            close_finalization,
+            "unlinked_tagged_commits",
+            return_value=(([], []), None),
+        ),
     ):
         yield
 
@@ -458,7 +464,7 @@ async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None
         ),
         sessions=(task.claimed_by_session_id or "",),
     )
-    linked_paths = MagicMock(return_value=frozenset({"src/a.py"}))
+    linked_paths = AsyncMock(return_value=frozenset({"src/a.py"}))
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
@@ -509,7 +515,7 @@ async def test_ready_leaf_detaches_criteria_review_and_records_latency() -> None
     assert evaluation.error == "agentic_review_required"
     assert evaluation.extra["criteria_review_duration_ms"] == 12.5
     assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
-    linked_paths.assert_called_once_with(task, "/repo", ("base123", "abc123"))
+    linked_paths.assert_awaited_once_with(task, "/repo", ("base123", "abc123"))
     review.assert_awaited_once()
 
 
@@ -547,7 +553,7 @@ async def _evaluate_with_tagged_scan(
         sessions=(task.claimed_by_session_id or "",),
     )
     derive_transcript = AsyncMock(return_value=transcript)
-    tagged_scan = MagicMock(return_value=(scan, None))
+    tagged_scan = AsyncMock(return_value=(scan, None))
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
@@ -712,11 +718,11 @@ async def test_scope_justification_controls_downstream_close_evidence(
         findings=(),
         evidence_files=(),
     )
-    scope_check = MagicMock(return_value=scope)
-    dirty_paths = MagicMock(return_value=set())
-    validation_paths = MagicMock(return_value=set())
-    diff = MagicMock(return_value="diff")
-    acceptance = MagicMock(return_value=artifacts)
+    scope_check = AsyncMock(return_value=scope)
+    dirty_paths = AsyncMock(return_value=set())
+    validation_paths = AsyncMock(return_value=set())
+    diff = AsyncMock(return_value="diff")
+    acceptance = AsyncMock(return_value=artifacts)
     tdd = MagicMock(return_value=TddEvidenceResult(passed=True, skipped=False, findings=()))
     review = AsyncMock(
         return_value=ValidationResult(
@@ -776,11 +782,11 @@ async def test_scope_justification_controls_downstream_close_evidence(
     if continues:
         assert evaluation.ready is True
         assert [gate.item for gate in evaluation.gates] == list(range(1, 14))
-        dirty_paths.assert_called_once()
+        dirty_paths.assert_awaited_once()
         validation_paths.assert_called_once()
         transcript.assert_awaited_once()
-        diff.assert_called_once()
-        acceptance.assert_called_once()
+        diff.assert_awaited_once()
+        acceptance.assert_awaited_once()
         tdd.assert_called_once()
         review.assert_awaited_once()
         return
@@ -791,11 +797,11 @@ async def test_scope_justification_controls_downstream_close_evidence(
     assert response["out_of_scope_paths"] == ["src/gobby/service.py"]
     assert response["blocking_reasons"] == [justification_error]
     assert "scope_justification" in response["required_actions"][0]
-    dirty_paths.assert_not_called()
+    dirty_paths.assert_not_awaited()
     validation_paths.assert_not_called()
     transcript.assert_not_awaited()
-    diff.assert_not_called()
-    acceptance.assert_not_called()
+    diff.assert_not_awaited()
+    acceptance.assert_not_awaited()
     tdd.assert_not_called()
     review.assert_not_awaited()
 
@@ -1868,14 +1874,8 @@ def test_closed_task_cleanup_removes_only_its_edit_entry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_close_resolves_commits_and_validates_them_off_the_event_loop() -> None:
-    """Both helpers shell out to git, so neither may run on the loop.
-
-    resolve_close_commit_shas and validate_commit_requirements both reach
-    normalize_commit_sha -> run_git_command -> subprocess.run, which forks git
-    and then blocks waiting for it, up to a 5s timeout. The loop-lag watchdog
-    caught all three entry points doing it on the loop thread (#20861).
-    """
+async def test_close_awaits_commit_resolution_and_validation() -> None:
+    """Git subprocess ownership lives below these awaited daemon-facing helpers."""
     task = _task()
     ctx = _ctx(task, validator=object())
     # Both helpers run before the scope gate. Later deterministic gates are
@@ -1901,11 +1901,11 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
         evidence_files=(),
     )
 
-    def record_resolve(*_args: object, **_kwargs: object) -> tuple[list[str], None]:
+    async def record_resolve(*_args: object, **_kwargs: object) -> tuple[list[str], None]:
         resolved_on.append(threading.get_ident())
         return (["abc123"], None)
 
-    def record_validate(*_args: object, **_kwargs: object) -> ValidationResult:
+    async def record_validate(*_args: object, **_kwargs: object) -> ValidationResult:
         validated_on.append(threading.get_ident())
         return ValidationResult(can_close=True)
 
@@ -1950,8 +1950,8 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
     loop_thread = threading.get_ident()
     assert resolved_on, "resolve_close_commit_shas must run"
     assert validated_on, "validate_commit_requirements must run"
-    assert loop_thread not in resolved_on
-    assert loop_thread not in validated_on
+    assert resolved_on == [loop_thread]
+    assert validated_on == [loop_thread]
 
 
 @pytest.mark.asyncio

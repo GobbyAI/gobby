@@ -13,7 +13,10 @@ import tarfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from gobby.utils.daemon_git import GitResult
 
 MANIFEST_FILENAME = "bundled_content_manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -214,6 +217,38 @@ def check_committed_bundled_content_manifest(
     )
 
 
+async def check_committed_bundled_content_manifest_async(
+    repo_root: Path,
+    *,
+    treeish: str = "HEAD",
+) -> CommittedManifestCheck:
+    """Async runtime variant backed by the daemon Git service."""
+    try:
+        expected = await _build_committed_bundled_content_manifest_async(repo_root, treeish)
+        raw_manifest = await _git_bytes_async(
+            repo_root,
+            "show",
+            f"{treeish}:{_MANIFEST_TREE_PATH.as_posix()}",
+        )
+        committed = json.loads(raw_manifest.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, tarfile.TarError) as exc:
+        return CommittedManifestCheck(
+            ok=False,
+            treeish=treeish,
+            errors=(f"Cannot verify committed bundled content manifest: {exc}",),
+            expected_file_count=0,
+        )
+
+    if committed == expected:
+        return CommittedManifestCheck(True, treeish, (), len(expected["files"]))
+    return CommittedManifestCheck(
+        ok=False,
+        treeish=treeish,
+        errors=tuple(_manifest_parity_errors(committed, expected)),
+        expected_file_count=len(expected["files"]),
+    )
+
+
 def check_linked_committed_bundled_manifest(
     repo_root: Path,
     commit_shas: Iterable[str],
@@ -247,6 +282,39 @@ def check_linked_committed_bundled_manifest(
     return None
 
 
+async def check_linked_committed_bundled_manifest_async(
+    repo_root: Path,
+    commit_shas: Iterable[str],
+) -> CommittedManifestCheck | None:
+    """Runtime linked-commit check backed by the daemon Git service."""
+    for sha in commit_shas:
+        try:
+            changed = await _git_bytes_async(
+                repo_root,
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-z",
+                sha,
+            )
+        except OSError as exc:
+            return CommittedManifestCheck(
+                ok=False,
+                treeish="HEAD",
+                errors=(f"Cannot inspect linked commit {sha}: {exc}",),
+                expected_file_count=0,
+            )
+        if any(
+            path.startswith(f"{_SHARED_TREE_PATH.as_posix()}/")
+            for path in changed.decode("utf-8", errors="surrogateescape").split("\0")
+            if path
+        ):
+            return await check_committed_bundled_content_manifest_async(repo_root)
+    return None
+
+
 def _committed_shared_files(repo_root: Path, treeish: str) -> dict[str, bytes]:
     raw_archive = _git_bytes(
         repo_root,
@@ -255,6 +323,21 @@ def _committed_shared_files(repo_root: Path, treeish: str) -> dict[str, bytes]:
         treeish,
         _SHARED_TREE_PATH.as_posix(),
     )
+    return _shared_files_from_archive(raw_archive)
+
+
+async def _committed_shared_files_async(repo_root: Path, treeish: str) -> dict[str, bytes]:
+    raw_archive = await _git_bytes_async(
+        repo_root,
+        "archive",
+        "--format=tar",
+        treeish,
+        _SHARED_TREE_PATH.as_posix(),
+    )
+    return _shared_files_from_archive(raw_archive)
+
+
+def _shared_files_from_archive(raw_archive: bytes) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:") as archive:
         for member in archive.getmembers():
@@ -287,6 +370,22 @@ def _build_committed_bundled_content_manifest(
     }
 
 
+async def _build_committed_bundled_content_manifest_async(
+    repo_root: Path,
+    treeish: str,
+) -> BundledContentManifest:
+    shared_files = await _committed_shared_files_async(repo_root, treeish)
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "hash_algorithm": MANIFEST_HASH_ALGORITHM,
+        "root": MANIFEST_ROOT,
+        "files": {
+            relative: hashlib.sha256(content).hexdigest()
+            for relative, content in shared_files.items()
+        },
+    }
+
+
 def _should_include_relative_path(relative: PurePosixPath) -> bool:
     if any(part.startswith(".") for part in relative.parts):
         return False
@@ -304,6 +403,25 @@ def _git_bytes(repo_root: Path, *args: str) -> bytes:
         capture_output=True,
         timeout=10,
     ).stdout
+
+
+async def _git_bytes_async(repo_root: Path, *args: str) -> bytes:
+    from gobby.utils.daemon_git import GitOk, daemon_git
+
+    result = await daemon_git.run(args, cwd=repo_root, timeout=10.0)
+    if not isinstance(result, GitOk):
+        raise OSError(_daemon_git_error_text(result))
+    return result.stdout.encode("utf-8", errors="surrogateescape")
+
+
+def _daemon_git_error_text(result: GitResult) -> str:
+    from gobby.utils.daemon_git import GitFailed, GitTimeout
+
+    if isinstance(result, GitTimeout):
+        return f"git {' '.join(result.argv[1:])} timed out after {result.timeout:g}s"
+    if isinstance(result, GitFailed):
+        return result.stderr.strip() or f"git exited {result.returncode}"
+    return "git returned no usable output"
 
 
 def _git_error_text(exc: BaseException) -> str:

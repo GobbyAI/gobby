@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -139,7 +139,10 @@ class TestScannerUnavailableFailClosed:
         )
 
         with (
-            patch("gobby.skills.loader.SkillLoader.load_from_github", return_value=parsed),
+            patch(
+                "gobby.skills.loader.SkillLoader.load_from_github_async",
+                new=AsyncMock(return_value=parsed),
+            ),
             patch(
                 "gobby.skills.scanner.scan_parsed_skill",
                 side_effect=ImportError("no clawcare"),

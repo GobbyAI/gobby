@@ -17,7 +17,7 @@ import httpx
 from gobby.skills.hubs._streaming import SkillContentError, read_limited_utf8
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
 from gobby.skills.limits import MAX_SKILL_MD_BYTES
-from gobby.skills.loader import GitHubRef, clone_skill_repo, resolve_github_skill_path
+from gobby.skills.loader import GitHubRef, clone_skill_repo_async, resolve_github_skill_path
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
@@ -380,7 +380,7 @@ Output ONLY the description text, no quotes, no explanation, no preamble."""
         )
 
         # Clone/update the repository
-        repo_path = clone_skill_repo(ref)
+        repo_path = await clone_skill_repo_async(ref)
 
         # Path to the skill within the repo
         skill_path = resolve_github_skill_path(repo_path, skill_subpath)

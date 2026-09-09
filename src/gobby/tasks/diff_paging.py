@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import os
 import re
-import signal
-import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from gobby.tasks.diff_manifest import (
     Base64Content as Base64Content,
@@ -39,6 +37,7 @@ from gobby.tasks.diff_manifest import (
 from gobby.tasks.diff_manifest import (
     parse_numstat,
 )
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 MIN_LIMIT_BYTES = 4
 MAX_LIMIT_BYTES = 30_000
@@ -48,7 +47,6 @@ MAX_CURSOR_OFFSET = (1 << 63) - 1
 DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024
 DEFAULT_GIT_TIMEOUT_SECONDS = 5.0
 
-_GIT_READ_CHUNK_BYTES = 64 * 1024
 _MAX_GIT_ERROR_BYTES = 8 * 1024
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{4,64}$")
 
@@ -175,16 +173,7 @@ def _remaining_timeout(*, subprocess_deadline: float | None, git_timeout_seconds
     return remaining
 
 
-def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is None:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            process.kill()
-    process.wait()
-
-
-def _run_git(
+async def _run_git(
     args: Sequence[str | bytes],
     *,
     cwd: Path,
@@ -193,52 +182,33 @@ def _run_git(
     git_timeout_seconds: float,
     check: bool = True,
 ) -> tuple[int, bytes]:
-    argv = [b"git", *(os.fsencode(arg) if isinstance(arg, str) else arg for arg in args)]
     timeout = _remaining_timeout(
         subprocess_deadline=subprocess_deadline,
         git_timeout_seconds=git_timeout_seconds,
     )
-    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-        try:
-            process = subprocess.Popen(
-                argv,
-                cwd=cwd,
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            raise DiffPagingError("git_failed", f"failed to start git: {exc}") from exc
-        try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            pid = process.pid
-            _kill_and_reap(process)
-            raise DiffPagingError(
-                "git_timeout",
-                "git subprocess exceeded its deadline",
-                timeout_seconds=timeout,
-                pid=pid,
-                reaped=process.poll() is not None,
-            ) from exc
-        stderr_file.seek(0)
-        stderr = stderr_file.read(_MAX_GIT_ERROR_BYTES)
-        if check and process.returncode != 0:
-            message = stderr.decode("utf-8", errors="replace").strip()
+    argv = [os.fsdecode(arg) if isinstance(arg, bytes) else arg for arg in args]
+    result = await daemon_git.stream_bytes(argv, cwd=cwd, consume=consume, timeout=timeout)
+    if isinstance(result, GitTimeout):
+        raise DiffPagingError(
+            "git_timeout",
+            "git subprocess exceeded its deadline",
+            timeout_seconds=timeout,
+        )
+    stderr = result.stderr.encode("utf-8", errors="surrogateescape")[:_MAX_GIT_ERROR_BYTES]
+    if isinstance(result, GitFailed):
+        if result.returncode is None or check:
+            message = result.stderr.strip()
             raise DiffPagingError(
                 "git_failed",
-                message or f"git exited with status {process.returncode}",
-                returncode=process.returncode,
+                message or "git execution failed",
+                returncode=result.returncode,
             )
-        if process.returncode == 0 and consume is not None:
-            stdout_file.seek(0)
-            while chunk := stdout_file.read(_GIT_READ_CHUNK_BYTES):
-                consume(chunk)
-        return process.returncode, stderr
+        return result.returncode, stderr
+    assert isinstance(result, GitOk)
+    return 0, stderr
 
 
-def _read_git(
+async def _read_git(
     args: Sequence[str | bytes],
     *,
     cwd: Path,
@@ -246,7 +216,7 @@ def _read_git(
     git_timeout_seconds: float,
 ) -> bytes:
     chunks: list[bytes] = []
-    _run_git(
+    await _run_git(
         args,
         cwd=cwd,
         consume=chunks.append,
@@ -256,7 +226,7 @@ def _read_git(
     return b"".join(chunks)
 
 
-def _canonicalize_commits(
+async def _canonicalize_commits(
     commits: Sequence[str],
     *,
     cwd: Path,
@@ -268,7 +238,7 @@ def _canonicalize_commits(
         if not _COMMIT_RE.fullmatch(commit):
             raise DiffPagingError("invalid_commit", f"invalid commit SHA: {commit!r}")
         try:
-            stdout = _read_git(
+            stdout = await _read_git(
                 ["rev-parse", "--verify", f"{commit}^{{commit}}"],
                 cwd=cwd,
                 subprocess_deadline=subprocess_deadline,
@@ -308,14 +278,14 @@ def _encode_window(value: bytes) -> tuple[EncodedContent, int]:
         return encode_bytes(value), len(value)
 
 
-def _numstat_totals(
+async def _numstat_totals(
     commit: str,
     *,
     cwd: Path,
     subprocess_deadline: float | None,
     git_timeout_seconds: float,
 ) -> dict[bytes, tuple[int | None, int | None]]:
-    data = _read_git(
+    data = await _read_git(
         [
             "--literal-pathspecs",
             "show",
@@ -334,7 +304,7 @@ def _numstat_totals(
     return parse_numstat(data)
 
 
-def _manifest_page_candidates(
+async def _manifest_page_candidates(
     commits: Sequence[str],
     *,
     offset: int,
@@ -345,36 +315,23 @@ def _manifest_page_candidates(
     git_timeout_seconds: float,
 ) -> tuple[list[ManifestItem], int, tuple[str, bytes, str] | None]:
     items: list[ManifestItem] = []
+    item_paths: list[bytes] = []
     total = 0
     matched: tuple[str, bytes, str] | None = None
-    current_numstat: dict[bytes, tuple[int | None, int | None]] | None = None
-    numstat_loaded = False
 
     def emit(item: ManifestItem, raw_path: bytes) -> None:
-        nonlocal current_numstat, matched, numstat_loaded, total
+        nonlocal matched, total
         if offset <= total < offset + limit:
-            if not numstat_loaded:
-                current_numstat = _numstat_totals(
-                    item["commit"],
-                    cwd=cwd,
-                    subprocess_deadline=subprocess_deadline,
-                    git_timeout_seconds=git_timeout_seconds,
-                )
-                numstat_loaded = True
-            assert current_numstat is not None
-            magnitude = current_numstat.get(raw_path)
-            if magnitude is not None:
-                item["lines_added"], item["lines_deleted"] = magnitude
             items.append(item)
+            item_paths.append(raw_path)
         if wanted_selector is not None and item["path_selector"] == wanted_selector:
             matched = (item["commit"], raw_path, item["status"])
         total += 1
 
     for commit in commits:
-        current_numstat = None
-        numstat_loaded = False
+        first_item = len(items)
         parser = ManifestParser(commit, emit)
-        _run_git(
+        await _run_git(
             [
                 "--literal-pathspecs",
                 "show",
@@ -392,6 +349,17 @@ def _manifest_page_candidates(
             git_timeout_seconds=git_timeout_seconds,
         )
         parser.finish()
+        if len(items) > first_item:
+            numstat = await _numstat_totals(
+                commit,
+                cwd=cwd,
+                subprocess_deadline=subprocess_deadline,
+                git_timeout_seconds=git_timeout_seconds,
+            )
+            for item, raw_path in zip(items[first_item:], item_paths[first_item:], strict=True):
+                magnitude = numstat.get(raw_path)
+                if magnitude is not None:
+                    item["lines_added"], item["lines_deleted"] = magnitude
     return items, total, matched
 
 
@@ -444,7 +412,7 @@ def _validate_tokens(
         raise DiffPagingError("view_changed", "the paging cursor belongs to a different view")
 
 
-def _stream_diff_view(
+async def _stream_diff_view(
     *,
     commits: Sequence[str],
     selected_commit: str | None,
@@ -458,7 +426,7 @@ def _stream_diff_view(
 ) -> None:
     has_output = False
 
-    def stream_source(args: Sequence[str | bytes]) -> None:
+    async def stream_source(args: Sequence[str | bytes]) -> None:
         nonlocal has_output
         source_started = False
 
@@ -471,7 +439,7 @@ def _stream_diff_view(
                 has_output = True
             window.feed(chunk)
 
-        _run_git(
+        await _run_git(
             args,
             cwd=cwd,
             consume=consume,
@@ -494,7 +462,7 @@ def _stream_diff_view(
         ]
         if raw_path is not None:
             args.append(raw_path)
-        stream_source(args)
+        await stream_source(args)
 
     if include_uncommitted:
         label = (
@@ -513,7 +481,7 @@ def _stream_diff_view(
                 has_output = True
             window.feed(chunk)
 
-        _run_git(
+        await _run_git(
             [
                 "--literal-pathspecs",
                 "diff",
@@ -529,7 +497,7 @@ def _stream_diff_view(
         )
 
 
-def _stream_file_view(
+async def _stream_file_view(
     *,
     commit: str,
     raw_path: bytes,
@@ -541,7 +509,7 @@ def _stream_file_view(
     git_timeout_seconds: float,
 ) -> None:
     object_name = commit.encode("ascii") + b":" + raw_path
-    returncode, _ = _run_git(
+    returncode, _ = await _run_git(
         ["cat-file", "-e", object_name],
         cwd=cwd,
         consume=None,
@@ -555,7 +523,7 @@ def _stream_file_view(
             "the selected path does not exist at the requested commit",
             commit=commit,
         )
-    _run_git(
+    await _run_git(
         ["cat-file", "blob", object_name],
         cwd=cwd,
         consume=window.feed,
@@ -563,7 +531,7 @@ def _stream_file_view(
         git_timeout_seconds=git_timeout_seconds,
     )
     if include_uncommitted:
-        _run_git(
+        await _run_git(
             [
                 "--literal-pathspecs",
                 "diff",
@@ -720,7 +688,7 @@ def _fit_page(
     return build(raw_length, commit_count, manifest_count)
 
 
-def _get_page(
+async def _get_page(
     task_id: str,
     task_manager: TaskManagerProtocol,
     *,
@@ -754,7 +722,7 @@ def _get_page(
     if task is None:
         raise DiffPagingError("task_not_found", f"task {task_id} not found")
     repo = Path(cwd) if cwd is not None else Path.cwd()
-    canonical_commits = _canonicalize_commits(
+    canonical_commits = await _canonicalize_commits(
         _task_commits(task),
         cwd=repo,
         subprocess_deadline=subprocess_deadline,
@@ -762,17 +730,19 @@ def _get_page(
     )
     selected_commit: str | None = None
     if commit is not None:
-        requested = _canonicalize_commits(
-            [commit],
-            cwd=repo,
-            subprocess_deadline=subprocess_deadline,
-            git_timeout_seconds=git_timeout_seconds,
+        requested = (
+            await _canonicalize_commits(
+                [commit],
+                cwd=repo,
+                subprocess_deadline=subprocess_deadline,
+                git_timeout_seconds=git_timeout_seconds,
+            )
         )[0]
         if requested not in canonical_commits:
             raise DiffPagingError("commit_not_linked", "commit is not linked to the task")
         selected_commit = requested
 
-    manifest_candidates, manifest_total, path_match = _manifest_page_candidates(
+    manifest_candidates, manifest_total, path_match = await _manifest_page_candidates(
         canonical_commits,
         offset=manifest_offset,
         limit=manifest_limit,
@@ -805,7 +775,7 @@ def _get_page(
     window = _WindowCollector(offset_bytes, limit_bytes)
     if view_kind == "file":
         assert selected_commit is not None and raw_path is not None
-        _stream_file_view(
+        await _stream_file_view(
             commit=selected_commit,
             raw_path=raw_path,
             include_uncommitted=include_uncommitted,
@@ -816,7 +786,7 @@ def _get_page(
             git_timeout_seconds=git_timeout_seconds,
         )
     else:
-        _stream_diff_view(
+        await _stream_diff_view(
             commits=canonical_commits,
             selected_commit=selected_commit,
             raw_path=raw_path,
@@ -861,7 +831,7 @@ def _get_page(
     )
 
 
-def get_task_diff_page(
+async def get_task_diff_page_async(
     task_id: str,
     task_manager: TaskManagerProtocol,
     *,
@@ -888,7 +858,7 @@ def get_task_diff_page(
         kind = "commit_diff"
     else:
         kind = "task_diff"
-    return _get_page(
+    return await _get_page(
         task_id,
         task_manager,
         view_kind=kind,
@@ -910,7 +880,16 @@ def get_task_diff_page(
     )
 
 
-def read_file_at_commit(
+def get_task_diff_page(
+    task_id: str,
+    task_manager: TaskManagerProtocol,
+    **kwargs: Any,
+) -> DiffPage:
+    """Offline synchronous facade for CLI and direct-library consumers."""
+    return asyncio.run(get_task_diff_page_async(task_id, task_manager, **kwargs))
+
+
+async def read_file_at_commit_async(
     task_id: str,
     task_manager: TaskManagerProtocol,
     *,
@@ -931,7 +910,7 @@ def read_file_at_commit(
     git_timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
 ) -> DiffPage:
     """Return one byte page of a linked commit's selected file."""
-    return _get_page(
+    return await _get_page(
         task_id,
         task_manager,
         view_kind="file",
@@ -951,3 +930,12 @@ def read_file_at_commit(
         subprocess_deadline=subprocess_deadline,
         git_timeout_seconds=git_timeout_seconds,
     )
+
+
+def read_file_at_commit(
+    task_id: str,
+    task_manager: TaskManagerProtocol,
+    **kwargs: Any,
+) -> DiffPage:
+    """Offline synchronous facade for CLI and direct-library consumers."""
+    return asyncio.run(read_file_at_commit_async(task_id, task_manager, **kwargs))

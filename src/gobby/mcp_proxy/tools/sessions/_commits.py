@@ -8,13 +8,14 @@ This module contains MCP tools for:
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
     require_local_session_ownership,
 )
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def register_commits_tools(
         name="get_session_commits",
         description="Get git commits made during a session timeframe. Accepts #N, N, UUID, or prefix for session_id.",
     )
-    def get_session_commits(
+    async def get_session_commits(
         session_id: str,
         max_commits: int = 20,
     ) -> dict[str, Any]:
@@ -82,9 +83,6 @@ def register_commits_tools(
         Returns:
             Session ID, list of commits, and count
         """
-        import subprocess  # nosec B404 # subprocess needed for git commands
-        from datetime import datetime
-
         if session_manager is None:
             return {"success": False, "error": "Session manager not available"}
 
@@ -104,6 +102,12 @@ def register_commits_tools(
             return {"success": False, "error": str(exc)}
 
         cwd = _session_repo_cwd(session)
+        if cwd is None:
+            return {
+                "success": False,
+                "session_id": session.id,
+                "error": "Registered project checkout is unavailable",
+            }
 
         # Format timestamps for git --since/--until
         # Git expects ISO format or relative dates
@@ -125,71 +129,56 @@ def register_commits_tools(
         since_str = since_time.isoformat()
         until_str = until_time.isoformat()
 
-        try:
-            # Get commits within timeframe
-            cmd = [
-                "git",
+        result = await daemon_git.run(
+            [
                 "log",
                 f"--since={since_str}",
                 f"--until={until_str}",
                 f"-{max_commits}",
-                "--format=%H|%s|%aI",  # hash|subject|author-date-iso
-            ]
-
-            result = subprocess.run(  # nosec B603 # cmd built from hardcoded git arguments
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                cwd=cwd,
-            )
-
-            if result.returncode != 0:
-                return {
-                    "success": False,
-                    "session_id": session.id,
-                    "error": "Git command failed",
-                    "stderr": result.stderr.strip(),
-                }
-
-            commits = []
-            for line in result.stdout.strip().split("\n"):
-                if "|" in line:
-                    parts = line.split("|", 2)
-                    if len(parts) >= 2:
-                        commit = {
-                            "hash": parts[0],
-                            "message": parts[1],
-                        }
-                        if len(parts) >= 3:
-                            commit["timestamp"] = parts[2]
-                        commits.append(commit)
-
-            return {
-                "success": True,
-                "session_id": session.id,
-                "commits": commits,
-                "count": len(commits),
-                "timeframe": {
-                    "since": since_str,
-                    "until": until_str,
-                },
-            }
-
-        except subprocess.TimeoutExpired:
+                "--format=%H|%s|%aI",
+            ],
+            cwd=cwd,
+            timeout=10.0,
+        )
+        if isinstance(result, GitTimeout):
             return {
                 "success": False,
                 "session_id": session.id,
                 "error": "Git command timed out",
             }
-        except FileNotFoundError:
+        if isinstance(result, GitFailed):
             return {
                 "success": False,
                 "session_id": session.id,
-                "error": "Git executable not found in PATH",
+                "error": "Git command failed",
+                "stderr": result.stderr.strip(),
             }
-        except Exception as e:
-            return {"success": False, "session_id": session.id, "error": str(e)}
+        if not isinstance(result, GitOk):
+            return {"success": False, "session_id": session.id, "error": "Git unavailable"}
+
+        commits = []
+        for line in result.stdout.strip().split("\n"):
+            if "|" in line:
+                parts = line.split("|", 2)
+                if len(parts) >= 2:
+                    commit = {
+                        "hash": parts[0],
+                        "message": parts[1],
+                    }
+                    if len(parts) >= 3:
+                        commit["timestamp"] = parts[2]
+                    commits.append(commit)
+
+        return {
+            "success": True,
+            "session_id": session.id,
+            "commits": commits,
+            "count": len(commits),
+            "timeframe": {
+                "since": since_str,
+                "until": until_str,
+            },
+        }
 
     @registry.tool(
         name="mark_loop_complete",

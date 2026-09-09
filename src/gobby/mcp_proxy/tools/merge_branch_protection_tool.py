@@ -16,7 +16,7 @@ from gobby.mcp_proxy.tools.merge_github_protection import (
     push_dry_run_probe,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.git import get_github_url
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -51,17 +51,12 @@ def register_branch_protection_tool(
                 "error": "repo_path or resolvable worktree_id is required",
             }
 
-        remote_url: str | None = None
-        if git_manager is not None:
-            remote = await git_manager.run_git_command(
-                ["remote", "get-url", "origin"],
-                cwd=effective_repo_path,
-                timeout=10,
-            )
-            if remote.returncode == 0:
-                remote_url = remote.stdout.strip()
-        if not remote_url:
-            remote_url = get_github_url(effective_repo_path)
+        remote = await daemon_git.run(
+            ["remote", "get-url", "origin"],
+            cwd=effective_repo_path,
+            timeout=10.0,
+        )
+        remote_url = remote.stdout.strip() if isinstance(remote, GitOk) else None
         if not remote_url:
             return {"success": False, "error": "No origin remote found"}
 

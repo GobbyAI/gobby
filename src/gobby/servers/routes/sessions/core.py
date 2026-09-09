@@ -287,11 +287,15 @@ def register_core_routes(
             # Extract git branch if project path exists but git_branch not provided
             git_branch = request_data.git_branch
             if request_data.project_path and not git_branch:
-                from gobby.utils.git import get_git_metadata
+                from gobby.utils.daemon_git import GitOk, daemon_git
 
-                git_metadata = await asyncio.to_thread(get_git_metadata, request_data.project_path)
-                if git_metadata.get("git_branch"):
-                    git_branch = git_metadata.get("git_branch")
+                git_result = await daemon_git.run(
+                    ["branch", "--show-current"],
+                    cwd=request_data.project_path,
+                    timeout=5.0,
+                )
+                if isinstance(git_result, GitOk) and git_result.stdout.strip():
+                    git_branch = git_result.stdout.strip()
 
             # Resolve project_id from cwd if not provided
             project_id = await server.run_db(

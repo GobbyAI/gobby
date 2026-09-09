@@ -13,15 +13,18 @@ Features:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.skills.loader import (
+    GitHubRef,
     SkillLoader,
     SkillLoadError,
     clone_skill_repo,
+    clone_skill_repo_async,
     parse_github_url,
 )
 from gobby.skills.parser import ParsedSkill, SkillParseError, parse_skill_file
@@ -129,6 +132,8 @@ class SkillUpdater:
         self,
         skill_id: str,
         cache_dir: Path | None = None,
+        *,
+        _github_parsed: ParsedSkill | None = None,
     ) -> SkillUpdateResult:
         """Update a skill from its source.
 
@@ -167,7 +172,11 @@ class SkillUpdater:
         try:
             # Fetch updated content based on source type
             if skill.source_type == "github":
-                parsed = self._fetch_from_github(skill, cache_dir)
+                parsed = (
+                    _github_parsed
+                    if _github_parsed is not None
+                    else self._fetch_from_github(skill, cache_dir)
+                )
             elif skill.source_type in ("local", "filesystem"):
                 parsed = self._fetch_from_local(skill)
             else:
@@ -238,6 +247,39 @@ class SkillUpdater:
                 backup_created=True,
                 rolled_back=rollback_succeeded,
             )
+
+    async def update_skill_async(
+        self,
+        skill_id: str,
+        cache_dir: Path | None = None,
+    ) -> SkillUpdateResult:
+        """Runtime update path with daemon-backed GitHub materialization."""
+        try:
+            skill = await asyncio.to_thread(self._storage.get_skill, skill_id)
+        except ValueError as exc:
+            return SkillUpdateResult(
+                skill_id=skill_id,
+                skill_name="unknown",
+                success=False,
+                error=f"Skill not found: {exc}",
+            )
+        if skill.source_type != "github":
+            return await asyncio.to_thread(self.update_skill, skill_id, cache_dir)
+        try:
+            parsed = await self._fetch_from_github_async(skill, cache_dir)
+        except (SkillLoadError, SkillParseError, SkillUpdateError) as exc:
+            return SkillUpdateResult(
+                skill_id=skill_id,
+                skill_name=skill.name,
+                success=False,
+                error=str(exc),
+            )
+        return await asyncio.to_thread(
+            self.update_skill,
+            skill_id,
+            cache_dir,
+            _github_parsed=parsed,
+        )
 
     def update_all(
         self,
@@ -328,7 +370,22 @@ class SkillUpdater:
         cache_dir: Path | None = None,
     ) -> ParsedSkill:
         """Fetch updated skill from GitHub."""
-        # Parse the source path to get GitHub ref
+        ref = self._github_ref(skill)
+        repo_path = clone_skill_repo(ref, cache_dir=cache_dir)
+        return self._load_github_checkout(ref, repo_path)
+
+    async def _fetch_from_github_async(
+        self,
+        skill: Skill,
+        cache_dir: Path | None = None,
+    ) -> ParsedSkill:
+        """Fetch updated skill through the daemon Git service."""
+        ref = self._github_ref(skill)
+        repo_path = await clone_skill_repo_async(ref, cache_dir=cache_dir)
+        return await asyncio.to_thread(self._load_github_checkout, ref, repo_path)
+
+    @staticmethod
+    def _github_ref(skill: Skill) -> GitHubRef:
         if skill.source_path is None:
             raise SkillLoadError("Source path is not set")
         source: str = skill.source_path
@@ -340,9 +397,9 @@ class SkillUpdater:
             if "#" not in source:
                 source = f"{source}#{skill.source_ref}"
 
-        ref = parse_github_url(source)
-        repo_path = clone_skill_repo(ref, cache_dir=cache_dir)
+        return parse_github_url(source)
 
+    def _load_github_checkout(self, ref: GitHubRef, repo_path: Path) -> ParsedSkill:
         # Determine skill path in repo
         if ref.path:
             skill_path = repo_path / ref.path

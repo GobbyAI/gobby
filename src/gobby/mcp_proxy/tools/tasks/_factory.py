@@ -107,15 +107,15 @@ def create_task_registry(
     registry.merge_from(create_backup_registry(ctx))
 
     # Merge commit linking tools.
-    from gobby.tasks.commits import auto_link_commits as auto_link_commits_fn
-    from gobby.tasks.diff_paging import get_task_diff_page
+    from gobby.tasks.commits import auto_link_commits_async as auto_link_commits_fn
+    from gobby.tasks.diff_paging import get_task_diff_page_async
 
     registry.merge_from(
         create_commit_registry(
             task_manager=task_manager,
             project_manager=ctx.project_manager,
             auto_link_commits_fn=auto_link_commits_fn,
-            get_task_diff_page_fn=get_task_diff_page,
+            get_task_diff_page_fn=get_task_diff_page_async,
             session_manager=ctx.session_manager,
         )
     )

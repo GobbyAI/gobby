@@ -6,7 +6,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -255,8 +255,8 @@ def test_hypothesis_scope_inspects_linked_commits() -> None:
     with (
         patch.object(TaskAffectedFileManager, "get_files", return_value=annotations),
         patch(
-            "gobby.mcp_proxy.tools.tasks._task_scope.collect_commit_paths",
-            return_value={"src/gobby/service.py"},
+            "gobby.mcp_proxy.tools.tasks._task_scope.collect_commit_paths_async",
+            new=AsyncMock(return_value={"src/gobby/service.py"}),
         ) as collect_paths,
     ):
         evaluation = evaluate_task_scope(

@@ -17,6 +17,7 @@ from gobby.skills._loader_files import _classify_file, load_skill_files, scan_su
 from gobby.skills._loader_github import (
     DEFAULT_CACHE_DIR,
     clone_skill_repo,
+    clone_skill_repo_async,
     parse_github_url,
     resolve_github_skill_path,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "SkillLoader",
     "_classify_file",
     "clone_skill_repo",
+    "clone_skill_repo_async",
     "extract_zip",
     "parse_github_url",
     "resolve_github_skill_path",
@@ -304,6 +306,29 @@ class SkillLoader:
         """
         ref = parse_github_url(url)
         repo_path = clone_skill_repo(ref, cache_dir=cache_dir)
+        return self._load_github_checkout(ref, repo_path, validate=validate, load_all=load_all)
+
+    async def load_from_github_async(
+        self,
+        url: str,
+        validate: bool = True,
+        load_all: bool = False,
+        cache_dir: Path | None = None,
+    ) -> ParsedSkill | list[ParsedSkill]:
+        """Runtime GitHub loader backed by the daemon Git service."""
+        ref = parse_github_url(url)
+        repo_path = await clone_skill_repo_async(ref, cache_dir=cache_dir)
+        return self._load_github_checkout(ref, repo_path, validate=validate, load_all=load_all)
+
+    def _load_github_checkout(
+        self,
+        ref: GitHubRef,
+        repo_path: Path,
+        *,
+        validate: bool,
+        load_all: bool,
+    ) -> ParsedSkill | list[ParsedSkill]:
+        """Load parsed skill content from an already-materialized checkout."""
 
         # Determine the skill path within the repo
         skill_path = resolve_github_skill_path(repo_path, ref.path)

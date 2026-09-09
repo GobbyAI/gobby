@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import subprocess  # nosec B404 # used for fixed git push/current-branch commands.
 from typing import Any
 
 import httpx
 import psycopg
 
-from gobby.build.delivery import normalize_github_repo, resolve_project_source_repo
+from gobby.build.delivery import normalize_github_repo, resolve_project_source_repo_async
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
@@ -20,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._context import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.delivery import TaskDeliveryStateManager
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _GITHUB_TOKEN_ENV_NAMES = ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 _GITHUB_TOKEN_SECRET_NAMES = ("github_personal_access_token", "github_token", "gh_token")
@@ -180,11 +179,12 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
         state = delivery.get_state(resolved_id)
         campaign = state["campaign"] or {}
         try:
-            effective_source_repo = normalize_github_repo(
-                source_repo
-                or campaign.get("source_repo")
-                or resolve_project_source_repo(ctx.task_manager.db, project_id)
-            )
+            resolved_source_repo = source_repo or campaign.get("source_repo")
+            if not resolved_source_repo:
+                resolved_source_repo = await resolve_project_source_repo_async(
+                    ctx.task_manager.db, project_id
+                )
+            effective_source_repo = normalize_github_repo(resolved_source_repo)
             effective_target_repo = normalize_github_repo(
                 target_repo or campaign.get("target_repo") or effective_source_repo
             )
@@ -193,8 +193,7 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 effective_source_branch = source_branch
             else:
                 repo_path = _repo_path(ctx, project_id, worktree)
-                effective_source_branch = await asyncio.to_thread(
-                    _resolve_source_branch,
+                effective_source_branch = await _resolve_source_branch(
                     source_branch=source_branch,
                     worktree=worktree,
                     repo_path=repo_path,
@@ -233,8 +232,7 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if push:
                 if repo_path is None:
                     repo_path = _repo_path(ctx, project_id, worktree)
-                await asyncio.to_thread(
-                    _push_branch,
+                await _push_branch(
                     repo_path=repo_path,
                     source_branch=effective_source_branch,
                     remote_branch=effective_source_branch,
@@ -402,7 +400,7 @@ def _repo_path(ctx: RegistryContext, project_id: str, worktree: Any | None) -> s
     return repo_path
 
 
-def _resolve_source_branch(
+async def _resolve_source_branch(
     *,
     source_branch: str | None,
     worktree: Any | None,
@@ -412,55 +410,40 @@ def _resolve_source_branch(
         return source_branch
     if worktree is not None and getattr(worktree, "branch_name", None):
         return str(worktree.branch_name)
-    result = subprocess.run(  # nosec B603 B607 # fixed git command.
-        ["git", "branch", "--show-current"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    branch = result.stdout.strip() if result.returncode == 0 else ""
+    result = await daemon_git.run(("branch", "--show-current"), cwd=repo_path, timeout=10)
+    branch = result.stdout.strip() if isinstance(result, GitOk) else ""
     if not branch:
         raise ValueError("source_branch is required when current branch cannot be resolved")
     return branch
 
 
-def _push_branch(
+async def _push_branch(
     *,
     repo_path: str,
     source_branch: str,
     remote_branch: str,
     force_with_lease: bool,
 ) -> None:
-    _validate_branch_ref(repo_path, source_branch, label="source")
-    _validate_branch_ref(repo_path, remote_branch, label="remote")
-    command = ["git", "push", "--no-verify"]
+    await _validate_branch_ref(repo_path, source_branch, label="source")
+    await _validate_branch_ref(repo_path, remote_branch, label="remote")
+    command = ["push", "--no-verify"]
     if force_with_lease:
         command.append("--force-with-lease")
     command.extend(["origin", f"{source_branch}:{remote_branch}"])
-    result = subprocess.run(  # nosec B603 B607 # fixed git command with validated args.
-        command,
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
+    result = await daemon_git.run(command, cwd=repo_path, timeout=60)
+    if not isinstance(result, GitOk):
         raise RuntimeError(f"git push failed: {result.stderr.strip() or result.stdout.strip()}")
 
 
-def _validate_branch_ref(repo_path: str, branch: str, *, label: str) -> None:
-    result = subprocess.run(  # nosec B603 B607 # fixed git command with validated args.
-        ["git", "check-ref-format", "--branch", branch],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
+async def _validate_branch_ref(repo_path: str, branch: str, *, label: str) -> None:
+    result = await daemon_git.run(
+        ("check-ref-format", "--branch", branch), cwd=repo_path, timeout=10
     )
-    if result.returncode != 0:
+    if isinstance(result, GitTimeout) or (
+        isinstance(result, GitFailed) and result.returncode is None
+    ):
+        raise RuntimeError("git is unavailable while validating a branch ref")
+    if not isinstance(result, GitOk):
         detail = result.stderr.strip() or result.stdout.strip()
         suffix = f": {detail}" if detail else ""
         raise ValueError(f"{label}_branch is not a valid git branch ref: {branch!r}{suffix}")

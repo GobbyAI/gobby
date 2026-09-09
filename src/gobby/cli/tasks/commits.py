@@ -8,6 +8,7 @@ import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.tasks.commits import auto_link_commits, collect_task_diff_text
+from gobby.utils.git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 
 
@@ -42,7 +43,10 @@ def link_commit(task_id: str, commit_sha: str) -> None:
 
     try:
         cwd = _get_project_cwd()
-        updated_task = manager.link_commit(task.id, commit_sha, cwd=cwd)
+        normalized = normalize_commit_sha(commit_sha, cwd=cwd)
+        if normalized is None:
+            raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
+        updated_task = manager.link_commit(task.id, normalized)
         stored_sha = updated_task.commits[-1] if updated_task.commits else commit_sha
         click.echo(f"Linked commit {stored_sha} to task {task.id}")
         if updated_task.commits:
@@ -69,7 +73,10 @@ def unlink_commit(task_id: str, commit_sha: str) -> None:
     try:
         existing_commits = list(task.commits or [])
         cwd = _get_project_cwd()
-        updated_task = manager.unlink_commit(task.id, commit_sha, cwd=cwd)
+        normalized = normalize_commit_sha(commit_sha, cwd=cwd)
+        if normalized is None:
+            raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
+        updated_task = manager.unlink_commit(task.id, normalized)
         remaining_commits = list(updated_task.commits or [])
         if existing_commits == remaining_commits:
             click.echo(f"Commit {commit_sha} not found on task {task.id}; nothing to unlink")

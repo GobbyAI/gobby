@@ -213,8 +213,8 @@ class TestInstallSkillTool:
         mock_skill.metadata = {}
 
         mocker.patch(
-            "gobby.skills.loader.SkillLoader.load_from_github",
-            return_value=mock_skill,
+            "gobby.skills.loader.SkillLoader.load_from_github_async",
+            new=mocker.AsyncMock(return_value=mock_skill),
         )
 
         registry = create_skills_registry(db)

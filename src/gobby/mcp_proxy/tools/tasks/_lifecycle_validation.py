@@ -19,6 +19,7 @@ from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation import ValidationPromptTooLarge
 from gobby.tasks.validation_history import ValidationHistoryManager
+from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.datetime import utc_now
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
@@ -47,7 +48,7 @@ class ValidationResult:
     reset_reason: str | None = None
 
 
-def validate_commit_requirements(
+async def validate_commit_requirements(
     task: Task,
     reason: str,
     repo_path: str | None = None,
@@ -64,9 +65,9 @@ def validate_commit_requirements(
             ),
         )
     if repo_path:
-        from gobby.utils.git import normalize_commit_sha
-
-        stale = [sha for sha in task.commits if normalize_commit_sha(sha, cwd=repo_path) is None]
+        stale = [
+            sha for sha in task.commits if await normalize_commit_sha(sha, cwd=repo_path) is None
+        ]
         if stale:
             return ValidationResult(
                 can_close=False,

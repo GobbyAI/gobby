@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 from functools import partial
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -486,8 +486,8 @@ class TestGitHubCollectionProviderCloneSkill:
 
         mock_repo_path = Path("/tmp/cache/anthropics/skills")
         with patch(
-            "gobby.skills.hubs.github_collection.clone_skill_repo",
-            return_value=mock_repo_path,
+            "gobby.skills.hubs.github_collection.clone_skill_repo_async",
+            new=AsyncMock(return_value=mock_repo_path),
         ) as mock_clone:
             result = await provider._clone_skill("commit-message")
 
@@ -515,8 +515,8 @@ class TestGitHubCollectionProviderCloneSkill:
 
         mock_repo_path = Path("/tmp/cache/anthropics/skills")
         with patch(
-            "gobby.skills.hubs.github_collection.clone_skill_repo",
-            return_value=mock_repo_path,
+            "gobby.skills.hubs.github_collection.clone_skill_repo_async",
+            new=AsyncMock(return_value=mock_repo_path),
         ) as mock_clone:
             await provider._clone_skill("commit-message", version="v2.0.0")
 
@@ -547,8 +547,8 @@ class TestGitHubCollectionProviderCloneSkill:
             target_dir = Path(tmpdir) / "target"
 
             with patch(
-                "gobby.skills.hubs.github_collection.clone_skill_repo",
-                return_value=mock_repo_path,
+                "gobby.skills.hubs.github_collection.clone_skill_repo_async",
+                new=AsyncMock(return_value=mock_repo_path),
             ):
                 result = await provider._clone_skill("commit-message", target_dir=str(target_dir))
 
@@ -575,8 +575,8 @@ class TestGitHubCollectionProviderCloneSkill:
 
         with (
             patch(
-                "gobby.skills.hubs.github_collection.clone_skill_repo",
-                side_effect=clone_into_test_cache,
+                "gobby.skills.hubs.github_collection.clone_skill_repo_async",
+                new=AsyncMock(side_effect=clone_into_test_cache),
             ),
             patch("gobby.skills.hubs.github_collection.shutil.copytree") as mock_copy,
             patch("subprocess.run") as mock_run,

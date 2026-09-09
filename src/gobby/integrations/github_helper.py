@@ -7,15 +7,14 @@ Local-only operations (status, diff, merge, checkout) remain as git subprocess.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import binascii
 import logging
-import subprocess  # nosec B404 # subprocess needed for git fallback
 from typing import TYPE_CHECKING, Any
 
 from gobby.integrations.github import GitHubIntegration
 from gobby.integrations.mcp_result import MCPToolResultError, parse_mcp_tool_result
+from gobby.utils.daemon_git import GitResult, GitTimeout, daemon_git
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -179,27 +178,13 @@ class GitHubMCPHelper:
 
         return records[:total_limit]
 
-    def _run_git(
-        self,
-        args: list[str],
-        timeout: int = 30,
-    ) -> subprocess.CompletedProcess[str]:
-        """Run a git command as fallback."""
-        return subprocess.run(  # nosec B603 B607
-            ["git", *args],
-            cwd=self.repo_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
     async def _run_git_async(
         self,
         args: list[str],
         timeout: int = 30,
-    ) -> subprocess.CompletedProcess[str]:
-        """Run a git command as fallback, off the event loop."""
-        return await asyncio.to_thread(self._run_git, args, timeout)
+    ) -> GitResult:
+        """Run a Git fallback through the daemon-owned subprocess service."""
+        return await daemon_git.run(args, cwd=self.repo_path, timeout=timeout)
 
     async def list_commits(
         self,
@@ -255,16 +240,16 @@ class GitHubMCPHelper:
 
         # Fallback: git log
         try:
-            return await asyncio.to_thread(self._list_commits_git, branch, limit)
+            return await self._list_commits_git(branch, limit)
         except Exception as fallback_error:
             if mcp_error is not None:
                 raise fallback_error from mcp_error
             raise
 
-    def _list_commits_git(self, branch: str, limit: int) -> list[dict[str, Any]]:
+    async def _list_commits_git(self, branch: str, limit: int) -> list[dict[str, Any]]:
         """List commits using git log as fallback."""
         _validate_git_ref(branch, "branch")
-        r = self._run_git(
+        r = await self._run_git_async(
             [
                 "log",
                 branch,
@@ -333,13 +318,12 @@ class GitHubMCPHelper:
 
         # Fallback: git show
         ref = branch or "HEAD"
-        try:
-            r = await self._run_git_async(["show", f"{ref}:{path}"], timeout=10)
-            if r.returncode == 0:
-                return r.stdout
-            raise FileNotFoundError(f"File not found: {path} at {ref}")
-        except subprocess.TimeoutExpired as err:
-            raise TimeoutError(f"git show timed out for {path}") from err
+        r = await self._run_git_async(["show", f"{ref}:{path}"], timeout=10)
+        if isinstance(r, GitTimeout):
+            raise TimeoutError(f"git show timed out for {path}")
+        if r.returncode == 0:
+            return r.stdout
+        raise FileNotFoundError(f"File not found: {path} at {ref}")
 
     async def create_branch(
         self,

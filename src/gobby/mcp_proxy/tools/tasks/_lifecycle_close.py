@@ -10,12 +10,14 @@ from time import perf_counter
 from typing import Any, Literal
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
-from gobby.install.manifest import check_linked_committed_bundled_manifest
+from gobby.install.manifest import (
+    check_linked_committed_bundled_manifest_async as check_linked_committed_bundled_manifest,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
     CloseWorktreeRoot,
     RepoPathValidationError,
-    resolve_close_worktree_root,
+    resolve_close_worktree_root_async,
     resolve_task_repo_path,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
@@ -62,17 +64,24 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     validate_uncommitted_task_edits,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths, evaluate_task_scope
+from gobby.mcp_proxy.tools.tasks._task_scope import (
+    collect_commit_paths_async as collect_commit_paths,
+)
+from gobby.mcp_proxy.tools.tasks._task_scope import (
+    evaluate_task_scope_async as evaluate_task_scope,
+)
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
-    evaluate_acceptance_artifacts,
+    evaluate_acceptance_artifacts_async as evaluate_acceptance_artifacts,
+)
+from gobby.tasks.acceptance_artifacts import (
     extract_artifact_references,
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.commits import collect_commit_diff_text
+from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.criteria_contract import operational_actions_from_command
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -82,7 +91,7 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
 )
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
-from gobby.workflows.task_dirty_state import task_dirty_paths as _task_dirty_paths
+from gobby.workflows.task_dirty_state import task_dirty_paths_async as _task_dirty_paths
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
 logger = logging.getLogger(__name__)
@@ -232,10 +241,7 @@ async def _evaluate_close(
             "close_task requires a registered repository path.",
         )
     if project_path is None:
-        # Off the loop: git merge-base per linked commit (#20861). An explicit
-        # project_path is the caller's root choice and skips the default.
-        close_root = await asyncio.to_thread(
-            resolve_close_worktree_root,
+        close_root = await resolve_close_worktree_root_async(
             task_manager=ctx.task_manager,
             task=task,
             commit_shas=[*(task.commits or []), *([commit_sha] if commit_sha else [])],
@@ -275,10 +281,7 @@ async def _evaluate_close(
             children_state=children_state,
             attribution=None,
         )
-        # Off the loop: this reaches normalize_commit_sha -> run_git_command ->
-        # subprocess.run, which forks git and then blocks waiting for it (#20861).
-        evaluation.commit_shas, _commit_error = await asyncio.to_thread(
-            resolve_close_commit_shas,
+        evaluation.commit_shas, _commit_error = await resolve_close_commit_shas(
             ctx.task_manager,
             task=task,
             task_id=resolved_id,
@@ -336,8 +339,7 @@ async def _evaluate_close(
         task=task,
         resolved_id=resolved_id,
     )
-    commit_shas, commit_error = await asyncio.to_thread(
-        resolve_close_commit_shas,
+    commit_shas, commit_error = await resolve_close_commit_shas(
         ctx.task_manager,
         task=task,
         task_id=resolved_id,
@@ -356,8 +358,7 @@ async def _evaluate_close(
         )
     # Fail fast on tagged commits the review would never see: in #21451 five
     # review failures and an escalation stood in for this one git scan.
-    (unlinked_on_head, tagged_elsewhere), tagged_error = await asyncio.to_thread(
-        unlinked_tagged_commits,
+    (unlinked_on_head, tagged_elsewhere), tagged_error = await unlinked_tagged_commits(
         ctx.task_manager,
         task=task,
         task_id=resolved_id,
@@ -425,10 +426,7 @@ async def _evaluate_close(
     )
     evaluation_task = replace(task, commits=commit_shas or None)
     if evaluation.had_attributed_edits:
-        # Off the loop: normalize_commit_sha again, once per already-linked commit.
-        commit_result = await asyncio.to_thread(
-            validate_commit_requirements, evaluation_task, reason, repo_path
-        )
+        commit_result = await validate_commit_requirements(evaluation_task, reason, repo_path)
         if not commit_result.can_close:
             commit_extra = dict(commit_result.extra)
             if evaluation.response_detail == "diagnostic":
@@ -440,11 +438,7 @@ async def _evaluate_close(
                 commit_result.message or "Link a commit for the attributed task edits.",
                 extra=commit_extra,
             )
-    manifest_check = await asyncio.to_thread(
-        check_linked_committed_bundled_manifest,
-        Path(repo_path),
-        commit_shas,
-    )
+    manifest_check = await check_linked_committed_bundled_manifest(Path(repo_path), commit_shas)
     if manifest_check is not None and not manifest_check.ok:
         details = {
             "treeish": manifest_check.treeish,
@@ -475,8 +469,7 @@ async def _evaluate_close(
     )
 
     try:
-        scope = await asyncio.to_thread(
-            evaluate_task_scope,
+        scope = await evaluate_task_scope(
             db=ctx.task_manager.db,
             task=task,
             commit_shas=commit_shas,
@@ -522,7 +515,7 @@ async def _evaluate_close(
             )
 
     dirty_paths = (
-        await asyncio.to_thread(_task_dirty_paths, evaluation.edited_paths, repo_path)
+        await _task_dirty_paths(evaluation.edited_paths, repo_path)
         if evaluation.edited_paths
         else set()
     )
@@ -548,7 +541,7 @@ async def _evaluate_close(
         evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
 
     try:
-        committed_paths = await asyncio.to_thread(collect_commit_paths, commit_shas, repo_path)
+        committed_paths = await collect_commit_paths(commit_shas, repo_path)
     except RuntimeError as exc:
         return evaluation.fail(
             10,
@@ -641,11 +634,7 @@ async def _evaluate_close(
         return evaluation
 
     try:
-        diff_text = await asyncio.to_thread(
-            collect_commit_diff_text,
-            commit_shas,
-            cwd=repo_path,
-        )
+        diff_text = await collect_commit_diff_text(commit_shas, cwd=repo_path)
     except RuntimeError as exc:
         infra = record_validation_infrastructure_failure(
             task,
@@ -679,8 +668,7 @@ async def _evaluate_close(
                 skipped=True,
             )
     else:
-        artifacts = await asyncio.to_thread(
-            evaluate_acceptance_artifacts,
+        artifacts = await evaluate_acceptance_artifacts(
             criteria=task.validation_criteria or "",
             repo_path=repo_path,
             commit_shas=commit_shas,

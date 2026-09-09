@@ -13,7 +13,9 @@ import pytest
 from gobby.install.manifest import (
     build_bundled_content_manifest,
     check_committed_bundled_content_manifest,
+    check_committed_bundled_content_manifest_async,
     check_linked_committed_bundled_manifest,
+    check_linked_committed_bundled_manifest_async,
     main,
     write_bundled_content_manifest,
 )
@@ -86,7 +88,9 @@ def test_main_write_treeish_uses_committed_shared_files(
     assert manifest_path.read_bytes() == expected
 
 
-def test_committed_checker_ignores_worktree_and_scopes_linked_commits(tmp_path: Path) -> None:
+async def test_committed_checker_ignores_worktree_and_scopes_linked_commits(
+    tmp_path: Path,
+) -> None:
     install_dir = tmp_path / "src" / "gobby" / "install"
     shared_dir = install_dir / "shared"
     shared_dir.mkdir(parents=True)
@@ -111,9 +115,13 @@ def test_committed_checker_ignores_worktree_and_scopes_linked_commits(tmp_path: 
     (shared_dir / "foreign.yaml").write_text("foreign: true\n", encoding="utf-8")
     stale = check_committed_bundled_content_manifest(tmp_path)
     linked = check_linked_committed_bundled_manifest(tmp_path, [shared_sha])
+    async_stale = await check_committed_bundled_content_manifest_async(tmp_path)
+    async_linked = await check_linked_committed_bundled_manifest_async(tmp_path, [shared_sha])
     assert stale.ok is False
     assert stale.errors[0] == "Committed bundled content manifest is stale."
     assert linked is not None and linked.ok is False
+    assert async_stale == stale
+    assert async_linked == linked
     stale_cli = subprocess.run(
         [
             sys.executable,
@@ -137,12 +145,14 @@ def test_committed_checker_ignores_worktree_and_scopes_linked_commits(tmp_path: 
     _git(tmp_path, "commit", "-qm", "unrelated")
     unrelated_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
     assert check_linked_committed_bundled_manifest(tmp_path, [unrelated_sha]) is None
+    assert await check_linked_committed_bundled_manifest_async(tmp_path, [unrelated_sha]) is None
 
     _git(tmp_path, "add", "src/gobby/install/bundled_content_manifest.json")
     _git(tmp_path, "commit", "-qm", "refresh manifest")
     rule.write_text("foreign working-tree edit\n", encoding="utf-8")
     clean = check_committed_bundled_content_manifest(tmp_path)
     assert clean.ok is True
+    assert await check_committed_bundled_content_manifest_async(tmp_path) == clean
 
     cli = subprocess.run(
         [

@@ -10,7 +10,8 @@ Provides tools for linking git commits to tasks:
 Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -31,6 +32,7 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
+from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
@@ -73,7 +75,7 @@ def create_commit_registry(
     task_manager: "LocalTaskManager | None" = None,
     project_manager: "LocalProjectManager | None" = None,
     auto_link_commits_fn: Callable[..., Any] | None = None,
-    get_task_diff_page_fn: Callable[..., DiffPage] | None = None,
+    get_task_diff_page_fn: Callable[..., DiffPage | Awaitable[DiffPage]] | None = None,
     git_timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
     session_manager: Any | None = None,
 ) -> InternalToolRegistry:
@@ -127,7 +129,7 @@ def create_commit_registry(
 
     # --- link_commit ---
 
-    def link_commit(
+    async def link_commit(
         task_id: str,
         commit_sha: str,
         project_path: str | None = None,
@@ -148,8 +150,11 @@ def create_commit_registry(
         if denied:
             return denied
 
+        normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
+        if normalized is None:
+            return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
         try:
-            task = task_manager.link_commit(resolved_task_id, commit_sha, cwd=repo_path)
+            task = task_manager.link_commit(resolved_task_id, normalized)
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
@@ -186,7 +191,7 @@ def create_commit_registry(
 
     # --- unlink_commit ---
 
-    def unlink_commit(
+    async def unlink_commit(
         task_id: str,
         commit_sha: str,
         project_path: str | None = None,
@@ -207,8 +212,11 @@ def create_commit_registry(
         if denied:
             return denied
 
+        normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
+        if normalized is None:
+            return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
         try:
-            task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=repo_path)
+            task = task_manager.unlink_commit(resolved_task_id, normalized)
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
@@ -245,7 +253,7 @@ def create_commit_registry(
 
     # --- auto_link_commits ---
 
-    def auto_link_commits(
+    async def auto_link_commits(
         task_id: str | None = None,
         since: str | None = None,
         project_path: str | None = None,
@@ -292,6 +300,8 @@ def create_commit_registry(
             cwd=repo_path,
             project_id=project_id,
         )
+        if inspect.isawaitable(result):
+            result = await result
 
         return {
             "linked_tasks": result.linked_tasks,
@@ -332,7 +342,7 @@ def create_commit_registry(
 
     # --- get_task_diff ---
 
-    def get_task_diff_tool(
+    async def get_task_diff_tool(
         task_id: str,
         include_uncommitted: bool = False,
         project_path: str | None = None,
@@ -367,26 +377,26 @@ def create_commit_registry(
             }
 
         try:
-            return cast(
-                dict[str, Any],
-                get_task_diff_page_fn(
-                    task_id=resolved_task_id,
-                    task_manager=task_manager,
-                    include_uncommitted=include_uncommitted,
-                    cwd=repo_path,
-                    commit=commit,
-                    path_selector=path_selector,
-                    offset_bytes=offset_bytes,
-                    limit_bytes=limit_bytes,
-                    commits_offset=commits_offset,
-                    commits_limit=commits_limit,
-                    manifest_offset=manifest_offset,
-                    manifest_limit=manifest_limit,
-                    snapshot_hash=snapshot_hash,
-                    view_hash=view_hash,
-                    git_timeout_seconds=git_timeout_seconds,
-                ),
+            page = get_task_diff_page_fn(
+                task_id=resolved_task_id,
+                task_manager=task_manager,
+                include_uncommitted=include_uncommitted,
+                cwd=repo_path,
+                commit=commit,
+                path_selector=path_selector,
+                offset_bytes=offset_bytes,
+                limit_bytes=limit_bytes,
+                commits_offset=commits_offset,
+                commits_limit=commits_limit,
+                manifest_offset=manifest_offset,
+                manifest_limit=manifest_limit,
+                snapshot_hash=snapshot_hash,
+                view_hash=view_hash,
+                git_timeout_seconds=git_timeout_seconds,
             )
+            if inspect.isawaitable(page):
+                page = await page
+            return cast(dict[str, Any], page)
         except DiffPagingError as exc:
             return exc.as_dict()
 

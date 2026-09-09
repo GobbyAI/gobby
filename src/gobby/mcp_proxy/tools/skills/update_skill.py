@@ -18,7 +18,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         name="update_skill",
         description="Update a skill by refreshing from its source. Returns whether the skill was updated.",
     )
-    def update_skill(
+    async def update_skill(
         name: str | None = None,
         skill_id: str | None = None,
     ) -> dict[str, Any]:
@@ -53,7 +53,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             # Use SkillUpdater to refresh from source
             # (notifier triggers re-indexing automatically if updated)
-            result = ctx.updater.update_skill(skill.id)
+            result = await ctx.updater.update_skill_async(skill.id)
 
             if result.error:
                 return {"success": False, "error": result.error}

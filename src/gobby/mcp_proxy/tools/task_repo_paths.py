@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import os
 import stat
@@ -23,7 +24,7 @@ from gobby.storage.project_checkouts import (
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
-from gobby.utils.git import run_git_command
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ class CloseWorktreeRoot:
         return self.repo_path is not None
 
 
-def resolve_close_worktree_root(
+async def resolve_close_worktree_root_async(
     *,
     task_manager: LocalTaskManager,
     task: Task,
@@ -101,12 +102,13 @@ def resolve_close_worktree_root(
             f"registered worktree {worktree_path} was not used: "
             "the close names no linked commit to locate there",
         )
-    unreachable = [
-        sha
-        for sha in commit_shas
-        if run_git_command(["git", "merge-base", "--is-ancestor", sha, "HEAD"], cwd=resolved)
-        is None
-    ]
+    unreachable = []
+    for sha in commit_shas:
+        result = await daemon_git.run(
+            ("merge-base", "--is-ancestor", sha, "HEAD"), cwd=resolved, timeout=5
+        )
+        if not isinstance(result, GitOk):
+            unreachable.append(sha)
     if unreachable:
         return CloseWorktreeRoot(
             worktree_path,
@@ -115,6 +117,22 @@ def resolve_close_worktree_root(
             f"{', '.join(unreachable)} is not reachable from its HEAD",
         )
     return CloseWorktreeRoot(worktree_path, str(resolved), None)
+
+
+def resolve_close_worktree_root(
+    *,
+    task_manager: LocalTaskManager,
+    task: Task,
+    commit_shas: Sequence[str],
+) -> CloseWorktreeRoot:
+    """Offline synchronous facade for direct-library consumers."""
+    return asyncio.run(
+        resolve_close_worktree_root_async(
+            task_manager=task_manager,
+            task=task,
+            commit_shas=commit_shas,
+        )
+    )
 
 
 def resolve_project_repo_path(

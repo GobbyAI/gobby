@@ -541,7 +541,10 @@ class TestSkillsMPDownload:
                 "_make_request",
                 return_value={"skills": [{"id": "test-skill", "githubUrl": "https://example.com"}]},
             ),
-            patch("gobby.skills.hubs.skillsmp.clone_skill_repo") as clone,
+            patch(
+                "gobby.skills.hubs.skillsmp.clone_skill_repo_async",
+                new=AsyncMock(),
+            ) as clone,
         ):
             result = await provider.download_skill("test-skill")
 
@@ -580,7 +583,10 @@ class TestSkillsMPDownload:
                     ]
                 },
             ) as request,
-            patch("gobby.skills.hubs.skillsmp.clone_skill_repo", return_value=repo) as clone,
+            patch(
+                "gobby.skills.hubs.skillsmp.clone_skill_repo_async",
+                new=AsyncMock(return_value=repo),
+            ) as clone,
         ):
             result = await provider.download_skill("openapi", target_dir=str(target))
 

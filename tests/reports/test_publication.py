@@ -14,6 +14,7 @@ from gobby.reports.storage import ReportStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.daemon_git import GitTimeout, daemon_git
 
 pytestmark = pytest.mark.integration
 
@@ -115,7 +116,7 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     attempt = store.begin("dream", run_id)
     assert attempt is not None
     report = store.prepare_task("dream", run_id)
-    content = _content(run_id)
+    content = _content(run_id).replace("\n", "\r\n")
     store.save_draft("dream", run_id, content)
     _git(tmp_path, "init", "-b", "main")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -141,16 +142,16 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     )
     report = store.get("dream", run_id)
     with pytest.raises(ValueError, match="closed documentation task"):
-        verify_publication(store, report, tmp_path, attempt)
+        await verify_publication(store, report, tmp_path, attempt)
     temp_db.execute(
         "UPDATE tasks SET closed_at = now(), commits = %s WHERE id = %s",
         (json.dumps([sha]), report["task_id"]),
     )
     with pytest.raises(ValueError, match="draft hash"):
-        verify_publication(store, {**report, "content_hash": "wrong"}, tmp_path, attempt)
+        await verify_publication(store, {**report, "content_hash": "wrong"}, tmp_path, attempt)
     # A restart after commit/task close verifies the saved draft directly;
     # no second synthesis agent is needed to finish publication.
-    from unittest.mock import AsyncMock, Mock
+    from unittest.mock import AsyncMock
 
     from tests.reports.test_service import _reporter
 
@@ -158,12 +159,13 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     spawn = AsyncMock()
     monkeypatch.setattr(reporter, "_spawn", spawn)
     source_before = MemoryDreamStore(temp_db).get_run(run_id)
-    command = ["git", "-C", str(tmp_path), "rev-parse", "--verify", report["branch_name"]]
-    timeout = subprocess.TimeoutExpired(
-        command, 30, output=b"partial output", stderr=b"transport stalled"
+    timeout = GitTimeout(
+        status="timeout",
+        argv=("git", "rev-parse", "--verify", report["branch_name"]),
+        timeout=30.0,
     )
     with monkeypatch.context() as patcher:
-        patcher.setattr("gobby.reports.publication.subprocess.run", Mock(side_effect=timeout))
+        patcher.setattr(daemon_git, "stream_bytes", AsyncMock(return_value=timeout))
         await reporter.publish("dream", run_id)
     interrupted = store.get("dream", run_id)
     assert interrupted["status"] == "pending"
@@ -171,8 +173,8 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     assert interrupted["content"] == content
     failure = store.attempts("dream", run_id)["attempts"][0]
     assert failure["phase"] == "verification" and failure["status"] == "failed"
+    assert "timed out after 30s" in failure["error"]
     assert "rev-parse" in failure["error"]
-    assert "partial output" in failure["error"] and "transport stalled" in failure["error"]
     await reporter.publish("dream", run_id)
     spawn.assert_not_called()
     completed = store.get("dream", run_id)

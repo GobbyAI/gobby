@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from gobby.reports.storage import ReportStore, transient_publication_error
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 
-def verify_publication(
+async def verify_publication(
     store: ReportStore, report: dict[str, Any], repo_path: Path, attempt_id: str
 ) -> str:
     """Use committed bytes and durable task/worktree linkage, never agent assertions."""
@@ -21,27 +23,53 @@ def verify_publication(
     if not branch.startswith(f"reports/{report['source_kind']}/"):
         raise ValueError("Publication branch does not belong to the report")
 
-    def git(*args: str) -> bytes:
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(repo_path), *args], capture_output=True, timeout=30, check=False
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise OSError(
-                f"Git command timed out after {exc.timeout}s: {exc.cmd!r}; "
-                f"stdout={exc.stdout!r}; stderr={exc.stderr!r}"
-            ) from exc
-        if result.returncode:
-            error = result.stderr.decode(errors="replace").strip()
+    async def git(*args: str, consume: Callable[[bytes], object]) -> None:
+        result = await daemon_git.stream_bytes(
+            args,
+            cwd=repo_path,
+            consume=consume,
+            timeout=30.0,
+        )
+        if isinstance(result, GitTimeout):
+            raise OSError(f"Git command timed out after {result.timeout:g}s: {result.argv!r}")
+        if isinstance(result, GitFailed):
+            error = result.stderr.strip()
             if transient_publication_error(error):
                 raise OSError(error)
             raise ValueError(error)
-        return result.stdout
+        if not isinstance(result, GitOk):
+            raise OSError("Git service returned no usable publication result")
 
-    commit = git("rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}").decode().strip()
-    content = git("show", f"{commit}:{report['report_path']}")
-    if hashlib.sha256(content).hexdigest() != report["content_hash"]:
+    commit_bytes = bytearray()
+    await git(
+        "rev-parse",
+        "--verify",
+        f"refs/heads/{branch}^{{commit}}",
+        consume=commit_bytes.extend,
+    )
+    commit = bytes(commit_bytes).decode().strip()
+    content_hash = hashlib.sha256()
+    await git("show", f"{commit}:{report['report_path']}", consume=content_hash.update)
+    if content_hash.hexdigest() != report["content_hash"]:
         raise ValueError("Committed report content does not match the persisted draft hash")
+    return await asyncio.to_thread(
+        _complete_publication,
+        store,
+        report,
+        attempt_id,
+        branch,
+        commit,
+    )
+
+
+def _complete_publication(
+    store: ReportStore,
+    report: dict[str, Any],
+    attempt_id: str,
+    branch: str,
+    commit: str,
+) -> str:
+    """Validate durable linkage and commit the publication transaction off-loop."""
     task = LocalTaskManager(store.db).get_task(str(report["task_id"]))
     if task.closed_at is None or commit not in (task.commits or []):
         raise ValueError("Publication commit must be linked to the closed documentation task")

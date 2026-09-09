@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
-import subprocess  # nosec B404 # used for a fixed git dry-run fallback.
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import psycopg
+
+from gobby.utils.daemon_git import daemon_git
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -141,6 +141,7 @@ async def push_dry_run_probe(
     error: str | None,
 ) -> dict[str, Any]:
     command = ["push", "--dry-run", "origin", f"HEAD:{branch}"]
+    returncode: int | None
     if git_manager is not None:
         result = await git_manager.run_git_command(
             command,
@@ -150,17 +151,13 @@ async def push_dry_run_probe(
         returncode = result.returncode
         output = f"{result.stdout}\n{result.stderr}"
     else:
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            ["git", *command],
+        daemon_result = await daemon_git.run(
+            command,
             cwd=repo_path,
-            capture_output=True,
-            text=True,
             timeout=_PROTECTION_PROBE_TIMEOUT_SECONDS,
-            check=False,
         )
-        returncode = proc.returncode
-        output = f"{proc.stdout}\n{proc.stderr}"
+        returncode = daemon_result.returncode
+        output = f"{daemon_result.stdout}\n{daemon_result.stderr}"
 
     lowered = output.lower()
     looks_protected = any(marker in lowered for marker in _PROTECTED_PUSH_MARKERS)

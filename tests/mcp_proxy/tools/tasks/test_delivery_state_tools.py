@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -171,7 +170,7 @@ async def test_open_delivery_pr_uses_github_mcp_for_same_repo(
 
 
 @pytest.mark.asyncio
-async def test_open_delivery_pr_offloads_git_helpers(
+async def test_open_delivery_pr_awaits_git_helpers(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: Any,
     sample_project: dict[str, Any],
@@ -181,17 +180,21 @@ async def test_open_delivery_pr_offloads_git_helpers(
     registry = _registry_with_github(temp_db, github)
     tool = registry.get_tool("open_delivery_pr")
     assert tool is not None
-    event_loop_thread = threading.get_ident()
-    helper_threads: list[int] = []
+    helper_calls: list[str] = []
 
-    def resolve_source_branch(**_kwargs: Any) -> str:
-        helper_threads.append(threading.get_ident())
+    async def resolve_source_branch(**_kwargs: Any) -> str:
+        helper_calls.append("resolve")
         return "feature/task"
 
-    def push_branch(**_kwargs: Any) -> None:
-        helper_threads.append(threading.get_ident())
+    async def push_branch(**_kwargs: Any) -> None:
+        helper_calls.append("push")
+
+    async def resolve_source_repo(*_args: Any) -> str:
+        helper_calls.append("repo")
+        return "test/test-project"
 
     monkeypatch.setattr(delivery_tools, "_repo_path", lambda *_args: "/repo")
+    monkeypatch.setattr(delivery_tools, "resolve_project_source_repo_async", resolve_source_repo)
     monkeypatch.setattr(delivery_tools, "_resolve_source_branch", resolve_source_branch)
     monkeypatch.setattr(delivery_tools, "_push_branch", push_branch)
 
@@ -199,8 +202,7 @@ async def test_open_delivery_pr_offloads_git_helpers(
 
     assert result["ok"] is True
     assert result["pushed"] is True
-    assert len(helper_threads) == 2
-    assert all(thread_id != event_loop_thread for thread_id in helper_threads)
+    assert helper_calls == ["repo", "resolve", "push"]
 
 
 @pytest.mark.asyncio
@@ -318,9 +320,10 @@ async def test_open_delivery_pr_uses_rest_head_repo_for_same_org_cross_repo(
     assert row["github_pr_number"] == 9
 
 
-def test_push_branch_rejects_invalid_branch_ref(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_push_branch_rejects_invalid_branch_ref(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="source_branch is not a valid git branch ref"):
-        delivery_tools._push_branch(
+        await delivery_tools._push_branch(
             repo_path=str(tmp_path),
             source_branch="bad branch",
             remote_branch="feature/good",
