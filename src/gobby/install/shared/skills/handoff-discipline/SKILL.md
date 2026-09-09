@@ -40,13 +40,27 @@ Use references to existing plans and evidence for cross-session history. Carry
 forward only the still-active constraints and unresolved work needed to continue.
 Before submitting, remove inherited history and completed ledgers from the draft.
 
+## Feedback Before Session Handoffs
+
+When working in the Gobby repository, acknowledge the current-epoch survey before
+calling `set_handoff`:
+
+1. If the current epoch's survey has not already been submitted, make a separate
+   `gobby-sessions:feedback` call. When there is nothing to report, the exact valid
+   example is `gobby-sessions:feedback(observations=[])`.
+2. Describe a successful feedback response as `submitted` or `acknowledged`, never
+   `human reviewed`.
+3. If feedback for the current epoch is already submitted, do not submit a
+   gratuitous duplicate.
+4. Call `set_handoff` last.
+
+In other projects, follow their configured survey scope.
+
 `set_handoff` accepts at most 10,000 JSON-escaped characters of rendered handoff
 content, including section headings and formatting. Oversized content is rejected
 before staging; shorten it and retry, retaining current state and concrete next
-actions and referencing existing evidence for detail. Submit any required survey
-first through `gobby-sessions:feedback` (observations=[] is valid). Submission is
-not human review. Call `set_handoff` last; its `clear_session` boolean is the boundary
-control. `clear_session=true` is reserved for moving between tasks after the current
-task closes. A spawned worker supplies nonblank `current_state` and at least one
-nonblank coordinator action in `next_steps` before cooperative success or a
+actions and referencing existing evidence for detail. Its `clear_session` boolean is
+the boundary control. `clear_session=true` is reserved for moving between tasks after
+the current task closes. A spawned worker supplies nonblank `current_state` and at
+least one nonblank coordinator action in `next_steps` before cooperative success or a
 `task_blocker` exit. Forced kills and crashes may have no authored handoff.

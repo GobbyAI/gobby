@@ -22,6 +22,9 @@ SKILL_DIR = (
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 HANDOFFS_PATH = SKILL_DIR.parent / "handoff-discipline" / "SKILL.md"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+HANDOFF_PROMPT_PATH = (
+    REPO_ROOT / "src" / "gobby" / "install" / "shared" / "prompts" / "handoff" / "authoring.md"
+)
 BREVITY_PATH = (
     REPO_ROOT / "src" / "gobby" / "install" / "shared" / "skills" / "brevity" / "SKILL.md"
 )
@@ -151,15 +154,38 @@ def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> 
     assert "task closes" in content
     assert "Spawned worker finishes or completes a blocker handoff" in content
     assert "Structured `end_agent_run(...)`" in content
-    assert "cumulative history, previous handoffs, raw logs, completed ledgers" in content
-    assert "artificial shorthand" in content
+    assert "multiple epochs" in content
+    assert "cumulative history, previous handoffs, raw logs, or" in content
+    assert "completed ledgers" in content
+    assert "invented abbreviations" in content
     assert "create or update a Markdown file" in content
     assert "include its path in the handoff's `references`" in content
     assert "Reuse an existing relevant log" in content
     assert "do not paste it into the handoff or" in content
     assert "try to compress it there" in content
     assert "Progress logs are optional" in content
-    assert "`set_handoff` remains uncapped" in content
+    assert "at most 10,000 JSON-escaped characters" in content
+
+
+def test_handoff_feedback_precedes_handoff_without_duplicate_epoch_submission() -> None:
+    content = HANDOFFS_PATH.read_text()
+    prompt = HANDOFF_PROMPT_PATH.read_text()
+
+    feedback_call = "`gobby-sessions:feedback(observations=[])`"
+    assert "When working in the Gobby repository" in content
+    assert "current-epoch survey" in content
+    assert "separate" in content
+    assert feedback_call in content
+    assert "`submitted` or `acknowledged`, never" in content
+    assert "`human reviewed`" in content
+    assert "current epoch is already submitted" in content
+    assert "do not submit a" in content
+    assert "gratuitous duplicate" in content
+    assert content.index(feedback_call) < content.index("Call `set_handoff` last.")
+    assert "In other projects, follow their configured survey scope." in content
+
+    assert "gobby-sessions:feedback first" in prompt
+    assert prompt.index("gobby-sessions:feedback first") < prompt.index("set_handoff last")
 
 
 def test_brevity_uses_normal_prose_for_structured_handoffs() -> None:
