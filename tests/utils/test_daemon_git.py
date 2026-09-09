@@ -42,6 +42,10 @@ def _write_fake_git(tmp_path: Path) -> None:
         '  printf \'%s %s\' "$$" "$!" > "$GIT_TEST_PIDS"\n'
         "fi\n"
         '/bin/sleep "${GIT_TEST_DELAY:-0}"\n'
+        'if [ -n "$GIT_TEST_OUTPUT_FILE" ]; then\n'
+        '  /bin/cat "$GIT_TEST_OUTPUT_FILE"\n'
+        "  exit 0\n"
+        "fi\n"
         "first=1\n"
         'for arg in "$@"; do\n'
         "  if [ \"$first\" -eq 0 ]; then printf '\\0'; fi\n"
@@ -105,6 +109,79 @@ async def test_run_returns_typed_success_and_failure(tmp_path: Path) -> None:
     assert isinstance(failure, GitFailed)
     assert failure.returncode == 7
     assert failure.stderr.strip() == "failed"
+
+
+@pytest.mark.asyncio
+async def test_stream_bytes_spools_and_preserves_raw_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_fake_git(tmp_path)
+    payload = b"prefix\r\nraw-cr\r\x00\xff" + bytes(range(256)) * 1024
+    output = tmp_path / "output.bin"
+    output.write_bytes(payload)
+    real_popen = subprocess.Popen
+    process_streams: list[tuple[object, object]] = []
+
+    def recording_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        process_streams.append((kwargs.get("stdout"), kwargs.get("stderr")))
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", recording_popen)
+    chunks: list[bytes] = []
+
+    result = await DaemonGitService().stream_bytes(
+        ["show"],
+        cwd=tmp_path,
+        consume=chunks.append,
+        timeout=2.0,
+        env=_git_env(tmp_path, GIT_TEST_OUTPUT_FILE=str(output)),
+    )
+
+    assert isinstance(result, GitOk)
+    assert result.stdout == ""
+    assert b"".join(chunks) == payload
+    assert len(chunks) > 1
+    assert max(map(len, chunks)) <= 64 * 1024
+    assert len(process_streams) == 1
+    assert all(stream not in (None, subprocess.PIPE) for stream in process_streams[0])
+
+
+@pytest.mark.asyncio
+async def test_stream_cancellation_waits_for_active_consumer(tmp_path: Path) -> None:
+    _write_fake_git(tmp_path)
+    payload = bytes(range(256)) * 1024
+    output = tmp_path / "output.bin"
+    output.write_bytes(payload)
+    entered = threading.Event()
+    release = threading.Event()
+    chunks: list[bytes] = []
+
+    def consume(chunk: bytes) -> None:
+        chunks.append(chunk)
+        entered.set()
+        assert release.wait(2)
+
+    request = asyncio.create_task(
+        DaemonGitService().stream_bytes(
+            ["show"],
+            cwd=tmp_path,
+            consume=consume,
+            timeout=10.0,
+            env=_git_env(tmp_path, GIT_TEST_OUTPUT_FILE=str(output)),
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    request.cancel()
+    await asyncio.sleep(0)
+    try:
+        assert not request.done()
+    finally:
+        release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(request, 1)
+    assert chunks == [payload[: 64 * 1024]]
 
 
 @pytest.mark.asyncio

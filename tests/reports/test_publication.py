@@ -116,7 +116,7 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     attempt = store.begin("dream", run_id)
     assert attempt is not None
     report = store.prepare_task("dream", run_id)
-    content = _content(run_id)
+    content = _content(run_id).replace("\n", "\r\n")
     store.save_draft("dream", run_id, content)
     _git(tmp_path, "init", "-b", "main")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -165,7 +165,7 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
         timeout=30.0,
     )
     with monkeypatch.context() as patcher:
-        patcher.setattr(daemon_git, "run", AsyncMock(return_value=timeout))
+        patcher.setattr(daemon_git, "stream_bytes", AsyncMock(return_value=timeout))
         await reporter.publish("dream", run_id)
     interrupted = store.get("dream", run_id)
     assert interrupted["status"] == "pending"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,13 @@ async def verify_publication(
     if not branch.startswith(f"reports/{report['source_kind']}/"):
         raise ValueError("Publication branch does not belong to the report")
 
-    async def git(*args: str) -> bytes:
-        result = await daemon_git.run(args, cwd=repo_path, timeout=30.0)
+    async def git(*args: str, consume: Callable[[bytes], object]) -> None:
+        result = await daemon_git.stream_bytes(
+            args,
+            cwd=repo_path,
+            consume=consume,
+            timeout=30.0,
+        )
         if isinstance(result, GitTimeout):
             raise OSError(f"Git command timed out after {result.timeout:g}s: {result.argv!r}")
         if isinstance(result, GitFailed):
@@ -33,13 +39,18 @@ async def verify_publication(
             raise ValueError(error)
         if not isinstance(result, GitOk):
             raise OSError("Git service returned no usable publication result")
-        return result.stdout.encode("utf-8", errors="surrogateescape")
 
-    commit = (
-        (await git("rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")).decode().strip()
+    commit_bytes = bytearray()
+    await git(
+        "rev-parse",
+        "--verify",
+        f"refs/heads/{branch}^{{commit}}",
+        consume=commit_bytes.extend,
     )
-    content = await git("show", f"{commit}:{report['report_path']}")
-    if hashlib.sha256(content).hexdigest() != report["content_hash"]:
+    commit = bytes(commit_bytes).decode().strip()
+    content_hash = hashlib.sha256()
+    await git("show", f"{commit}:{report['report_path']}", consume=content_hash.update)
+    if content_hash.hexdigest() != report["content_hash"]:
         raise ValueError("Committed report content does not match the persisted draft hash")
     return await asyncio.to_thread(
         _complete_publication,

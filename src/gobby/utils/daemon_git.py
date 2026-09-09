@@ -6,8 +6,9 @@ import asyncio
 import os
 import signal
 import subprocess  # nosec B404 - argv-only Git process boundary
+import tempfile
 import threading
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -59,6 +60,10 @@ class GitStatusEntry:
 
 
 type GitResult = GitOk | GitTimeout | GitFailed
+type _GitProcess = subprocess.Popen[str] | subprocess.Popen[bytes]
+type _GitWorker = Callable[
+    [asyncio.AbstractEventLoop, asyncio.Future[GitOk | GitFailed], "_ProcessControl"], None
+]
 type _StatusKey = tuple[
     asyncio.AbstractEventLoop,
     str,
@@ -66,6 +71,9 @@ type _StatusKey = tuple[
     float,
     tuple[tuple[str, str], ...] | None,
 ]
+
+_STREAM_CHUNK_BYTES = 64 * 1024
+_MAX_STREAM_STDERR_BYTES = 64 * 1024
 
 
 def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
@@ -103,28 +111,45 @@ class _InFlight:
 class _ProcessControl:
     """Coordinate a deadline with a process that may still be spawning."""
 
-    process: subprocess.Popen[str] | None = None
+    process: _GitProcess | None = None
     kill_requested: bool = False
-    finished: bool = False
+    phase: Literal["spawning", "running", "consuming", "finished"] = "spawning"
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def attach(self, process: subprocess.Popen[str]) -> None:
+    def attach(self, process: _GitProcess) -> None:
         with self.lock:
             self.process = process
+            self.phase = "running"
             kill_requested = self.kill_requested
         if kill_requested:
             _kill_process_group(process)
 
-    def kill(self) -> None:
+    def begin_consuming(self) -> bool:
+        """Claim the consumer phase unless the caller already gave up."""
+        with self.lock:
+            if self.kill_requested:
+                return False
+            self.phase = "consuming"
+            return True
+
+    def continue_consuming(self) -> bool:
+        with self.lock:
+            return not self.kill_requested
+
+    def kill(self) -> bool:
+        """Request shutdown and report whether caller-visible consumption is active."""
         with self.lock:
             self.kill_requested = True
-            process = None if self.finished else self.process
+            consuming = self.phase == "consuming"
+            process = self.process if self.phase == "running" else None
         if process is not None:
             _kill_process_group(process)
+        return consuming
 
     def mark_finished(self) -> None:
         with self.lock:
-            self.finished = True
+            self.phase = "finished"
+            self.process = None
 
 
 class DaemonGitService:
@@ -159,6 +184,42 @@ class DaemonGitService:
             env=effective_env,
             input_text=input_text,
         )
+
+    async def stream_bytes(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: str | Path,
+        consume: Callable[[bytes], object] | None,
+        timeout: float = 10.0,
+        env: Mapping[str, str] | None = None,
+    ) -> GitResult:
+        """Spool raw stdout to disk, then deliver bounded byte chunks before returning."""
+        argv = ("git", *args)
+        if timeout <= 0:
+            return GitTimeout("timeout", argv, timeout)
+        try:
+            resolved_cwd = os.path.abspath(os.fspath(cwd))
+        except (OSError, TypeError, ValueError) as exc:
+            return GitFailed("failed", argv, None, "", str(exc))
+        effective_env = dict(env) if env is not None else None
+
+        def worker(
+            loop: asyncio.AbstractEventLoop,
+            completion: asyncio.Future[GitOk | GitFailed],
+            control: _ProcessControl,
+        ) -> None:
+            _stream_git_worker(
+                loop,
+                completion,
+                control,
+                argv,
+                cwd=resolved_cwd,
+                env=effective_env,
+                consume=consume,
+            )
+
+        return await self._execute_worker(argv, timeout=timeout, worker=worker)
 
     async def status(
         self,
@@ -234,30 +295,63 @@ class DaemonGitService:
         env: dict[str, str] | None,
         input_text: str | None,
     ) -> GitResult:
+        def worker(
+            loop: asyncio.AbstractEventLoop,
+            completion: asyncio.Future[GitOk | GitFailed],
+            control: _ProcessControl,
+        ) -> None:
+            _run_git_worker(
+                loop,
+                completion,
+                control,
+                argv,
+                cwd=cwd,
+                env=env,
+                input_text=input_text,
+            )
+
+        return await self._execute_worker(argv, timeout=timeout, worker=worker)
+
+    async def _execute_worker(
+        self,
+        argv: tuple[str, ...],
+        *,
+        timeout: float,
+        worker: _GitWorker,
+    ) -> GitResult:
+        """Apply one deadline and cancellation lifecycle to a dedicated Git worker."""
         loop = asyncio.get_running_loop()
         completion: asyncio.Future[GitOk | GitFailed] = loop.create_future()
         control = _ProcessControl()
-        worker = threading.Thread(
-            target=_run_git_worker,
-            args=(loop, completion, control, argv),
-            kwargs={"cwd": cwd, "env": env, "input_text": input_text},
+        worker_thread = threading.Thread(
+            target=worker,
+            args=(loop, completion, control),
             name="gobby-daemon-git",
             daemon=True,
         )
         try:
-            worker.start()
+            worker_thread.start()
         except RuntimeError as exc:
             return GitFailed("failed", argv, None, "", str(exc))
 
         try:
             return await asyncio.wait_for(asyncio.shield(completion), timeout)
         except TimeoutError:
-            control.kill()
+            consumer_active = control.kill()
+            cancelled = False
+            if consumer_active:
+                cancelled = await _await_worker_cleanup(completion)
+            completion.cancel()
+            if cancelled:
+                raise asyncio.CancelledError() from None
             # The dedicated worker owns eventual kill/reap, including a process
             # that has not returned from Popen yet. Never await a wedged spawn.
             return GitTimeout("timeout", argv, timeout)
         except asyncio.CancelledError:
-            control.kill()
+            consumer_active = control.kill()
+            if consumer_active:
+                await _await_worker_cleanup(completion)
+            completion.cancel()
             raise
 
 
@@ -306,12 +400,83 @@ def _run_git_worker(
         pass
 
 
+def _stream_git_worker(
+    loop: asyncio.AbstractEventLoop,
+    completion: asyncio.Future[GitOk | GitFailed],
+    control: _ProcessControl,
+    argv: tuple[str, ...],
+    *,
+    cwd: str,
+    env: dict[str, str] | None,
+    consume: Callable[[bytes], object] | None,
+) -> None:
+    """Spool raw process output and consume it without an in-memory copy."""
+    process: subprocess.Popen[bytes] | None = None
+    consumer_error: Exception | None = None
+    try:
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
+                argv,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                env=env if env is not None else git_subprocess_env(),
+                start_new_session=True,
+            )
+            control.attach(process)
+            process.wait()
+            may_consume = control.begin_consuming()
+            stderr_file.seek(0)
+            stderr = stderr_file.read(_MAX_STREAM_STDERR_BYTES).decode(
+                "utf-8", errors="surrogateescape"
+            )
+            if process.returncode == 0:
+                if consume is not None and may_consume:
+                    stdout_file.seek(0)
+                    while control.continue_consuming():
+                        chunk = stdout_file.read(_STREAM_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        try:
+                            consume(chunk)
+                        except Exception as exc:
+                            consumer_error = exc
+                            break
+                result: GitOk | GitFailed = GitOk("ok", argv, "", stderr)
+            else:
+                result = GitFailed("failed", argv, process.returncode, "", stderr)
+    except Exception as exc:
+        if process is not None:
+            _kill_process_group(process)
+            process.wait()
+        result = GitFailed("failed", argv, None, "", str(exc))
+    finally:
+        control.mark_finished()
+
+    try:
+        if consumer_error is None:
+            loop.call_soon_threadsafe(_set_result_if_pending, completion, result)
+        else:
+            loop.call_soon_threadsafe(_set_exception_if_pending, completion, consumer_error)
+    except RuntimeError:
+        pass
+
+
 def _set_result_if_pending(
     future: asyncio.Future[GitOk | GitFailed],
     result: GitOk | GitFailed,
 ) -> None:
     if not future.done():
         future.set_result(result)
+
+
+def _set_exception_if_pending(
+    future: asyncio.Future[GitOk | GitFailed],
+    error: Exception,
+) -> None:
+    if not future.done():
+        future.set_exception(error)
 
 
 async def _await_cleanup[T](future: asyncio.Future[T] | asyncio.Task[T]) -> T:
@@ -324,7 +489,22 @@ async def _await_cleanup[T](future: asyncio.Future[T] | asyncio.Task[T]) -> T:
                 raise
 
 
-def _kill_process_group(process: subprocess.Popen[str]) -> None:
+async def _await_worker_cleanup(future: asyncio.Future[GitOk | GitFailed]) -> bool:
+    """Wait until a byte consumer stops without replacing timeout/cancellation."""
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(future)
+            return cancelled
+        except asyncio.CancelledError:
+            cancelled = True
+            if future.done():
+                return True
+        except Exception:
+            return cancelled
+
+
+def _kill_process_group(process: _GitProcess) -> None:
     """Kill the complete session-owned process group; the worker reaps its leader."""
     try:
         os.killpg(process.pid, signal.SIGKILL)

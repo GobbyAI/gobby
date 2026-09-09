@@ -47,7 +47,6 @@ MAX_CURSOR_OFFSET = (1 << 63) - 1
 DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024
 DEFAULT_GIT_TIMEOUT_SECONDS = 5.0
 
-_GIT_READ_CHUNK_BYTES = 64 * 1024
 _MAX_GIT_ERROR_BYTES = 8 * 1024
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{4,64}$")
 
@@ -188,7 +187,7 @@ async def _run_git(
         git_timeout_seconds=git_timeout_seconds,
     )
     argv = [os.fsdecode(arg) if isinstance(arg, bytes) else arg for arg in args]
-    result = await daemon_git.run(argv, cwd=cwd, timeout=timeout)
+    result = await daemon_git.stream_bytes(argv, cwd=cwd, consume=consume, timeout=timeout)
     if isinstance(result, GitTimeout):
         raise DiffPagingError(
             "git_timeout",
@@ -206,10 +205,6 @@ async def _run_git(
             )
         return result.returncode, stderr
     assert isinstance(result, GitOk)
-    if consume is not None:
-        stdout = result.stdout.encode("utf-8", errors="surrogateescape")
-        for offset in range(0, len(stdout), _GIT_READ_CHUNK_BYTES):
-            consume(stdout[offset : offset + _GIT_READ_CHUNK_BYTES])
     return 0, stderr
 
 

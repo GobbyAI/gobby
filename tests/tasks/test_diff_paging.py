@@ -183,7 +183,7 @@ def test_invalid_utf8_manifest_and_blob_round_trip_as_base64(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     raw_path = b"invalid-\xff.bin"
-    raw_content = b"\xff\xfe\x00payload\x80"
+    raw_content = b"\xff\xfe\x00payload\r\nraw-cr\rtail\x80"
     (repo / "blob.bin").write_bytes(raw_content)
     commit = _commit(repo, "invalid bytes")
     manager = _manager(commit)
