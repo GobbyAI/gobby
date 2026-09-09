@@ -641,7 +641,7 @@ class TestBrevityRules:
 class TestRequirePythonSkillStructure:
     """Verify require-python-skill rule structure."""
 
-    def test_is_before_tool_event(self, db, manager) -> None:
+    def test_is_before_tool_event(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-python-skill")
         assert row is not None
@@ -650,6 +650,7 @@ class TestRequirePythonSkillStructure:
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "not skill_loaded('python')" in body.when
+        assert "canonical_repo_mutation" in body.when
         assert ".pyi" in body.when
         assert "pyproject.toml" in body.when
 
@@ -672,17 +673,18 @@ class TestRequirePythonSkillCondition:
     CONDITION = (
         "not skill_loaded('python') "
         "and event.data.get('canonical_tool_kind') == 'write' "
+        "and event.data.get('canonical_repo_mutation') "
         "and ("
-        "event.data.get('canonical_file_path', '').endswith(('.py', '.pyi')) "
-        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "event.data.get('canonical_write_file_path', '').endswith(('.py', '.pyi')) "
+        "or event.data.get('canonical_write_file_path', '').rpartition('/')[2] "
         "in ('pyproject.toml', 'setup.cfg', 'setup.py', 'tox.ini', 'noxfile.py', "
         "'pytest.ini', 'mypy.ini', 'ruff.toml', '.python-version', 'Pipfile', "
         "'py.typed') "
         "or ("
-        "event.data.get('canonical_file_path', '').rpartition('/')[2].startswith("
+        "event.data.get('canonical_write_file_path', '').rpartition('/')[2].startswith("
         "'requirements'"
         ") "
-        "and event.data.get('canonical_file_path', '').rpartition('/')[2].endswith("
+        "and event.data.get('canonical_write_file_path', '').rpartition('/')[2].endswith("
         "('.txt', '.in')"
         ")"
         ")"
@@ -694,6 +696,7 @@ class TestRequirePythonSkillCondition:
         file_path: str,
         *,
         canonical_tool_kind: str = "write",
+        repo_mutation: bool = True,
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
@@ -705,7 +708,8 @@ class TestRequirePythonSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
-                    "canonical_file_path": file_path,
+                    "canonical_repo_mutation": repo_mutation,
+                    "canonical_write_file_path": file_path,
                 }
             ),
             "tool_input": {},
@@ -767,6 +771,9 @@ class TestRequirePythonSkillCondition:
 
     def test_skips_when_already_loaded(self) -> None:
         assert self._eval("/project/src/main.py", loaded_skills=["python"]) is False
+
+    def test_skips_python_write_outside_managed_project(self) -> None:
+        assert self._eval("/tmp/scratchpad/helper.py", repo_mutation=False) is False
 
     def test_does_not_skip_when_legacy_injected(self) -> None:
         assert self._eval("/project/src/main.py", injected_skills=["python"]) is True

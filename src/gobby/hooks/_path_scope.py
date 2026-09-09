@@ -105,11 +105,7 @@ def paths_may_touch_project(
         path = resolve_tool_path(raw_path, cwd)
         if path is None:
             return True
-        if project_root is not None and _is_relative_to(path, project_root):
-            return True
-        if project_root is not None and _shares_git_repository(path, project_root):
-            return True
-        if project_root is None and not _is_known_external_path(path):
+        if _is_project_managed_path(path, project_root):
             return True
     return False
 
@@ -129,31 +125,28 @@ def code_navigation_may_touch_project(
     if not paths:
         if cwd is None:
             return True
-        if project_root is not None and _is_relative_to(cwd, project_root):
-            return True
-        if _is_temp_agent_scratchpad_path(cwd):
-            return False
-        if project_root is not None and _shares_git_repository(cwd, project_root):
-            return True
-        if _is_known_external_path(cwd):
-            return False
-        return project_root is None
+        return _is_project_managed_path(cwd, project_root)
 
     for raw_path in paths:
         path = resolve_tool_path(raw_path, cwd)
         if path is None:
             return True
-        if project_root is not None and _is_relative_to(path, project_root):
-            return True
-        if _is_temp_agent_scratchpad_path(path):
-            continue
-        if project_root is not None and _shares_git_repository(path, project_root):
-            return True
-        if _is_known_external_path(path):
-            continue
-        if project_root is None:
+        if _is_project_managed_path(path, project_root):
             return True
     return False
+
+
+def _is_project_managed_path(path: Path, project_root: Path | None) -> bool:
+    """Classify one canonical path against the active project and its worktrees."""
+    if project_root is not None and _is_relative_to(path, project_root):
+        return True
+    if _is_temp_agent_scratchpad_path(path):
+        return False
+    if project_root is not None and _shares_git_repository(path, project_root):
+        return True
+    if _is_known_external_path(path):
+        return False
+    return project_root is None
 
 
 def _shares_git_repository(path: Path, project_root: Path) -> bool:

@@ -9,6 +9,7 @@ rules:
     when: >
       not skill_loaded('python')
       and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_repo_mutation')
       and (
         event.data.get('canonical_write_file_path', '').endswith(('.py', '.pyi'))
         or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('pyproject.toml', 'setup.cfg', 'setup.py', 'tox.ini', 'noxfile.py', 'pytest.ini', 'mypy.ini', 'ruff.toml', '.python-version', 'Pipfile', 'py.typed')
