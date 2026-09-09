@@ -1027,6 +1027,35 @@ class TestWorktreeIsolationHandler:
     """Tests for WorktreeIsolationHandler."""
 
     @pytest.mark.asyncio
+    async def test_prepare_environment_preserves_failure_message(self) -> None:
+        git_manager = MagicMock()
+        git_manager.get_current_branch.return_value = "main"
+        git_manager.has_unpushed_commits.return_value = (False, 0)
+        git_manager.create_worktree.return_value = MagicMock(
+            success=False, error=None, message="Git command timed out after 60s"
+        )
+        storage = MagicMock()
+        storage.get_by_branch.return_value = None
+        handler = WorktreeIsolationHandler(git_manager=git_manager, worktree_storage=storage)
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with pytest.raises(RuntimeError, match="Git command timed out after 60s"):
+            await handler.prepare_environment(config)
+        storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_prepare_environment_creates_worktree(self) -> None:
         """Test prepare_environment creates worktree if not exists."""
         mock_git_manager = MagicMock()

@@ -15,3 +15,24 @@ def test_codex_shell_tmpdir_is_omitted_without_sandbox() -> None:
     overrides = _codex_mcp_config_overrides("/repo", None)
 
     assert not any(entry.startswith("shell_environment_policy.set.TMPDIR") for entry in overrides)
+
+
+def test_managed_codex_requires_gobby_before_first_turn() -> None:
+    import tomllib
+
+    config = tomllib.loads("\n".join(_codex_mcp_config_overrides("/main/repo")))
+    server = config["mcp_servers"]["gobby"]
+
+    assert server["required"] is True
+    assert server["args"] == ["run", "--project", "/main/repo", "gobby", "mcp-server"]
+
+
+def test_resume_retains_required_gobby_server() -> None:
+    import tomllib
+
+    from gobby.agents.resume_metadata import filter_resume_config_overrides
+
+    restored = filter_resume_config_overrides(_codex_mcp_config_overrides("/main/repo"))
+    config = tomllib.loads("\n".join(restored))
+
+    assert config["mcp_servers"]["gobby"]["required"] is True

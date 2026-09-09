@@ -32,6 +32,7 @@ prompts:
     proportionality to reject speculative or needless follow-up machinery while
     preserving fixes justified by concrete evidence.
 
+    Before submitting the handoff, load `handoff-discipline` through gobby-skills.
     In REVIEW, produce the exact JSON object requested by the spawn prompt. Do
     not wrap it in Markdown and do not add commentary. Call `end_agent_run` with
     that exact compact JSON string as `current_state` and one nonblank
@@ -111,6 +112,8 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-feedback:get_review_observations"
         - "gobby-feedback:get_review_results"
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
         - "gobby-agents:end_agent_run"
       on_mcp_success:
         - server: gobby-agents

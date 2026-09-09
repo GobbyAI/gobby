@@ -1063,6 +1063,63 @@ class TestAgentRunCompletion:
         assert "no activity" in fail_kwargs["error"].lower()
         mock_agent_run_manager.complete.assert_not_called()
 
+    def test_session_end_during_cooperative_kill_preserves_completion(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        from gobby.agents.capture import capture_then_kill_sync
+        from gobby.storage.agents import LocalAgentRunManager
+
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        _install_step_workflow(temp_db, CHILD_SESSION_ID, "resolve_conflicts")
+        manager = LocalAgentRunManager(temp_db)
+        run = manager.create(
+            parent_session_id=PARENT_SESSION_ID,
+            provider="claude",
+            prompt="Review observations",
+            child_session_id=CHILD_SESSION_ID,
+        )
+        manager.start(run.id)
+        coordinator = SessionCoordinator(agent_run_manager=manager)
+        session = SimpleNamespace(
+            id=CHILD_SESSION_ID,
+            agent_run_id=run.id,
+            summary_markdown="Unaccepted final turn text",
+            tool_call_count=7,
+            turn_count=3,
+        )
+        alive = True
+
+        def kill() -> bool:
+            nonlocal alive
+            alive = False
+            coordinator.complete_agent_run(session)
+            pending = manager.get(run.id)
+            assert pending is not None
+            assert pending.status == "running"
+            assert pending.pending_terminal_action == "complete"
+            assert pending.error is None
+            return True
+
+        result = capture_then_kill_sync(
+            storage=manager,
+            run_id=run.id,
+            session_name="isolated-cooperative-review",
+            action="complete",
+            result_prefix='{"clusters": []}',
+            session_alive=lambda: alive,
+            capture=lambda: "terminal output",
+            kill=kill,
+        )
+
+        assert result.success is True
+        completed = manager.get(run.id)
+        assert completed is not None
+        assert completed.status == "success"
+        assert completed.error is None
+        assert completed.result == '{"clusters": []}'
+
     def test_complete_agent_run_fails_incomplete_step_workflow(
         self,
         temp_db: HubDatabase,

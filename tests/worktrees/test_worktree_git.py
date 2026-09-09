@@ -368,12 +368,21 @@ class TestWorktreeGitManagerCreateWorktree:
     def test_create_handles_timeout(self, mock_run, manager, tmp_path) -> None:
         """Create handles git timeout."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=60)
+        mock_run.side_effect = subprocess.TimeoutExpired(
+            cmd=["git", "worktree", "add", str(worktree_path)],
+            timeout=60,
+            output=b"checkout started\n",
+            stderr=b"post-checkout still running\n",
+        )
 
         result = manager.create_worktree(worktree_path, "feature/test")
 
         assert result.success is False
         assert "timed out" in result.message
+        assert result.error is not None
+        assert str(worktree_path) in result.error
+        assert "post-checkout still running" in result.error
+        assert result.output == "checkout started\n"
 
 
 class TestWorktreeGitManagerDeleteWorktree:

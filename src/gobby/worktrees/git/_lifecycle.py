@@ -173,10 +173,18 @@ def create_worktree(
                 error=result.stderr,
             )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
+        stdout = (
+            exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+        )
         return GitOperationResult(
             success=False,
-            message="Git command timed out",
+            message=f"Git command timed out after {exc.timeout}s",
+            error=f"{exc}\n{stderr}" if stderr else str(exc),
+            output=stdout,
         )
     except Exception as e:
         return GitOperationResult(
