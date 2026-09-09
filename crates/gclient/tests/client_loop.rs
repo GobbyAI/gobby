@@ -2975,6 +2975,9 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     let (_, mut observed_events) = observed_daemon.subscribe();
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
+    // A request that failed during the outage leaves its banner behind; the
+    // recovered handshake must clear it.
+    chrome.status_message = Some("daemon request timed out".to_string());
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     // More failed handshakes than an unexpected loss is allowed before exiting.
@@ -3052,6 +3055,10 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     );
     assert_ne!(workspace.pane(pane_id).attachment_id(), old_attachment);
     assert!(workspace.pane(pane_id).writable());
+    assert_eq!(
+        chrome.status_message, None,
+        "a recovered reconnect clears the stale failure banner"
+    );
     let attach_targets: Vec<String> = websocket_requests(&mock, "terminal_attach")
         .into_iter()
         .filter_map(|request| {

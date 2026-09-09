@@ -538,6 +538,8 @@ async fn handle_reconnect_outcome(
         ReconnectAttempt::Reconnected(generation) => match reconcile_ready(workspace).await {
             Ok(()) => {
                 supervisor.handshake_complete(generation);
+                // The outage's failure banner is stale once the handshake lands.
+                chrome.status_message = None;
                 let (_, fallback) = Daemon::subscribe(workspace.daemon());
                 *events = Some(workspace.event_rx.take().unwrap_or(fallback));
                 sync_live_chrome(workspace, chrome);
