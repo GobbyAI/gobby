@@ -3,80 +3,32 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import re
+import math
+import os
 import subprocess
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from gobby.agents.code_index import ensure_isolation_code_index
 from gobby.ask.artifacts import AskArtifactStore
+from gobby.ask.storage import AskRunStorage
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.project_context import ensure_project_json_for_isolation
-from gobby.worktrees.deletion import (
-    DeletionSurface,
-    WorktreeDeletionRequest,
-    delete_worktree_transaction,
-)
-from gobby.worktrees.executor import DestructiveBoundary
-from gobby.worktrees.git.manager import WorktreeGitManager
 
 if TYPE_CHECKING:
+    from gobby.ask.contracts import AskRunRecord, SnapshotGeneration
     from gobby.storage.managed_credentials import ManagedCredentialManager
 
 
-_MAX_EVIDENCE_FILE_BYTES = 10 * 1024 * 1024
-_OID_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
-_LANGUAGES = {
-    ".py": "python",
-    ".pyi": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".cjs": "javascript",
-    ".mjs": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".php": "php",
-    ".dart": "dart",
-    ".cs": "csharp",
-    ".m": "objc",
-    ".mm": "objc",
-    ".c": "c",
-    ".cpp": "cpp",
-    ".cc": "cpp",
-    ".cxx": "cpp",
-    ".hpp": "cpp",
-    ".hxx": "cpp",
-    ".hh": "cpp",
-    ".ex": "elixir",
-    ".exs": "elixir",
-    ".rb": "ruby",
-    ".rake": "ruby",
-    ".gemspec": "ruby",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".scala": "scala",
-    ".sc": "scala",
-    ".lua": "lua",
-    ".swift": "swift",
-    ".sh": "bash",
-    ".bash": "bash",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".json": "json",
-    ".jsonc": "json",
-}
-_GENERATED_SNAPSHOT_PATHS = {".gobby/isolation.json", ".gobby/bin/gcode"}
+_CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
 class SnapshotDriftError(RuntimeError):
@@ -89,10 +41,12 @@ class SnapshotIndexRuntime:
     env: Mapping[str, str]
     managed_execution_id: str
     credential_generation: int
+    argv_prefix: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedSnapshot:
+    generation: int
     commit_oid: str
     binding: dict[str, Any]
     inventory: dict[str, Any]
@@ -107,266 +61,127 @@ IndexPreparer = Callable[[Path, datetime], Awaitable[SnapshotIndexRuntime]]
 IndexReleaser = Callable[[SnapshotIndexRuntime], None]
 
 
-def _canonical_hash(value: object) -> str:
-    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
-    return hashlib.sha256(payload).hexdigest()
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _remaining_seconds(deadline_at: datetime) -> float:
+    if deadline_at.tzinfo is None:
+        raise ValueError("Ask snapshot deadline must be timezone-aware")
+    remaining = (deadline_at.astimezone(UTC) - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(remaining) or remaining <= 0:
+        raise TimeoutError("Ask snapshot deadline exceeded")
+    return remaining
+
+
+def _safe_process_env() -> dict[str, str]:
+    env = {
+        key: value for key in ("PATH", "SYSTEMROOT") if (value := os.environ.get(key)) is not None
+    }
+    env.update(
+        {
+            "GIT_ATTR_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return env
 
 
 def _git(
     repository_root: Path,
     *arguments: str,
+    timeout: float,
     input_bytes: bytes | None = None,
 ) -> bytes:
     completed = subprocess.run(
-        ["git", *arguments],
-        cwd=repository_root,
+        [
+            "git",
+            "--no-replace-objects",
+            "--literal-pathspecs",
+            "-c",
+            "core.useReplaceRefs=false",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "-c",
+            "diff.external=",
+            "-C",
+            str(repository_root),
+            *arguments,
+        ],
         input=input_bytes,
         check=True,
         capture_output=True,
-        timeout=60,
+        timeout=timeout,
+        env=_safe_process_env(),
     )
     return completed.stdout
 
 
-def _git_text(repository_root: Path, *arguments: str) -> str:
-    return _git(repository_root, *arguments).decode().strip()
-
-
-def _safe_repo_path(raw_path: bytes) -> tuple[str, str | None]:
-    try:
-        path = raw_path.decode("utf-8")
-    except UnicodeDecodeError:
-        return "".join(f"\\x{byte:02x}" for byte in raw_path), "unsafe_path"
-    parsed = PurePosixPath(path)
-    if (
-        not path
-        or "\\" in path
-        or parsed.is_absolute()
-        or any(part in {".", "..", ""} for part in parsed.parts)
-    ):
-        return path, "unsafe_path"
-    return path, None
-
-
-def _language(path: str, content: bytes | None, all_paths: set[str]) -> str | None:
-    suffix = PurePosixPath(path).suffix.lower()
-    if suffix != ".h":
-        return _LANGUAGES.get(suffix)
-    stem = str(PurePosixPath(path).with_suffix(""))
-    if any(f"{stem}{candidate}" in all_paths for candidate in (".m", ".mm")):
-        return "objc"
-    if any(f"{stem}{candidate}" in all_paths for candidate in (".cpp", ".cc", ".cxx")):
-        return "cpp"
-    source = (content or b"").decode("utf-8", errors="ignore")
-    if re.search(r"@(interface|protocol|class|property|end)\b", source):
-        return "objc"
-    if re.search(r"\b(namespace|template|class|constexpr|decltype)\b|::", source):
-        return "cpp"
-    return "c"
-
-
-def _load_snapshot(
+def _native_snapshot(
+    executable: Path,
     repository_root: Path,
+    *,
     project_id: str,
-    expected_commit_oid: str,
+    commit_oid: str,
+    action: str,
+    timeout: float,
+    target_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if not _OID_PATTERN.fullmatch(expected_commit_oid):
-        raise ValueError("Ask snapshot requires a full hexadecimal commit OID")
-    commit_oid = _git_text(
-        repository_root,
-        "rev-parse",
-        "--verify",
-        f"{expected_commit_oid}^{{commit}}",
-    )
-    if commit_oid != expected_commit_oid:
-        raise SnapshotDriftError("snapshot recovery would change the pinned commit")
-    tree_oid = _git_text(repository_root, "rev-parse", "--verify", f"{commit_oid}^{{tree}}")
-    raw_records = [
-        record
-        for record in _git(repository_root, "ls-tree", "-rlz", "--full-tree", tree_oid).split(b"\0")
-        if record
-    ]
-    all_paths = {_safe_repo_path(record.split(b"\t", 1)[1])[0] for record in raw_records}
-    entries: list[dict[str, Any]] = []
-    for record in raw_records:
-        header, raw_path = record.split(b"\t", 1)
-        mode, object_type, object_oid, raw_size = header.decode().split()
-        path, exclusion = _safe_repo_path(raw_path)
-        size_bytes = int(raw_size) if raw_size.isdigit() else None
-        if mode == "100644" and object_type == "blob":
-            kind, blob_oid = "file", object_oid
-        elif mode == "100755" and object_type == "blob":
-            kind, blob_oid = "executable", object_oid
-        elif mode == "120000" and object_type == "blob":
-            kind, blob_oid, exclusion = "symlink", object_oid, exclusion or "symlink"
-        elif mode == "160000" and object_type == "commit":
-            kind, blob_oid, exclusion = "gitlink", None, exclusion or "gitlink"
-        else:
-            kind, blob_oid, exclusion = "unsupported", None, exclusion or "unsupported_object"
-        if size_bytes is not None and size_bytes > _MAX_EVIDENCE_FILE_BYTES:
-            exclusion = "oversized"
-        content: bytes | None = None
-        content_hash: str | None = None
-        if exclusion is None and blob_oid is not None:
-            content = _git(repository_root, "cat-file", "blob", blob_oid)
-            if b"\0" in content:
-                exclusion = "binary"
-            else:
-                try:
-                    content.decode("utf-8")
-                except UnicodeDecodeError:
-                    exclusion = "unsupported_encoding"
-                else:
-                    content_hash = hashlib.sha256(content).hexdigest()
-        entries.append(
-            {
-                "path": path,
-                "mode": mode,
-                "kind": kind,
-                "object_oid": object_oid,
-                "blob_oid": blob_oid,
-                "size_bytes": size_bytes,
-                "content_hash": content_hash,
-                "language": _language(path, content, all_paths),
-                "exclusion": exclusion,
-            }
-        )
-    entries.sort(key=lambda entry: entry["path"])
-    inventory_digest = _canonical_hash(entries)
-    inventory = {
+    request: dict[str, Any] = {
         "schema_version": 1,
-        "complete": True,
-        "digest": inventory_digest,
-        "entries": entries,
-    }
-    parent_oids = _git_text(repository_root, "show", "-s", "--format=%P", commit_oid).split()
-    if parent_oids:
-        comparison_parent_oid, comparison_kind = parent_oids[0], "first_parent"
-    else:
-        comparison_parent_oid = (
-            _git(
-                repository_root,
-                "hash-object",
-                "-t",
-                "tree",
-                "--stdin",
-                input_bytes=b"",
-            )
-            .decode()
-            .strip()
-        )
-        comparison_kind = "empty_tree"
-    changed_paths = _load_changed_paths(repository_root, comparison_parent_oid, commit_oid)
-    binding = {
         "project_id": project_id,
         "commit_oid": commit_oid,
-        "tree_oid": tree_oid,
-        "inventory_digest": inventory_digest,
-        "commit": {
-            "parent_oids": parent_oids,
-            "comparison_parent_oid": comparison_parent_oid,
-            "comparison_kind": comparison_kind,
-            "changed_paths_digest": _canonical_hash(changed_paths),
-            "changed_paths": changed_paths,
-        },
+        "action": action,
     }
-    return binding, inventory
-
-
-def _load_changed_paths(
-    repository_root: Path, base_oid: str, commit_oid: str
-) -> list[dict[str, Any]]:
-    fields = _git(
-        repository_root,
-        "diff-tree",
-        "--raw",
-        "-r",
-        "-z",
-        "--no-abbrev",
-        "--no-commit-id",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--find-renames",
-        base_oid,
-        commit_oid,
-    ).split(b"\0")
-    result: list[dict[str, Any]] = []
-    index = 0
-    while index < len(fields) and fields[index]:
-        header = fields[index].decode()
-        index += 1
-        old_mode, new_mode, old_oid, new_oid, status_token = header.removeprefix(":").split()
-        status = {
-            "A": "added",
-            "C": "copied",
-            "D": "deleted",
-            "M": "modified",
-            "R": "renamed",
-            "T": "type_changed",
-        }.get(status_token[0])
-        if status is None or index >= len(fields):
-            raise RuntimeError(f"unsupported git change record: {header}")
-        first_path, first_exclusion = _safe_repo_path(fields[index])
-        index += 1
-        if status == "added":
-            old_path, new_path = None, first_path
-            old_exclusion, new_exclusion = None, first_exclusion
-        elif status == "deleted":
-            old_path, new_path = first_path, None
-            old_exclusion, new_exclusion = first_exclusion, None
-        elif status in {"renamed", "copied"}:
-            if index >= len(fields):
-                raise RuntimeError(f"rename/copy record lacks destination: {header}")
-            second_path, second_exclusion = _safe_repo_path(fields[index])
-            index += 1
-            old_path, new_path = first_path, second_path
-            old_exclusion, new_exclusion = first_exclusion, second_exclusion
-        else:
-            old_path = new_path = first_path
-            old_exclusion = new_exclusion = first_exclusion
-        result.append(
-            {
-                "status": status,
-                "similarity": int(status_token[1:]) if status_token[1:] else None,
-                "old_path": old_path,
-                "new_path": new_path,
-                "old_exclusion": old_exclusion,
-                "new_exclusion": new_exclusion,
-                "old_mode": old_mode if old_mode != "000000" else None,
-                "new_mode": new_mode if new_mode != "000000" else None,
-                "old_blob_oid": (
-                    old_oid if old_mode.startswith("100") or old_mode == "120000" else None
-                ),
-                "new_blob_oid": (
-                    new_oid if new_mode.startswith("100") or new_mode == "120000" else None
-                ),
-            }
-        )
-    status_order = {
-        name: order
-        for order, name in enumerate(
-            ("added", "copied", "deleted", "modified", "renamed", "type_changed")
-        )
-    }
-
-    def option(value: object) -> tuple[bool, object]:
-        return value is not None, value or ""
-
-    result.sort(
-        key=lambda item: (
-            status_order[item["status"]],
-            option(item["similarity"]),
-            option(item["old_path"]),
-            option(item["new_path"]),
-            option(item["old_exclusion"]),
-            option(item["new_exclusion"]),
-            option(item["old_mode"]),
-            option(item["new_mode"]),
-            option(item["old_blob_oid"]),
-            option(item["new_blob_oid"]),
-        )
+    if target_root is not None:
+        request["target_root"] = str(target_root)
+    completed = subprocess.run(
+        [
+            str(executable),
+            "--quiet",
+            "--format",
+            "json",
+            "--project",
+            str(repository_root),
+            "evidence",
+            "--snapshot-json",
+            _canonical_json(request),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=_safe_process_env(),
     )
-    return result
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        if action == "verify" and "inventory_mismatch" in detail:
+            raise SnapshotDriftError(detail)
+        raise RuntimeError(f"native Ask snapshot {action} failed: {detail}")
+    try:
+        response = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("native Ask snapshot returned invalid JSON") from error
+    if not isinstance(response, dict) or response.get("schema_version") != 1:
+        raise RuntimeError("native Ask snapshot returned an unsupported contract")
+    binding = response.get("binding")
+    inventory = response.get("inventory")
+    if not isinstance(binding, dict) or not isinstance(inventory, dict):
+        raise RuntimeError("native Ask snapshot omitted binding or inventory")
+    if binding.get("project_id") != project_id or binding.get("commit_oid") != commit_oid:
+        raise SnapshotDriftError("native Ask snapshot identity changed")
+    if inventory.get("complete") is not True or (
+        inventory.get("digest") != binding.get("inventory_digest")
+    ):
+        raise SnapshotDriftError("native Ask snapshot inventory is incomplete or mismatched")
+    return binding, inventory
 
 
 class AskSnapshotManager:
@@ -376,6 +191,8 @@ class AskSnapshotManager:
         self,
         *,
         worktree_storage: LocalWorktreeManager,
+        run_storage: AskRunStorage,
+        snapshot_executable: Path | None = None,
         index_preparer: IndexPreparer | None = None,
         index_releaser: IndexReleaser | None = None,
         credential_manager: ManagedCredentialManager | None = None,
@@ -383,7 +200,12 @@ class AskSnapshotManager:
     ) -> None:
         if index_preparer is None and (credential_manager is None or session_id is None):
             raise ValueError("Ask snapshots require an injected or managed index preparer")
+        executable = snapshot_executable or resolve_native_bin("gcode")
+        if executable is None:
+            raise RuntimeError("gcode_not_installed")
         self.worktree_storage = worktree_storage
+        self.run_storage = run_storage
+        self.snapshot_executable = Path(executable)
         self.index_preparer = index_preparer
         self.index_releaser = index_releaser
         self.credential_manager = credential_manager
@@ -393,19 +215,13 @@ class AskSnapshotManager:
         self,
         *,
         run_id: str,
-        project_id: str,
         repository_root: Path,
-        commit_oid: str,
-        deadline_at: datetime,
         artifacts: AskArtifactStore,
     ) -> PreparedSnapshot:
         return self._run_sync(
             self.prepare_async(
                 run_id=run_id,
-                project_id=project_id,
                 repository_root=repository_root,
-                commit_oid=commit_oid,
-                deadline_at=deadline_at,
                 artifacts=artifacts,
             )
         )
@@ -414,199 +230,455 @@ class AskSnapshotManager:
         self,
         *,
         run_id: str,
-        project_id: str,
         repository_root: Path,
-        commit_oid: str,
-        deadline_at: datetime,
         artifacts: AskArtifactStore,
     ) -> PreparedSnapshot:
-        if deadline_at.tzinfo is None or deadline_at <= datetime.now(UTC):
-            raise ValueError("Ask snapshot deadline has already expired")
+        record = self._record_for_artifacts(run_id, artifacts)
+        deadline_at = record.binding.deadline_at
+        _remaining_seconds(deadline_at)
+        if self.run_storage.get_snapshot_generation(run_id) is not None:
+            raise ValueError("Ask run already has a current snapshot generation")
         repository_root = repository_root.resolve()
         binding, inventory = await asyncio.to_thread(
-            _load_snapshot,
+            _native_snapshot,
+            self.snapshot_executable,
             repository_root,
-            project_id,
-            commit_oid,
+            project_id=record.binding.project_id,
+            commit_oid=record.binding.commit_oid,
+            action="inspect",
+            timeout=_remaining_seconds(deadline_at),
         )
-        source_root = artifacts.run_root / "source"
-        if source_root.exists():
-            raise FileExistsError(f"Ask snapshot path already exists: {source_root}")
+        if binding.get("tree_oid") != record.binding.tree_oid:
+            raise SnapshotDriftError("native Ask snapshot tree differs from the stored run")
+        identity_body = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "project_id": record.binding.project_id,
+            "commit_oid": record.binding.commit_oid,
+            "deadline_at": self._format_deadline(deadline_at),
+            "retrieval_mode": record.binding.retrieval_mode.value,
+            "binding": binding,
+            "inventory": inventory,
+        }
+        _remaining_seconds(deadline_at)
+        identity_pointer = await asyncio.to_thread(artifacts.write_body, "snapshot", identity_body)
+        _remaining_seconds(deadline_at)
         await asyncio.to_thread(
-            _git,
-            repository_root,
-            "worktree",
-            "add",
-            "--detach",
-            str(source_root),
-            commit_oid,
+            self.run_storage.attach_snapshot,
+            run_id,
+            inventory_digest=str(binding["inventory_digest"]),
+            snapshot_artifact=identity_pointer,
+            deadline_at=deadline_at,
         )
-        source_root.chmod(0o700)
-        worktree = self.worktree_storage.create(
-            project_id=project_id,
-            branch_name=None,
-            worktree_path=str(source_root),
-            base_branch=commit_oid,
-            agent_session_id=str(self.session_id) if self.session_id is not None else None,
-            workspace_role="ask_snapshot",
-        )
-        try:
-            await asyncio.to_thread(ensure_project_json_for_isolation, repository_root, source_root)
-            runtime = await self._prepare_index(source_root, deadline_at)
-            body = {
-                "schema_version": 1,
-                "run_id": run_id,
-                "project_id": project_id,
-                "repository_root": str(repository_root),
-                "source_root": str(source_root),
-                "worktree_id": worktree.id,
-                "commit_oid": commit_oid,
-                "binding": binding,
-                "inventory": inventory,
-                "index_runtime": {
-                    "executable": str(runtime.executable),
-                    "managed_execution_id": runtime.managed_execution_id,
-                    "credential_generation": runtime.credential_generation,
-                },
-            }
-            pointer = artifacts.write_body("snapshot", body)
-        except BaseException:
-            await asyncio.to_thread(self._delete_worktree, repository_root, worktree.id)
-            raise
-        return PreparedSnapshot(
-            commit_oid=commit_oid,
+        return await self._create_generation(
+            record=record,
+            generation=1,
+            expected_previous_generation=None,
+            repository_root=repository_root,
+            identity_pointer=identity_pointer,
             binding=binding,
             inventory=inventory,
-            repository_root=repository_root,
-            source_root=source_root,
-            worktree_id=worktree.id,
-            runtime=runtime,
-            manifest_pointer=pointer,
+            artifacts=artifacts,
         )
 
     def recover(
         self,
-        manifest_pointer: dict[str, Any],
         *,
-        deadline_at: datetime,
+        run_id: str,
         artifacts: AskArtifactStore,
     ) -> PreparedSnapshot:
-        return self._run_sync(
-            self.recover_async(
-                manifest_pointer,
-                deadline_at=deadline_at,
-                artifacts=artifacts,
-            )
-        )
+        return self._run_sync(self.recover_async(run_id=run_id, artifacts=artifacts))
 
     async def recover_async(
         self,
-        manifest_pointer: dict[str, Any],
         *,
-        deadline_at: datetime,
+        run_id: str,
         artifacts: AskArtifactStore,
     ) -> PreparedSnapshot:
-        body = await asyncio.to_thread(artifacts.read_body, manifest_pointer)
-        repository_root = Path(self._required_text(body, "repository_root")).resolve()
-        source_root = Path(self._required_text(body, "source_root"))
-        project_id = self._required_text(body, "project_id")
-        commit_oid = self._required_text(body, "commit_oid")
-        if source_root != artifacts.run_root / "source":
-            raise SnapshotDriftError("snapshot manifest source path escaped the Ask run")
-        binding, inventory = await asyncio.to_thread(
-            _load_snapshot,
-            repository_root,
-            project_id,
-            commit_oid,
+        record = self._record_for_artifacts(run_id, artifacts)
+        deadline_at = record.binding.deadline_at
+        _remaining_seconds(deadline_at)
+        await asyncio.to_thread(artifacts.verify_manifest)
+        _remaining_seconds(deadline_at)
+        current = self.run_storage.get_snapshot_generation(run_id)
+        if current is None:
+            raise SnapshotDriftError("Ask run has no persisted snapshot lifecycle")
+        lifecycle = await asyncio.to_thread(artifacts.read_body, current.lifecycle_artifact)
+        identity_pointer, identity = await self._validate_lifecycle(
+            record, current, lifecycle, artifacts
         )
-        if binding != body.get("binding") or inventory != body.get("inventory"):
-            raise SnapshotDriftError("snapshot manifest no longer matches the pinned commit")
+        repository_root = Path(self._required_text(lifecycle, "repository_root")).resolve()
+        source_root = Path(self._required_text(lifecycle, "source_root"))
+        if source_root != artifacts.run_root / "source":
+            raise SnapshotDriftError("snapshot lifecycle source path escaped the Ask run")
+        binding = self._required_mapping(identity, "binding")
+        inventory = self._required_mapping(identity, "inventory")
+        _remaining_seconds(deadline_at)
+        inspected_binding, inspected_inventory = await asyncio.to_thread(
+            _native_snapshot,
+            self.snapshot_executable,
+            repository_root,
+            project_id=record.binding.project_id,
+            commit_oid=record.binding.commit_oid,
+            action="inspect",
+            timeout=_remaining_seconds(deadline_at),
+        )
+        if inspected_binding != binding or inspected_inventory != inventory:
+            raise SnapshotDriftError("snapshot identity no longer matches the pinned commit")
 
-        manifest_worktree_id = self._required_text(body, "worktree_id")
-        current_worktree = self.worktree_storage.get_by_path(str(source_root))
+        created_worktree = False
+        worktree_id = self._required_text(lifecycle, "worktree_id")
         if source_root.exists():
-            if current_worktree is None:
-                raise SnapshotDriftError("snapshot checkout lost its managed worktree record")
-            if current_worktree.project_id != project_id:
-                raise SnapshotDriftError("snapshot worktree project scope changed")
-            worktree_id = current_worktree.id
+            current_worktree = self.worktree_storage.get_by_path(str(source_root))
+            if current_worktree is None or current_worktree.id != worktree_id:
+                raise SnapshotDriftError("snapshot checkout lost its current managed record")
             await asyncio.to_thread(
-                self._verify_checkout,
-                source_root,
-                commit_oid,
-                binding["tree_oid"],
+                _native_snapshot,
+                self.snapshot_executable,
+                repository_root,
+                project_id=record.binding.project_id,
+                commit_oid=record.binding.commit_oid,
+                action="verify",
+                target_root=source_root,
+                timeout=_remaining_seconds(deadline_at),
             )
         else:
-            await asyncio.to_thread(_git, repository_root, "worktree", "prune")
-            stale = current_worktree or self.worktree_storage.get(manifest_worktree_id)
+            stale = self.worktree_storage.get(worktree_id)
             if stale is not None:
                 self.worktree_storage.delete(stale.id)
             await asyncio.to_thread(
                 _git,
                 repository_root,
                 "worktree",
-                "add",
-                "--detach",
-                str(source_root),
-                commit_oid,
+                "prune",
+                timeout=_remaining_seconds(deadline_at),
             )
-            source_root.chmod(0o700)
-            replacement = self.worktree_storage.create(
-                project_id=project_id,
-                branch_name=None,
-                worktree_path=str(source_root),
-                base_branch=commit_oid,
-                agent_session_id=str(self.session_id) if self.session_id is not None else None,
-                workspace_role="ask_snapshot",
+            worktree_id = await self._create_worktree(
+                record=record,
+                repository_root=repository_root,
+                source_root=source_root,
+                deadline_at=deadline_at,
             )
-            worktree_id = replacement.id
-            await asyncio.to_thread(ensure_project_json_for_isolation, repository_root, source_root)
-        self._revoke_manifest_runtime(body)
-        runtime = await self._prepare_index(source_root, deadline_at)
+            created_worktree = True
+            try:
+                await self._materialize(
+                    record=record,
+                    repository_root=repository_root,
+                    source_root=source_root,
+                    deadline_at=deadline_at,
+                )
+            except BaseException:
+                await asyncio.to_thread(
+                    self._delete_worktree,
+                    repository_root,
+                    source_root,
+                    worktree_id,
+                )
+                raise
+
+        runtime: SnapshotIndexRuntime | None = None
+        try:
+            runtime = await self._prepare_index(source_root, deadline_at)
+            lifecycle_pointer = await self._publish_lifecycle(
+                record=record,
+                generation=current.generation + 1,
+                expected_previous_generation=current.generation,
+                repository_root=repository_root,
+                source_root=source_root,
+                worktree_id=worktree_id,
+                runtime=runtime,
+                identity_pointer=identity_pointer,
+                binding=binding,
+                artifacts=artifacts,
+            )
+        except BaseException:
+            if runtime is not None:
+                await asyncio.to_thread(self._release_runtime, runtime, "recovery_failed")
+            if created_worktree:
+                await asyncio.to_thread(
+                    self._delete_worktree,
+                    repository_root,
+                    source_root,
+                    worktree_id,
+                )
+            raise
+        previous_runtime = self._runtime_from_lifecycle(lifecycle)
+        await asyncio.to_thread(self._release_runtime, previous_runtime, "recovered")
         return PreparedSnapshot(
-            commit_oid=commit_oid,
+            generation=current.generation + 1,
+            commit_oid=record.binding.commit_oid,
             binding=binding,
             inventory=inventory,
             repository_root=repository_root,
             source_root=source_root,
             worktree_id=worktree_id,
             runtime=runtime,
-            manifest_pointer=manifest_pointer,
+            manifest_pointer=lifecycle_pointer,
         )
 
     def release(self, snapshot: PreparedSnapshot, *, artifacts: AskArtifactStore) -> None:
-        """Revoke the grant and release the managed checkout, retaining evidence bodies."""
         if artifacts.run_root / "source" != snapshot.source_root:
             raise ValueError("snapshot does not belong to this Ask artifact store")
-        if self.index_releaser is not None:
-            self.index_releaser(snapshot.runtime)
-        elif self.credential_manager is not None:
-            self.credential_manager.revoke(
-                UUID(snapshot.runtime.managed_execution_id),
-                generation=snapshot.runtime.credential_generation,
-                reason="ask_snapshot_released",
+        current = self.run_storage.get_snapshot_generation(artifacts.run_id)
+        if (
+            current is None
+            or current.generation != snapshot.generation
+            or (current.lifecycle_artifact != snapshot.manifest_pointer)
+        ):
+            raise SnapshotDriftError("release requires the current snapshot lifecycle generation")
+        self._release_runtime(snapshot.runtime, "released")
+        self._delete_worktree(
+            snapshot.repository_root,
+            snapshot.source_root,
+            snapshot.worktree_id,
+        )
+
+    async def _create_generation(
+        self,
+        *,
+        record: AskRunRecord,
+        generation: int,
+        expected_previous_generation: int | None,
+        repository_root: Path,
+        identity_pointer: dict[str, Any],
+        binding: dict[str, Any],
+        inventory: dict[str, Any],
+        artifacts: AskArtifactStore,
+    ) -> PreparedSnapshot:
+        source_root = artifacts.run_root / "source"
+        if source_root.exists():
+            raise FileExistsError(f"Ask snapshot path already exists: {source_root}")
+        worktree_id = await self._create_worktree(
+            record=record,
+            repository_root=repository_root,
+            source_root=source_root,
+            deadline_at=record.binding.deadline_at,
+        )
+        runtime: SnapshotIndexRuntime | None = None
+        try:
+            await self._materialize(
+                record=record,
+                repository_root=repository_root,
+                source_root=source_root,
+                deadline_at=record.binding.deadline_at,
             )
-        self._delete_worktree(snapshot.repository_root, snapshot.worktree_id)
+            runtime = await self._prepare_index(source_root, record.binding.deadline_at)
+            lifecycle_pointer = await self._publish_lifecycle(
+                record=record,
+                generation=generation,
+                expected_previous_generation=expected_previous_generation,
+                repository_root=repository_root,
+                source_root=source_root,
+                worktree_id=worktree_id,
+                runtime=runtime,
+                identity_pointer=identity_pointer,
+                binding=binding,
+                artifacts=artifacts,
+            )
+        except BaseException:
+            if runtime is not None:
+                await asyncio.to_thread(self._release_runtime, runtime, "preparation_failed")
+            await asyncio.to_thread(
+                self._delete_worktree,
+                repository_root,
+                source_root,
+                worktree_id,
+            )
+            raise
+        return PreparedSnapshot(
+            generation=generation,
+            commit_oid=record.binding.commit_oid,
+            binding=binding,
+            inventory=inventory,
+            repository_root=repository_root,
+            source_root=source_root,
+            worktree_id=worktree_id,
+            runtime=runtime,
+            manifest_pointer=lifecycle_pointer,
+        )
+
+    async def _create_worktree(
+        self,
+        *,
+        record: AskRunRecord,
+        repository_root: Path,
+        source_root: Path,
+        deadline_at: datetime,
+    ) -> str:
+        added = False
+        try:
+            await asyncio.to_thread(
+                _git,
+                repository_root,
+                "worktree",
+                "add",
+                "--detach",
+                "--no-checkout",
+                str(source_root),
+                record.binding.commit_oid,
+                timeout=_remaining_seconds(deadline_at),
+            )
+            added = True
+            source_root.chmod(0o700)
+            remaining = _remaining_seconds(deadline_at)
+            with database_operation_deadline(
+                timeout_seconds=remaining,
+                operation_timeout_seconds=remaining,
+            ):
+                worktree = self.worktree_storage.create(
+                    project_id=record.binding.project_id,
+                    branch_name=None,
+                    worktree_path=str(source_root),
+                    base_branch=record.binding.commit_oid,
+                    agent_session_id=(
+                        str(self.session_id) if self.session_id is not None else None
+                    ),
+                    workspace_role="ask_snapshot",
+                )
+            return worktree.id
+        except BaseException:
+            if added:
+                await asyncio.to_thread(
+                    self._delete_worktree,
+                    repository_root,
+                    source_root,
+                    None,
+                )
+            raise
+
+    async def _materialize(
+        self,
+        *,
+        record: AskRunRecord,
+        repository_root: Path,
+        source_root: Path,
+        deadline_at: datetime,
+    ) -> None:
+        await asyncio.to_thread(
+            _native_snapshot,
+            self.snapshot_executable,
+            repository_root,
+            project_id=record.binding.project_id,
+            commit_oid=record.binding.commit_oid,
+            action="materialize",
+            target_root=source_root,
+            timeout=_remaining_seconds(deadline_at),
+        )
+        _remaining_seconds(deadline_at)
+        await asyncio.to_thread(ensure_project_json_for_isolation, repository_root, source_root)
+        _remaining_seconds(deadline_at)
+
+    async def _publish_lifecycle(
+        self,
+        *,
+        record: AskRunRecord,
+        generation: int,
+        expected_previous_generation: int | None,
+        repository_root: Path,
+        source_root: Path,
+        worktree_id: str,
+        runtime: SnapshotIndexRuntime,
+        identity_pointer: dict[str, Any],
+        binding: Mapping[str, Any],
+        artifacts: AskArtifactStore,
+    ) -> dict[str, Any]:
+        deadline_at = record.binding.deadline_at
+        _remaining_seconds(deadline_at)
+        body = {
+            "schema_version": 1,
+            "generation": generation,
+            "run_id": record.run_id,
+            "project_id": record.binding.project_id,
+            "commit_oid": record.binding.commit_oid,
+            "deadline_at": self._format_deadline(deadline_at),
+            "retrieval_mode": record.binding.retrieval_mode.value,
+            "inventory_digest": binding["inventory_digest"],
+            "snapshot_artifact": identity_pointer,
+            "repository_root": str(repository_root),
+            "source_root": str(source_root),
+            "worktree_id": worktree_id,
+            "index_runtime": {
+                "executable": str(runtime.executable),
+                "argv_prefix": list(runtime.argv_prefix),
+                "managed_execution_id": runtime.managed_execution_id,
+                "credential_generation": runtime.credential_generation,
+            },
+        }
+        pointer = await asyncio.to_thread(artifacts.write_body, "snapshot-lifecycle", body)
+        _remaining_seconds(deadline_at)
+        await asyncio.to_thread(artifacts.verify_manifest)
+        _remaining_seconds(deadline_at)
+        await asyncio.to_thread(
+            self.run_storage.publish_snapshot_generation,
+            record.run_id,
+            generation=generation,
+            lifecycle_artifact=pointer,
+            expected_previous_generation=expected_previous_generation,
+            deadline_at=deadline_at,
+        )
+        _remaining_seconds(deadline_at)
+        return pointer
+
+    async def _validate_lifecycle(
+        self,
+        record: AskRunRecord,
+        current: SnapshotGeneration,
+        lifecycle: Mapping[str, Any],
+        artifacts: AskArtifactStore,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if lifecycle.get("generation") != current.generation:
+            raise SnapshotDriftError("snapshot lifecycle generation does not match pipeline state")
+        expected = {
+            "run_id": record.run_id,
+            "project_id": record.binding.project_id,
+            "commit_oid": record.binding.commit_oid,
+            "deadline_at": self._format_deadline(record.binding.deadline_at),
+            "retrieval_mode": record.binding.retrieval_mode.value,
+            "inventory_digest": record.binding.inventory_digest,
+        }
+        for key, value in expected.items():
+            if lifecycle.get(key) != value:
+                raise SnapshotDriftError(f"snapshot lifecycle {key} differs from stored run")
+        identity_pointer = self._required_mapping(lifecycle, "snapshot_artifact")
+        if identity_pointer != record.binding.snapshot_artifact:
+            raise SnapshotDriftError("snapshot lifecycle artifact identity changed")
+        identity = await asyncio.to_thread(artifacts.read_body, identity_pointer)
+        for key in ("run_id", "project_id", "commit_oid", "deadline_at", "retrieval_mode"):
+            if identity.get(key) != expected[key]:
+                raise SnapshotDriftError(f"snapshot identity {key} differs from stored run")
+        binding = self._required_mapping(identity, "binding")
+        inventory = self._required_mapping(identity, "inventory")
+        if binding.get("inventory_digest") != record.binding.inventory_digest or (
+            inventory.get("digest") != record.binding.inventory_digest
+        ):
+            raise SnapshotDriftError("snapshot identity inventory digest changed")
+        return identity_pointer, identity
 
     async def _prepare_index(
         self, source_root: Path, deadline_at: datetime
     ) -> SnapshotIndexRuntime:
+        remaining = _remaining_seconds(deadline_at)
         if self.index_preparer is not None:
-            return await self.index_preparer(source_root, deadline_at)
+            async with asyncio.timeout(remaining):
+                runtime = await self.index_preparer(source_root, deadline_at)
+            _remaining_seconds(deadline_at)
+            return runtime
         if self.credential_manager is None or self.session_id is None:
             raise RuntimeError("managed Ask snapshot index services are unavailable")
-        issued = await asyncio.to_thread(
-            self.credential_manager.issue_tool_request,
-            session_id=self.session_id,
-            requested_project_path=str(source_root),
-            expires_at=deadline_at,
-        )
+        with database_operation_deadline(
+            timeout_seconds=remaining,
+            operation_timeout_seconds=remaining,
+        ):
+            issued = await asyncio.to_thread(
+                self.credential_manager.issue_tool_request,
+                session_id=self.session_id,
+                requested_project_path=str(source_root),
+                expires_at=deadline_at,
+            )
         try:
+            _remaining_seconds(deadline_at)
             if Path(issued.project_path).resolve() != source_root.resolve():
                 raise RuntimeError("managed Ask grant resolved a different project path")
-            remaining = (deadline_at - datetime.now(UTC)).total_seconds()
-            if remaining <= 0:
-                raise TimeoutError("Ask snapshot deadline exceeded during preparation")
             identity_env = {
                 "GOBBY_MACHINE_ID": require_machine_id(),
                 "GOBBY_PROJECT_ID": str(issued.project_id),
@@ -614,13 +686,14 @@ class AskSnapshotManager:
             }
             result = await ensure_isolation_code_index(
                 str(source_root),
-                timeout=remaining,
+                timeout=_remaining_seconds(deadline_at),
                 credential=issued.credential,
                 identity_env=identity_env,
             )
             executable = result.wrapper_path or resolve_native_bin("gcode")
             if executable is None:
                 raise RuntimeError("gcode_not_installed")
+            _remaining_seconds(deadline_at)
         except BaseException:
             await asyncio.to_thread(
                 self.credential_manager.revoke,
@@ -636,61 +709,92 @@ class AskSnapshotManager:
             credential_generation=issued.credential.credential_generation,
         )
 
-    def _delete_worktree(self, repository_root: Path, worktree_id: str) -> None:
-        result = delete_worktree_transaction(
-            DestructiveBoundary(),
-            request=WorktreeDeletionRequest(
-                worktree_id=worktree_id,
-                surface=DeletionSurface.MCP,
-                force=True,
-            ),
-            worktree_storage=self.worktree_storage,
-            resolve_git_manager=lambda _worktree: WorktreeGitManager(repository_root),
-            task_manager=None,
-        )
-        if not result.success:
-            raise RuntimeError(result.error or "failed to release Ask snapshot worktree")
+    def _record_for_artifacts(self, run_id: str, artifacts: AskArtifactStore) -> AskRunRecord:
+        record = self.run_storage.get(run_id)
+        if record is None:
+            raise ValueError(f"Ask run not found: {run_id}")
+        if artifacts.run_id != run_id or artifacts.project_id != record.binding.project_id:
+            raise ValueError("Ask artifact store does not belong to the stored run")
+        return record
 
-    def _revoke_manifest_runtime(self, body: Mapping[str, Any]) -> None:
-        if self.credential_manager is None:
-            return
-        runtime = body.get("index_runtime")
-        if not isinstance(runtime, Mapping):
-            return
-        managed_execution_id = runtime.get("managed_execution_id")
-        generation = runtime.get("credential_generation")
-        if not isinstance(managed_execution_id, str) or not isinstance(generation, int):
-            raise SnapshotDriftError("snapshot manifest has invalid managed grant identity")
-        self.credential_manager.revoke(
-            UUID(managed_execution_id),
-            generation=generation,
-            reason="ask_snapshot_recovered",
-        )
+    def _delete_worktree(
+        self,
+        repository_root: Path,
+        source_root: Path,
+        worktree_id: str | None,
+    ) -> None:
+        try:
+            _git(
+                repository_root,
+                "worktree",
+                "remove",
+                "--force",
+                str(source_root),
+                timeout=_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except subprocess.CalledProcessError:
+            _git(
+                repository_root,
+                "worktree",
+                "prune",
+                timeout=_CLEANUP_TIMEOUT_SECONDS,
+            )
+        finally:
+            if worktree_id is not None and self.worktree_storage.get(worktree_id) is not None:
+                self.worktree_storage.delete(worktree_id)
+
+    def _release_runtime(self, runtime: SnapshotIndexRuntime, reason: str) -> None:
+        if self.index_releaser is not None:
+            self.index_releaser(runtime)
+        elif self.credential_manager is not None:
+            self.credential_manager.revoke(
+                UUID(runtime.managed_execution_id),
+                generation=runtime.credential_generation,
+                reason=f"ask_snapshot_{reason}",
+            )
 
     @staticmethod
-    def _verify_checkout(source_root: Path, commit_oid: str, tree_oid: str) -> None:
-        if _git_text(source_root, "rev-parse", "HEAD") != commit_oid:
-            raise SnapshotDriftError("working tree drift: snapshot HEAD changed")
-        if _git_text(source_root, "rev-parse", "HEAD^{tree}") != tree_oid:
-            raise SnapshotDriftError("working tree drift: snapshot tree changed")
-        status = _git_text(source_root, "status", "--porcelain=v1", "--untracked-files=all")
-        dirty: list[str] = []
-        for line in status.splitlines():
-            path = line[3:].split(" -> ")[-1]
-            if line.startswith("?? ") and (
-                path in _GENERATED_SNAPSHOT_PATHS or path.startswith(".gobby/bin/")
-            ):
-                continue
-            dirty.append(line)
-        if dirty:
-            raise SnapshotDriftError("working tree drift: " + ", ".join(dirty))
+    def _runtime_from_lifecycle(body: Mapping[str, Any]) -> SnapshotIndexRuntime:
+        runtime = body.get("index_runtime")
+        if not isinstance(runtime, Mapping):
+            raise SnapshotDriftError("snapshot lifecycle has invalid runtime identity")
+        executable = runtime.get("executable")
+        argv_prefix = runtime.get("argv_prefix")
+        managed_execution_id = runtime.get("managed_execution_id")
+        generation = runtime.get("credential_generation")
+        if (
+            not isinstance(executable, str)
+            or not isinstance(argv_prefix, list)
+            or not all(isinstance(value, str) for value in argv_prefix)
+            or not isinstance(managed_execution_id, str)
+            or not isinstance(generation, int)
+        ):
+            raise SnapshotDriftError("snapshot lifecycle has invalid runtime identity")
+        return SnapshotIndexRuntime(
+            executable=Path(executable),
+            env={},
+            managed_execution_id=managed_execution_id,
+            credential_generation=generation,
+            argv_prefix=tuple(argv_prefix),
+        )
 
     @staticmethod
     def _required_text(body: Mapping[str, Any], key: str) -> str:
         value = body.get(key)
         if not isinstance(value, str) or not value:
-            raise SnapshotDriftError(f"snapshot manifest is missing {key}")
+            raise SnapshotDriftError(f"snapshot lifecycle is missing {key}")
         return value
+
+    @staticmethod
+    def _required_mapping(body: Mapping[str, Any], key: str) -> dict[str, Any]:
+        value = body.get(key)
+        if not isinstance(value, Mapping):
+            raise SnapshotDriftError(f"snapshot lifecycle is missing {key}")
+        return dict(value)
+
+    @staticmethod
+    def _format_deadline(deadline_at: datetime) -> str:
+        return deadline_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def _run_sync(coroutine: Coroutine[Any, Any, PreparedSnapshot]) -> PreparedSnapshot:

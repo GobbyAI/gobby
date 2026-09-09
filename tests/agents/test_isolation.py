@@ -677,6 +677,31 @@ class TestEnsureIsolationCodeIndex:
         assert proc.wait_count == 1
 
     @pytest.mark.asyncio
+    async def test_one_deadline_bounds_every_gcode_preflight_phase(self, tmp_path: Path) -> None:
+        observed: list[float] = []
+
+        async def run_gcode(*_args: Any, timeout: float, **_kwargs: Any) -> None:
+            observed.append(timeout)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch("gobby.agents.code_index._run_gcode", side_effect=run_gcode),
+            patch(
+                "gobby.agents.code_index.time.monotonic",
+                side_effect=[0.0, 0.01, 0.02, 0.03, 0.04, 0.05],
+            ),
+        ):
+            await ensure_isolation_code_index(
+                str(tmp_path),
+                timeout=0.2,
+                config_probe_timeout=5,
+                search_smoke_timeout=5,
+            )
+
+        assert len(observed) == 3
+        assert 0 < observed[2] < observed[1] < observed[0] <= 0.2
+
+    @pytest.mark.asyncio
     async def test_gcode_launch_oserror_uses_failure_code(self, tmp_path: Path) -> None:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
