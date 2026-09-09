@@ -19,6 +19,16 @@ const SECRET_EXTENSIONS: &[&str] = &[
 
 const PRIVATE_KEY_NAMES: &[&str] = &["id_rsa", "id_ed25519"];
 
+const SENSITIVE_PATH_COMPONENTS: &[&str] = &[
+    ".git",
+    ".gobby",
+    "credential",
+    "credentials",
+    "private_key",
+    "secret",
+    "secrets",
+];
+
 const PLAINTEXT_SECRET_EXTENSIONS: &[&str] = &[
     "",
     ".txt",
@@ -156,6 +166,15 @@ pub fn has_secret_extension(path: &Path) -> bool {
 
     PLAINTEXT_SECRET_EXTENSIONS.contains(&suffix.as_str())
         && is_plaintext_secret_name(plaintext_stem)
+}
+
+/// Return whether evidence extraction must exclude a repository-relative path.
+pub fn is_sensitive_evidence_path(path: &Path) -> bool {
+    has_secret_extension(path)
+        || path.components().any(|component| {
+            let name = component.as_os_str().to_string_lossy().to_lowercase();
+            SENSITIVE_PATH_COMPONENTS.contains(&name.as_str()) || name.starts_with(".env.")
+        })
 }
 
 fn is_plaintext_secret_name(stem: &str) -> bool {

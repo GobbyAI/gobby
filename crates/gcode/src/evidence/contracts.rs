@@ -5,6 +5,31 @@ pub const DEFAULT_MAX_BYTES: usize = 16_384;
 pub const DEFAULT_GRAPH_DEPTH: usize = 2;
 pub const DEFAULT_RESULT_LIMIT: usize = 1_000;
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotRequest {
+    pub schema_version: u32,
+    pub project_id: String,
+    pub commit_oid: String,
+    #[serde(flatten)]
+    pub action: SnapshotAction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum SnapshotAction {
+    Inspect,
+    Materialize { target_root: String },
+    Verify { target_root: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotResponse {
+    pub schema_version: u32,
+    pub binding: SnapshotBinding,
+    pub inventory: SnapshotInventory,
+}
+
 fn default_max_bytes() -> usize {
     DEFAULT_MAX_BYTES
 }
@@ -109,6 +134,7 @@ pub enum ExclusionReason {
     Binary,
     Gitlink,
     Oversized,
+    SensitivePath,
     Symlink,
     UnsafePath,
     UnsupportedEncoding,

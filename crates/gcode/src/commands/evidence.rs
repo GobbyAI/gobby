@@ -1,5 +1,6 @@
 //! Thin CLI adapter for exact, model-independent evidence reads.
 
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use crate::cli_error::CliError;
@@ -7,7 +8,8 @@ use crate::codewiki_facts::CodewikiFacts;
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context, ServiceConfigSelection};
 use crate::evidence::{
     EvidenceError, EvidenceLibrary, EvidenceOperation, EvidenceRequest, FactPage, HybridIdentity,
-    HybridSearch, SearchLane, SearchSelector, Snapshot, validate_request_shape,
+    HybridSearch, SearchLane, SearchSelector, Snapshot, SnapshotAction, SnapshotRequest,
+    SnapshotResponse, validate_request_shape,
 };
 use crate::output::{self, Format};
 use crate::vector::code_symbols::{audited_semantic_search, collection_name};
@@ -51,6 +53,75 @@ pub(crate) fn preflight(
     validate_request_shape(&request).map_err(cli_error)?;
 
     Ok(request)
+}
+
+pub(crate) fn preflight_snapshot(
+    request_json: &str,
+    format: Format,
+    allow_stale: bool,
+) -> anyhow::Result<SnapshotRequest> {
+    let request: SnapshotRequest =
+        serde_json::from_str(request_json).map_err(|error| CliError {
+            code: "invalid_snapshot_request",
+            message: format!("invalid snapshot request JSON: {error}"),
+            recovery: Some(
+                "provide one complete snapshot schema v1 request with --snapshot-json".to_string(),
+            ),
+            exit_status: 2,
+        })?;
+    if !matches!(format, Format::Json) {
+        return Err(CliError {
+            code: "unsupported_evidence_format",
+            message: "snapshot output is available only as JSON".to_string(),
+            recovery: Some("remove --format text or pass --format json".to_string()),
+            exit_status: 2,
+        }
+        .into());
+    }
+    if allow_stale {
+        return Err(CliError {
+            code: "stale_admission_bypass_forbidden",
+            message: "--allow-stale cannot be used with canonical snapshots".to_string(),
+            recovery: Some("remove --allow-stale before retrying".to_string()),
+            exit_status: 2,
+        }
+        .into());
+    }
+    if request.schema_version != crate::evidence::EVIDENCE_SCHEMA_VERSION {
+        return Err(cli_error(EvidenceError::UnsupportedSchema {
+            found: request.schema_version,
+        })
+        .into());
+    }
+    if request.project_id.trim().is_empty() || request.commit_oid.trim().is_empty() {
+        return Err(CliError {
+            code: "invalid_snapshot_request",
+            message: "snapshot project_id and commit_oid must not be empty".to_string(),
+            recovery: Some("provide the pinned Ask project and full commit OID".to_string()),
+            exit_status: 2,
+        }
+        .into());
+    }
+    Ok(request)
+}
+
+pub(crate) fn run_snapshot(repo_root: &Path, request: SnapshotRequest) -> anyhow::Result<()> {
+    let snapshot = Snapshot::prepare(repo_root, &request.project_id, &request.commit_oid)
+        .map_err(cli_error)?;
+    match &request.action {
+        SnapshotAction::Inspect => {}
+        SnapshotAction::Materialize { target_root } => snapshot
+            .materialize(Path::new(target_root))
+            .map_err(cli_error)?,
+        SnapshotAction::Verify { target_root } => snapshot
+            .verify_materialized(Path::new(target_root))
+            .map_err(cli_error)?,
+    }
+    output::print_json(&SnapshotResponse {
+        schema_version: crate::evidence::EVIDENCE_SCHEMA_VERSION,
+        binding: snapshot.binding().clone(),
+        inventory: snapshot.inventory().clone(),
+    })
 }
 
 pub(crate) fn service_config_selection(request: &EvidenceRequest) -> ServiceConfigSelection {

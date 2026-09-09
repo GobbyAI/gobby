@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -292,6 +293,16 @@ async def ensure_isolation_code_index(
     variable, which the daemon process env does not provide.
     """
 
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("gcode index timeout must be finite and positive")
+    cutoff = time.monotonic() + timeout
+
+    def remaining(*, cap: float | None = None) -> float:
+        value = cutoff - time.monotonic()
+        if value <= 0:
+            raise RuntimeError("gcode_index_timeout:deadline_exceeded")
+        return value if cap is None else min(value, cap)
+
     workspace = Path(isolated_path)
     if not workspace.is_dir():
         raise RuntimeError(f"gcode_index_workspace_missing:{isolated_path}")
@@ -301,6 +312,7 @@ async def ensure_isolation_code_index(
         raise RuntimeError("gcode_not_installed")
 
     identity = dict(identity_env or {})
+    remaining()
     result = await asyncio.to_thread(
         _prepare_gcode_runtime,
         workspace=workspace,
@@ -311,6 +323,7 @@ async def ensure_isolation_code_index(
         project_id=identity.get("GOBBY_PROJECT_ID"),
         session_id=identity.get("GOBBY_SESSION_ID"),
     )
+    remaining()
     gcode_command = result.wrapper_path or gcode_bin
     merged_probe_env = dict(identity_env or {})
     if api_token:
@@ -335,7 +348,7 @@ async def ensure_isolation_code_index(
                 str(workspace),
             ],
             cwd=workspace,
-            timeout=config_probe_timeout,
+            timeout=remaining(cap=config_probe_timeout),
             timeout_code="gcode_index_unavailable_timeout",
             failure_code="gcode_index_unavailable",
             env=probe_env,
@@ -348,7 +361,7 @@ async def ensure_isolation_code_index(
         await _run_gcode(
             [gcode_command, "index", "--quiet", "--project", str(workspace)],
             cwd=workspace,
-            timeout=timeout,
+            timeout=remaining(),
             timeout_code="gcode_index_timeout",
             failure_code="gcode_index_failed",
             env=probe_env,
@@ -371,7 +384,7 @@ async def ensure_isolation_code_index(
                 str(workspace),
             ],
             cwd=workspace,
-            timeout=search_smoke_timeout,
+            timeout=remaining(cap=search_smoke_timeout),
             timeout_code="gcode_search_content_timeout",
             failure_code="gcode_search_content_failed",
             env=probe_env,

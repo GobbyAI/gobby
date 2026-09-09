@@ -55,8 +55,11 @@ pub(crate) enum Command {
     /// Read exact, commit-bound evidence without agent or model orchestration
     Evidence {
         /// Evidence request using the versioned JSON request contract
-        #[arg(long, value_name = "JSON")]
-        request_json: String,
+        #[arg(long, value_name = "JSON", conflicts_with = "snapshot_json")]
+        request_json: Option<String>,
+        /// Canonical snapshot inspect/materialize/verify request
+        #[arg(long, value_name = "JSON", required_unless_present = "request_json")]
+        snapshot_json: Option<String>,
     },
 
     // ── Project Setup ────────────────────────────────────────────────

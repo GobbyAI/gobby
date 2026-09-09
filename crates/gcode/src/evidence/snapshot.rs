@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -121,6 +121,101 @@ impl Snapshot {
 
     pub fn inventory(&self) -> &SnapshotInventory {
         &self.inventory
+    }
+
+    /// Materialize only evidence-eligible blobs without checkout filters or hooks.
+    pub fn materialize(&self, target_root: &Path) -> Result<()> {
+        let target_root =
+            target_root
+                .canonicalize()
+                .map_err(|error| EvidenceError::InventoryMismatch {
+                    detail: format!("canonicalize materialization root: {error}"),
+                })?;
+        for entry in self.eligible_entries() {
+            let destination = checked_destination(&target_root, &entry.path)?;
+            if destination.exists() || destination.is_symlink() {
+                return Err(EvidenceError::InventoryMismatch {
+                    detail: format!("materialized path already exists: {}", entry.path),
+                });
+            }
+            let parent = destination
+                .parent()
+                .ok_or_else(|| EvidenceError::InventoryMismatch {
+                    detail: format!("materialized path has no parent: {}", entry.path),
+                })?;
+            std::fs::create_dir_all(parent).map_err(|error| EvidenceError::InventoryMismatch {
+                detail: format!("create materialized parent for {}: {error}", entry.path),
+            })?;
+            let resolved_parent =
+                parent
+                    .canonicalize()
+                    .map_err(|error| EvidenceError::InventoryMismatch {
+                        detail: format!(
+                            "canonicalize materialized parent for {}: {error}",
+                            entry.path
+                        ),
+                    })?;
+            if !resolved_parent.starts_with(&target_root) {
+                return Err(EvidenceError::UnsafePath {
+                    path: entry.path.clone(),
+                });
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)
+                .map_err(|error| EvidenceError::InventoryMismatch {
+                    detail: format!("create materialized file {}: {error}", entry.path),
+                })?;
+            file.write_all(&self.read_blob(&entry.path)?)
+                .and_then(|()| file.sync_all())
+                .map_err(|error| EvidenceError::InventoryMismatch {
+                    detail: format!("write materialized file {}: {error}", entry.path),
+                })?;
+            set_materialized_mode(&destination, entry.kind)?;
+        }
+        self.verify_materialized(&target_root)
+    }
+
+    /// Verify every evidence-eligible path without invoking Git filters or hooks.
+    pub fn verify_materialized(&self, target_root: &Path) -> Result<()> {
+        let target_root =
+            target_root
+                .canonicalize()
+                .map_err(|error| EvidenceError::InventoryMismatch {
+                    detail: format!("canonicalize verification root: {error}"),
+                })?;
+        for entry in self.eligible_entries() {
+            let path = checked_destination(&target_root, &entry.path)?;
+            let metadata =
+                path.symlink_metadata()
+                    .map_err(|error| EvidenceError::InventoryMismatch {
+                        detail: format!("missing materialized file {}: {error}", entry.path),
+                    })?;
+            if !metadata.file_type().is_file() {
+                return Err(EvidenceError::InventoryMismatch {
+                    detail: format!("materialized path is not a file: {}", entry.path),
+                });
+            }
+            let content =
+                std::fs::read(&path).map_err(|error| EvidenceError::InventoryMismatch {
+                    detail: format!("read materialized file {}: {error}", entry.path),
+                })?;
+            let actual = gobby_core::indexing::content_hash(&content);
+            if entry.content_hash.as_deref() != Some(actual.as_str()) {
+                return Err(EvidenceError::InventoryMismatch {
+                    detail: format!("materialized content changed for {}", entry.path),
+                });
+            }
+        }
+        verify_materialized_paths(
+            &target_root,
+            &self
+                .eligible_entries()
+                .map(|entry| entry.path.clone())
+                .collect(),
+        )?;
+        Ok(())
     }
 
     pub fn entry(&self, path: &str) -> Result<&InventoryEntry> {
@@ -289,11 +384,14 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
         };
         if unsafe_path {
             exclusion = Some(ExclusionReason::UnsafePath);
+        } else if crate::index::security::is_sensitive_evidence_path(Path::new(&path)) {
+            exclusion = Some(ExclusionReason::SensitivePath);
         }
         if size_bytes.is_some_and(|size| size > MAX_EVIDENCE_FILE_BYTES) {
             exclusion = Some(ExclusionReason::Oversized);
         }
         let mut content_hash = None;
+        let mut language = crate::index::languages::detect_language(&path).map(str::to_string);
         if exclusion.is_none()
             && let Some(oid) = &blob_oid
         {
@@ -309,6 +407,8 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
                 Some(ExclusionReason::UnsupportedEncoding)
             } else {
                 content_hash = Some(gobby_core::indexing::content_hash(&content));
+                language = crate::index::languages::detect_language_from_content(&path, &content)
+                    .map(str::to_string);
                 None
             };
         }
@@ -320,7 +420,7 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
             blob_oid,
             size_bytes,
             content_hash,
-            language: crate::index::languages::detect_language(&path).map(str::to_string),
+            language,
             exclusion,
         });
     }
@@ -464,9 +564,121 @@ fn blob_oid(mode: &str, oid: &str) -> Option<String> {
 
 fn canonical_diff_path(path: &[u8]) -> (String, Option<ExclusionReason>) {
     match std::str::from_utf8(path) {
-        Ok(path) if validate_repo_path(path).is_ok() => (path.to_string(), None),
+        Ok(path) if validate_repo_path(path).is_ok() => (
+            path.to_string(),
+            crate::index::security::is_sensitive_evidence_path(Path::new(path))
+                .then_some(ExclusionReason::SensitivePath),
+        ),
         _ => (escaped_path(path), Some(ExclusionReason::UnsafePath)),
     }
+}
+
+fn checked_destination(root: &Path, path: &str) -> Result<PathBuf> {
+    validate_repo_path(path)?;
+    let destination = root.join(path);
+    if !destination.starts_with(root) {
+        return Err(EvidenceError::UnsafePath {
+            path: path.to_string(),
+        });
+    }
+    Ok(destination)
+}
+
+fn verify_materialized_paths(root: &Path, expected_files: &BTreeSet<String>) -> Result<()> {
+    let mut expected_directories = BTreeSet::new();
+    for path in expected_files {
+        let mut parent = Path::new(path).parent();
+        while let Some(directory) = parent {
+            if directory.as_os_str().is_empty() {
+                break;
+            }
+            expected_directories.insert(directory.to_string_lossy().replace('\\', "/"));
+            parent = directory.parent();
+        }
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for item in
+            std::fs::read_dir(&directory).map_err(|error| EvidenceError::InventoryMismatch {
+                detail: format!(
+                    "read materialized directory {}: {error}",
+                    directory.display()
+                ),
+            })?
+        {
+            let item = item.map_err(|error| EvidenceError::InventoryMismatch {
+                detail: format!("read materialized directory entry: {error}"),
+            })?;
+            let path = item.path();
+            let relative =
+                path.strip_prefix(root)
+                    .map_err(|error| EvidenceError::InventoryMismatch {
+                        detail: format!("materialized path escaped snapshot root: {error}"),
+                    })?;
+            let relative = relative
+                .to_str()
+                .ok_or_else(|| EvidenceError::InventoryMismatch {
+                    detail: "unexpected non-UTF-8 materialized path".to_string(),
+                })?;
+            let relative = relative.replace('\\', "/");
+            let metadata =
+                path.symlink_metadata()
+                    .map_err(|error| EvidenceError::InventoryMismatch {
+                        detail: format!("inspect materialized path {relative}: {error}"),
+                    })?;
+            let runtime_path = relative == ".gobby" || relative.starts_with(".gobby/");
+            if runtime_path {
+                if metadata.file_type().is_symlink() {
+                    return Err(EvidenceError::InventoryMismatch {
+                        detail: format!("unexpected materialized path: {relative}"),
+                    });
+                }
+                if metadata.is_dir() {
+                    pending.push(path);
+                } else if !metadata.is_file() {
+                    return Err(EvidenceError::InventoryMismatch {
+                        detail: format!("unexpected materialized path: {relative}"),
+                    });
+                }
+                continue;
+            }
+            if relative == ".git" && metadata.is_file() {
+                continue;
+            }
+            if metadata.is_dir() && expected_directories.contains(&relative) {
+                pending.push(path);
+            } else if !metadata.is_file() || !expected_files.contains(&relative) {
+                return Err(EvidenceError::InventoryMismatch {
+                    detail: format!("unexpected materialized path: {relative}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_materialized_mode(path: &Path, kind: TrackedFileKind) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mode = if kind == TrackedFileKind::Executable {
+        0o755
+    } else {
+        0o644
+    };
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(|error| {
+        EvidenceError::InventoryMismatch {
+            detail: format!(
+                "set materialized permissions for {}: {error}",
+                path.display()
+            ),
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn set_materialized_mode(_path: &Path, _kind: TrackedFileKind) -> Result<()> {
+    Ok(())
 }
 
 fn split_once(bytes: &[u8], delimiter: u8) -> Option<(&[u8], &[u8])> {

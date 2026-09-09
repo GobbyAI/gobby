@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,7 @@ from uuid import uuid4
 
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import EvidenceReference, RetrievalMode
+from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
 from gobby.utils.terminal_output import redact_terminal_output
 
@@ -61,41 +63,156 @@ class EvidenceAdmission:
         self,
         *,
         run_id: str,
-        source_root: Path,
-        snapshot_binding: Mapping[str, Any],
-        retrieval_mode: RetrievalMode,
+        runtime: SnapshotIndexRuntime,
         permitted_operations: set[str],
-        deadline_at: datetime,
         page_size: int,
-        executable: Path,
-        env: Mapping[str, str],
         artifacts: AskArtifactStore,
         storage: AskRunStorage,
     ) -> None:
-        if deadline_at.tzinfo is None:
-            raise ValueError("evidence deadline must be timezone-aware")
         if not 0 < page_size <= _MAX_PAGE_SIZE:
             raise ValueError(f"evidence page_size must be between 1 and {_MAX_PAGE_SIZE}")
         if not permitted_operations or not permitted_operations <= {"search", "read", "graph"}:
             raise ValueError("unsupported evidence operation policy")
-        source_root = source_root.resolve()
-        if not source_root.is_dir():
-            raise ValueError(f"evidence source root does not exist: {source_root}")
-        inventory_digest = snapshot_binding.get("inventory_digest")
-        if not isinstance(inventory_digest, str) or len(inventory_digest) != 64:
-            raise ValueError("evidence binding requires an inventory digest")
 
         self.run_id = run_id
-        self.source_root = source_root
-        self.snapshot_binding = json.loads(_canonical_json(snapshot_binding))
-        self.retrieval_mode = retrieval_mode
         self.permitted_operations = frozenset(permitted_operations)
-        self.deadline_at = deadline_at.astimezone(UTC)
         self.page_size = page_size
-        self.executable = executable
-        self.env = dict(env)
         self.artifacts = artifacts
         self.storage = storage
+        (
+            self.source_root,
+            self.snapshot_binding,
+            self.retrieval_mode,
+            self.deadline_at,
+            self.executable,
+            self.argv_prefix,
+            self.env,
+        ) = self._load_authority(runtime)
+
+    def _load_authority(
+        self,
+        runtime: SnapshotIndexRuntime,
+    ) -> tuple[
+        Path,
+        dict[str, Any],
+        RetrievalMode,
+        datetime,
+        Path,
+        tuple[str, ...],
+        dict[str, str],
+    ]:
+        if self.artifacts.run_id != self.run_id:
+            raise EvidenceAdmissionError("artifact store does not belong to the Ask run")
+        record = self.storage.get(self.run_id)
+        if record is None:
+            raise EvidenceAdmissionError(f"Ask run does not exist: {self.run_id}")
+        if self.artifacts.project_id != record.binding.project_id:
+            raise EvidenceAdmissionError("artifact store does not belong to the Ask project")
+        current = self.storage.get_snapshot_generation(self.run_id)
+        if current is None:
+            raise EvidenceAdmissionError("Ask run has no current snapshot generation")
+        if record.binding.snapshot_artifact is None or record.binding.inventory_digest is None:
+            raise EvidenceAdmissionError("Ask run has no persisted snapshot identity")
+        try:
+            self.artifacts.verify_manifest()
+            lifecycle = self.artifacts.read_body(current.lifecycle_artifact)
+        except (OSError, ValueError, RuntimeError) as error:
+            raise EvidenceAdmissionError(
+                "current snapshot lifecycle artifact is invalid"
+            ) from error
+
+        deadline_at = record.binding.deadline_at
+        if deadline_at.tzinfo is None:
+            raise EvidenceAdmissionError("persisted evidence deadline is not timezone-aware")
+        deadline_at = deadline_at.astimezone(UTC)
+        remaining = (deadline_at - datetime.now(UTC)).total_seconds()
+        if not math.isfinite(remaining):
+            raise EvidenceAdmissionError("persisted evidence deadline is not finite")
+        expected = {
+            "generation": current.generation,
+            "run_id": record.run_id,
+            "project_id": record.binding.project_id,
+            "commit_oid": record.binding.commit_oid,
+            "deadline_at": deadline_at.isoformat().replace("+00:00", "Z"),
+            "retrieval_mode": record.binding.retrieval_mode.value,
+            "inventory_digest": record.binding.inventory_digest,
+            "snapshot_artifact": record.binding.snapshot_artifact,
+        }
+        for key, value in expected.items():
+            if lifecycle.get(key) != value:
+                raise EvidenceAdmissionError(
+                    f"current snapshot lifecycle {key} differs from the persisted Ask run"
+                )
+        try:
+            identity = self.artifacts.read_body(record.binding.snapshot_artifact)
+        except (OSError, ValueError, RuntimeError) as error:
+            raise EvidenceAdmissionError(
+                "persisted snapshot identity artifact is invalid"
+            ) from error
+        for key in ("run_id", "project_id", "commit_oid", "deadline_at", "retrieval_mode"):
+            if identity.get(key) != expected[key]:
+                raise EvidenceAdmissionError(
+                    f"snapshot identity {key} differs from the persisted Ask run"
+                )
+        binding = identity.get("binding")
+        inventory = identity.get("inventory")
+        if not isinstance(binding, dict) or not isinstance(inventory, dict):
+            raise EvidenceAdmissionError("snapshot identity is missing its native payload")
+        if binding.get("project_id") != record.binding.project_id or (
+            binding.get("commit_oid") != record.binding.commit_oid
+        ):
+            raise EvidenceAdmissionError(
+                "native snapshot binding differs from the persisted Ask run"
+            )
+        if binding.get("inventory_digest") != record.binding.inventory_digest or (
+            inventory.get("digest") != record.binding.inventory_digest
+        ):
+            raise EvidenceAdmissionError("native snapshot inventory identity changed")
+
+        source_value = lifecycle.get("source_root")
+        runtime_value = lifecycle.get("index_runtime")
+        if not isinstance(source_value, str) or not isinstance(runtime_value, dict):
+            raise EvidenceAdmissionError("current snapshot lifecycle is incomplete")
+        source_root = Path(source_value).resolve()
+        expected_source = (self.artifacts.run_root / "source").resolve()
+        if source_root != expected_source or not source_root.is_dir():
+            raise EvidenceAdmissionError("current snapshot source root is unavailable")
+        executable_value = runtime_value.get("executable")
+        argv_prefix_value = runtime_value.get("argv_prefix")
+        if (
+            not isinstance(executable_value, str)
+            or not isinstance(argv_prefix_value, list)
+            or not all(isinstance(value, str) for value in argv_prefix_value)
+        ):
+            raise EvidenceAdmissionError("current snapshot runtime command is invalid")
+        executable = Path(executable_value).resolve()
+        argv_prefix = tuple(argv_prefix_value)
+        if (
+            runtime.executable.resolve() != executable
+            or runtime.argv_prefix != argv_prefix
+            or runtime.managed_execution_id != runtime_value.get("managed_execution_id")
+            or runtime.credential_generation != runtime_value.get("credential_generation")
+        ):
+            raise EvidenceAdmissionError("current snapshot runtime identity does not match")
+        env = dict(runtime.env)
+        if any(
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or key.startswith("GIT_")
+            or key in {"LD_PRELOAD", "PYTHONHOME", "PYTHONPATH"}
+            or key.startswith("DYLD_")
+            for key, value in env.items()
+        ):
+            raise EvidenceAdmissionError("current snapshot runtime environment is not admissible")
+        return (
+            source_root,
+            json.loads(_canonical_json(binding)),
+            record.binding.retrieval_mode,
+            deadline_at,
+            executable,
+            argv_prefix,
+            env,
+        )
 
     async def query(
         self,
@@ -119,6 +236,7 @@ class EvidenceAdmission:
             request["continuation"] = continuation
         argv = [
             str(self.executable),
+            *self.argv_prefix,
             "--quiet",
             "--format",
             "json",
@@ -177,7 +295,11 @@ class EvidenceAdmission:
             )
             raise EvidenceAdmissionError("evidence deadline exceeded before invocation")
 
-        child_env = os.environ.copy()
+        child_env = {
+            key: value
+            for key in ("PATH", "SYSTEMROOT")
+            if (value := os.environ.get(key)) is not None
+        }
         child_env.update(self.env)
         try:
             process = await asyncio.create_subprocess_exec(
@@ -520,8 +642,13 @@ class EvidenceAdmission:
                     "complete response has inconsistent completeness fields"
                 )
         elif complete is False:
-            if completeness not in _INCOMPLETE_STATES or not isinstance(continuation, str):
-                raise EvidenceAdmissionError("partial response lacks a valid continuation")
+            if completeness not in _INCOMPLETE_STATES:
+                raise EvidenceAdmissionError("partial response has an unsupported completeness")
+            if completeness == "paginated":
+                if not isinstance(continuation, str) or not continuation:
+                    raise EvidenceAdmissionError("paginated response lacks a valid continuation")
+            elif continuation is not None:
+                raise EvidenceAdmissionError("terminal partial response has a continuation")
         else:
             raise EvidenceAdmissionError("response complete field must be boolean")
         bounds = response.get("bounds")

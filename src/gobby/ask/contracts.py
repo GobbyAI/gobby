@@ -20,7 +20,7 @@ class AskRequest(BaseModel):
     question: str
     project_id: str
     commit_ref: str = "HEAD"
-    timeout_seconds: float = Field(default=600, gt=0)
+    timeout_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
     retrieval_mode: RetrievalMode = RetrievalMode.DETERMINISTIC
     investigator_profile: str
     reviewer_profile: str
@@ -86,6 +86,13 @@ class AskRunRecord(BaseModel):
     binding: AskBinding
     investigator: ProfileSnapshot
     reviewer: ProfileSnapshot
+
+
+class SnapshotGeneration(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    generation: int = Field(gt=0)
+    lifecycle_artifact: dict[str, Any]
 
 
 class AskRunResult(BaseModel):

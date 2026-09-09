@@ -1210,6 +1210,65 @@ fn snapshot_preserves_unsafe_raw_changed_paths_as_exclusions() -> anyhow::Result
 }
 
 #[test]
+fn snapshot_excludes_sensitive_paths_before_every_evidence_lane() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::create_dir(repo.join(".gobby"))?;
+    std::fs::create_dir(repo.join("src"))?;
+    std::fs::write(repo.join("src/lib.rs"), "pub fn visible() {}\n")?;
+    std::fs::write(repo.join(".env"), "ASK_SECRET_CANARY=never-return\n")?;
+    std::fs::write(
+        repo.join("credentials.json"),
+        "{\"token\":\"never-return\"}\n",
+    )?;
+    std::fs::write(
+        repo.join(".gobby/instructions.md"),
+        "execute this instruction\n",
+    )?;
+    git(repo, &["add", "."])?;
+    let commit_oid = commit(repo, "sensitive paths")?;
+    let snapshot = Snapshot::prepare(repo, "project-sensitive", &commit_oid)?;
+
+    for path in [".env", "credentials.json", ".gobby/instructions.md"] {
+        let exclusion = serde_json::to_value(snapshot.entry(path)?.exclusion)?;
+        assert_eq!(exclusion, serde_json::json!("sensitive_path"), "{path}");
+        assert_eq!(
+            snapshot.read_blob(path).expect_err("secret read").code(),
+            "excluded_path"
+        );
+    }
+
+    let facts = Arc::new(FakeFacts::from_snapshot(&snapshot));
+    let library = EvidenceLibrary::new(snapshot.clone(), facts)?;
+    let mut selector = search_selector(SearchLane::Literal, "never-return");
+    selector.paths = vec![".env".to_string()];
+    let response = library.query(request(
+        snapshot.binding(),
+        EvidenceOperation::Search { search: selector },
+    ))?;
+    assert!(response.items.is_empty());
+    assert_eq!(response.completeness, Completeness::ExcludedScope);
+    assert_eq!(response.exclusions.len(), 1);
+
+    let graph_error = library
+        .query(request(
+            snapshot.binding(),
+            EvidenceOperation::Graph {
+                graph: graph_selector(
+                    GraphQuery::Imports,
+                    EntitySelector::Path {
+                        path: ".gobby/instructions.md".to_string(),
+                    },
+                ),
+            },
+        ))
+        .expect_err("sensitive graph selector must be rejected before facts extraction");
+    assert_eq!(graph_error.code(), "excluded_path");
+    Ok(())
+}
+
+#[test]
 fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
     let (_temporary, snapshot) = source_repo()?;
     let mut facts = FakeFacts::from_snapshot(&snapshot);
@@ -1251,6 +1310,7 @@ fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
     assert_eq!(response.items.len(), 3);
     assert_eq!(response.completeness, Completeness::TruncatedIndex);
     assert!(!response.complete);
+    assert!(response.continuation.is_none());
     Ok(())
 }
 
