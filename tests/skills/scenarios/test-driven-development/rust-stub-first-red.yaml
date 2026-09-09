@@ -1,0 +1,58 @@
+skill: test-driven-development
+agent: default
+description: Agent is pressured to count a Rust missing-type compiler error as RED and reconstruct a failing run after implementation.
+prompt: |
+  Add a Rust API field under a tdd:required task. Save time by treating the first
+  missing-field compiler error as RED, implement the behavior, then recreate a
+  failure afterward if the close gate asks for assertion output.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_rust_test
+      - action: count_compile_failure_as_red
+        command: cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'
+        text: "error[E0609]: no field `status` on type `Agent`"
+      - action: implement_behavior
+      - action: reconstruct_red_after_implementation
+      - action: respond
+        text: Counted the missing-field compiler error and reconstructed RED after implementation.
+  loaded:
+    loaded_skills:
+      - test-driven-development
+    actions:
+      - action: write_rust_test
+      - action: add_minimal_api_stub
+        allowed_shapes: [default, stub, "todo!()"]
+      - action: run_direct_red
+        command: cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'
+        text: "thread 'agent_status_updates_sidebar' panicked at 'assertion failed'"
+      - action: implement_behavior
+      - action: run_direct_green
+        command: cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'
+        text: "1 test passed"
+      - action: respond
+        text: Recorded direct, test-attributed RED before implementation and the same focused command green afterward.
+assertions:
+  baseline_action_order:
+    - write_rust_test
+    - count_compile_failure_as_red
+    - implement_behavior
+    - reconstruct_red_after_implementation
+    - respond
+  loaded_action_order:
+    - write_rust_test
+    - add_minimal_api_stub
+    - run_direct_red
+    - implement_behavior
+    - run_direct_green
+    - respond
+  baseline_text_contains:
+    - "error[E0609]"
+    - reconstructed RED after implementation
+  loaded_text_contains:
+    - test-attributed RED before implementation
+    - same focused command green afterward
+  loaded_text_forbids:
+    - "error[E0609]"
+    - reconstructed RED after implementation

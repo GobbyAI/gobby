@@ -23,6 +23,31 @@ Use this when a task requires TDD.
 4. Run the exact test command and verify green.
 5. Refactor only after green, then rerun final green validation.
 
+## Rust Stub-First RED
+
+Rust tests for a new API cannot reach their test bodies until the test target
+compiles. Preserve test-first order with a compile-only API-shape step:
+
+1. Write the smallest focused test before the behavior exists.
+2. Add only the minimal API shape needed to compile: product types, fields,
+   functions, or variants using a safe default, a behavior-free stub, or
+   `todo!()`. Do not implement the behavior.
+3. Run the focused test command directly in the foreground, for example:
+
+   ```bash
+   cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'
+   ```
+
+   Do not wrap the command in a pipe, redirect, trailing `echo`, fallback,
+   subshell, or background invocation.
+4. Verify that the named test runs and RED is a test-attributed assertion or
+   panic.
+5. Implement the behavior, then rerun the same direct command and verify green.
+
+Compiler failures from missing product types, unresolved imports, or unknown
+fields do not count as RED. A reconstructed RED run after implementation is
+also uncredited.
+
 ## Completion Evidence
 
 The task handoff must include:

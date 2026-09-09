@@ -107,7 +107,11 @@ def test_block_holds_until_named_acceptance_test_is_written(
     assert [effect.type for effect in block.resolved_effects] == ["block"]
     block_reason = block.resolved_effects[0].reason
     assert block_reason is not None
-    assert acceptance_path in TemplateEngine().render(block_reason, render_context)
+    rendered_reason = TemplateEngine().render(block_reason, render_context)
+    assert acceptance_path in rendered_reason
+    assert "`test-driven-development` skill's `Rust Stub-First RED` sequence" in rendered_reason
+    for duplicated_policy in ("Compiler failures", "assertion or panic", "reconstructed RED"):
+        assert duplicated_policy not in rendered_reason
     legacy_variable = "tdd_" + "nudged_files"
     assert legacy_variable not in json.dumps(block_row.definition_json)
     assert all(effect.type != "mcp_call" for effect in block.resolved_effects)
