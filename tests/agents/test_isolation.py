@@ -8,10 +8,11 @@ import asyncio
 import json
 import subprocess
 import threading
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -766,10 +767,13 @@ class TestRepairIsolationEnvironment:
                 new=AsyncMock(),
             ),
         ):
-            result = await repair_isolation_environment(
-                main_repo_path="/main/repo",
-                isolated_path=str(tmp_path),
-                provider="codex",
+            result = await cast(
+                Awaitable[object],
+                repair_isolation_environment(
+                    main_repo_path="/main/repo",
+                    isolated_path=str(tmp_path),
+                    provider="codex",
+                ),
             )
 
         assert result is None
@@ -1036,8 +1040,7 @@ class TestNoneIsolationHandler:
             parent_session_id="sess",
         )
 
-        result = await handler.cleanup_environment(config)
-        assert result is None
+        await handler.cleanup_environment(config)
         assert handler.build_context_prompt("prompt", IsolationContext(cwd="/path")) == "prompt"
 
     def test_is_isolation_handler_subclass(self) -> None:
@@ -1047,7 +1050,7 @@ class TestNoneIsolationHandler:
     def test_isolation_handler_is_abstract(self) -> None:
         """Test IsolationHandler cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            IsolationHandler()
+            cast(type[object], IsolationHandler)()
 
 
 class TestWorktreeIsolationHandler:
@@ -1284,8 +1287,6 @@ class TestWorktreeIsolationHandler:
             git_manager=mock_git_manager,
             worktree_storage=mock_worktree_storage,
         )
-        handler._generate_worktree_path = MagicMock(return_value="/tmp/worktrees/stale-branch")
-
         config = SpawnConfig(
             prompt="Test",
             task_id=None,
@@ -1301,6 +1302,9 @@ class TestWorktreeIsolationHandler:
         )
 
         with (
+            patch.object(
+                handler, "_generate_worktree_path", return_value="/tmp/worktrees/stale-branch"
+            ),
             patch("pathlib.Path.is_dir", return_value=False),
             patch(
                 "gobby.agents.isolation_worktree.repair_isolation_environment",
@@ -2139,7 +2143,7 @@ class TestGetIsolationHandler:
     def test_get_isolation_handler_invalid_mode_raises(self) -> None:
         """Test get_isolation_handler raises ValueError for invalid mode."""
         with pytest.raises(ValueError, match="Unknown isolation mode"):
-            get_isolation_handler("invalid")
+            get_isolation_handler(cast(Literal["none", "worktree", "clone"], "invalid"))
 
     def test_get_isolation_handler_worktree_missing_deps_raises(self) -> None:
         """Test get_isolation_handler('worktree') raises if dependencies missing."""
@@ -2263,9 +2267,9 @@ class TestProviderMcpConfigPreflight:
     """Tests for provider_mcp_config_error."""
 
     def test_reports_missing_mcp_json(self, tmp_path: Path) -> None:
-        assert provider_mcp_config_error(str(tmp_path), "qwen").startswith(
-            "provider_mcp_config_missing:"
-        )
+        error = provider_mcp_config_error(str(tmp_path), "qwen")
+        assert error is not None
+        assert error.startswith("provider_mcp_config_missing:")
 
     def test_accepts_non_claude_mcp_json(self, tmp_path: Path) -> None:
         (tmp_path / ".mcp.json").write_text(
