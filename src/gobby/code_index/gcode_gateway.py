@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import signal
+import sys
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -32,6 +35,7 @@ _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
 # "message": ..., "recovery": ...} (since #21444).
 _CHECKOUT_ERROR_CODES = frozenset({"checkout_required", "checkout_mismatch"})
 _TIMEOUT_OUTPUT_LIMIT_BYTES = 4096
+_PROCESS_CLEANUP_TIMEOUT_SECONDS = 1.0
 
 
 def _bounded_timeout_output(data: bytes, *, suffix: bytes = b"") -> bytes:
@@ -52,21 +56,77 @@ async def _kill_collect_and_reap(
     *,
     collect_output: bool,
 ) -> tuple[bytes, bytes]:
-    """Kill a subprocess and reap it, optionally draining its uncancelled pipes."""
-    with suppress(ProcessLookupError):
-        proc.kill()
+    """Kill an owned process group and settle its pipes and leader under bounds."""
 
-    if collect_output:
-        stdout, stderr = await communication
-    else:
-        communication.cancel()
-        with suppress(asyncio.CancelledError):
-            await communication
+    async def cleanup() -> tuple[bytes, bytes]:
+        pid = getattr(proc, "pid", None)
+        if sys.platform != "win32" and isinstance(pid, int):
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                if proc.returncode is None:
+                    with suppress(ProcessLookupError):
+                        proc.kill()
+        else:
+            with suppress(ProcessLookupError):
+                proc.kill()
+
         stdout, stderr = b"", b""
+        try:
+            if collect_output:
+                done, _ = await asyncio.wait(
+                    {communication},
+                    timeout=_PROCESS_CLEANUP_TIMEOUT_SECONDS,
+                )
+                if not done:
+                    communication.cancel()
+            else:
+                communication.cancel()
 
-    with suppress(ProcessLookupError):
-        await proc.wait()
-    return stdout, stderr
+            if not communication.done():
+                done, _ = await asyncio.wait(
+                    {communication},
+                    timeout=_PROCESS_CLEANUP_TIMEOUT_SECONDS,
+                )
+                if not done:
+                    raise GcodeGatewayError("gcode output collection did not stop after kill")
+            try:
+                collected = communication.result()
+            except asyncio.CancelledError:
+                pass
+            else:
+                if collect_output:
+                    stdout, stderr = collected
+        finally:
+            try:
+                await asyncio.wait_for(
+                    proc.wait(),
+                    timeout=_PROCESS_CLEANUP_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise GcodeGatewayError("gcode subprocess did not reap after kill") from exc
+        return stdout, stderr
+
+    cleanup_task = asyncio.create_task(cleanup())
+    cancellation: asyncio.CancelledError | None = None
+    while not cleanup_task.done():
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+
+    result: tuple[bytes, bytes] | None = None
+    cleanup_error: BaseException | None = None
+    try:
+        result = cleanup_task.result()
+    except BaseException as exc:
+        cleanup_error = exc
+    if cancellation is not None:
+        raise cancellation
+    if cleanup_error is not None:
+        raise cleanup_error
+    assert result is not None
+    return result
 
 
 def _typed_gcode_error(stderr_text: str) -> dict[str, Any] | None:
@@ -737,6 +797,7 @@ class GcodeGateway:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env if env is not None else self._child_env,
+                start_new_session=True,
             )
             communication = asyncio.create_task(proc.communicate())
             stdout, stderr = await asyncio.wait_for(
@@ -805,6 +866,7 @@ class GcodeGateway:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env if env is not None else self._child_env,
+                start_new_session=True,
             )
             communication = asyncio.create_task(proc.communicate())
             stdout, stderr = await asyncio.wait_for(

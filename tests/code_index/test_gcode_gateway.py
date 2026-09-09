@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -53,20 +56,18 @@ class FakeProcess:
         stdout: bytes = b'{"success": true}',
         stderr: bytes = b"",
         timeout: bool = False,
-        cancelled: bool = False,
     ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.timeout = timeout
-        self.cancelled = cancelled
         self.killed = False
         self.waited = False
         self._released = asyncio.Event()
+        self.started = asyncio.Event()
 
     async def communicate(self) -> tuple[bytes, bytes]:
-        if self.cancelled:
-            raise asyncio.CancelledError
+        self.started.set()
         if self.timeout:
             await self._released.wait()
         return self.stdout, self.stderr
@@ -700,8 +701,47 @@ async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> No
     assert timeout_proc.waited is True
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
+async def test_gateway_timeout_reaps_child_holding_pipes(tmp_path: Path) -> None:
+    pgid_file = tmp_path / "pgid"
+    program = (
+        "import os,signal,sys\n"
+        "if os.getpid() != os.getpgrp():\n"
+        "    os.setsid()\n"
+        f"open({str(pgid_file)!r},'w').write(str(os.getpgrp()))\n"
+        "print('partial-output',flush=True)\n"
+        "print('stage=child-held-pipes',file=sys.stderr,flush=True)\n"
+        "os.fork()\n"
+        "signal.pause()\n"
+    )
+    gateway = GcodeGateway(binary=sys.executable, timeout_seconds=0.25)
+
+    try:
+        with pytest.raises(GcodeTimeoutError) as exc_info:
+            await asyncio.wait_for(
+                gateway._run_command(
+                    [sys.executable, "-c", program],
+                    check_version=False,
+                ),
+                timeout=2.0,
+            )
+
+        assert exc_info.value.stdout == "partial-output"
+        assert exc_info.value.stderr == "stage=child-held-pipes"
+        pgid = int(pgid_file.read_text(encoding="utf-8"))
+        with pytest.raises(ProcessLookupError):
+            os.killpg(pgid, 0)
+    finally:
+        if pgid_file.exists():
+            pgid = int(pgid_file.read_text(encoding="utf-8"))
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 async def test_gateway_cleans_up_process_when_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
-    cancelled_proc = FakeProcess(cancelled=True)
+    cancelled_proc = FakeProcess(timeout=True)
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
         cancelled_proc,
@@ -709,8 +749,11 @@ async def test_gateway_cleans_up_process_when_cancelled(monkeypatch: pytest.Monk
     _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
 
+    command = asyncio.create_task(gateway.graph_clear("proj-1"))
+    await asyncio.wait_for(cancelled_proc.started.wait(), timeout=1.0)
+    command.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await gateway.graph_clear("proj-1")
+        await command
 
     assert cancelled_proc.killed is True
     assert cancelled_proc.waited is True
