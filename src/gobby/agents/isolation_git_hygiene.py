@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess  # nosec B404 # fixed git argv for local workspace hygiene.
 from pathlib import Path
 from typing import Any
+
+from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ GENERATED_ISOLATION_EXCLUDE_PATHS = (
 )
 
 
-def apply_isolation_git_hygiene(
+async def apply_isolation_git_hygiene(
     isolated_path: str | Path,
     *,
     main_repo_path: str | Path | None = None,
@@ -40,14 +41,14 @@ def apply_isolation_git_hygiene(
         return
 
     for relative_path in GENERATED_ISOLATION_EXCLUDE_PATHS:
-        _add_local_exclude(workspace, relative_path)
-        _unstage_path(workspace, relative_path)
-        if _git_path_is_tracked(workspace, relative_path):
-            _mark_skip_worktree(workspace, relative_path)
+        await _add_local_exclude(workspace, relative_path)
+        await _unstage_path(workspace, relative_path)
+        if await _git_path_is_tracked(workspace, relative_path) is True:
+            await _mark_skip_worktree(workspace, relative_path)
 
-    if not _git_path_is_tracked(workspace, PROJECT_JSON_RELATIVE_PATH):
-        _add_local_exclude(workspace, PROJECT_JSON_RELATIVE_PATH)
-        _unstage_path(workspace, PROJECT_JSON_RELATIVE_PATH)
+    if await _git_path_is_tracked(workspace, PROJECT_JSON_RELATIVE_PATH) is False:
+        await _add_local_exclude(workspace, PROJECT_JSON_RELATIVE_PATH)
+        await _unstage_path(workspace, PROJECT_JSON_RELATIVE_PATH)
 
 
 def is_generated_isolation_project_json(
@@ -101,8 +102,8 @@ def _same_path(left: Path, right: Path) -> bool:
         return str(left.expanduser()) == str(right.expanduser())
 
 
-def _add_local_exclude(workspace: Path, pattern: str) -> None:
-    exclude_path = _git_info_exclude_path(workspace)
+async def _add_local_exclude(workspace: Path, pattern: str) -> None:
+    exclude_path = await _git_info_exclude_path(workspace)
     if exclude_path is None:
         return
     try:
@@ -117,11 +118,12 @@ def _add_local_exclude(workspace: Path, pattern: str) -> None:
         logger.debug("Failed to update Git exclude for %s in %s", pattern, workspace, exc_info=True)
 
 
-def _git_info_exclude_path(workspace: Path) -> Path | None:
-    if _is_linked_worktree(workspace):
+async def _git_info_exclude_path(workspace: Path) -> Path | None:
+    linked_worktree = await _is_linked_worktree(workspace)
+    if linked_worktree is not False:
         return None
-    result = _run_git(workspace, ["rev-parse", "--git-path", "info/exclude"])
-    if result.returncode != 0:
+    result = await _run_git(workspace, ["rev-parse", "--git-path", "info/exclude"])
+    if not isinstance(result, GitOk):
         return None
     raw_path = result.stdout.strip()
     if not raw_path:
@@ -129,17 +131,17 @@ def _git_info_exclude_path(workspace: Path) -> Path | None:
     return _git_path_from_output(workspace, raw_path)
 
 
-def _is_linked_worktree(workspace: Path) -> bool:
-    git_dir = _rev_parse_git_path(workspace, "--git-dir")
-    common_dir = _rev_parse_git_path(workspace, "--git-common-dir")
+async def _is_linked_worktree(workspace: Path) -> bool | None:
+    git_dir = await _rev_parse_git_path(workspace, "--git-dir")
+    common_dir = await _rev_parse_git_path(workspace, "--git-common-dir")
     if git_dir is None or common_dir is None:
-        return False
+        return None
     return not _same_path(git_dir, common_dir)
 
 
-def _rev_parse_git_path(workspace: Path, arg: str) -> Path | None:
-    result = _run_git(workspace, ["rev-parse", arg])
-    if result.returncode != 0:
+async def _rev_parse_git_path(workspace: Path, arg: str) -> Path | None:
+    result = await _run_git(workspace, ["rev-parse", arg])
+    if not isinstance(result, GitOk):
         return None
     raw_path = result.stdout.strip()
     if not raw_path:
@@ -152,18 +154,24 @@ def _git_path_from_output(workspace: Path, raw_path: str) -> Path:
     return parsed_path if parsed_path.is_absolute() else workspace / parsed_path
 
 
-def _git_path_is_tracked(workspace: Path, relative_path: str) -> bool:
-    result = _run_git(workspace, ["ls-files", "--error-unmatch", "--", relative_path])
-    return result.returncode == 0
+async def _git_path_is_tracked(workspace: Path, relative_path: str) -> bool | None:
+    result = await _run_git(workspace, ["ls-files", "--error-unmatch", "--", relative_path])
+    if isinstance(result, GitOk):
+        return True
+    if isinstance(result, GitFailed) and result.returncode == 1:
+        return False
+    return None
 
 
-def _unstage_path(workspace: Path, relative_path: str) -> None:
-    _run_git(workspace, ["reset", "-q", "--", relative_path])
+async def _unstage_path(workspace: Path, relative_path: str) -> None:
+    result = await _run_git(workspace, ["reset", "-q", "--", relative_path])
+    if not isinstance(result, GitOk):
+        logger.debug("Failed to unstage %s in %s: %s", relative_path, workspace, result.stderr)
 
 
-def _mark_skip_worktree(workspace: Path, relative_path: str) -> None:
-    result = _run_git(workspace, ["update-index", "--skip-worktree", "--", relative_path])
-    if result.returncode != 0:
+async def _mark_skip_worktree(workspace: Path, relative_path: str) -> None:
+    result = await _run_git(workspace, ["update-index", "--skip-worktree", "--", relative_path])
+    if not isinstance(result, GitOk):
         logger.debug(
             "Failed to mark %s skip-worktree in %s: %s",
             relative_path,
@@ -172,20 +180,5 @@ def _mark_skip_worktree(workspace: Path, relative_path: str) -> None:
         )
 
 
-def _run_git(workspace: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(  # nosec B603 B607 # fixed git executable and argv.
-            ["git", *args],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(
-            args=["git", *args],
-            returncode=1,
-            stdout="",
-            stderr=str(exc),
-        )
+async def _run_git(workspace: Path, args: list[str]) -> GitResult:
+    return await daemon_git.run(args, cwd=workspace, timeout=10)

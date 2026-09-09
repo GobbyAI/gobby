@@ -5,16 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
-import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.isolation import CloneIsolationHandler, SpawnConfig, repair_isolation_environment
+from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.code_index.sync_breaker import SyncCircuitBreaker
 from gobby.code_index.trigger import CodeIndexTrigger
+from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout
 
 pytestmark = pytest.mark.unit
 
@@ -48,11 +49,11 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
 
     clone_manager = MagicMock()
 
-    def create_clone(**_kwargs: object) -> MagicMock:
+    async def create_clone(**_kwargs: object) -> MagicMock:
         clone_path.mkdir()
         return MagicMock(success=True)
 
-    clone_manager.create_clone.side_effect = create_clone
+    clone_manager.create_clone = AsyncMock(side_effect=create_clone)
     clone_storage = MagicMock()
     clone_storage.get_by_branch.return_value = None
     clone_storage.create.return_value = MagicMock(
@@ -101,14 +102,14 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
     clone_path = tmp_path / "clone"
 
     clone_manager = MagicMock()
-    release_clone = threading.Event()
+    release_clone = asyncio.Event()
 
-    def create_clone(**_kwargs: object) -> MagicMock:
-        release_clone.wait(timeout=0.5)
+    async def create_clone(**_kwargs: object) -> MagicMock:
+        await release_clone.wait()
         clone_path.mkdir()
         return MagicMock(success=True)
 
-    clone_manager.create_clone.side_effect = create_clone
+    clone_manager.create_clone = AsyncMock(side_effect=create_clone)
     clone_storage = MagicMock()
     clone_storage.get_by_branch.return_value = None
     clone_storage.create.return_value = MagicMock(
@@ -136,6 +137,7 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
     with (
         patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair.apply_isolation_git_hygiene", new=AsyncMock()),
     ):
         loop = asyncio.get_running_loop()
         loop_was_responsive = loop.create_future()
@@ -151,13 +153,38 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
     assert ctx.branch_name == "feature"
     assert ctx.clone_id == "clone-1"
     assert ctx.isolation_type == "clone"
-    clone_manager.create_clone.assert_called_once_with(
+    clone_manager.create_clone.assert_awaited_once_with(
         clone_path=str(clone_path),
         branch_name="feature",
         base_branch="main",
         shallow=True,
         use_local=False,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        GitTimeout("timeout", ("git", "rev-parse"), 10),
+        GitFailed("failed", ("git", "rev-parse"), None, "", "git unavailable"),
+    ],
+    ids=["timeout", "unavailable"],
+)
+async def test_hygiene_unknown_git_state_does_not_write_excludes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: GitResult,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run = AsyncMock(return_value=outcome)
+    monkeypatch.setattr("gobby.agents.isolation_git_hygiene.daemon_git.run", run)
+
+    await apply_isolation_git_hygiene(workspace)
+
+    assert not (workspace / ".git" / "info" / "exclude").exists()
+    assert run.await_count > 0
 
 
 @pytest.mark.asyncio

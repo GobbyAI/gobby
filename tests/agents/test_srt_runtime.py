@@ -94,7 +94,7 @@ def test_render_settings_uses_srt_credential_schema() -> None:
     assert "inject_hosts" not in json.dumps(settings)
 
 
-def test_package_root_discovery_preserves_worktree_carveout(
+async def test_package_root_discovery_preserves_worktree_carveout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -119,7 +119,7 @@ def test_package_root_discovery_preserves_worktree_carveout(
     assert _nearest_package_root(home_executable) is None
     assert _nearest_package_root(nested_executable) == nested_package
 
-    paths = compute_sandbox_paths(
+    paths = await compute_sandbox_paths(
         SandboxConfig(enabled=True, backend="srt", allow_network=False),
         str(workspace),
         provider="droid",
@@ -133,7 +133,7 @@ def test_package_root_discovery_preserves_worktree_carveout(
     assert str((home / ".gobby").resolve()) not in filesystem["denyRead"]
 
 
-def test_provider_state_roots_are_writable(
+async def test_provider_state_roots_are_writable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -145,7 +145,7 @@ def test_provider_state_roots_are_writable(
     monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
 
     for provider, state_root in (("codex", ".codex"), ("droid", ".factory")):
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             SandboxConfig(enabled=True, backend="srt", allow_network=False),
             str(workspace),
             provider=provider,
@@ -168,7 +168,7 @@ def test_provider_state_roots_are_writable(
         assert uv_root not in filesystem["allowWrite"]
 
 
-def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
+async def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -179,7 +179,7 @@ def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
 
-    paths = compute_sandbox_paths(
+    paths = await compute_sandbox_paths(
         SandboxConfig(enabled=True, backend="srt", allow_network=False),
         str(workspace),
         provider="claude",
@@ -195,7 +195,9 @@ def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
     assert login_keychain not in filesystem["allowWrite"]
 
 
-def test_compute_paths_masks_credentials_only_at_provider_api_hosts(tmp_path: Path) -> None:
+async def test_compute_paths_masks_credentials_only_at_provider_api_hosts(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config = SandboxConfig(
@@ -205,7 +207,7 @@ def test_compute_paths_masks_credentials_only_at_provider_api_hosts(tmp_path: Pa
         allowed_domains=["telemetry.example"],
     )
 
-    paths = compute_sandbox_paths(
+    paths = await compute_sandbox_paths(
         config,
         str(workspace),
         provider="codex",
@@ -230,16 +232,16 @@ def test_compute_paths_masks_credentials_only_at_provider_api_hosts(tmp_path: Pa
     ]
 
 
-def test_git_and_package_network_are_separate_capabilities(tmp_path: Path) -> None:
+async def test_git_and_package_network_are_separate_capabilities(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    default_paths = compute_sandbox_paths(
+    default_paths = await compute_sandbox_paths(
         SandboxConfig(enabled=True, backend="srt", allow_network=False),
         str(workspace),
         provider="codex",
         env={"PATH": ""},
     )
-    capable_paths = compute_sandbox_paths(
+    capable_paths = await compute_sandbox_paths(
         SandboxConfig(
             enabled=True,
             backend="srt",
@@ -264,11 +266,11 @@ def test_git_and_package_network_are_separate_capabilities(tmp_path: Path) -> No
     assert set(capable_paths.write_paths) == set(default_paths.write_paths)
 
 
-def test_network_capabilities_are_preserved_without_a_provider(tmp_path: Path) -> None:
+async def test_network_capabilities_are_preserved_without_a_provider(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    paths = compute_sandbox_paths(
+    paths = await compute_sandbox_paths(
         SandboxConfig(
             enabled=True,
             backend="srt",

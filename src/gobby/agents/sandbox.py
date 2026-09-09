@@ -8,12 +8,13 @@ installer/runtime glue that needs to materialize provider settings.
 import hashlib
 import json
 import os
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
+
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 
 
 class SandboxConfig(BaseModel):
@@ -245,7 +246,7 @@ class ResolvedSandboxPaths(BaseModel):
     provider: str | None = None
 
 
-def compute_sandbox_paths(
+async def compute_sandbox_paths(
     config: SandboxConfig,
     workspace_path: str,
     gobby_daemon_port: int = 60887,
@@ -292,7 +293,7 @@ def compute_sandbox_paths(
 
     workspace = Path(canonical_path(workspace_path))
     policy_env = os.environ if env is None else env
-    git_paths = _git_metadata_write_paths(workspace)
+    git_paths = await _git_metadata_write_paths(workspace)
     from gobby.integrations.rtk import sandbox_paths as resolve_rtk_sandbox_paths
 
     rtk_paths = resolve_rtk_sandbox_paths(env=policy_env)
@@ -370,28 +371,18 @@ def compute_sandbox_paths(
     )
 
 
-def _git_metadata_write_paths(workspace: Path) -> list[str]:
+async def _git_metadata_write_paths(workspace: Path) -> list[str]:
     """Return Git metadata dirs that must be writable for commits from a worktree."""
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(workspace),
-                "rev-parse",
-                "--git-dir",
-                "--git-common-dir",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
+    result = await daemon_git.run(
+        ["rev-parse", "--git-dir", "--git-common-dir"],
+        cwd=workspace,
+        timeout=2,
+    )
+    if isinstance(result, GitFailed) and "not a git repository" in result.stderr.lower():
         return []
-    if result.returncode != 0:
-        return []
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.status
+        raise RuntimeError(f"Failed to resolve Git metadata for sandbox: {detail}")
 
     paths: list[str] = []
     for raw_path in result.stdout.splitlines():

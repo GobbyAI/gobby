@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout
 
 pytestmark = pytest.mark.unit
 
@@ -39,32 +41,33 @@ def manager(mock_storage: MagicMock) -> CheckpointManager:
     return CheckpointManager(mock_storage)
 
 
+@pytest.mark.asyncio
 class TestCreateCheckpoint:
     """Tests for CheckpointManager.create_checkpoint()."""
 
-    def test_returns_none_when_no_changes(
+    async def test_returns_none_when_no_changes(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
         with patch.object(manager, "_run_git") as mock_git:
             mock_git.return_value = ""  # Empty status = no changes
-            result = manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
+            result = await manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
             assert result is None
             mock_storage.create.assert_not_called()
 
-    def test_returns_none_when_status_is_none(
+    async def test_returns_none_when_status_is_none(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
         with patch.object(manager, "_run_git") as mock_git:
             mock_git.return_value = None  # git failed
-            result = manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
+            result = await manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
             assert result is None
 
-    def test_creates_checkpoint_on_dirty_tree(
+    async def test_creates_checkpoint_on_dirty_tree(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
         git_calls: list[list[str]] = []
 
-        def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
+        async def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
             git_calls.append(args)
             cmd = args[0]
             if cmd == "status":
@@ -86,7 +89,7 @@ class TestCreateCheckpoint:
             return None
 
         with patch.object(manager, "_run_git", side_effect=mock_run_git):
-            result = manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
+            result = await manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
 
         assert result is not None
         assert result.task_id == "task-1"
@@ -111,13 +114,13 @@ class TestCreateCheckpoint:
         assert isinstance(stored, Checkpoint)
         assert stored.run_id == "run-1"
 
-    def test_always_unstages_on_failure(
+    async def test_always_unstages_on_failure(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
         """Ensures the original index is restored even when write-tree fails."""
         call_log: list[str] = []
 
-        def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
+        async def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
             call_log.append(args[0])
             if args[0] == "status":
                 return " M file.py\n"
@@ -132,12 +135,12 @@ class TestCreateCheckpoint:
             return None
 
         with patch.object(manager, "_run_git", side_effect=mock_run_git):
-            result = manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
+            result = await manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
 
         assert result is None
         assert "read-tree" in call_log  # Original index is still restored in finally
 
-    def test_restores_divergent_pre_existing_staged_blob(
+    async def test_restores_divergent_pre_existing_staged_blob(
         self,
         manager: CheckpointManager,
         tmp_path: Path,
@@ -158,7 +161,7 @@ class TestCreateCheckpoint:
         staged_blob_before = _git(repo, "rev-parse", ":file.txt").strip()
         file_path.write_text("worktree\n")
 
-        result = manager.create_checkpoint(repo, "task-1", "sess-1", "run-1")
+        result = await manager.create_checkpoint(repo, "task-1", "sess-1", "run-1")
 
         assert result is not None
         assert _git(repo, "rev-parse", ":file.txt").strip() == staged_blob_before
@@ -166,13 +169,13 @@ class TestCreateCheckpoint:
         assert file_path.read_text() == "worktree\n"
         assert _git(repo, "show", f"{result.commit_sha}:file.txt") == "worktree\n"
 
-    def test_increments_seq_from_storage_count(
+    async def test_increments_seq_from_storage_count(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
         mock_storage.count_for_task.return_value = 3
         index_snapshotted = False
 
-        def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
+        async def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
             nonlocal index_snapshotted
             if args[0] == "status":
                 return " M file.py\n"
@@ -194,33 +197,75 @@ class TestCreateCheckpoint:
             return None
 
         with patch.object(manager, "_run_git", side_effect=mock_run_git):
-            result = manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
+            result = await manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
 
         assert result is not None
         assert result.ref_name == "refs/gobby/ckpt/task-1/4"  # count=3, so seq=4
 
 
+@pytest.mark.asyncio
 class TestRunGit:
     """Tests for CheckpointManager._run_git()."""
 
-    def test_returns_stdout_on_success(self, manager: CheckpointManager) -> None:
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="output\n")
-            result = manager._run_git(["status"], "/tmp")
+    async def test_returns_stdout_on_success(self, manager: CheckpointManager) -> None:
+        with patch(
+            "gobby.agents.checkpoint_manager.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "status"), "output\n", "")),
+        ):
+            result = await manager._run_git(["status"], "/tmp")
             assert result == "output\n"
 
-    def test_returns_none_on_failure(self, manager: CheckpointManager) -> None:
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stderr="error", stdout="")
-            result = manager._run_git(["bad-cmd"], "/tmp")
+    async def test_returns_none_on_failure(self, manager: CheckpointManager) -> None:
+        outcome = GitFailed("failed", ("git", "bad-cmd"), 1, "", "error")
+        with patch(
+            "gobby.agents.checkpoint_manager.daemon_git.run",
+            new=AsyncMock(return_value=outcome),
+        ):
+            result = await manager._run_git(["bad-cmd"], "/tmp")
             assert result is None
 
-    def test_returns_none_on_timeout(self, manager: CheckpointManager) -> None:
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 30)):
-            result = manager._run_git(["slow-cmd"], "/tmp")
+    async def test_returns_none_on_timeout(self, manager: CheckpointManager) -> None:
+        outcome = GitTimeout("timeout", ("git", "slow-cmd"), 30)
+        with patch(
+            "gobby.agents.checkpoint_manager.daemon_git.run",
+            new=AsyncMock(return_value=outcome),
+        ):
+            result = await manager._run_git(["slow-cmd"], "/tmp")
             assert result is None
 
-    def test_returns_none_on_os_error(self, manager: CheckpointManager) -> None:
-        with patch("subprocess.run", side_effect=OSError("git not found")):
-            result = manager._run_git(["status"], "/tmp")
+    async def test_returns_none_when_git_is_unavailable(self, manager: CheckpointManager) -> None:
+        outcome = GitFailed("failed", ("git", "status"), None, "", "git not found")
+        with patch(
+            "gobby.agents.checkpoint_manager.daemon_git.run",
+            new=AsyncMock(return_value=outcome),
+        ):
+            result = await manager._run_git(["status"], "/tmp")
             assert result is None
+
+    async def test_cancellation_restores_original_index(self, manager: CheckpointManager) -> None:
+        started = asyncio.Event()
+        calls: list[list[str]] = []
+
+        async def fake_run_git(args: list[str], cwd: str | Path, timeout: int = 30) -> str | None:
+            calls.append(args)
+            if args[0] == "status":
+                return " M file.py\n"
+            if args[0] == "write-tree":
+                return "original-index-tree\n"
+            if args[0] == "add":
+                started.set()
+                await asyncio.Event().wait()
+            if args[0] == "read-tree":
+                return ""
+            return None
+
+        with patch.object(manager, "_run_git", side_effect=fake_run_git):
+            task = asyncio.create_task(
+                manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
+            )
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert ["read-tree", "original-index-tree"] in calls

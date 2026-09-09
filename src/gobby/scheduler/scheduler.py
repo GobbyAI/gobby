@@ -379,11 +379,14 @@ class CronScheduler:
         session_token = set_session_context(None)
         project_token = None
         try:
-            if job.project_id:
-                project_ctx = await self._run_db(self._resolve_project_context, job.project_id)
-                project_token = set_project_context(project_ctx)
             result: CronRun | None = None
             try:
+                if job.project_id:
+                    project_ctx = await self._run_db(
+                        self._resolve_project_context,
+                        job.project_id,
+                    )
+                    project_token = set_project_context(project_ctx)
                 result = await self.executor.execute(job, run)
 
                 # Update job status

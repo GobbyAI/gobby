@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import subprocess  # nosec B404 # git subprocess results are mediated by WorktreeGitManager.
 from dataclasses import dataclass
@@ -167,12 +166,12 @@ async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
     main_repo_path = _main_repo_path(git_manager)
     if main_repo_path is not None:
         try:
-            ensure_project_json_for_isolation(main_repo_path, path)
+            await ensure_project_json_for_isolation(main_repo_path, path)
         except IsolationProjectJsonError as exc:
             raise RuntimeError(
                 f"Failed to write isolation sidecar for reused worktree {path}: {exc}"
             ) from exc
-    await asyncio.to_thread(apply_isolation_git_hygiene, path, main_repo_path=main_repo_path)
+    await apply_isolation_git_hygiene(path, main_repo_path=main_repo_path)
     status = await _run_git(git_manager, ["status", "--porcelain"], cwd=path)
     if status.returncode != 0:
         detail = _detail(status)

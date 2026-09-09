@@ -37,6 +37,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from gobby.clones.git import CloneGitManager
 from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.worktrees.git import WorktreeGitManager
@@ -1590,7 +1591,10 @@ class TestWorktreeIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        with patch("gobby.utils.project_context.ensure_project_json_for_isolation") as mock_ensure:
+        with patch(
+            "gobby.utils.project_context.ensure_project_json_for_isolation",
+            new_callable=AsyncMock,
+        ) as mock_ensure:
             await handler.prepare_environment(config)
             mock_ensure.assert_called_once_with(
                 "/path/to/main/repo",
@@ -1610,7 +1614,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_prepare_environment_creates_clone(self) -> None:
         """Test prepare_environment creates shallow clone if not exists."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(
             success=True,
             clone_path="/tmp/clones/my-branch",
@@ -1657,7 +1661,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_prepare_environment_uses_local_with_unpushed_commits(self) -> None:
         """Test prepare_environment uses local clone when unpushed commits detected."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(
             success=True,
             clone_path="/tmp/clones/my-branch",
@@ -1671,7 +1675,7 @@ class TestCloneIsolationHandler:
             branch_name="my-branch",
         )
 
-        mock_git_manager = MagicMock()
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
         mock_git_manager.get_current_branch.return_value = "main"
         mock_git_manager.has_unpushed_commits.return_value = (True, 3)
 
@@ -1707,7 +1711,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_prepare_environment_no_local_without_unpushed(self) -> None:
         """Test prepare_environment uses remote clone when no unpushed commits."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(
             success=True,
             clone_path="/tmp/clones/my-branch",
@@ -1721,7 +1725,7 @@ class TestCloneIsolationHandler:
             branch_name="my-branch",
         )
 
-        mock_git_manager = MagicMock()
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
         mock_git_manager.get_current_branch.return_value = "main"
         mock_git_manager.has_unpushed_commits.return_value = (False, 0)
 
@@ -1756,7 +1760,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_prepare_environment_reuses_existing_clone(self) -> None:
         """Test prepare_environment reuses existing clone for same branch."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
 
         mock_clone_storage = MagicMock()
         mock_clone_storage.get_by_branch.return_value = MagicMock(
@@ -1819,7 +1823,7 @@ class TestCloneIsolationHandler:
                 branch_name=kwargs["branch_name"],
             )
 
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.side_effect = create_clone
         mock_clone_storage = MagicMock()
         mock_clone_storage.get_by_branch.return_value = None
@@ -1874,7 +1878,7 @@ class TestCloneIsolationHandler:
 
     def test_build_context_prompt_prepends_warning(self) -> None:
         """Test build_context_prompt prepends the clone context banner."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_storage = MagicMock()
 
         handler = CloneIsolationHandler(
@@ -1900,7 +1904,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_cleanup_after_storage_create_failure(self) -> None:
         """Test cleanup removes clone on disk when storage.create fails."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(success=True)
 
         mock_clone_storage = MagicMock()
@@ -1940,7 +1944,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_cleanup_after_hook_copy_failure(self) -> None:
         """Test cleanup removes clone and storage record when hook copy fails."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(success=True)
 
         mock_clone_storage = MagicMock()
@@ -1986,7 +1990,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_cleanup_noop_on_success(self) -> None:
         """Test cleanup does nothing after successful prepare."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(success=True)
 
         mock_clone_storage = MagicMock()
@@ -2029,7 +2033,7 @@ class TestCloneIsolationHandler:
     @pytest.mark.asyncio
     async def test_prepare_calls_ensure_project_json(self) -> None:
         """Test prepare_environment calls ensure_project_json_for_isolation."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_manager.create_clone.return_value = MagicMock(success=True)
 
         mock_clone_storage = MagicMock()
@@ -2085,7 +2089,7 @@ class TestGetIsolationHandler:
 
     def test_get_isolation_handler_worktree(self) -> None:
         """Test get_isolation_handler('worktree', ...) returns WorktreeIsolationHandler."""
-        mock_git_manager = MagicMock()
+        mock_git_manager = MagicMock(spec=WorktreeGitManager)
         mock_worktree_storage = MagicMock()
 
         handler = get_isolation_handler(
@@ -2098,7 +2102,7 @@ class TestGetIsolationHandler:
 
     def test_get_isolation_handler_clone(self) -> None:
         """Test get_isolation_handler('clone', ...) returns CloneIsolationHandler."""
-        mock_clone_manager = MagicMock()
+        mock_clone_manager = MagicMock(spec=CloneGitManager)
         mock_clone_storage = MagicMock()
 
         handler = get_isolation_handler(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -16,6 +16,7 @@ from gobby.storage.tasks._runtime_mutex import (
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
 )
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _REVIEW_SAFE_STATES = frozenset({"needs_review", "review_approved"})
 _RECOVERABLE_STAGE_STATES = ("ready", "in_progress", "needs_review", "review_approved")
@@ -49,7 +50,7 @@ class _WorkspaceCheck:
     error: str | None = None
 
 
-def recover_safe_build_claims(
+async def recover_safe_build_claims(
     db: HubDatabase,
     project_id: str | None,
     *,
@@ -62,7 +63,12 @@ def recover_safe_build_claims(
     refused = 0
     workspace_inspections = 0
 
-    for candidate in _claimed_automation_candidates(db, project_id=project_id):
+    candidates = await asyncio.to_thread(
+        _claimed_automation_candidates,
+        db,
+        project_id=project_id,
+    )
+    for candidate in candidates:
         considered += 1
         claim = candidate.task.claimed_by_session_id
         if not claim:
@@ -71,7 +77,7 @@ def recover_safe_build_claims(
         inspect_workspace = (
             max_workspace_inspections is None or workspace_inspections < max_workspace_inspections
         )
-        refusal = _refusal_payload(
+        refusal = await _refusal_payload(
             db,
             task_manager,
             candidate,
@@ -82,7 +88,8 @@ def recover_safe_build_claims(
             workspace_inspections += 1
         if refusal is not None:
             refused += 1
-            _record_claim_recovery_event(
+            await asyncio.to_thread(
+                _record_claim_recovery_event,
                 db,
                 candidate,
                 outcome="refused",
@@ -92,17 +99,11 @@ def recover_safe_build_claims(
             continue
 
         try:
-            with RuntimeDispatchMutex(
-                TaskDispatchMutexManager(db),
-                candidate.task.id,
-                "claim_recovery",
-                "claim_release",
-                30,
-            ):
-                task_manager.release_task_claim(candidate.task.id)
+            await asyncio.to_thread(_release_claim, db, task_manager, candidate.task.id)
         except DispatchMutexUnavailableError:
             refused += 1
-            _record_claim_recovery_event(
+            await asyncio.to_thread(
+                _record_claim_recovery_event,
                 db,
                 candidate,
                 outcome="refused",
@@ -112,7 +113,8 @@ def recover_safe_build_claims(
             continue
 
         released += 1
-        _record_claim_recovery_event(
+        await asyncio.to_thread(
+            _record_claim_recovery_event,
             db,
             candidate,
             outcome="released",
@@ -171,7 +173,7 @@ def _claimed_automation_candidates(
     ]
 
 
-def _refusal_payload(
+async def _refusal_payload(
     db: HubDatabase,
     task_manager: LocalTaskManager,
     candidate: _ClaimCandidate,
@@ -182,14 +184,14 @@ def _refusal_payload(
     if candidate.stage_state not in _REVIEW_SAFE_STATES:
         return {"reason": "unsafe_stage"}
 
-    agent_claim = _agent_claim_payload(db, candidate.task.id, claim)
+    agent_claim = await asyncio.to_thread(_agent_claim_payload, db, candidate.task.id, claim)
     if agent_claim is not None:
         return agent_claim
 
     if not inspect_workspace:
         return {"reason": "workspace_inspection_deferred"}
 
-    workspace = _workspace_check(task_manager, candidate.task)
+    workspace = await _workspace_check(task_manager, candidate.task)
     if workspace.error is not None:
         return {"reason": "workspace_inspection_failed", "workspace": _workspace_payload(workspace)}
     if workspace.dirty_files:
@@ -243,12 +245,15 @@ def _agent_claim_payload(
     return None
 
 
-def _workspace_check(task_manager: LocalTaskManager, task: Task) -> _WorkspaceCheck:
-    artifacts = TaskArtifactManager(task_manager.db).get_artifacts(task.id)
+async def _workspace_check(task_manager: LocalTaskManager, task: Task) -> _WorkspaceCheck:
+    artifacts = await asyncio.to_thread(
+        TaskArtifactManager(task_manager.db).get_artifacts,
+        task.id,
+    )
     if artifacts.worktree_path:
-        return _inspect_workspace("worktree", artifacts.worktree_path)
+        return await _inspect_workspace("worktree", artifacts.worktree_path)
     if artifacts.clone_path:
-        return _inspect_workspace("clone", artifacts.clone_path)
+        return await _inspect_workspace("clone", artifacts.clone_path)
 
     isolation = getattr(task.isolation, "value", task.isolation)
     if isolation in _ARTIFACT_ISOLATION:
@@ -259,12 +264,12 @@ def _workspace_check(task_manager: LocalTaskManager, task: Task) -> _WorkspaceCh
     return _WorkspaceCheck(family="none")
 
 
-def _inspect_workspace(family: WorkspaceFamily, raw_path: str) -> _WorkspaceCheck:
+async def _inspect_workspace(family: WorkspaceFamily, raw_path: str) -> _WorkspaceCheck:
     path = Path(raw_path)
-    if not path.exists():
+    if not await asyncio.to_thread(path.exists):
         return _WorkspaceCheck(family=family, path=raw_path, error="artifact_path_missing")
 
-    dirty_files, error = _git_status_lines(path)
+    dirty_files, error = await _git_status_lines(path)
     return _WorkspaceCheck(
         family=family,
         path=str(path),
@@ -273,25 +278,28 @@ def _inspect_workspace(family: WorkspaceFamily, raw_path: str) -> _WorkspaceChec
     )
 
 
-def _git_status_lines(path: Path) -> tuple[list[str], str | None]:
-    try:
-        result = subprocess.run(  # nosec B603 # git args are fixed by this helper.
-            ["git", "status", "--porcelain"],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
+async def _git_status_lines(path: Path) -> tuple[list[str], str | None]:
+    result = await daemon_git.run(["status", "--porcelain"], cwd=path, timeout=10)
+    if isinstance(result, GitTimeout):
         return [], "git_status_timeout"
-    except OSError as exc:
-        return [], f"git_status_error:{exc}"
-
-    if result.returncode != 0:
+    if isinstance(result, GitFailed):
         detail = (result.stderr or result.stdout).strip()
+        if result.returncode is None:
+            return [], f"git_status_error:{detail[:500]}"
         return [], f"git_status_failed:{detail[:500]}"
+    assert isinstance(result, GitOk)
     return [line for line in result.stdout.splitlines() if line.strip()], None
+
+
+def _release_claim(db: HubDatabase, task_manager: LocalTaskManager, task_id: str) -> None:
+    with RuntimeDispatchMutex(
+        TaskDispatchMutexManager(db),
+        task_id,
+        "claim_recovery",
+        "claim_release",
+        30,
+    ):
+        task_manager.release_task_claim(task_id)
 
 
 def _record_claim_recovery_event(

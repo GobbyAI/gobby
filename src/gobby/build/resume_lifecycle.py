@@ -81,7 +81,7 @@ async def resume_existing_lifecycle(
         resume_skip_stages,
     )
     apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
-    record_build_delivery_campaign(
+    await record_build_delivery_campaign(
         db,
         project_id=project_id,
         task_id=task.id,

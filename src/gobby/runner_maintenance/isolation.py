@@ -225,9 +225,7 @@ async def cleanup_expired_isolation_loop(
                     async def delete_clone(
                         boundary: DestructiveBoundary, clone_id: str = clone.id
                     ) -> GitOperationResult:
-                        return await run_thread_to_completion(
-                            _delete_expired_clone, db, clone_storage, clone_id, boundary
-                        )
+                        return await _delete_expired_clone(db, clone_storage, clone_id, boundary)
 
                     clone_result = await run_worktree_delete(
                         worktree_delete_executor,
@@ -262,7 +260,7 @@ async def cleanup_expired_isolation_loop(
             logger.error("Error in expired isolation cleanup loop: %s", e)
 
 
-def _delete_expired_clone(
+async def _delete_expired_clone(
     db: HubDatabase,
     storage: LocalCloneManager,
     clone_id: str,
@@ -277,7 +275,7 @@ def _delete_expired_clone(
         path = manager.resolve_managed_clone_path(clone.clone_path)
         if path is None:
             return GitOperationResult(False, "Clone path is outside managed storage")
-        status = manager.get_clone_status(path)
+        status = await manager.get_clone_status(path)
         if (
             status is None
             or status.branch is None
@@ -293,24 +291,25 @@ def _delete_expired_clone(
         ):
             return GitOperationResult(False, "Clone base must be a local branch")
         target_ref = target if target.startswith("refs/heads/") else f"refs/heads/{target}"
-        if manager.run_git_command(["check-ref-format", target_ref], timeout=5).returncode != 0:
+        if (
+            await manager.run_git_command(["check-ref-format", target_ref], timeout=5)
+        ).returncode != 0:
             return GitOperationResult(False, "Clone base is not a valid local branch")
         if (
-            manager.run_git_command(["symbolic-ref", "--quiet", target_ref], timeout=5).returncode
-            != 1
-        ):
+            await manager.run_git_command(["symbolic-ref", "--quiet", target_ref], timeout=5)
+        ).returncode != 1:
             return GitOperationResult(False, "Clone base must be a direct local branch")
-        head = manager.run_git_command(["rev-parse", "--verify", "HEAD"], cwd=path, timeout=5)
+        head = await manager.run_git_command(["rev-parse", "--verify", "HEAD"], cwd=path, timeout=5)
         if head.returncode != 0 or not head.stdout.strip():
             return GitOperationResult(False, "Clone HEAD cannot be verified")
-        proof = manager.run_git_command(
+        proof = await manager.run_git_command(
             ["merge-base", "--is-ancestor", head.stdout.strip(), target_ref], timeout=10
         )
         if proof.returncode != 0:
             return GitOperationResult(False, "Clone HEAD is not merged into its local base")
         if not boundary.begin_mutation():
             return GitOperationResult(False, "Clone cleanup cancelled before mutation")
-        result = manager.delete_clone(path, force=False)
+        result = await manager.delete_clone(path, force=False)
         if result.success and not storage.delete(clone_id):
             return GitOperationResult(False, "Failed to delete clone record")
         return result

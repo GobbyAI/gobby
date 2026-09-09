@@ -120,7 +120,7 @@ def resolve_project_context(
     )
 
 
-def copy_project_json_to_worktree(
+async def copy_project_json_to_worktree(
     repo_path: str | Path,
     worktree_path: str | Path,
 ) -> None:
@@ -128,7 +128,7 @@ def copy_project_json_to_worktree(
 
     Delegates to ``ensure_project_json_for_isolation``.
     """
-    ensure_project_json_for_isolation(repo_path, worktree_path)
+    await ensure_project_json_for_isolation(repo_path, worktree_path)
 
 
 # Registry: (module_path, function_name, uses_mode_param)

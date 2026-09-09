@@ -908,8 +908,7 @@ class AgentLifecycleMonitor:
             cwd = await self._resolve_agent_cwd(run)
             if cwd:
                 try:
-                    checkpoint = await asyncio.to_thread(
-                        self._checkpoint_manager.create_checkpoint,
+                    checkpoint = await self._checkpoint_manager.create_checkpoint(
                         cwd,
                         run.task_id,
                         run.child_session_id,

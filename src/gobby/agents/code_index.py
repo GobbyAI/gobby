@@ -42,6 +42,7 @@ from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.runtime_grants.signing import sign_grant
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.schema_contract import expected_schema_identity
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_local_api_token
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -94,7 +95,7 @@ class RepositoryDigest:
     source_files: tuple[str, ...]
 
 
-def repository_source_digest(
+async def repository_source_digest(
     repository_root: Path,
     *,
     source_files: Sequence[str] | None = None,
@@ -110,7 +111,7 @@ def repository_source_digest(
     inputs = (
         tuple(sorted(set(source_files)))
         if source_files is not None
-        else _git_visible_source_files(root)
+        else await _git_visible_source_files(root)
     )
     if not inputs:
         raise IndexInventoryError(
@@ -145,7 +146,7 @@ def repository_source_digest(
     return RepositoryDigest(digest=digest.hexdigest(), source_files=inputs)
 
 
-def settle_indexed_value[T](
+async def settle_indexed_value[T](
     repository_root: Path,
     *,
     index_operation: Callable[[], None],
@@ -171,7 +172,7 @@ def settle_indexed_value[T](
     attempts = 0
     while attempts < max_attempts and monotonic() <= deadline:
         attempts += 1
-        before = repository_source_digest(repository_root, source_files=source_files)
+        before = await repository_source_digest(repository_root, source_files=source_files)
         try:
             index_operation()
             last_indexed_at = read_last_indexed_at()
@@ -187,7 +188,7 @@ def settle_indexed_value[T](
                 "inventory_unavailable",
                 "code index did not report last_indexed_at",
             )
-        after = repository_source_digest(
+        after = await repository_source_digest(
             repository_root,
             source_files=source_files,
         )
@@ -213,28 +214,19 @@ def settle_indexed_value[T](
     )
 
 
-def _git_visible_source_files(repository_root: Path) -> tuple[str, ...]:
-    try:
-        completed = subprocess.run(  # Fixed local Git argv. # nosec B603 B607
-            [
-                "git",
-                "ls-files",
-                "-z",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-            ],
-            cwd=repository_root,
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+async def _git_visible_source_files(repository_root: Path) -> tuple[str, ...]:
+    result = await daemon_git.run(
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=repository_root,
+        timeout=30,
+    )
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.stdout.strip() or result.status
         raise IndexInventoryError(
             "inventory_unavailable",
-            f"repository source inventory failed: {exc}",
-        ) from exc
-    files = tuple(sorted(os.fsdecode(raw) for raw in completed.stdout.split(b"\0") if raw))
+            f"repository source inventory failed: {detail}",
+        )
+    files = tuple(sorted(raw for raw in result.stdout.split("\0") if raw))
     return files
 
 
@@ -301,6 +293,9 @@ async def ensure_isolation_code_index(
         raise RuntimeError("gcode_not_installed")
 
     identity = dict(identity_env or {})
+    git_exclude_path = (
+        await _resolve_git_exclude_path(workspace) if credential is not None else None
+    )
     result = await asyncio.to_thread(
         _prepare_gcode_runtime,
         workspace=workspace,
@@ -310,6 +305,7 @@ async def ensure_isolation_code_index(
         machine_id=identity.get("GOBBY_MACHINE_ID"),
         project_id=identity.get("GOBBY_PROJECT_ID"),
         session_id=identity.get("GOBBY_SESSION_ID"),
+        git_exclude_path=git_exclude_path,
     )
     gcode_command = result.wrapper_path or gcode_bin
     merged_probe_env = dict(identity_env or {})
@@ -390,6 +386,7 @@ def _prepare_gcode_runtime(
     machine_id: str | None = None,
     project_id: str | None = None,
     session_id: str | None = None,
+    git_exclude_path: Path | None = None,
 ) -> CodeIndexPreflightResult:
     if credential is None:
         return CodeIndexPreflightResult(env={})
@@ -438,7 +435,7 @@ def _prepare_gcode_runtime(
 
     wrapper_path = workspace / _WRAPPER_RELATIVE_PATH
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
-    _exclude_generated_wrapper_from_git(workspace)
+    _exclude_generated_wrapper_from_git(git_exclude_path)
     wrapper_path.write_text(
         _gcode_wrapper_script(runtime_home, gcode_bin, launch.grant_path),
         encoding="utf-8",
@@ -611,23 +608,29 @@ def _gcode_wrapper_script(
     )
 
 
-def _exclude_generated_wrapper_from_git(workspace: Path) -> None:
-    try:
-        result = subprocess.run(  # nosec B603 B607 # fixed git argv on local workspace.
-            ["git", "rev-parse", "--git-path", "info/exclude"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=10,
+async def _resolve_git_exclude_path(workspace: Path) -> Path | None:
+    result = await daemon_git.run(
+        ["rev-parse", "--git-path", "info/exclude"],
+        cwd=workspace,
+        timeout=10,
+    )
+    if not isinstance(result, GitOk):
+        logger.debug(
+            "Skipping gcode wrapper Git exclude after Git failure in %s: %s",
+            workspace,
+            result.stderr.strip() or result.stdout.strip() or result.status,
         )
-    except (OSError, subprocess.SubprocessError):
-        logger.debug("Skipping gcode wrapper Git exclude after Git failure", exc_info=True)
-        return
-    if result.returncode != 0:
-        logger.debug("Skipping gcode wrapper Git exclude outside repository: %s", workspace)
-        return
+        return None
+    raw_path = result.stdout.strip()
+    if not raw_path:
+        return None
+    exclude_path = Path(raw_path)
+    return exclude_path if exclude_path.is_absolute() else workspace / exclude_path
 
-    exclude_path = workspace / result.stdout.strip()
+
+def _exclude_generated_wrapper_from_git(exclude_path: Path | None) -> None:
+    if exclude_path is None:
+        return
     try:
         existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
         patterns = {line.strip() for line in existing.splitlines()}
@@ -641,7 +644,7 @@ def _exclude_generated_wrapper_from_git(workspace: Path) -> None:
         )
     except OSError:
         logger.debug(
-            "Failed to update Git exclude for gcode wrapper in %s", workspace, exc_info=True
+            "Failed to update Git exclude for gcode wrapper at %s", exclude_path, exc_info=True
         )
 
 

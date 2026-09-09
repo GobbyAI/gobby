@@ -867,7 +867,7 @@ class TestInitializeProject:
             }
         )
 
-    def test_reinit_preserves_generated_isolation_parent_metadata(
+    async def test_reinit_preserves_generated_isolation_parent_metadata(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
@@ -885,7 +885,7 @@ class TestInitializeProject:
             "parent-project",
             "2024-01-01T00:00:00Z",
         )
-        ensure_project_json_for_isolation(parent_root, worktree_root)
+        await ensure_project_json_for_isolation(parent_root, worktree_root)
 
         result = initialize_project(worktree_root, db=temp_db)
 
