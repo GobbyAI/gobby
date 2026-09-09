@@ -249,12 +249,12 @@ def test_has_active_agent_wait_translates_storage_failures() -> None:
         subscriber_manager.has_active_agent_wait("session-id")
 
 
-def test_has_active_agent_wait_rejects_missing_foreign_and_orphan_subscriptions(
+def test_has_active_agent_wait_accepts_observers_but_rejects_missing_and_orphan_subscriptions(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, object],
 ) -> None:
-    owner_session_id, run_id, _run_manager = _create_agent_run(
+    owner_session_id, run_id, run_manager = _create_agent_run(
         temp_db,
         session_manager,
         sample_project,
@@ -273,6 +273,10 @@ def test_has_active_agent_wait_rejects_missing_foreign_and_orphan_subscriptions(
     assert subscriber_manager.has_active_agent_wait(owner_session_id) is False
 
     subscriber_manager.add_completion_subscriber(run_id, foreign_session.id)
+    assert subscriber_manager.has_active_agent_wait(foreign_session.id) is True
+
+    run_manager.complete(run_id, result="done")
+    assert subscriber_manager.get_completion_subscribers(run_id) == [foreign_session.id]
     assert subscriber_manager.has_active_agent_wait(foreign_session.id) is False
 
     orphan_run_id = "55361235-ff5f-5de3-88f4-c98c82f7f0c3"

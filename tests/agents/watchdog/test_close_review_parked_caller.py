@@ -27,6 +27,7 @@ from gobby.autonomous.progress_tracker import ProgressType
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
@@ -47,6 +48,8 @@ from gobby.utils.session_context import (
     session_context_for_test,
     set_current_agent_run_id,
 )
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
     _fake_terminal_services,
@@ -518,7 +521,7 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
 
 
 @pytest.mark.asyncio
-async def test_passive_wait_exemption_requires_live_owned_subscription(
+async def test_passive_wait_exemption_requires_live_subscription_including_observers(
     harness: _Harness,
 ) -> None:
     launched = await harness.close_task()
@@ -539,9 +542,64 @@ async def test_passive_wait_exemption_requires_live_owned_subscription(
         run_id=_rid("foreign-run"),
     )
     harness.runs.start(foreign.id)
-    subscribers.add_completion_subscriber(foreign.id, harness.caller_session)
+    waiting = await harness.wait_for_agent(foreign.id)
+    assert waiting["notification_registered"] is True
+    assert await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
+
+    harness.runs.complete(foreign.id, result="done")
     assert not await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
 
     subscribers.add_completion_subscriber(run_id, harness.caller_session)
     harness.runs.complete(run_id, result="done")
     assert not await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
+
+
+async def test_observer_wait_yields_task_and_epic_gates_until_run_completes(
+    harness: _Harness,
+) -> None:
+    sync_bundled_rules(harness.db, get_bundled_rules_path())
+    harness.task_manager.claim_task(harness.task.id, harness.caller_session)
+    report_run = harness.runs.create(
+        parent_session_id=harness.parent_session,
+        provider="claude",
+        prompt="publish the report",
+        agent_name="synthesis-reporter",
+    )
+    harness.runs.start(report_run.id)
+    engine = RuleEngine(harness.db, task_manager=harness.task_manager)
+    event = HookEvent(
+        event_type=HookEventType.STOP,
+        session_id=harness.caller_session,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={},
+    )
+    variables: dict[str, Any] = {
+        "_agent_type": "default",
+        "_memory_initial_stop_checked": True,
+        "mode_level": 2,
+        "task_claimed": True,
+        "claimed_tasks": {harness.task.id: f"#{harness.task.seq_num}"},
+        "stop_attempts": 0,
+    }
+    blocked = await engine.evaluate(event, session_id=harness.caller_session, variables=variables)
+    assert blocked.decision == "block"
+    assert "claimed tasks" in (blocked.reason or "")
+    assert "Epic tree not complete" in (blocked.reason or "")
+
+    waiting = await harness.wait_for_agent(report_run.id)
+    assert waiting["notification_registered"] is True and waiting["completed"] is False
+    attempts_before_wait = variables["stop_attempts"]
+    allowed = await engine.evaluate(event, session_id=harness.caller_session, variables=variables)
+    assert allowed.decision == "allow"
+    assert variables["stop_attempts"] == attempts_before_wait
+    assert harness.task_manager.get_task(harness.task.id).closed_at is None
+
+    harness.runs.complete(report_run.id, result="published")
+    blocked_again = await engine.evaluate(
+        event, session_id=harness.caller_session, variables=variables
+    )
+    assert blocked_again.decision == "block"
+    assert "[aggregated:2-gates]" in (blocked_again.reason or "")
+    assert variables["stop_attempts"] == attempts_before_wait + 1
