@@ -114,6 +114,18 @@ def memory_dream_status(ctx: click.Context, run_id: str) -> None:
         _print_checkpoint(checkpoint)
     _print_summary(run.get("summary"))
     _print_dry_run_actions(run.get("plan"))
+    _print_publication(run)
+
+
+def _print_publication(run: dict[str, Any]) -> None:
+    publication = run.get("publication")
+    if not isinstance(publication, dict):
+        return
+    click.echo(f"Report publication: {publication.get('status', 'not_requested')}")
+    if publication.get("commit_sha"):
+        click.echo(
+            f"{publication['report_path']} @ {publication['commit_sha']} ({publication['branch_name']})"
+        )
 
 
 @memory_dream.command("revert")
@@ -196,6 +208,7 @@ def _render_terminal_run(ctx: click.Context, run: dict[str, Any]) -> None:
     plan = raw_plan if isinstance(raw_plan, dict) else {}
     raw_checkpoint = run.get("checkpoint")
     checkpoint = raw_checkpoint if isinstance(raw_checkpoint, dict) else {}
+    _print_publication(run)
 
     if status == "completed":
         click.echo(f"Dream run {run_id} completed")

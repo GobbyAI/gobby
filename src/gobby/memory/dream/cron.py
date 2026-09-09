@@ -55,7 +55,9 @@ class CronRegistrationProtocol(Protocol):
         ...
 
 
-def reconcile_interrupted_dream_runs(memory_manager: MemoryDreamManagerProtocol) -> list[str]:
+def reconcile_interrupted_dream_runs(
+    memory_manager: MemoryDreamManagerProtocol, *, report_project_id: str | None = None
+) -> list[str]:
     """Mark dream runs orphaned by a daemon restart as 'interrupted'.
 
     Runs once during synchronous startup (init_orchestration) before the daemon
@@ -64,7 +66,7 @@ def reconcile_interrupted_dream_runs(memory_manager: MemoryDreamManagerProtocol)
     that orphans are cleaned up even after the feature is turned off. Returns the
     reconciled run IDs.
     """
-    store = MemoryDreamStore(memory_manager.db)
+    store = MemoryDreamStore(memory_manager.db, report_project_id=report_project_id)
     return store.mark_interrupted_runs()
 
 

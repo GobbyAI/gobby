@@ -125,6 +125,16 @@ def test_digest_defaults_to_latest_run() -> None:
     assert "# Digest body" in result.output
 
 
+@pytest.mark.parametrize("command", ["observations", "results"])
+def test_evidence_commands_forward_page_bounds(command: str) -> None:
+    endpoint = f"/feedback/review/run-3/{command}?offset=2&limit=1"
+    requests = _FakeRequests({("GET", endpoint): {"run_id": "run-3", "next_offset": 3}})
+    result = _invoke(requests, [command, "run-3", "--offset", "2", "--limit", "1"])
+    assert result.exit_code == 0, result.output
+    assert '"next_offset": 3' in result.output
+    assert requests.calls[0]["endpoint"] == endpoint
+
+
 def test_digest_by_run_id_surfaces_error_field() -> None:
     requests = _FakeRequests(
         {

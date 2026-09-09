@@ -119,6 +119,7 @@ class DreamCandidate:
             "content": self.content,
             "memory_type": self.memory_type,
             "project_id": self.project_id,
+            "is_global": self.is_global,
             "source_type": self.source_type,
             "source_session_id": self.source_session_id,
             "rationale": self.rationale,
@@ -150,6 +151,7 @@ class DreamAction:
     tags: list[str] | None = None
     reason: str = ""
     confidence: float = 0.0
+    proposals: list[Any] = field(default_factory=list)
 
     def affected_ids(self) -> set[str]:
         ids = set(self.memory_ids)

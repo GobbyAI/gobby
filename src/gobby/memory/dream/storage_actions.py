@@ -58,8 +58,11 @@ class _DreamActionMixin:
         content: str | None = None,
         tags: list[str] | None = None,
         on_committed: Callable[[], None] | None = None,
+        decision_id: str | None = None,
     ) -> DreamApplyResult | None:
         """Apply one dream action behind the complete selected-row fence."""
+        if action == "promote" and selected_is_global:
+            action = "keep"
         with self.db.transaction() as conn:
             row = conn.execute(
                 """
@@ -81,6 +84,13 @@ class _DreamActionMixin:
                 ),
             ).fetchone()
             if row is None:
+                if decision_id is not None:
+                    conn.execute(
+                        """UPDATE memory_dream_decisions SET status = 'skipped', completed_at = now(),
+                        outcome = '{"reason":"selected memory changed or was deleted","mutations":0}'::jsonb
+                        WHERE id = %s AND run_id = %s""",
+                        (decision_id, run_id),
+                    )
                 return None
 
             before = dict(row)
@@ -183,8 +193,21 @@ class _DreamActionMixin:
                 snapshot_id,
                 after_data=after,
             )
+            if decision_id is not None:
+                conn.execute(
+                    """UPDATE memory_dream_decisions
+                    SET status = %s, snapshot_id = %s, completed_at = now(), outcome = %s
+                    WHERE id = %s AND run_id = %s""",
+                    (
+                        "noop" if action == "keep" else "applied",
+                        snapshot_id,
+                        json_dumps({"mutations": 0 if action == "keep" else 1}),
+                        decision_id,
+                        run_id,
+                    ),
+                )
 
-        if on_committed is not None:
+        if on_committed is not None and action != "keep":
             on_committed()
         return DreamApplyResult(snapshot_id=snapshot_id, before=before, after=after)
 

@@ -117,3 +117,19 @@ def test_run_by_id_returns_run_and_404_for_unknown() -> None:
 
     service.store.get_run.return_value = None
     assert _client(service).get("/feedback/review/missing").status_code == 404
+
+
+@pytest.mark.parametrize("reader", ["observations", "results"])
+def test_evidence_routes_forward_bounds_and_reject_invalid_pages(reader: str) -> None:
+    service = MagicMock()
+    method = getattr(service.store, f"{reader}_page")
+    method.return_value = {"run_id": "run-9", "next_offset": 3}
+    client = _client(service)
+    response = client.get(f"/feedback/review/run-9/{reader}?offset=2&limit=1")
+    assert response.status_code == 200
+    assert response.json()["next_offset"] == 3
+    method.assert_called_once_with("run-9", offset=2, limit=1)
+    method.side_effect = ValueError("offset must be nonnegative")
+    invalid = client.get(f"/feedback/review/run-9/{reader}?offset=-1")
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "offset must be nonnegative"

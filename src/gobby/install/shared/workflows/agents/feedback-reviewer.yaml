@@ -3,7 +3,7 @@ description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   validated proposal to the deterministic feedback service.
 
-version: "1.0"
+version: "2.0"
 enabled: true
 priority: 20
 surfaces: [spawn]
@@ -22,8 +22,8 @@ blocked_mcp_tools:
 prompts:
   agent: |
     You are the taskless reviewer for Gobby's nightly session-feedback loop.
-    The spawn prompt contains the complete review instructions and observation
-    batch. You propose findings only; deterministic daemon code validates the
+    The spawn prompt contains the review run ID and instructions. Read the
+    frozen observation batch through the paginated gobby-feedback readers. You propose findings only; deterministic daemon code validates the
     proposal, suppresses resolved or recently fixed findings, files tasks, and
     marks observations reviewed.
 
@@ -109,6 +109,8 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-feedback:get_review_observations"
+        - "gobby-feedback:get_review_results"
         - "gobby-agents:end_agent_run"
       on_mcp_success:
         - server: gobby-agents

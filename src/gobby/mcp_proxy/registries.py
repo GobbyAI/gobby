@@ -201,6 +201,13 @@ def setup_internal_registries(
         manager.add_registry(profiles_registry)
         logger.debug("Profiles registry initialized")
 
+        from gobby.mcp_proxy.tools.feedback import create_feedback_registry
+
+        manager.add_registry(create_feedback_registry(db))
+        from gobby.mcp_proxy.tools.reports import create_reports_registry
+
+        manager.add_registry(create_reports_registry(db, project_id=project_id))
+
         if initial_config is not None:
             offload_config = initial_config.get_tool_result_offload_config()
             if offload_config.enabled is True:

@@ -18,6 +18,7 @@ from typing import Any
 
 import psycopg
 
+from gobby.memory.dream.decisions import DreamDecisionStore
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
@@ -42,12 +43,24 @@ async def apply_dream_plan(
     """Apply validated actions once, snapshotting before every mutation."""
     candidate_map = {candidate.id: candidate for candidate in candidates}
     summary = _empty_summary(dry_run)
+    decisions = DreamDecisionStore(store.db)
+    decision_ids = await asyncio.to_thread(decisions.stage, run_id, actions, candidates)
+    summary.update(noops=0, skipped=0, proposed_actions={})
+    proposals = {
+        proposal["ordinal"]: proposal["proposal"]
+        for action in actions
+        for proposal in action.proposals
+    }
+    for proposal in proposals.values():
+        name = str(proposal.get("action", "invalid")) if isinstance(proposal, dict) else "invalid"
+        summary["proposed_actions"][name] = summary["proposed_actions"].get(name, 0) + 1
     stamp = when or _now()
     snapshots_before = await asyncio.to_thread(store.count_snapshots, run_id)
-    for action in actions:
+    for action, decision_id in zip(actions, decision_ids, strict=True):
         summary["actions"][action.action] = summary["actions"].get(action.action, 0) + 1
         if dry_run:
             summary["planned_actions"].append(_planned_action_preview(action, candidate_map))
+            await asyncio.to_thread(decisions.finish, decision_id, "planned", mutations=0)
             continue
         try:
             mutations = await _apply_action(
@@ -57,9 +70,16 @@ async def apply_dream_plan(
                 action=action,
                 candidate_map=candidate_map,
                 stamp=stamp,
+                decision_id=decision_id,
             )
-            summary["mutations"] += mutations
+            await asyncio.to_thread(
+                decisions.finish,
+                decision_id,
+                "applied" if mutations else "noop",
+                mutations=mutations,
+            )
         except _EXPECTED_ACTION_ERRORS as exc:
+            await asyncio.to_thread(decisions.finish, decision_id, "failed", error=str(exc))
             summary["errors"] += 1
             summary["error_details"].append(
                 {
@@ -76,16 +96,32 @@ async def apply_dream_plan(
                 logger.warning("Memory dream action failed: %s", exc)
             # A failed mutation must not strand the candidate in the sweep window;
             # advance its cooldown cursor so it is not re-dreamed immediately.
-            await _advance_cursor(
-                memory_manager,
-                store,
-                run_id,
-                candidate_map.get(action.memory_id or ""),
-                stamp,
+            decision = await asyncio.to_thread(decisions.get, decision_id)
+            if decision["status"] == "failed":
+                await _advance_cursor(
+                    memory_manager,
+                    store,
+                    run_id,
+                    candidate_map.get(action.memory_id or ""),
+                    stamp,
+                )
+        except BaseException as exc:
+            await asyncio.to_thread(
+                decisions.finish,
+                decision_id,
+                "interrupted" if isinstance(exc, asyncio.CancelledError) else "failed",
+                error=str(exc) or type(exc).__name__,
             )
-        except Exception:
+            await asyncio.to_thread(decisions.interrupt_pending, run_id)
             logger.exception("Unexpected memory dream action failure")
             raise
+        finally:
+            # Primary writes and their ledger outcome commit together. Projection
+            # failures after that commit must not erase the applied change count.
+            decision = await asyncio.to_thread(decisions.get, decision_id)
+            summary["mutations"] += int(decision["outcome"].get("mutations", 0))
+            summary["noops"] += decision["status"] == "noop"
+            summary["skipped"] += decision["status"] == "skipped"
 
     # Per-call delta, not the run-cumulative count: unit summaries are summed
     # by the sweep orchestrator, so a cumulative gauge here inflates totals.
@@ -262,6 +298,7 @@ async def _apply_action(
     action: DreamAction,
     candidate_map: dict[str, DreamCandidate],
     stamp: str,
+    decision_id: str | None = None,
 ) -> int:
     if action.action == "refresh" and not action.content:
         await _advance_cursor(
@@ -270,6 +307,7 @@ async def _apply_action(
             run_id,
             candidate_map.get(action.memory_id or ""),
             stamp,
+            decision_id,
         )
         return 0
     if action.action == "keep" and not (action.memory_id or "").strip():
@@ -289,6 +327,7 @@ async def _apply_action(
             candidate,
             action,
             stamp,
+            decision_id,
         )
     # Defensive fallback for any future action shape that reaches this dispatcher.
     await _advance_cursor(
@@ -308,9 +347,10 @@ async def _apply_fenced_action(
     candidate: DreamCandidate,
     action: DreamAction,
     stamp: str,
+    decision_id: str | None = None,
 ) -> int:
     """Apply selected state atomically, then reconcile secondaries post-commit."""
-    action_name = action.action
+    action_name = "keep" if action.action == "promote" and candidate.is_global else action.action
     result = await asyncio.to_thread(
         store.apply_candidate_action,
         run_id=run_id,
@@ -324,6 +364,7 @@ async def _apply_fenced_action(
         content=action.content,
         tags=action.tags,
         on_committed=memory_manager.notify_memory_changed,
+        decision_id=decision_id,
     )
     if result is None:
         return 0
@@ -352,6 +393,7 @@ async def _advance_cursor(
     run_id: str,
     candidate: DreamCandidate | None,
     stamp: str,
+    decision_id: str | None = None,
 ) -> None:
     """Stamp ``last_dreamed_at`` for a kept candidate so the sweep cursor advances."""
     if candidate is None:
@@ -368,6 +410,7 @@ async def _advance_cursor(
             selected_is_global=candidate.is_global,
             stamp=stamp,
             on_committed=memory_manager.notify_memory_changed,
+            decision_id=decision_id,
         )
     except _EXPECTED_ACTION_ERRORS as exc:
         # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.

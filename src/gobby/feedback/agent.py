@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -41,7 +42,12 @@ FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "observation_ids": {"type": "array", "items": {"type": "string"}},
+                    "observation_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "uniqueItems": True,
+                    },
                     "cited_paths": {"type": "array", "items": {"type": "string"}},
                     "theme": {"type": "string"},
                     "classification": {"type": "string", "enum": list(_CLASSIFICATIONS)},
@@ -99,6 +105,19 @@ class FeedbackReviewerError(RuntimeError):
 class FeedbackReviewerLaunchError(FeedbackReviewerError):
     """The named reviewer could not be launched."""
 
+    @property
+    def transient(self) -> bool:
+        return isinstance(self.__cause__, (OSError, TimeoutError)) or any(
+            message in str(self).lower()
+            for message in (
+                "temporarily unavailable",
+                "connection reset",
+                "input/output error",
+                "message too long",
+                "socket unavailable",
+            )
+        )
+
 
 class FeedbackReviewerRunError(FeedbackReviewerError):
     """The named reviewer reached a non-success terminal state."""
@@ -116,6 +135,7 @@ def validate_feedback_findings(
     value: object,
     *,
     agent_run_id: str | None = None,
+    observation_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Validate untrusted reviewer output before deterministic actions consume it."""
     if not isinstance(value, dict):
@@ -132,6 +152,22 @@ def validate_feedback_findings(
             f"feedback reviewer result failed schema validation{at}: {exc.message}",
             agent_run_id=agent_run_id,
         ) from exc
+    if observation_ids is not None:
+        actual = Counter(
+            observation_id
+            for cluster in value["clusters"]
+            for observation_id in cluster["observation_ids"]
+        )
+        expected = set(observation_ids)
+        missing = sorted(expected - actual.keys())
+        unknown = sorted(actual.keys() - expected)
+        repeated = sorted(key for key, count in actual.items() if count != 1)
+        if missing or unknown or repeated:
+            raise FeedbackReviewerResultError(
+                f"feedback coverage must include each frozen observation exactly once: "
+                f"missing={missing}, unknown={unknown}, repeated={repeated}",
+                agent_run_id=agent_run_id,
+            )
     return value
 
 
@@ -272,6 +308,10 @@ class FeedbackReviewerAgent:
             )
         if run.status != "success":
             detail = run.error or run.result or f"terminal status {run.status}"
+            if run.started_at is None and run.error:
+                raise FeedbackReviewerLaunchError(
+                    f"feedback reviewer background launch failed: {detail}", agent_run_id=run_id
+                )
             raise FeedbackReviewerRunError(
                 f"feedback reviewer agent {run_id} failed: {detail}",
                 agent_run_id=run_id,

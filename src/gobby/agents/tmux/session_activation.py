@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from gobby.agents.spawners.auth_env import split_credential_env
 from gobby.agents.tmux.errors import TmuxSessionError
+from gobby.agents.tmux.launcher import INLINE_LAUNCH_LIMIT, write_launcher
 from gobby.agents.tmux.wsl_compat import convert_windows_path_to_wsl, needs_wsl
 
 if TYPE_CHECKING:
@@ -213,10 +214,16 @@ async def activate_session(
 
     secret_env_file: Path | None = None
     secret_env_file_arg: str | None = None
+    launcher_file: Path | None = None
 
     # Inject env vars via -e (tmux 3.2+)
     if env:
         public_env, credential_env = _split_tmux_env(env)
+        if sum(len(f"{key}={value}".encode()) + 4 for key, value in public_env.items()) > (
+            INLINE_LAUNCH_LIMIT
+        ):
+            credential_env.update(public_env)
+            public_env = {}
         for key, val in public_env.items():
             args.extend(["-e", f"{key}={val}"])
         if credential_env:
@@ -231,6 +238,15 @@ async def activate_session(
         command_text = shlex.join(command) if isinstance(command, list) else command
     if secret_env_file_arg:
         command_text = _source_secret_env_command(command_text, secret_env_file_arg)
+    if command_text and sum(len(arg.encode()) + 1 for arg in [*args, command_text]) > (
+        INLINE_LAUNCH_LIMIT
+    ):
+        try:
+            launcher_file, command_text = write_launcher(command_text)
+        except BaseException:
+            if secret_env_file:
+                secret_env_file.unlink(missing_ok=True)
+            raise
     if command_text:
         args.append(command_text)
 
@@ -244,13 +260,17 @@ async def activate_session(
 
     try:
         rc, _stdout, stderr = await manager._run(*args)
-    except Exception:
+    except BaseException:
         if secret_env_file:
             secret_env_file.unlink(missing_ok=True)
+        if launcher_file:
+            launcher_file.unlink(missing_ok=True)
         raise
     if rc != 0:
         if secret_env_file:
             secret_env_file.unlink(missing_ok=True)
+        if launcher_file:
+            launcher_file.unlink(missing_ok=True)
         raise TmuxSessionError(
             f"Failed to create session (rc={rc}): {stderr.strip()}",
             session_name=safe_name,

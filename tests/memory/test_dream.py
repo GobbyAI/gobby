@@ -1617,6 +1617,7 @@ class _FakeDreamDB:
         self.runs: dict[str, dict[str, Any]] = {}
         self.snapshots: list[dict[str, Any]] = []
         self.projection_changes: list[dict[str, Any]] = []
+        self.decisions: dict[str, dict[str, Any]] = {}
 
     def transaction(self) -> Any:
         @contextlib.contextmanager
@@ -1626,6 +1627,7 @@ class _FakeDreamDB:
             runs = copy.deepcopy(self.runs)
             snapshots = copy.deepcopy(self.snapshots)
             projection_changes = copy.deepcopy(self.projection_changes)
+            decisions = copy.deepcopy(self.decisions)
             try:
                 yield _FencedConn(self)
             except Exception:
@@ -1634,12 +1636,24 @@ class _FakeDreamDB:
                 self.runs = runs
                 self.snapshots = snapshots
                 self.projection_changes = projection_changes
+                self.decisions = decisions
                 raise
 
         return _txn()
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Cursor:
         normalized = " ".join(sql.split())
+        if normalized.startswith("UPDATE memory_dream_decisions"):
+            if "status = CASE" in normalized:
+                decision = self.decisions[str(params[2])]
+                if decision["status"] not in {"applied", "noop", "skipped"}:
+                    decision["status"] = params[0]
+                decision["outcome"].update(json.loads(params[1]))
+            elif "status = 'interrupted'" in normalized:
+                for decision in self.decisions.values():
+                    if decision["run_id"] == params[0] and decision["status"] == "pending":
+                        decision["status"] = "interrupted"
+            return _Cursor()
         if normalized.startswith("INSERT INTO memory_dream_runs"):
             self.runs[params[0]] = {
                 "id": params[0],
@@ -1735,6 +1749,8 @@ class _FakeDreamDB:
 
     def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         normalized = " ".join(sql.split())
+        if "FROM memory_dream_decisions" in normalized:
+            return self.decisions.get(str(params[0]))
         if "FROM project_checkouts" in normalized:
             machine_id, project_id = map(str, params[:2])
             project = self.projects.get(project_id)
@@ -3381,6 +3397,35 @@ class _FencedConn:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FencedCursor:
         normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT id FROM memory_dream_runs"):
+            return _FencedCursor(row={"id": params[0]})
+        if normalized.startswith("SELECT COALESCE(MAX(ordinal)"):
+            ordinals = [
+                d["ordinal"] for d in self.db.decisions.values() if d["run_id"] == params[0]
+            ]
+            return _FencedCursor(row={"n": max(ordinals, default=0)})
+        if normalized.startswith("INSERT INTO memory_dream_decisions"):
+            self.db.decisions[str(params[0])] = {
+                "id": params[0],
+                "run_id": params[1],
+                "ordinal": params[2],
+                "proposals": json.loads(params[3]),
+                "effective_action": json.loads(params[4]),
+                "candidate": json.loads(params[5]) if params[5] is not None else None,
+                "status": "pending",
+                "outcome": {},
+            }
+            return _FencedCursor()
+        if normalized.startswith("UPDATE memory_dream_decisions"):
+            if "status = 'skipped'" in normalized:
+                self.db.decisions[str(params[0])].update(status="skipped", outcome={"mutations": 0})
+            else:
+                self.db.decisions[str(params[3])].update(
+                    status=params[0],
+                    snapshot_id=params[1],
+                    outcome=json.loads(params[2]),
+                )
+            return _FencedCursor()
         if normalized.startswith("SELECT * FROM memory_dream_runs WHERE status = 'interrupted'"):
             marker = str(params[0])
             candidates = []

@@ -58,4 +58,20 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"feedback review run not found: {run_id}")
         return {"success": True, "run": asdict(run)}
 
+    @router.get("/review/{run_id}/observations")
+    async def feedback_observations(
+        run_id: str, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        try:
+            return _service().store.observations_page(run_id, offset=offset, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/review/{run_id}/results")
+    async def feedback_results(run_id: str, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        try:
+            return _service().store.results_page(run_id, offset=offset, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     return router

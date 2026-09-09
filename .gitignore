@@ -239,7 +239,7 @@ __marimo__/
 !.gobby/workflows/**
 
 screenshots/
-reports/
+/reports/
 bandit_report.json
 coderabbit.md
 ./*.txt

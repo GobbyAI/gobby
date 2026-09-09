@@ -8,6 +8,7 @@ import click
 import httpx
 
 from gobby.cli.utils_config import get_daemon_client
+from gobby.utils.json_helpers import json_dumps
 
 # The review runs inline in the daemon: one distill call (900s deadline)
 # plus deterministic task filing, bounded by the cron action timeout.
@@ -18,6 +19,32 @@ _STATUS_TIMEOUT_SECONDS = 30.0
 @click.group("feedback")
 def feedback() -> None:
     """Session-feedback review loop."""
+
+
+@feedback.command("observations")
+@click.argument("run_id")
+@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--limit", default=50, type=click.IntRange(1, 100))
+@click.pass_context
+def feedback_observations(ctx: click.Context, run_id: str, offset: int, limit: int) -> None:
+    """Read one page of the frozen review batch."""
+    data = _request(
+        ctx, f"/feedback/review/{run_id}/observations?offset={offset}&limit={limit}", method="GET"
+    )
+    click.echo(json_dumps(data, indent=2))
+
+
+@feedback.command("results")
+@click.argument("run_id")
+@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--limit", default=50, type=click.IntRange(1, 100))
+@click.pass_context
+def feedback_results(ctx: click.Context, run_id: str, offset: int, limit: int) -> None:
+    """Read accepted findings and their recorded task outcomes."""
+    data = _request(
+        ctx, f"/feedback/review/{run_id}/results?offset={offset}&limit={limit}", method="GET"
+    )
+    click.echo(json_dumps(data, indent=2))
 
 
 @feedback.command("review")
@@ -75,6 +102,13 @@ def _print_digest(run: Any) -> None:
     digest = run.get("digest_md") if isinstance(run, dict) else None
     click.echo()
     click.echo(str(digest) if digest else "(no digest recorded)")
+    publication = run.get("publication") if isinstance(run, dict) else None
+    if publication:
+        click.echo(f"Report publication: {publication['status']}")
+        if publication.get("commit_sha"):
+            click.echo(
+                f"{publication['report_path']} @ {publication['commit_sha']} ({publication['branch_name']})"
+            )
 
 
 def _request(
