@@ -226,6 +226,74 @@ def _valid_case() -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
     return draft, evidence, {("src/app.py", blob_oid): content}, review
 
 
+def test_repeated_canonical_evidence_retains_complete_invocation_provenance() -> None:
+    from gobby.ask.claims import AssertionKind, EvidenceScope
+    from gobby.ask.validation import _response_body, validate_claims
+
+    draft, evidence, blobs, _review = _valid_case()
+    source_id = evidence.records[0].response.items[0].evidence_id
+    scoped_claim = draft.claims[0].model_copy(
+        update={
+            "assertion_kind": AssertionKind.NEGATIVE,
+            "evidence_scope": EvidenceScope(
+                description="Every recorded return-value query.",
+                evidence_ids=(source_id,),
+            ),
+        }
+    )
+    draft = draft.model_copy(update={"claims": (scoped_claim, draft.claims[1])})
+    complete = evidence.records[0].model_copy(update={"invocation_id": "invocation-complete"})
+    partial_response = complete.response.model_copy(
+        update={"complete": False, "completeness": "truncated_index"}
+    )
+    partial = complete.model_copy(
+        update={
+            "invocation_id": "invocation-partial",
+            "response": partial_response,
+            "response_hash": _json_hash(_response_body(partial_response)),
+        }
+    )
+
+    for records in ((partial, complete), (complete, partial)):
+        repeated = evidence.model_copy(update={"records": records})
+        report = validate_claims(draft, repeated, pinned_blobs=blobs)
+        assert report.accepted_claim_ids == ("claim-return", "claim-stable")
+        assert "duplicate_evidence_id" not in report.diagnostic_codes
+
+    explicitly_partial = scoped_claim.model_copy(
+        update={
+            "evidence_scope": EvidenceScope(
+                description="The explicitly selected partial invocation.",
+                evidence_ids=(source_id,),
+                invocation_ids=(partial.invocation_id,),
+            )
+        }
+    )
+    explicit_report = validate_claims(
+        draft.model_copy(update={"claims": (explicitly_partial, draft.claims[1])}),
+        evidence.model_copy(update={"records": (complete, partial)}),
+        pinned_blobs=blobs,
+    )
+    assert "incomplete_exhaustive_scope" in explicit_report.diagnostic_codes
+
+    source = complete.response.items[0]
+    conflicting_source = source.model_copy(update={"excerpt": "    return 2\n"})
+    conflicting_response = complete.response.model_copy(update={"items": (conflicting_source,)})
+    conflicting = complete.model_copy(
+        update={
+            "invocation_id": "invocation-conflict",
+            "response": conflicting_response,
+            "response_hash": _json_hash(_response_body(conflicting_response)),
+        }
+    )
+    conflict_report = validate_claims(
+        draft,
+        evidence.model_copy(update={"records": (complete, conflicting)}),
+        pinned_blobs=blobs,
+    )
+    assert "conflicting_evidence_id" in conflict_report.diagnostic_codes
+
+
 def test_claim_validation_and_review_gates() -> None:
     from gobby.ask.claims import (
         ClaimClassification,
