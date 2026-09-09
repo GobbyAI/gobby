@@ -1,14 +1,33 @@
-use super::super::file::write_parsed_file_facts;
+use super::super::file::{index_file, write_parsed_file_facts};
 use super::super::sink::PostgresCodeFactSink;
+use super::super::types::IndexTarget;
 use super::super::{IndexOptions, IndexRequest, index_files};
 use super::fixtures::{git, write_file};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::db;
-use crate::index::api;
+use crate::index::semantic::{SemanticCallRequest, SemanticCallResolver, SemanticCallTarget};
+use crate::index::{api, hasher, parser};
 use crate::models::{IndexedFile, IndexedProject, ParseResult, Symbol};
 use crate::visibility;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+struct RewriteDuringParse {
+    path: PathBuf,
+    replacement: Vec<u8>,
+    rewrites: usize,
+}
+
+impl SemanticCallResolver for RewriteDuringParse {
+    fn resolve(
+        &mut self,
+        _request: &SemanticCallRequest<'_>,
+    ) -> anyhow::Result<Option<SemanticCallTarget>> {
+        std::fs::write(&self.path, &self.replacement)?;
+        self.rewrites += 1;
+        Ok(None)
+    }
+}
 
 #[test]
 #[cfg_attr(
@@ -864,6 +883,108 @@ fn explicit_file_index_preserves_last_indexed_at_until_full_index() {
     )
     .expect("index full project");
     assert_ne!(last_indexed_at(&mut conn), baseline);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrite() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let project_root = tempfile::tempdir().expect("create project root");
+    let project_id = unique_test_uuid("gcode-index-snapshot-race");
+    let rel = "src/race.py";
+    let absolute_path = project_root.path().join(rel);
+    let original: &[u8] = b"def indexed_snapshot():\n    unresolved_during_parse()\n";
+    let replacement: &[u8] = b"def replacement_snapshot():\n    pass\n";
+
+    std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
+        .expect("create source directory");
+    std::fs::write(&absolute_path, original).expect("write original source");
+    cleanup_summary_preservation_project(&mut conn, &project_id)
+        .expect("pre-clean snapshot race rows");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project_id, project_root.path())
+        .expect("seed primary checkout");
+
+    let import_context =
+        parser::build_import_resolution_context(project_root.path(), &[absolute_path.clone()]);
+    let mut resolver = RewriteDuringParse {
+        path: absolute_path.clone(),
+        replacement: replacement.to_vec(),
+        rewrites: 0,
+    };
+    let excludes = Vec::<String>::new();
+    let counts = index_file(
+        &mut conn,
+        &absolute_path,
+        IndexTarget {
+            project_id: &project_id,
+            root_path: project_root.path(),
+            mode: api::IndexWriteMode::Primary,
+        },
+        &excludes,
+        &import_context,
+        Some(&mut resolver),
+    )
+    .expect("index the captured source snapshot")
+    .expect("source remains indexable");
+
+    assert!(resolver.rewrites > 0, "test must rewrite during parsing");
+    assert_eq!(
+        std::fs::read(&absolute_path).expect("read rewritten source"),
+        replacement
+    );
+    assert!(counts.symbols_indexed > 0);
+
+    let project_uuid = test_uuid_param(&project_id);
+    let original_hash = hasher::content_hash(original);
+    let parent = conn
+        .query_one(
+            "SELECT content_hash, byte_size
+             FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_uuid, &rel],
+        )
+        .expect("load indexed parent snapshot");
+    assert_eq!(parent.get::<_, String>(0), original_hash);
+    assert_eq!(
+        parent.get::<_, i32>(1),
+        i32::try_from(original.len()).expect("source size fits i32")
+    );
+
+    let symbol_hashes = conn
+        .query(
+            "SELECT DISTINCT file_content_hash
+             FROM code_symbols
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_uuid, &rel],
+        )
+        .expect("load indexed symbol snapshots")
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
+    assert_eq!(symbol_hashes, vec![original_hash]);
+
+    let orphan_count: i64 = conn
+        .query_one(
+            "SELECT COUNT(*)::BIGINT
+             FROM code_symbols s
+             LEFT JOIN code_indexed_files f
+               ON f.project_id = s.project_id
+              AND f.file_path = s.file_path
+              AND f.content_hash = s.file_content_hash
+             WHERE s.project_id = $1 AND f.id IS NULL",
+            &[&project_uuid],
+        )
+        .expect("check symbol parent integrity")
+        .get(0);
+    assert_eq!(orphan_count, 0);
 }
 
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {

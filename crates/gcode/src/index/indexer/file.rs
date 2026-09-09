@@ -38,35 +38,11 @@ pub(super) fn index_file(
     };
 
     let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
-    let h = match hasher::file_content_hash(file_path) {
-        Ok(hash) => hash,
-        Err(error) => {
-            log::debug!(
-                "skipping AST index for unreadable file {}: {error}",
-                file_path.display()
-            );
-            return Ok(None);
-        }
-    };
-    let size = match file_path.metadata() {
-        Ok(metadata) => match usize::try_from(metadata.len()) {
-            Ok(size) => size,
-            Err(error) => {
-                log::warn!(
-                    "skipping AST index for file with unsupported size {}: {error}",
-                    file_path.display()
-                );
-                return Ok(None);
-            }
-        },
-        Err(error) => {
-            log::warn!(
-                "skipping AST index for file with unreadable metadata {}: {error}",
-                file_path.display()
-            );
-            return Ok(None);
-        }
-    };
+    // Child facts were derived from this captured source. Re-reading the mutable
+    // path here can mix snapshots when an editor writes during parsing, leaving
+    // their content FK pointed at a parent row for different bytes.
+    let h = hasher::content_hash(&parse_result.source);
+    let size = parse_result.source.len();
 
     // PostgreSQL hub writes (transactional).
     let mut tx = conn
