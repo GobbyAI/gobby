@@ -303,9 +303,6 @@ pub fn validate_for_construction(
             source: None,
         });
     }
-    if grant.schema_identity != expected_schema_identity() {
-        return Err(GrantError::SchemaMismatch);
-    }
     if grant.principal.project_id != expected_project {
         return Err(GrantError::Malformed(
             "grant project does not match local project".to_string(),
@@ -335,6 +332,9 @@ pub fn validate_for_construction(
         return Err(GrantError::Malformed(
             "grant code overlay does not match the local isolation workspace".to_string(),
         ));
+    }
+    if grant.schema_identity != expected_schema_identity() {
+        return Err(GrantError::SchemaMismatch);
     }
     Ok(())
 }

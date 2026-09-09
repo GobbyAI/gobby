@@ -494,6 +494,124 @@ fn collection_lifecycle_ensures_schema_and_deletes_filtered_points() {
 }
 
 #[test]
+fn concurrent_collection_creation_reuses_only_compatible_schema() {
+    let (url, handle) = spawn_qdrant_responses(vec![
+        (404, json!({"status": "not found"})),
+        (409, json!({"status": "already exists"})),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+        ),
+    ]);
+    let config = QdrantConfig {
+        url: Some(url),
+        api_key: None,
+    };
+    let schema = ensure_collection(
+        &config,
+        "collection",
+        VectorCollectionSchema {
+            size: 3,
+            distance: "Cosine".into(),
+        },
+    )
+    .expect("concurrent creator installed compatible schema");
+    assert_eq!(schema.size, 3);
+    assert_eq!(schema.distance, "Cosine");
+    let requests = handle.join().unwrap().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].starts_with("GET /collections/collection HTTP/1.1"));
+    assert!(requests[1].starts_with("PUT /collections/collection HTTP/1.1"));
+    assert!(requests[2].starts_with("GET /collections/collection HTTP/1.1"));
+}
+
+#[test]
+fn concurrent_collection_creation_rejects_incompatible_or_missing_schema() {
+    for (status, body) in [
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 4, "distance": "Cosine"}}}}}),
+        ),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Dot"}}}}}),
+        ),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {}}}}}),
+        ),
+        (404, json!({"status": "not found"})),
+        (503, json!({"status": "service unavailable"})),
+    ] {
+        let (url, handle) = spawn_qdrant_responses(vec![
+            (404, json!({"status": "not found"})),
+            (409, json!({"status": "already exists"})),
+            (status, body),
+        ]);
+        let config = QdrantConfig {
+            url: Some(url),
+            api_key: None,
+        };
+        let error = ensure_collection(
+            &config,
+            "collection",
+            VectorCollectionSchema {
+                size: 3,
+                distance: "Cosine".into(),
+            },
+        )
+        .expect_err("conflict cannot conceal an unusable collection");
+        assert_eq!(handle.join().unwrap().unwrap().len(), 3);
+        if status == 404 {
+            assert!(matches!(
+                error.downcast_ref::<QdrantError>(),
+                Some(QdrantError::HttpStatus {
+                    status: StatusCode::CONFLICT,
+                    ..
+                })
+            ));
+        } else if status == 503 {
+            assert!(matches!(
+                error.downcast_ref::<QdrantError>(),
+                Some(QdrantError::HttpStatus {
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    ..
+                })
+            ));
+        } else {
+            assert!(error.to_string().contains("schema"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn collection_creation_preserves_non_conflict_failures() {
+    for status in [400, 401, 500] {
+        let (url, handle) = spawn_qdrant_responses(vec![
+            (404, json!({"status": "not found"})),
+            (status, json!({"status": "create rejected"})),
+        ]);
+        let config = QdrantConfig {
+            url: Some(url),
+            api_key: None,
+        };
+        let error = ensure_collection(
+            &config,
+            "collection",
+            VectorCollectionSchema {
+                size: 3,
+                distance: "Cosine".into(),
+            },
+        )
+        .expect_err("other create failures must remain errors");
+        assert_eq!(handle.join().unwrap().unwrap().len(), 2);
+        assert!(
+            matches!(error.downcast_ref::<QdrantError>(), Some(QdrantError::HttpStatus { operation: "create collection", status: actual, .. }) if actual.as_u16() == status)
+        );
+    }
+}
+
+#[test]
 fn collection_point_count_reads_collection_info() {
     let (base_url, request_handle) = spawn_qdrant_response(
         200,

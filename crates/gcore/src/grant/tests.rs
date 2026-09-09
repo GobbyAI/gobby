@@ -553,7 +553,7 @@ fn absent_api_contract_parses_to_enriched_mismatch() {
 #[test]
 fn schema_mismatch_refuses_construction() {
     let harness = Harness::new();
-    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    let mut grant = fixture_grant(PrincipalKind::AgentRun);
     grant.schema_identity.baseline_version += 1;
     grant = grant.with_checksum();
     let path = harness.home.join("managed.json");
@@ -1612,6 +1612,431 @@ fn refresh_destination_by_source_managed_writes_managed_file() {
         written.credential_generation(),
         renewed.credential_generation()
     );
+}
+
+#[test]
+fn stale_managed_schema_refreshes_with_capability_and_preserves_interactive_cache() {
+    let harness = Harness::new();
+    let interactive = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(
+        &harness,
+        "http://127.0.0.1:1",
+        &interactive.deployment.token,
+    );
+    write_cache(&harness, &interactive, None);
+    let cache_path =
+        interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT, None);
+    let cache_before = fs::read(&cache_path).unwrap();
+
+    let fresh = fixture_grant(PrincipalKind::AgentRun);
+    let mut stale = fresh.clone();
+    stale.schema_identity.latest_version -= 1;
+    stale = stale.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &stale).unwrap();
+    let token = envelope_token(NOW + 60, PROJECT);
+    let scripted = spawn_managed_challenge(&token, fresh.clone());
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(token.clone());
+    request.expected_execution_id = Some("exec-1".into());
+
+    let acquired = acquire_with(&request).expect("refresh stale managed schema");
+    let requests = join(scripted);
+    assert_eq!(acquired.source, GrantSource::ManagedFile);
+    assert_eq!(acquired.bundle.schema_identity, expected_schema_identity());
+    assert_eq!(acquired.bundle.principal, fresh.principal);
+    assert_eq!(
+        load_grant_file(&managed_path).unwrap().schema_identity,
+        expected_schema_identity()
+    );
+    assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
+    assert!(requests.iter().any(|request| {
+        has_header(request, AUTHORIZATION_HEADER) && request.contains(&format!("Bearer {token}"))
+    }));
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.contains(&format!("Bearer {TOKEN}")))
+    );
+
+    request.daemon_url = Some("http://127.0.0.1:1".into());
+    let offline = acquire_with(&request).expect("reuse refreshed managed cache offline");
+    assert_eq!(offline.bundle.schema_identity, expected_schema_identity());
+    assert_eq!(offline.bundle.principal, fresh.principal);
+}
+
+#[test]
+fn managed_refresh_rejects_returned_capability_principal_mismatch() {
+    for config_retry in [false, true] {
+        for field in [
+            "session",
+            "execution",
+            "kind",
+            "project",
+            "machine",
+            "schema",
+            "deployment",
+            "api",
+            "checksum",
+        ] {
+            let harness = Harness::new();
+            let mut existing = fixture_grant(PrincipalKind::AgentRun);
+            existing.expires_at = NOW - 1;
+            existing = existing.with_checksum();
+            let managed_path = harness.home.join("run.json");
+            write_grant_file(&managed_path, &existing).unwrap();
+            let before = fs::read(&managed_path).unwrap();
+            let mut fresh = fixture_grant(PrincipalKind::AgentRun);
+            match field {
+                "session" => fresh.principal.session_id = Some("another-session".into()),
+                "execution" => fresh.principal.execution_id = Some("another-run".into()),
+                "kind" => fresh.principal.kind = PrincipalKind::ToolChat,
+                "project" => fresh.principal.project_id = "another-project".into(),
+                "machine" => fresh.principal.machine_id = "another-machine".into(),
+                "schema" => fresh.schema_identity.latest_version -= 1,
+                "deployment" => fresh.deployment.token = "another-deployment".into(),
+                "api" => fresh.api_contract += 1,
+                "checksum" => {}
+                _ => unreachable!(),
+            }
+            fresh = fresh.with_checksum();
+            if field == "checksum" {
+                fresh.config_revision += 1;
+            }
+            let mut steps = if config_retry {
+                vec![
+                    Step::Challenge {
+                        valid: true,
+                        token: "sig-bytes-for-tests-32!!!!!!!!!!!".into(),
+                    },
+                    Step::Handshake {
+                        grant: Box::new(fixture_grant(PrincipalKind::AgentRun)),
+                    },
+                    Step::Config { revision: 8 },
+                ]
+            } else {
+                Vec::new()
+            };
+            steps.extend([
+                Step::Challenge {
+                    valid: true,
+                    token: "sig-bytes-for-tests-32!!!!!!!!!!!".into(),
+                },
+                Step::Handshake {
+                    grant: Box::new(fresh),
+                },
+            ]);
+            let scripted = spawn_scripted(steps);
+            let mut request = harness.request(Some(scripted.url.clone()));
+            request.managed_bootstrap = Some(managed_path.clone());
+            request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+            request.expected_execution_id = Some("exec-1".into());
+            let result = acquire_with(&request);
+            let requests = join(scripted);
+            assert!(result.is_err(), "accepted {field}: {result:?}");
+            assert!(
+                !matches!(
+                    result,
+                    Err(GrantError::DaemonRequired | GrantError::Timeout)
+                ),
+                "invalid {field} reached config request (retry={config_retry})"
+            );
+            assert_eq!(requests.len(), if config_retry { 5 } else { 2 });
+            assert_eq!(fs::read(&managed_path).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn stale_managed_schema_does_not_refresh_invalid_cached_identity() {
+    for field in ["project", "machine", "kind", "execution", "api", "checksum"] {
+        let harness = Harness::new();
+        let mut stale = fixture_grant(PrincipalKind::AgentRun);
+        stale.schema_identity.latest_version -= 1;
+        match field {
+            "project" => stale.principal.project_id = "another-project".into(),
+            "machine" => stale.principal.machine_id = "another-machine".into(),
+            "kind" => stale.principal.kind = PrincipalKind::Interactive,
+            "execution" => stale.principal.execution_id = Some("another-run".into()),
+            "api" => stale.api_contract += 1,
+            "checksum" => {}
+            _ => unreachable!(),
+        }
+        stale = stale.with_checksum();
+        if field == "checksum" {
+            stale.config_revision += 1;
+        }
+        let managed_path = harness.home.join("run.json");
+        fs::write(&managed_path, serde_json::to_vec(&stale).unwrap()).unwrap();
+        let before = fs::read(&managed_path).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut request =
+            harness.request(Some(format!("http://{}", listener.local_addr().unwrap())));
+        request.managed_bootstrap = Some(managed_path.clone());
+        request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+        request.expected_execution_id = Some("exec-1".into());
+        let result = acquire_with(&request);
+        assert!(result.is_err(), "accepted invalid cached {field}");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "network access for {field}"
+        );
+        assert_eq!(fs::read(&managed_path).unwrap(), before);
+    }
+}
+
+#[test]
+fn stale_managed_schema_fails_closed_without_usable_capability_or_daemon() {
+    for case in [
+        "absent",
+        "expired",
+        "wrong-project",
+        "wrong-session",
+        "malformed",
+        "offline",
+    ] {
+        let harness = Harness::new();
+        let mut stale = fixture_grant(PrincipalKind::AgentRun);
+        stale.schema_identity.latest_version -= 1;
+        if case == "wrong-session" {
+            stale.principal.session_id = Some("another-session".into());
+        }
+        stale = stale.with_checksum();
+        let managed_path = harness.home.join("run.json");
+        write_grant_file(&managed_path, &stale).unwrap();
+        let before = fs::read(&managed_path).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = if case == "offline" {
+            "http://127.0.0.1:1".into()
+        } else {
+            format!("http://{}", listener.local_addr().unwrap())
+        };
+        let mut request = harness.request(Some(url));
+        request.managed_bootstrap = Some(managed_path.clone());
+        request.managed_envelope = match case {
+            "absent" => None,
+            "expired" => Some(envelope_token(NOW - 1, PROJECT)),
+            "wrong-project" => Some(envelope_token(NOW + 60, "another-project")),
+            "malformed" => Some("invalid-envelope".into()),
+            _ => Some(envelope_token(NOW + 60, PROJECT)),
+        };
+        request.expected_execution_id = Some("exec-1".into());
+        let error = acquire_with(&request).expect_err(case);
+        assert!(
+            matches!(
+                error,
+                GrantError::Expired | GrantError::Malformed(_) | GrantError::SchemaMismatch
+            ),
+            "unexpected {case}: {error:?}"
+        );
+        assert_eq!(fs::read(&managed_path).unwrap(), before);
+    }
+}
+
+#[test]
+fn stale_managed_schema_preserves_cache_when_challenge_authentication_fails() {
+    let harness = Harness::new();
+    let mut stale = fixture_grant(PrincipalKind::AgentRun);
+    stale.schema_identity.latest_version -= 1;
+    stale = stale.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &stale).unwrap();
+    let before = fs::read(&managed_path).unwrap();
+    let scripted = spawn_scripted(vec![Step::Challenge {
+        valid: false,
+        token: String::new(),
+    }]);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+    let result = acquire_with(&request);
+    assert_eq!(join(scripted).len(), 1);
+    assert!(result.is_err());
+    assert_eq!(fs::read(&managed_path).unwrap(), before);
+}
+
+#[test]
+fn stale_managed_schema_rejects_downgrade_without_returning_stale_cache() {
+    let harness = Harness::new();
+    let mut stale = fixture_grant(PrincipalKind::AgentRun);
+    stale.schema_identity.latest_version -= 1;
+    let mut fresh = fixture_grant(PrincipalKind::AgentRun);
+    for (grant, generation) in [(&mut stale, 5), (&mut fresh, 4)] {
+        let PostgresCapability::Direct {
+            credential_generation,
+            ..
+        } = &mut grant.capabilities.postgres
+        else {
+            panic!("fixture must contain direct credentials");
+        };
+        *credential_generation = generation;
+        *grant = grant.clone().with_checksum();
+    }
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &stale).unwrap();
+    let before = fs::read(&managed_path).unwrap();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: "sig-bytes-for-tests-32!!!!!!!!!!!".into(),
+        },
+        Step::Handshake {
+            grant: Box::new(fresh),
+        },
+    ]);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+    let result = acquire_with(&request);
+    assert_eq!(join(scripted).len(), 2);
+    assert!(matches!(result, Err(GrantError::SchemaMismatch)));
+    assert_eq!(fs::read(&managed_path).unwrap(), before);
+}
+
+#[test]
+fn stale_maintenance_schema_refreshes_without_a_session_principal() {
+    let harness = Harness::new();
+    let mut fresh = fixture_grant(PrincipalKind::Maintenance);
+    fresh.principal.session_id = None;
+    fresh = fresh.with_checksum();
+    let mut stale = fresh.clone();
+    stale.schema_identity.latest_version -= 1;
+    stale = stale.with_checksum();
+    let managed_path = harness.home.join("maintenance.json");
+    write_grant_file(&managed_path, &stale).unwrap();
+    let payload = json!({
+        "exp": NOW + 60, "iat": NOW, "machine_id": MACHINE,
+        "project_id": PROJECT, "session_id": "exec-1",
+        "managed_execution_id": "exec-1", "kind": "maintenance",
+    });
+    let encoded = openssl::base64::encode_block(payload.to_string().as_bytes())
+        .replace('+', "-")
+        .replace('/', "_")
+        .trim_end_matches('=')
+        .to_string();
+    let token = format!(
+        "gobby-agent-v1.{encoded}.{}",
+        envelope_token(NOW + 60, PROJECT)
+            .rsplit('.')
+            .next()
+            .unwrap()
+    );
+    let scripted = spawn_managed_challenge(&token, fresh.clone());
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(token);
+    request.expected_execution_id = Some("exec-1".into());
+    // Rejection leaves the fixture's requests unconsumed; assert before joining.
+    let acquired = acquire_with(&request).expect("refresh sessionless maintenance grant");
+    assert_eq!(join(scripted).len(), 3);
+    assert_eq!(acquired.bundle.principal, fresh.principal);
+    assert_eq!(
+        load_grant_file(&managed_path).unwrap().schema_identity,
+        expected_schema_identity()
+    );
+}
+
+#[test]
+fn managed_config_retry_rejects_generation_downgrade_before_config_request() {
+    let harness = Harness::new();
+    let mut existing = fixture_grant(PrincipalKind::AgentRun);
+    existing.expires_at = NOW - 1;
+    let mut initial = fixture_grant(PrincipalKind::AgentRun);
+    let mut retried = initial.clone();
+    for (grant, generation) in [(&mut existing, 4), (&mut initial, 6), (&mut retried, 5)] {
+        let PostgresCapability::Direct {
+            credential_generation,
+            ..
+        } = &mut grant.capabilities.postgres
+        else {
+            panic!("fixture must contain direct credentials");
+        };
+        *credential_generation = generation;
+        *grant = grant.clone().with_checksum();
+    }
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &existing).unwrap();
+    let before = fs::read(&managed_path).unwrap();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: "sig-bytes-for-tests-32!!!!!!!!!!!".into(),
+        },
+        Step::Handshake {
+            grant: Box::new(initial),
+        },
+        Step::Config { revision: 8 },
+        Step::Challenge {
+            valid: true,
+            token: "sig-bytes-for-tests-32!!!!!!!!!!!".into(),
+        },
+        Step::Handshake {
+            grant: Box::new(retried),
+        },
+    ]);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(managed_path.clone());
+    request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+    request.expected_execution_id = Some("exec-1".into());
+    let result = acquire_with(&request);
+    assert_eq!(join(scripted).len(), 5);
+    assert!(
+        matches!(result, Err(GrantError::Malformed(ref message)) if message.contains("generation downgrade")),
+        "unexpected result: {result:?}"
+    );
+    assert_eq!(fs::read(&managed_path).unwrap(), before);
+}
+
+#[test]
+fn managed_renewal_revalidates_concurrent_cache_replacement() {
+    for field in [
+        "schema",
+        "project",
+        "machine",
+        "session",
+        "execution",
+        "deployment",
+    ] {
+        let harness = Harness::new();
+        let mut existing = fixture_grant(PrincipalKind::AgentRun);
+        existing.expires_at = NOW - 1;
+        existing = existing.with_checksum();
+        let mut replaced = fixture_grant(PrincipalKind::AgentRun);
+        match field {
+            "schema" => replaced.schema_identity.latest_version -= 1,
+            "project" => replaced.principal.project_id = "another-project".into(),
+            "machine" => replaced.principal.machine_id = "another-machine".into(),
+            "session" => replaced.principal.session_id = Some("another-session".into()),
+            "execution" => replaced.principal.execution_id = Some("another-run".into()),
+            "deployment" => replaced.deployment.token = "another-deployment".into(),
+            _ => unreachable!(),
+        }
+        replaced = replaced.with_checksum();
+        let managed_path = harness.home.join("run.json");
+        write_grant_file(&managed_path, &replaced).unwrap();
+        let before = fs::read(&managed_path).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut request =
+            harness.request(Some(format!("http://{}", listener.local_addr().unwrap())));
+        request.managed_bootstrap = Some(managed_path.clone());
+        request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+        request.expected_execution_id = Some("exec-1".into());
+        let ctx = super::AcquireCtx::from_request(&request).unwrap();
+        let result = super::refresh_or_fail(
+            &ctx,
+            Some(&existing),
+            GrantSource::ManagedFile,
+            managed_path.clone(),
+            true,
+            true,
+            None,
+        );
+        assert!(result.is_err(), "accepted replaced {field}");
+        assert_eq!(fs::read(&managed_path).unwrap(), before);
+    }
 }
 
 #[test]
