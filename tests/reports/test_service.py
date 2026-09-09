@@ -42,8 +42,22 @@ def _reporter(db: HubDatabase, root: Path) -> SynthesisReporter:
     )
 
 
+@pytest.mark.parametrize(
+    "spawn_error",
+    [
+        "socket unavailable",
+        "Failed to prepare reused worktree: Timed out rebasing reused worktree onto 0.5.0: "
+        "Command '['git', 'rebase', '0.5.0']' timed out after 120 seconds; "
+        "rebase abort failed: fatal: no rebase in progress",
+        "Failed to prepare environment: Git command timed out after 60s",
+        "Failed to prepare environment: Unable to verify local-vs-remote divergence for "
+        "branch '0.5.0': Command '['git', 'rev-list', '--count', 'origin/0.5.0..0.5.0']' "
+        "timed out after 5 seconds. Refusing to select a remote worktree base; "
+        "retry after Git is responsive.",
+    ],
+)
 async def test_infrastructure_retry_reuses_task_and_never_replays_source(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spawn_error: str
 ) -> None:
     run_id = _source(temp_db, "feedback")
     reporter = _reporter(temp_db, tmp_path)
@@ -53,7 +67,7 @@ async def test_infrastructure_retry_reuses_task_and_never_replays_source(
     monkeypatch.setattr(
         "gobby.reports.service.get_or_create_launcher_session", Mock(return_value="launcher")
     )
-    spawn = AsyncMock(return_value={"success": False, "error": "socket unavailable"})
+    spawn = AsyncMock(return_value={"success": False, "error": spawn_error})
     monkeypatch.setattr("gobby.reports.service.spawn_agent_impl", spawn)
     assert await reporter.run_pending() == 1
     first = reporter.store.get("feedback", run_id)
@@ -63,7 +77,7 @@ async def test_infrastructure_retry_reuses_task_and_never_replays_source(
     failed = reporter.store.get("feedback", run_id)
     assert failed["status"] == "failed" and failed["task_id"] == first["task_id"]
     attempts = reporter.store.attempts("feedback", run_id)["attempts"]
-    assert len(attempts) == 2 and all(item["error"] == "socket unavailable" for item in attempts)
+    assert len(attempts) == 2 and all(item["error"] == spawn_error for item in attempts)
     assert spawn.await_count == 2
     assert spawn.await_args_list[0].kwargs["task_id"] == spawn.await_args_list[1].kwargs["task_id"]
     source_after = FeedbackReviewStore(temp_db).get_run(run_id)
@@ -186,12 +200,17 @@ async def test_report_waits_for_resumable_dream_to_finish(
 
 @pytest.mark.parametrize("started", [False, True])
 @pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize(
+    "agent_error",
+    ["socket unavailable", "Git command timed out after 60s", "Agent exceeded 900.0s timeout"],
+)
 async def test_background_transport_failure_retries_only_before_agent_started(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     started: bool,
     restart: bool,
+    agent_error: str,
 ) -> None:
     machine_id = "21000000-0000-4000-8000-000000000001"
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", machine_id)
@@ -218,7 +237,7 @@ async def test_background_transport_failure_retries_only_before_agent_started(
     )
     if started:
         agents.start(agent.id)
-    agents.fail(agent.id, "socket unavailable")
+    agents.fail(agent.id, agent_error)
     store.attach_agent(attempt, agent.id, None)
     monkeypatch.setattr(reporter.runner, "get_run", agents.get)
     spawn = AsyncMock()
@@ -229,9 +248,10 @@ async def test_background_transport_failure_retries_only_before_agent_started(
         await reporter.publish("feedback", run_id)
     result = store.get("feedback", run_id)
     failure_status = "interrupted" if restart else "failed"
-    assert result["status"] == (failure_status if started else "pending")
-    assert result["auto_retries"] == (0 if started else 1)
+    can_retry = not started and agent_error != "Agent exceeded 900.0s timeout"
+    assert result["status"] == ("pending" if can_retry else failure_status)
+    assert result["auto_retries"] == int(can_retry)
     history = store.attempts("feedback", run_id)["attempts"]
     assert history[0]["agent_run_id"] == agent.id
-    assert history[0]["error"] == "socket unavailable"
+    assert history[0]["error"] == agent_error
     spawn.assert_not_called()

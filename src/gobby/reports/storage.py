@@ -18,8 +18,11 @@ _TERMINAL = {"completed", "partial", "failed", "interrupted", "reverted", "rever
 
 
 def transient_publication_error(error: str) -> bool:
-    return any(
-        value in error.lower()
+    lowered = error.lower()
+    return (
+        "unable to verify local-vs-remote divergence" in lowered and "timed out after" in lowered
+    ) or any(
+        value in lowered
         for value in (
             "index.lock",
             "cannot lock ref",
@@ -28,6 +31,8 @@ def transient_publication_error(error: str) -> bool:
             "input/output error",
             "message too long",
             "socket unavailable",
+            "git command timed out",
+            "timed out rebasing reused worktree",
         )
     )
 
