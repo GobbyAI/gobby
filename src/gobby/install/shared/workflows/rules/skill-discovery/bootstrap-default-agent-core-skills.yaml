@@ -9,14 +9,14 @@ rules:
     when: >
       not variables.get('handoff_pull_pending')
       and (
-        (
+        not skill_loaded('loading-skills')
+        or (
           not skill_loaded('memory')
           and not has_open_tool_error(
             "gobby-skills/get_skill",
             {"name": "memory"}
           )
         )
-        or not skill_loaded('loading-skills')
         or (
           not variables.get('restraint_disabled')
           and not skill_loaded('restraint')
@@ -28,6 +28,9 @@ rules:
       )
     effects:
       - type: load_skill
+        skill: loading-skills
+        when: "not skill_loaded('loading-skills')"
+      - type: load_skill
         skill: memory
         when: >
           not skill_loaded('memory')
@@ -35,9 +38,6 @@ rules:
             "gobby-skills/get_skill",
             {"name": "memory"}
           )
-      - type: load_skill
-        skill: loading-skills
-        when: "not skill_loaded('loading-skills')"
       - type: load_skill
         skill: brevity
         when: >
