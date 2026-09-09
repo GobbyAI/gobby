@@ -207,7 +207,9 @@ def test_clear_claim_session_variables_does_not_materialize_missing_rows(
     )
     existing_variables = variable_manager.get_variables(existing_session.id)
     assert task.id not in existing_variables["claimed_tasks"]
-    assert task.id not in existing_variables["task_edited_files"]
+    # Recovery pauses the task rather than finishing it, so its edits stay attributed
+    # for the parent coordinator's worktree checkpoint (#21897).
+    assert existing_variables["task_edited_files"][task.id] == ["src/gobby/example.py"]
 
 
 def test_release_task_claim_mutex_construction_type_error_falls_back() -> None:
