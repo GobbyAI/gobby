@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -36,6 +35,7 @@ from gobby.hooks.session_activation import (
     clear_active_rule_names_cache,
     reconcile_session_activation,
 )
+from gobby.sessions.turn_lifecycle import TurnDisposition
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager, get_definitions_revision
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -47,7 +47,7 @@ from gobby.workflows.definitions import (
     RuleTriggerEvent,
 )
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.git_utils import DirtyFiles
+from gobby.workflows.git_utils import GIT_STATUS_UNAVAILABLE_MARKER, DirtyFiles
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -109,7 +109,13 @@ def test_agent_has_step_workflow_uses_typed_resolver(db: HubDatabase) -> None:
     resolve.assert_called_once_with("reviewer", db, project_id="project-id")
 
 
-def _event(event_type: HookEventType, session_id: str, tmp_path: Path) -> HookEvent:
+def _event(
+    event_type: HookEventType,
+    session_id: str,
+    tmp_path: Path,
+    *,
+    turn_disposition: TurnDisposition = "unknown",
+) -> HookEvent:
     return HookEvent(
         event_type=event_type,
         session_id="external-1",
@@ -117,6 +123,7 @@ def _event(event_type: HookEventType, session_id: str, tmp_path: Path) -> HookEv
         timestamp=datetime.now(UTC),
         data={"cwd": str(tmp_path)},
         metadata={"_platform_session_id": session_id},
+        turn_disposition=turn_disposition,
     )
 
 
@@ -295,7 +302,11 @@ def test_expired_session_resumes_across_turn_start_and_end(
     assert transcript_row is not None
     assert transcript_row["transcript_processed"] is False
 
-    handlers.handle_after_agent(_event(HookEventType.AFTER_AGENT, session_id, tmp_path))
+    # A turn with an unknown disposition never settles the session; a completed
+    # turn pauses it.
+    handlers.handle_after_agent(
+        _event(HookEventType.AFTER_AGENT, session_id, tmp_path, turn_disposition="completed")
+    )
 
     paused = session_manager.get(session_id)
     assert paused is not None
@@ -1237,18 +1248,19 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     session_id = _register_session(session_manager, project_id, tmp_path)
     SessionVariableManager(db).merge_variables(session_id, {"session_edited_files": ["kept.py"]})
 
-    monkeypatch.setattr(
-        "gobby.workflows.git_utils.get_dirty_files_categorized",
-        lambda _path: DirtyFiles(tracked={"dirty.py"}, untracked={"new.py"}),
-    )
-
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
     variables = _variables(db, session_id)
-    assert variables["baseline_dirty_files"] == ["dirty.py", "new.py"]
+    # Sampling is deferred to async workflow evaluation, which replaces the marker.
+    assert variables["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
     assert variables["session_edited_files"] == ["kept.py"]
     assert variables["active_task_id"] is None
     assert variables["task_edited_files"] == {}
+
+    SessionVariableManager(db).merge_variables(session_id, {"baseline_dirty_files": ["dirty.py"]})
+    reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
+
+    assert _variables(db, session_id)["baseline_dirty_files"] == ["dirty.py"]
 
 
 def test_pipeline_session_skips_agent_activation_and_reconciles_baseline(
@@ -1272,21 +1284,17 @@ def test_pipeline_session_skips_agent_activation_and_reconciles_baseline(
     )
     activate = MagicMock(side_effect=AssertionError("pipeline session activated an agent"))
     monkeypatch.setattr(handlers, "_activate_default_agent", activate)
-    monkeypatch.setattr(
-        "gobby.workflows.git_utils.get_dirty_files_categorized",
-        lambda _path: DirtyFiles(tracked={"dirty.py"}, untracked={"new.py"}),
-    )
 
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
     variables = _variables(db, session_id)
     activate.assert_not_called()
     assert variables["_agent_type"] == "pipeline"
-    assert variables["baseline_dirty_files"] == ["dirty.py", "new.py"]
+    assert variables["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
     assert variables["session_edited_files"] == ["kept.py"]
 
 
-def test_baseline_dirty_prefers_valid_repo_path_over_unusable_cwd(
+def test_baseline_dirty_sampling_is_deferred_to_workflow_evaluation(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
@@ -1294,33 +1302,20 @@ def test_baseline_dirty_prefers_valid_repo_path_over_unusable_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    non_repo = tmp_path / "plain"
-    non_repo.mkdir()
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    session_id = _register_session(session_manager, project_id, non_repo)
-    captured_paths: list[str | None] = []
+    """The hook path never samples git status; async rule evaluation owns that."""
+    session_id = _register_session(session_manager, project_id, tmp_path)
 
-    def fake_dirty(path: str | None) -> DirtyFiles:
-        captured_paths.append(path)
-        return DirtyFiles(tracked={"dirty.py"}, untracked=set())
+    def unexpected_sample(*args: Any, **kwargs: Any) -> DirtyFiles:
+        raise AssertionError("reconciliation must not sample dirty files on the hook path")
 
-    monkeypatch.setattr("gobby.workflows.git_utils.get_dirty_files_categorized", fake_dirty)
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_AGENT,
-        session_id="external-1",
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data={"cwd": str(non_repo), "project_path": str(repo)},
-        metadata={"_platform_session_id": session_id},
+    monkeypatch.setattr("gobby.workflows.git_utils.get_dirty_files_categorized", unexpected_sample)
+    monkeypatch.setattr(
+        "gobby.workflows.git_utils.get_dirty_files_categorized_async", unexpected_sample
     )
 
-    reconcile_session_activation(event, handlers)
+    reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
-    assert captured_paths == [str(repo.resolve())]
-    variables = _variables(db, session_id)
-    assert variables["baseline_dirty_files"] == ["dirty.py"]
+    assert _variables(db, session_id)["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
 
 
 def test_terminal_pickup_metadata_backfills_from_agent_runs(

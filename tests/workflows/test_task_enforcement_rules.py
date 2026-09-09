@@ -8,6 +8,7 @@ task claim/release tracking.
 from __future__ import annotations
 
 import shlex
+import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -172,11 +173,18 @@ def _skill_fetch_template(name: str) -> str:
     return f'{{{{ skill_fetch_directive("{name}") }}}}'
 
 
+def _git_repo(path: Path) -> str:
+    """Create an empty git repository so the dirty-tree scan has a worktree to read."""
+    subprocess.run(["git", "init", "-q", str(path)], check=True, capture_output=True)
+    return str(path)
+
+
 def _close_task_event(
     task_id: str = "#1",
     *,
     commit_sha: str | None = "abc123",
     preview: bool = False,
+    cwd: str = "/tmp",
 ) -> HookEvent:
     arguments: dict[str, object] = {"task_id": task_id}
     if commit_sha is not None:
@@ -188,7 +196,7 @@ def _close_task_event(
         session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
-        cwd="/tmp",
+        cwd=cwd,
         data={
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {
@@ -197,7 +205,7 @@ def _close_task_event(
                 "arguments": arguments,
             },
         },
-        metadata={"_platform_session_id": SESSION_ID, "project_path": "/tmp"},
+        metadata={"_platform_session_id": SESSION_ID, "project_path": cwd},
     )
 
 
@@ -269,12 +277,13 @@ async def _evaluate_close_event(
     *,
     commit_sha: str | None = "abc123",
     preview: bool = False,
+    cwd: str = "/tmp",
 ) -> HookResponse:
     _sync_bundled(db)
     SessionVariableManager(db).merge_variables(SESSION_ID, variables)
     handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
     return await handler._evaluate_rules(
-        _close_task_event("#1", commit_sha=commit_sha, preview=preview)
+        _close_task_event("#1", commit_sha=commit_sha, preview=preview, cwd=cwd)
     )
 
 
@@ -1884,7 +1893,7 @@ class TestRequireCleanTreeBeforeStatus:
         assert "task_has_commits" not in body.when
 
     @pytest.mark.asyncio
-    async def test_target_task_dirty_file_blocks(self, db) -> None:
+    async def test_target_task_dirty_file_blocks(self, db, tmp_path: Path) -> None:
         """Should block when the target task's attributed file is dirty."""
         variables = _status_gate_variables(
             active_task_id="task-1",
@@ -1892,17 +1901,19 @@ class TestRequireCleanTreeBeforeStatus:
         )
 
         with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
             return_value=DirtyFiles({"src/owned.py"}, set()),
         ):
-            response = await _evaluate_close_event(db, variables, preview=True)
+            response = await _evaluate_close_event(
+                db, variables, preview=True, cwd=_git_repo(tmp_path)
+            )
 
         assert response.decision == "block"
         assert response.reason is not None
         assert "uncommitted" in response.reason.lower()
 
     @pytest.mark.asyncio
-    async def test_unrelated_dirty_file_allows(self, db) -> None:
+    async def test_unrelated_dirty_file_allows(self, db, tmp_path: Path) -> None:
         """Should allow dirty files not attributed to the target task."""
         variables = _status_gate_variables(
             active_task_id="task-1",
@@ -1910,15 +1921,15 @@ class TestRequireCleanTreeBeforeStatus:
         )
 
         with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
             return_value=DirtyFiles({"src/unrelated.py"}, set()),
         ):
-            response = await _evaluate_close_event(db, variables)
+            response = await _evaluate_close_event(db, variables, cwd=_git_repo(tmp_path))
 
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_different_task_dirty_file_allows(self, db) -> None:
+    async def test_different_task_dirty_file_allows(self, db, tmp_path: Path) -> None:
         """Should allow dirty files attributed only to another task."""
         variables = _status_gate_variables(
             claimed_tasks={"task-1": "#1", "task-2": "#2"},
@@ -1927,10 +1938,10 @@ class TestRequireCleanTreeBeforeStatus:
         )
 
         with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
             return_value=DirtyFiles({"src/other.py"}, set()),
         ):
-            response = await _evaluate_close_event(db, variables)
+            response = await _evaluate_close_event(db, variables, cwd=_git_repo(tmp_path))
 
         assert response.decision == "allow"
 
@@ -1948,7 +1959,7 @@ class TestRequireCleanTreeBeforeStatus:
         handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
 
         with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
             return_value=DirtyFiles({"src/owned.py"}, set()),
         ):
             response = await handler._evaluate_rules(_close_task_event("#999"))

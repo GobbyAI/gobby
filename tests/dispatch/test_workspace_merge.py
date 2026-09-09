@@ -527,7 +527,7 @@ async def test_execute_merge_workspace_retries_clone_sync_before_completing_stag
     assert stored_source.status == "merged"
 
     _git(repo, "checkout", "integration/root")
-    _sync_source_repo_branch(
+    await _sync_source_repo_branch(
         temp_db,
         leaf.id,
         str(integration_path),

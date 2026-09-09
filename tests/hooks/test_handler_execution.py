@@ -354,6 +354,7 @@ class TestPendingTranscriptRecheck:
         )
         with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
             first = manager._handle_after_daemon_ready(pending_event)
+        assert isinstance(first, HookResponse)
         assert first.decision == "allow"
         cast(Any, manager._session_manager).update.assert_not_called()
 
@@ -370,6 +371,7 @@ class TestPendingTranscriptRecheck:
         )
         with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
             second = manager._handle_after_daemon_ready(stop_event)
+        assert isinstance(second, HookResponse)
         assert second.decision == "allow"
         cast(Any, manager._session_manager).update.assert_called_once_with(
             "platform-1",
@@ -408,6 +410,7 @@ class TestPendingTranscriptRecheck:
         )
         with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
             response = manager._handle_after_daemon_ready(event)
+        assert isinstance(response, HookResponse)
         assert response.decision == "allow"
         assert session.transcript_path == str(target)
         assert manager._pending_transcript_rechecks == {}

@@ -749,6 +749,7 @@ class TestPendingTranscriptRecheckBudget:
                 _recheck_event(event_type, platform_session_id=None)
             )
 
+        assert isinstance(response, HookResponse)
         assert response.decision == "allow"
         assert manager._pending_transcript_rechecks == {}
 

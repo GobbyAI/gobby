@@ -3,6 +3,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -309,9 +310,10 @@ class TestProjectPathResolution:
     """Verify project_path for dirty file checks uses event.cwd."""
 
     @pytest.mark.asyncio
-    async def test_existing_baseline_skips_dirty_file_snapshot_for_ordinary_hook(self) -> None:
+    async def test_existing_baseline_is_kept_and_snapshot_taken_once(self) -> None:
+        """One async snapshot per evaluation; an existing baseline is never resampled."""
         handler, _mock_engine = _handler_with_variables(
-            {"baseline_dirty_files": [], "session_edited_files": []}
+            {"baseline_dirty_files": ["seed.py"], "session_edited_files": []}
         )
 
         event = HookEvent(
@@ -325,12 +327,23 @@ class TestProjectPathResolution:
 
         with (
             patch.object(handler, "_resolve_project_path", return_value="/repo"),
-            patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty,
+            patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty,
         ):
+            mock_dirty.return_value = DirtyFiles({"seed.py", "new.py"}, set())
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"
-        mock_dirty.assert_not_called()
+        mock_dirty.assert_called_once_with(
+            "/repo",
+            timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+        )
+        variable_manager = cast(Any, handler._session_var_manager)
+        persisted = [
+            call.args[1]
+            for call in variable_manager.merge_variables.call_args_list
+            if len(call.args) > 1 and isinstance(call.args[1], dict)
+        ]
+        assert all("baseline_dirty_files" not in payload for payload in persisted)
 
     @pytest.mark.asyncio
     async def test_dirty_predicates_share_one_cached_snapshot(self) -> None:
@@ -353,7 +366,7 @@ class TestProjectPathResolution:
 
         with (
             patch.object(handler, "_resolve_project_path", return_value="/repo"),
-            patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty,
+            patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty,
         ):
             mock_dirty.return_value = DirtyFiles({"tracked.py"}, set())
             response = await handler._evaluate_rules(event)
@@ -394,7 +407,7 @@ class TestProjectPathResolution:
             cwd=str(worktree_path),
         )
 
-        with patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty:
+        with patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty:
             mock_dirty.return_value = DirtyFiles(set(), set())
             # Call _evaluate_rules directly (async) to avoid threading issues
             await handler._evaluate_rules(event)
@@ -403,7 +416,7 @@ class TestProjectPathResolution:
             assert mock_engine.evaluate.called
             call_kwargs = mock_engine.evaluate.call_args
             eval_context = call_kwargs.kwargs.get("eval_context", {})
-            # Force the LazyBool to evaluate, which triggers get_dirty_files_categorized
+            # Force the LazyBool to evaluate, which reads the cached snapshot
             assert "has_dirty_files" in eval_context
             bool(eval_context["has_dirty_files"])
             assert mock_dirty.call_count >= 1
@@ -436,7 +449,7 @@ class TestProjectPathResolution:
             metadata={"project_path": str(repo)},
         )
 
-        with patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty:
+        with patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty:
             mock_dirty.return_value = DirtyFiles(set(), set())
             await handler._evaluate_rules(event)
 
@@ -446,14 +459,18 @@ class TestProjectPathResolution:
             for call in mock_dirty.call_args_list:
                 assert call[0][0] == str(repo.resolve())
 
-    def test_dirty_files_none_returns_empty_without_git_status(self) -> None:
-        from gobby.workflows.git_utils import get_dirty_files_categorized
+    @pytest.mark.asyncio
+    async def test_dirty_files_outside_a_repo_return_empty_without_git_status(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.utils.daemon_git import daemon_git
+        from gobby.workflows.git_utils import get_dirty_files_categorized_async
 
-        with patch("gobby.workflows.git_utils.subprocess.run") as mock_run:
-            dirty = get_dirty_files_categorized(None)
+        with patch.object(daemon_git, "status") as mock_status:
+            dirty = await get_dirty_files_categorized_async(str(tmp_path))
 
         assert not dirty
-        mock_run.assert_not_called()
+        mock_status.assert_not_called()
 
     @pytest.mark.parametrize(
         ("expires_in", "expected"),
@@ -503,7 +520,7 @@ class TestProjectPathResolution:
         )
         deadline = BlockingEffectDeadline(time.monotonic() + 2.0)
 
-        with patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty:
+        with patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty:
             mock_dirty.return_value = DirtyFiles(set(), set())
             await handler._evaluate_rules(event, blocking_deadline=deadline)
 
@@ -610,7 +627,7 @@ class TestProjectPathResolution:
         )
 
         with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
-            assert handler._resolve_project_path(event) is None
+            assert handler._resolve_project_path(event, None) is None
 
         mock_engine.db.fetchone.assert_not_called()
         assert not caplog.records
@@ -631,7 +648,7 @@ class TestProjectPathResolution:
         event = _event_for(project.id, clone)
 
         with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
-            resolved = handler._resolve_project_path(event)
+            resolved = handler._resolve_project_path(event, str(clone))
 
         assert resolved is not None
         assert Path(resolved).resolve() == clone.resolve()
@@ -654,7 +671,7 @@ class TestProjectPathResolution:
         event = _event_for(isolated.project.id, second)
 
         with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
-            resolved = handler._resolve_project_path(event)
+            resolved = handler._resolve_project_path(event, str(second))
 
         assert resolved is not None
         assert Path(resolved).resolve() == second.resolve()
@@ -681,5 +698,5 @@ class TestProjectPathResolution:
         handler = _handler_with_db(temp_db)
         event = _event_for(isolated.project.id, overlay)
 
-        assert handler._resolve_project_path(event) == str(overlay)
+        assert handler._resolve_project_path(event, str(overlay)) == str(overlay)
         assert event.metadata["project_path"] == str(overlay)

@@ -36,7 +36,7 @@ def git_repo(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("detached", [False, True])
-def test_inspect_linked_worktree_returns_real_branch_or_none(
+async def test_inspect_linked_worktree_returns_real_branch_or_none(
     git_repo: Path,
     tmp_path: Path,
     detached: bool,
@@ -49,7 +49,7 @@ def test_inspect_linked_worktree_returns_real_branch_or_none(
         args.extend(["-b", "feature/adopt", str(linked)])
     _git(git_repo, *args)
 
-    info = WorktreeGitManager(git_repo).inspect_worktree(linked)
+    info = await WorktreeGitManager(git_repo).inspect_worktree(linked)
 
     assert info.path == str(linked.resolve())
     assert info.branch is None if detached else info.branch == "feature/adopt"
@@ -57,7 +57,7 @@ def test_inspect_linked_worktree_returns_real_branch_or_none(
     assert info.commit
 
 
-def test_inspect_linked_worktree_rejects_primary_and_unlinked_paths(
+async def test_inspect_linked_worktree_rejects_primary_and_unlinked_paths(
     git_repo: Path,
     tmp_path: Path,
 ) -> None:
@@ -66,16 +66,16 @@ def test_inspect_linked_worktree_rejects_primary_and_unlinked_paths(
     unlinked.mkdir()
 
     with pytest.raises(ValueError, match="Primary checkout"):
-        manager.inspect_worktree(git_repo)
+        await manager.inspect_worktree(git_repo)
     with pytest.raises(ValueError, match="not a linked worktree"):
-        manager.inspect_worktree(unlinked)
+        await manager.inspect_worktree(unlinked)
 
 
 @pytest.mark.parametrize(
     ("field", "message"),
     [("is_bare", "Bare worktree"), ("prunable", "Prunable worktree")],
 )
-def test_inspect_linked_worktree_rejects_unadoptable_metadata(
+async def test_inspect_linked_worktree_rejects_unadoptable_metadata(
     tmp_path: Path,
     field: str,
     message: str,
@@ -99,4 +99,4 @@ def test_inspect_linked_worktree_rejects_unadoptable_metadata(
         return_value=[primary_info, linked_info],
     ):
         with pytest.raises(ValueError, match=message):
-            manager.inspect_worktree(linked)
+            await manager.inspect_worktree(linked)
