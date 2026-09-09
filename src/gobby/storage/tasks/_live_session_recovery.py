@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -24,10 +25,10 @@ from gobby.storage.tasks._transitions import (
     release_task_claim_if_owned,
 )
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.git_utils import resolve_git_worktree_root
+from gobby.workflows.git_utils import resolve_git_worktree_root_async
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import remove_claimed_task, task_edited_file_set
-from gobby.workflows.task_dirty_state import task_dirty_paths
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class LiveSessionRecoveryResult:
     raced: int = 0
 
 
-def recover_expired_live_session_claims(
+async def recover_expired_live_session_claims(
     db: HubDatabase,
     *,
     project_id: str | None = None,
@@ -52,7 +53,8 @@ def recover_expired_live_session_claims(
     session_manager = SessionManager(db)
     variable_manager = SessionVariableManager(db)
     local_machine_id = require_machine_id()
-    tasks = task_manager.list_tasks(
+    tasks = await asyncio.to_thread(
+        task_manager.list_tasks,
         project_id=project_id,
         claimed=True,
         closed=False,
@@ -70,7 +72,7 @@ def recover_expired_live_session_claims(
             continue
         session_lookup_failed = False
         try:
-            session = session_manager.get(owner)
+            session = await asyncio.to_thread(session_manager.get, owner)
         except Exception:
             logger.warning(
                 "Could not load owning session %s for live-session task %s",
@@ -82,7 +84,7 @@ def recover_expired_live_session_claims(
             session_lookup_failed = True
         if session is not None and session.machine_id != local_machine_id:
             continue
-        variables = _session_variables(db, variable_manager, owner)
+        variables = await asyncio.to_thread(_session_variables, db, variable_manager, owner)
         if session is not None and (
             session.status in _LIVE_OWNER_STATUSES
             or is_contestable_terminal_expiry(session, variables)
@@ -105,20 +107,28 @@ def recover_expired_live_session_claims(
         elif attributed_paths is None:
             dirty_paths = None
         else:
-            workspace = _resolve_workspace(db, session, task.project_id)
+            workspace = await _resolve_workspace(db, session, task.project_id)
             dirty_paths = (
-                task_dirty_paths(attributed_paths, workspace) if workspace is not None else None
+                await task_dirty_paths_async(attributed_paths, workspace)
+                if workspace is not None
+                else None
             )
 
         if dirty_paths == set():
-            transitioned = release_task_claim_if_owned(db, task.id, expected_owner=owner)
+            transitioned = await asyncio.to_thread(
+                release_task_claim_if_owned,
+                db,
+                task.id,
+                expected_owner=owner,
+            )
             if transitioned is None:
                 raced += 1
                 continue
             released += 1
         else:
             evidence_paths = dirty_paths if dirty_paths is not None else attributed_paths
-            transitioned = escalate_task_if_owned(
+            transitioned = await asyncio.to_thread(
+                escalate_task_if_owned,
                 db,
                 task.id,
                 reason=_escalation_reason(session, owner, evidence_paths, dirty_paths is None),
@@ -128,7 +138,7 @@ def recover_expired_live_session_claims(
                 raced += 1
                 continue
             escalated += 1
-        _clear_claim_variables(db, variable_manager, owner, task.id)
+        await asyncio.to_thread(_clear_claim_variables, db, variable_manager, owner, task.id)
 
     return LiveSessionRecoveryResult(released=released, escalated=escalated, raced=raced)
 
@@ -167,7 +177,7 @@ def _session_variables_exist(db: HubDatabase, session_id: str) -> bool:
     )
 
 
-def _resolve_workspace(
+async def _resolve_workspace(
     db: HubDatabase,
     session: object | None,
     project_id: str,
@@ -180,10 +190,10 @@ def _resolve_workspace(
             session_cwd = raw_cwd
     machine_id = getattr(session, "machine_id", None)
     try:
-        checkout_root = require_root(db, project_id, machine_id)
+        checkout_root = await asyncio.to_thread(require_root, db, project_id, machine_id)
     except (CheckoutNotFoundError, MissingMachineContextError):
         return None
-    return resolve_git_worktree_root(session_cwd, checkout_root)
+    return await resolve_git_worktree_root_async(session_cwd, checkout_root)
 
 
 def _escalation_reason(

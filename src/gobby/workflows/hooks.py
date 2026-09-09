@@ -240,7 +240,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         while not lock.acquire(blocking=False):
             await asyncio.sleep(0.01)
 
-    def _resolve_project_path(self, event: HookEvent) -> str | None:
+    def _resolve_project_path(self, event: HookEvent, worktree_root: str | None) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
         from gobby.storage.project_checkouts import (
             CheckoutNotFoundError,
@@ -255,20 +255,10 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             MachineOwnershipMismatchError,
             require_local_machine_id,
         )
-        from gobby.workflows.git_utils import resolve_git_worktree_root
 
         metadata = event.metadata if isinstance(event.metadata, dict) else {}
         if metadata is not event.metadata:
             event.metadata = metadata
-
-        candidates: list[str] = []
-        if event.cwd and event.cwd.strip():
-            candidates.append(event.cwd)
-        metadata_path = metadata.get("project_path")
-        if isinstance(metadata_path, str) and metadata_path.strip():
-            candidates.append(metadata_path)
-
-        worktree_root = resolve_git_worktree_root(*candidates)
         if worktree_root:
             metadata["project_path"] = worktree_root
         project_id = event.project_id
@@ -343,6 +333,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         session_id: str,
         variables: dict[str, Any],
         project_path: str | None = None,
+        dirty_paths: set[str] | None = None,
     ) -> set[str]:
         """Run built-in observer functions to populate tracking variables.
 
@@ -441,6 +432,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     session_id,
                     variable_manager=self._session_var_manager,
                     project_path=project_path,
+                    dirty_paths=dirty_paths or set(),
                 )
                 if released:
                     logger.debug(
@@ -634,10 +626,21 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             exc_info=True,
                         )
 
-                from gobby.workflows.git_utils import DirtyFiles, get_dirty_files_categorized
+                from gobby.workflows.git_utils import (
+                    GIT_STATUS_UNAVAILABLE_MARKER,
+                    DirtyFiles,
+                    get_dirty_files_categorized_async,
+                    resolve_git_worktree_root_async,
+                )
                 from gobby.workflows.safe_evaluator import LazyBool
 
-                project_path = await asyncio.to_thread(self._resolve_project_path, event)
+                metadata_path = event.metadata.get("project_path")
+                worktree_root = await resolve_git_worktree_root_async(
+                    event.cwd, metadata_path if isinstance(metadata_path, str) else None
+                )
+                project_path = await asyncio.to_thread(
+                    self._resolve_project_path, event, worktree_root
+                )
                 if not project_path:
                     message = (
                         f"_evaluate_rules: no project_path resolved for session={session_id} "
@@ -656,20 +659,24 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     else:
                         logger.warning(message)
 
-                dirty_files: DirtyFiles | None = None
+                dirty_files = (
+                    await get_dirty_files_categorized_async(
+                        project_path,
+                        timeout=_git_status_timeout(blocking_deadline),
+                    )
+                    if project_path
+                    else DirtyFiles(set(), set())
+                )
 
                 def _load_dirty_files() -> DirtyFiles:
-                    nonlocal dirty_files
-                    if dirty_files is None:
-                        dirty_files = get_dirty_files_categorized(
-                            project_path,
-                            timeout=_git_status_timeout(blocking_deadline),
-                        )
                     return dirty_files
 
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
-                if "baseline_dirty_files" not in variables:
-                    initial_dirty = sorted((await asyncio.to_thread(_load_dirty_files)).all)
+                if variables.get("baseline_dirty_files") in (
+                    None,
+                    [GIT_STATUS_UNAVAILABLE_MARKER],
+                ):
+                    initial_dirty = sorted(dirty_files.all)
                     variables["baseline_dirty_files"] = initial_dirty
                     variables.setdefault("session_edited_files", [])
                     variables.setdefault("active_task_id", None)
@@ -733,8 +740,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         foreign_staged_commit_conflict,
                     )
 
-                    eval_context["foreign_staged_commit_conflict"] = await asyncio.to_thread(
-                        foreign_staged_commit_conflict,
+                    eval_context[
+                        "foreign_staged_commit_conflict"
+                    ] = await foreign_staged_commit_conflict(
                         self.rule_engine.db,
                         event,
                         session_id=session_id,
@@ -768,6 +776,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     session_id,
                     variables,
                     project_path,
+                    dirty_files.all,
                 )
                 if (
                     event.event_type == HookEventType.STOP

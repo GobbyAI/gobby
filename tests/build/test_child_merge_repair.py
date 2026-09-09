@@ -302,7 +302,7 @@ async def test_epic_build_does_not_provision_integration_workspaces(
 
 
 @pytest.mark.parametrize("backend", ["worktree", "clone"])
-def test_leaf_dispatch_provisions_only_open_epic_ancestry(
+async def test_leaf_dispatch_provisions_only_open_epic_ancestry(
     backend: Literal["worktree", "clone"],
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
@@ -348,7 +348,7 @@ def test_leaf_dispatch_provisions_only_open_epic_ancestry(
     )
     task_manager.artifacts.set_artifact(root.id, "target_branch", "main")
 
-    nearest = ensure_task_parent_integration_workspace(
+    nearest = await ensure_task_parent_integration_workspace(
         task_manager=task_manager,
         task=leaf,
         backend=backend,
@@ -392,7 +392,7 @@ def test_leaf_dispatch_provisions_only_open_epic_ancestry(
     assert phase_id is not None
     assert nearest.id == phase_id
 
-    reused = ensure_task_parent_integration_workspace(
+    reused = await ensure_task_parent_integration_workspace(
         task_manager=task_manager,
         task=leaf,
         backend=backend,
@@ -411,7 +411,7 @@ def test_leaf_dispatch_provisions_only_open_epic_ancestry(
         assert clone is not None
         shutil.rmtree(clone.clone_path)
 
-    recovered = ensure_task_parent_integration_workspace(
+    recovered = await ensure_task_parent_integration_workspace(
         task_manager=task_manager,
         task=leaf,
         backend=backend,
@@ -421,7 +421,7 @@ def test_leaf_dispatch_provisions_only_open_epic_ancestry(
     assert recovered is not None
     assert recovered.id != phase_id
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=root,
         backend=backend,
@@ -436,7 +436,7 @@ def test_leaf_dispatch_provisions_only_open_epic_ancestry(
 
 
 @pytest.mark.parametrize("backend", ["worktree", "clone"])
-def test_leaf_dispatch_requires_root_target_metadata(
+async def test_leaf_dispatch_requires_root_target_metadata(
     backend: Literal["worktree", "clone"],
     temp_db: HubDatabase,
 ) -> None:
@@ -461,7 +461,7 @@ def test_leaf_dispatch_requires_root_target_metadata(
         BuildWorkspaceError,
         match=f"target_branch is required for root epic integration workspace #{root.seq_num}",
     ):
-        ensure_task_parent_integration_workspace(
+        await ensure_task_parent_integration_workspace(
             task_manager=task_manager,
             task=leaf,
             backend=backend,
@@ -475,7 +475,7 @@ def test_leaf_dispatch_requires_root_target_metadata(
     assert artifacts.integration_clone_id is None
 
 
-def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
+async def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -519,7 +519,7 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
 
     assert _git(integration_path, "rev-parse", "HEAD") != target_head
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -532,7 +532,7 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
     assert (integration_path / "after-child-merge.txt").read_text() == "landed on target\n"
 
 
-def test_epic_integration_workspace_adopts_pruned_metadata(
+async def test_epic_integration_workspace_adopts_pruned_metadata(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -561,7 +561,7 @@ def test_epic_integration_workspace_adopts_pruned_metadata(
         target_branch="main",
     )
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -581,7 +581,7 @@ def test_epic_integration_workspace_adopts_pruned_metadata(
     assert parent_artifacts.integration_workspace_id == adopted.id
 
 
-def test_epic_integration_workspace_recreates_missing_path(
+async def test_epic_integration_workspace_recreates_missing_path(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -618,7 +618,7 @@ def test_epic_integration_workspace_recreates_missing_path(
         target_branch="main",
     )
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -637,7 +637,7 @@ def test_epic_integration_workspace_recreates_missing_path(
     assert parent_artifacts.integration_workspace_id == recreated.id
 
 
-def test_epic_integration_workspace_recreates_invalid_git_path(
+async def test_epic_integration_workspace_recreates_invalid_git_path(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -677,7 +677,7 @@ def test_epic_integration_workspace_recreates_invalid_git_path(
         target_branch="main",
     )
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -698,7 +698,7 @@ def test_epic_integration_workspace_recreates_invalid_git_path(
     assert parent_artifacts.integration_workspace_id == recreated.id
 
 
-def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_task(
+async def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_task(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -738,7 +738,7 @@ def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_t
         workspace_role="integration",
     )
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -760,7 +760,7 @@ def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_t
     assert parent_artifacts.integration_workspace_id == recreated.id
 
 
-def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
+async def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -813,7 +813,7 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     with pytest.raises(
         BuildWorkspaceError, match="active run b3a0c54a-b2a1-590a-b615-abb42da4a56d"
     ):
-        ensure_epic_integration_workspaces(
+        await ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
             backend="worktree",
@@ -826,7 +826,7 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     assert parent_artifacts.integration_workspace_id == stale_worktree_id
 
 
-def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
+async def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -893,7 +893,7 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
     with pytest.raises(
         BuildWorkspaceError, match="active run af0adb09-330c-55d2-9e8c-688e28ca4311"
     ):
-        ensure_epic_integration_workspaces(
+        await ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
             backend="worktree",
@@ -908,7 +908,7 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
     assert parent_artifacts.integration_workspace_id == stale.id
 
 
-def test_epic_integration_workspace_merges_closed_descendant_commits(
+async def test_epic_integration_workspace_merges_closed_descendant_commits(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -963,7 +963,7 @@ def test_epic_integration_workspace_merges_closed_descendant_commits(
 
     assert not _is_ancestor(integration_path, feature_sha)
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -977,7 +977,7 @@ def test_epic_integration_workspace_merges_closed_descendant_commits(
     assert (integration_path / "feature.txt").read_text() == "feature\n"
 
 
-def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
+async def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1037,7 +1037,7 @@ def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
     task_manager.link_commit(leaf.id, stale_sha, cwd=repo)
     task_manager.close_task_with_commit(leaf.id, accepted_sha, force=True, cwd=repo)
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -1052,7 +1052,7 @@ def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
     assert (integration_path / "feature.txt").read_text() == "accepted\n"
 
 
-def test_epic_integration_workspace_skips_non_automation_planning_commits(
+async def test_epic_integration_workspace_skips_non_automation_planning_commits(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1129,7 +1129,7 @@ def test_epic_integration_workspace_skips_non_automation_planning_commits(
     task_manager.update_task(automated_leaf.id, allow_automation=True)
     task_manager.close_task_with_commit(automated_leaf.id, feature_sha, force=True, cwd=repo)
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -1235,7 +1235,7 @@ def test_epic_integration_workspace_refuses_dirty_checkout(
     assert calls == [("status", "--porcelain")]
 
 
-def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
+async def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1291,7 +1291,7 @@ def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     _git(repo, "commit", "-m", "land child merge on target")
     target_head = _git(repo, "rev-parse", "main")
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -1309,7 +1309,7 @@ def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     assert parent_artifacts.base_commit_sha is None
 
 
-def test_epic_integration_workspace_promotes_existing_task_worktree(
+async def test_epic_integration_workspace_promotes_existing_task_worktree(
     temp_db,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1352,7 +1352,7 @@ def test_epic_integration_workspace_promotes_existing_task_worktree(
         base_commit_sha=base_sha,
     )
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -1376,7 +1376,7 @@ def test_epic_integration_workspace_promotes_existing_task_worktree(
     assert _git(repo, "branch", "--list", _integration_branch(parent)) == ""
 
 
-def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
+async def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1415,7 +1415,7 @@ def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
     )
 
     with pytest.raises(BuildWorkspaceError, match="dirty"):
-        ensure_epic_integration_workspaces(
+        await ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
             backend="worktree",
@@ -1433,7 +1433,7 @@ def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
     assert parent_artifacts.integration_workspace_id is None
 
 
-def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotion(
+async def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotion(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1497,7 +1497,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
     with pytest.raises(
         BuildWorkspaceError, match="active run a74fdb9c-fa5e-5a29-b3b2-8c7f24a60258"
     ):
-        ensure_epic_integration_workspaces(
+        await ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
             backend="worktree",
@@ -1515,7 +1515,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
     assert parent_artifacts.integration_workspace_id is None
 
 
-def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
+async def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1583,7 +1583,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
     with pytest.raises(
         BuildWorkspaceError, match="active run 9dae75b1-e795-5f8a-b287-cbf256abab62"
     ):
-        ensure_epic_integration_workspaces(
+        await ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
             backend="clone",
@@ -1601,7 +1601,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
     assert parent_artifacts.integration_clone_id is None
 
 
-def test_epic_integration_workspace_recovers_partially_promoted_worktree(
+async def test_epic_integration_workspace_recovers_partially_promoted_worktree(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1644,7 +1644,7 @@ def test_epic_integration_workspace_recovers_partially_promoted_worktree(
         base_commit_sha=base_sha,
     )
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",
@@ -1667,7 +1667,7 @@ def test_epic_integration_workspace_recovers_partially_promoted_worktree(
     assert _git(repo, "branch", "--list", _integration_branch(parent)) == ""
 
 
-def test_closed_epic_without_a_workspace_is_not_provisioned_during_merge_repair(
+async def test_closed_epic_without_a_workspace_is_not_provisioned_during_merge_repair(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1712,7 +1712,7 @@ def test_closed_epic_without_a_workspace_is_not_provisioned_during_merge_repair(
     assert closed_parent is not None
     assert closed_parent.closed_at is not None
 
-    ensure_epic_integration_workspaces(
+    await ensure_epic_integration_workspaces(
         task_manager=task_manager,
         root_task=parent,
         backend="worktree",

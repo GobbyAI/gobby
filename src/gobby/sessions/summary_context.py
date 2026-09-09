@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -121,7 +122,7 @@ async def _build_summary_prompt_context(
         format_turns_for_llm,
     )
     from gobby.sessions.transcripts import get_parser
-    from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
+    from gobby.workflows.git_utils import get_file_changes_async, get_git_diff_summary_async
 
     source = getattr(session, "source", None)
     parser = get_parser(
@@ -171,26 +172,14 @@ async def _build_summary_prompt_context(
         structured_handoff_ctx.git_status = ""
         structured_handoff_ctx.git_commits = []
 
-    file_changes = (
-        await run_db_fn(
-            run_db,
-            get_file_changes,
-            project_path=project_path,
-            paths=session_paths,
+    if has_session_edits:
+        file_changes, git_diff_summary = await asyncio.gather(
+            get_file_changes_async(project_path=project_path, paths=session_paths),
+            get_git_diff_summary_async(project_path=project_path, paths=session_paths),
         )
-        if has_session_edits
-        else ""
-    )
-    git_diff_summary = (
-        await run_db_fn(
-            run_db,
-            get_git_diff_summary,
-            project_path=project_path,
-            paths=session_paths,
-        )
-        if has_session_edits
-        else ""
-    )
+    else:
+        file_changes = ""
+        git_diff_summary = ""
 
     return {
         "transcript_summary": transcript_summary,

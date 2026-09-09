@@ -80,7 +80,7 @@ def mock_server() -> Iterator[MagicMock]:
     server.services.git_manager = None
     server.services.task_manager = None
     server.services.terminal_manager = None
-    executor = WorktreeDeleteExecutor(thread_name_prefix="test-http-worktree-delete")
+    executor = WorktreeDeleteExecutor()
     server.services.run_worktree_delete = executor.run_delete
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     try:
@@ -97,6 +97,43 @@ def client(mock_server: MagicMock) -> TestClient:
     router = create_source_control_router(mock_server)
     app.include_router(router)
     return TestClient(app)
+
+
+@pytest.mark.asyncio
+async def test_daemon_git_timeout_is_unavailable_without_blocking_loop(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gobby.servers.routes import source_control
+    from gobby.utils.daemon_git import GitTimeout
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def timeout_git(args: list[str], **kwargs: object) -> GitTimeout:
+        started.set()
+        await release.wait()
+        return GitTimeout("timeout", ("git", *args), 0.01)
+
+    monkeypatch.setattr(source_control, "_resolve_project", lambda *_args: ("/tmp/repo", None))
+    monkeypatch.setattr("gobby.servers.routes.source_control_git.daemon_git.run", timeout_git)
+    async with AsyncClient(transport=ASGITransport(app=client.app), base_url="http://test") as http:
+        request = asyncio.create_task(http.get("/api/source-control/status"))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            heartbeat: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            asyncio.get_running_loop().call_soon(heartbeat.set_result, True)
+            assert await asyncio.wait_for(heartbeat, 1)
+            assert not request.done()
+        finally:
+            release.set()
+        response = await request
+    assert response.status_code == 504
+    assert response.json() == {"detail": "Git status timed out"}
+    assert source_control._get_cached("status:default", 60) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1876,7 +1913,7 @@ class TestDeleteWorktree:
             ) as mock_wgm_cls,
             patch("gobby.worktrees.deletion.emit_worktree_event") as emit_event,
         ):
-            mock_wgm_cls.return_value.delete_worktree.return_value = mock_git_result
+            mock_wgm_cls.return_value.delete_worktree = AsyncMock(return_value=mock_git_result)
 
             response = client.delete(
                 "/api/source-control/worktrees/wt-1",
@@ -1932,7 +1969,7 @@ class TestDeleteWorktree:
                 "gobby.worktrees.git.WorktreeGitManager",
             ) as mock_wgm_cls,
         ):
-            mock_wgm_cls.return_value.delete_worktree.return_value = mock_git_result
+            mock_wgm_cls.return_value.delete_worktree = AsyncMock(return_value=mock_git_result)
 
             response = client.delete("/api/source-control/worktrees/wt-1")
 
@@ -2083,7 +2120,7 @@ class TestSyncWorktree:
         mock_result.success = True
         mock_result.message = "Synced successfully"
         mock_git = MagicMock()
-        mock_git.sync_from_main.return_value = mock_result
+        mock_git.sync_from_main = AsyncMock(return_value=mock_result)
         mock_server.services.git_manager = mock_git
 
         response = client.post("/api/source-control/worktrees/wt-1/sync")
@@ -2417,8 +2454,8 @@ def test_create_client_worktree(
     storage = MagicMock()
     git_manager = MagicMock()
     git_manager.repo_path = "/repo"
-    git_manager.has_unpushed_commits.return_value = (False, 0)
-    git_manager.create_worktree.return_value = SimpleNamespace(success=True, error=None)
+    git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
+    git_manager.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True, error=None))
     worktree = MagicMock(
         id="wt-client",
         project_id="project-1",

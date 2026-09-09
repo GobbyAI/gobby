@@ -27,7 +27,7 @@ from typing import Any
 import psycopg
 
 from gobby.storage.tasks import TaskArtifactConstraintError
-from gobby.utils.git import run_git_command
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +65,13 @@ class ChangedFile:
     status: str
 
 
-async def _git(cwd: str, args: list[str], timeout: int = _GIT_TIMEOUT) -> str | None:
-    """Run a git command in ``cwd`` off the event loop.
-
-    Reuses the shared ``gobby.utils.git.run_git_command`` helper (which returns
-    stripped stdout on success, ``None`` on any non-zero exit) and runs it in a
-    worker thread so the async route is not blocked.
-    """
-    return await asyncio.to_thread(run_git_command, ["git", *args], cwd, timeout)
+async def _git(cwd: str, args: list[str], timeout: int = _GIT_TIMEOUT) -> str:
+    """Run one Git command without hiding unavailable or failed results."""
+    result = await daemon_git.run(args, cwd=cwd, timeout=timeout)
+    if not isinstance(result, GitOk):
+        detail = result.stderr.strip() or result.status
+        raise RuntimeError(f"Git command failed: {detail}")
+    return result.stdout.strip()
 
 
 def _new_file_diff(abs_path: Path, rel_path: str) -> str:
@@ -219,7 +218,13 @@ async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFi
     base = workspace.base_ref
     files: dict[str, str] = {}
 
-    out = await _git(cwd, ["-c", "core.quotepath=false", "diff", base, "--name-status"])
+    out, out_untracked = await asyncio.gather(
+        _git(cwd, ["-c", "core.quotepath=false", "diff", base, "--name-status"]),
+        _git(
+            cwd,
+            ["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"],
+        ),
+    )
     if out:
         for line in out.splitlines():
             if not line.strip():
@@ -232,9 +237,6 @@ async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFi
             path = parts[-1]
             files[path] = _map_status(code)
 
-    out_untracked = await _git(
-        cwd, ["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]
-    )
     if out_untracked:
         for line in out_untracked.splitlines():
             path = line.strip()

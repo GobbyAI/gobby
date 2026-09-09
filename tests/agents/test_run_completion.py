@@ -200,7 +200,7 @@ def _runner() -> MagicMock:
     return runner
 
 
-def test_failed_isolated_run_reports_checkout_dirt_when_attribution_read_fails(
+async def test_failed_isolated_run_reports_checkout_dirt_when_attribution_read_fails(
     tmp_path: Path,
 ) -> None:
     checkout = tmp_path / "task-worktree"
@@ -239,7 +239,7 @@ def test_failed_isolated_run_reports_checkout_dirt_when_attribution_read_fails(
             return_value=worktree_manager,
         ),
     ):
-        dirty_paths = run_completion.agent_run_task_dirty_paths(
+        dirty_paths = await run_completion.agent_run_task_dirty_paths(
             runner.run_storage.db,
             runner._session_manager,
             run,
@@ -250,7 +250,7 @@ def test_failed_isolated_run_reports_checkout_dirt_when_attribution_read_fails(
     assert worktree_reads == ["worktree-id"]
 
 
-def test_shared_checkout_without_attribution_does_not_claim_all_dirty_paths(
+async def test_shared_checkout_without_attribution_does_not_claim_all_dirty_paths(
     tmp_path: Path,
 ) -> None:
     checkout = tmp_path / "shared-checkout"
@@ -279,7 +279,7 @@ def test_shared_checkout_without_attribution_does_not_claim_all_dirty_paths(
             return_value=checkout,
         ),
     ):
-        dirty_paths = run_completion.agent_run_task_dirty_paths(
+        dirty_paths = await run_completion.agent_run_task_dirty_paths(
             runner.run_storage.db,
             runner._session_manager,
             run,

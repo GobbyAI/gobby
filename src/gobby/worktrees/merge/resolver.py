@@ -16,6 +16,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
+
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
 
@@ -461,33 +463,27 @@ class MergeResolver:
         # target branches without pushing, so default to the local ref and let
         # callers pass origin/<branch> explicitly when they need a remote ref.
         merge_ref = target_branch
-        process = await asyncio.create_subprocess_exec(
-            "git",
-            "merge",
-            "--no-commit",
-            "--no-ff",
-            merge_ref,
+        merge_result = await daemon_git.run(
+            ["merge", "--no-commit", "--no-ff", merge_ref],
             cwd=worktree_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            timeout=120.0,
         )
-        await process.communicate()
-
-        if process.returncode == 0:
+        if isinstance(merge_result, GitOk):
             return {"success": True, "conflicts": []}
+        if not isinstance(merge_result, GitFailed) or merge_result.returncode is None:
+            detail = merge_result.stderr.strip() or merge_result.status
+            raise RuntimeError(f"Git merge unavailable: {detail}")
 
         # Merge failed, find conflicting files
-        diff_process = await asyncio.create_subprocess_exec(
-            "git",
-            "diff",
-            "--name-only",
-            "--diff-filter=U",
+        diff_result = await daemon_git.run(
+            ["--no-optional-locks", "diff", "--name-only", "--diff-filter=U"],
             cwd=worktree_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            timeout=30.0,
         )
-        stdout, _ = await diff_process.communicate()
-        conflicted_files = stdout.decode().strip().splitlines()
+        if not isinstance(diff_result, GitOk):
+            detail = diff_result.stderr.strip() or diff_result.status
+            raise RuntimeError(f"Git conflict status unavailable: {detail}")
+        conflicted_files = diff_result.stdout.strip().splitlines()
 
         from gobby.worktrees.merge.conflict_parser import extract_conflict_hunks
 

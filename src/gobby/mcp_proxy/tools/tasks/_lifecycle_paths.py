@@ -1,9 +1,6 @@
 """Owner-controlled task path attribution release."""
 
 import logging
-import os
-import subprocess
-from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -17,11 +14,12 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths,
-    inspect_checkout_path_ownership,
+    inspect_checkout_path_ownership_async,
 )
 from gobby.workflows.task_claim_state import (
     normalize_task_edited_path,
@@ -71,52 +69,37 @@ def _lifecycle_checkout_root(
     return ctx.get_project_repo_path(project_id, machine_id)
 
 
-def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
-    result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
-        ["git", "--literal-pathspecs", "status", "--porcelain", "-z", "--", *paths],
-        cwd=Path(repo_path),
-        check=False,
-        capture_output=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        stderr = os.fsdecode(result.stderr).strip()
-        raise RuntimeError(f"git status failed: {stderr}")
-
+async def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
+    result = await daemon_git.status(repo_path, paths, timeout=10)
+    if not isinstance(result, GitOk):
+        raise RuntimeError(f"git status unavailable: {result.stderr.strip()}")
     dirty: set[str] = set()
-    records = iter(result.stdout.split(b"\0"))
-    for record in records:
-        if len(record) < 4:
-            continue
-        status = record[:2]
-        path = normalize_task_edited_path(os.fsdecode(record[3:]))
+    for entry in parse_porcelain_v1_z(result.stdout):
+        path = normalize_task_edited_path(entry.path)
         if path is not None:
             dirty.add(path)
-        if b"R" in status or b"C" in status:
-            original = normalize_task_edited_path(os.fsdecode(next(records, b"")))
+        if entry.original_path is not None:
+            original = normalize_task_edited_path(entry.original_path)
             if original is not None:
                 dirty.add(original)
 
     return [path for path in paths if path in dirty]
 
 
-def _last_commit_epoch(repo_path: str, path: str) -> int:
+async def _last_commit_epoch(repo_path: str, path: str) -> int:
     """Return the committer epoch of the last commit touching ``path`` (0 if none)."""
-    result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
-        ["git", "--literal-pathspecs", "log", "-1", "--format=%ct", "--", path],
-        cwd=Path(repo_path),
-        check=False,
-        capture_output=True,
+    result = await daemon_git.run(
+        ("--literal-pathspecs", "log", "-1", "--format=%ct", "--", path),
+        cwd=repo_path,
         timeout=10,
     )
-    if result.returncode != 0:
-        stderr = os.fsdecode(result.stderr).strip()
-        raise RuntimeError(f"git log failed: {stderr}")
+    if not isinstance(result, GitOk):
+        raise RuntimeError(f"git log unavailable: {result.stderr.strip()}")
     output = result.stdout.strip()
     return int(output) if output else 0
 
 
-def _own_uncommitted_paths(
+async def _own_uncommitted_paths(
     repo_path: str,
     dirty_paths: list[str],
     edit_times: dict[str, float],
@@ -130,7 +113,7 @@ def _own_uncommitted_paths(
     own: list[str] = []
     for path in dirty_paths:
         edited_at = edit_times.get(path)
-        if edited_at is None or int(edited_at) > _last_commit_epoch(repo_path, path):
+        if edited_at is None or int(edited_at) > await _last_commit_epoch(repo_path, path):
             own.append(path)
     return own
 
@@ -141,7 +124,7 @@ def register_release_task_paths(
 ) -> None:
     """Register task path ownership inspection and owner-controlled release."""
 
-    def inspect_task_path_ownership() -> dict[str, Any]:
+    async def inspect_task_path_ownership() -> dict[str, Any]:
         """Inspect dirty and staged path attribution in the caller's checkout."""
         session_ref = get_current_session_id()
         if not session_ref:
@@ -172,7 +155,7 @@ def register_release_task_paths(
                 TaskToolErrorCode.TASK_INVALID_STATUS,
             )
         try:
-            ownership = inspect_checkout_path_ownership(
+            ownership = await inspect_checkout_path_ownership_async(
                 ctx.task_manager.db,
                 project_id=project_id,
                 checkout_root=checkout_root,
@@ -213,7 +196,7 @@ def register_release_task_paths(
         func=inspect_task_path_ownership,
     )
 
-    def release_task_paths(task_id: str, paths: list[str]) -> dict[str, Any]:
+    async def release_task_paths(task_id: str, paths: list[str]) -> dict[str, Any]:
         """Release committed or abandoned paths from the current session's task ledger."""
         session_ref = get_current_session_id()
         if not session_ref:
@@ -298,20 +281,20 @@ def register_release_task_paths(
                 TaskToolErrorCode.TASK_INVALID_STATUS,
             )
         try:
-            dirty_paths = _dirty_repo_paths(repo_path, normalized_paths)
+            dirty_paths = await _dirty_repo_paths(repo_path, normalized_paths)
             # Dirt is this task's own uncommitted work unless the session's edit ledger
             # shows its newest edit of the path predates the last commit touching it;
             # only then is releasing the attribution safe (#20818 and its reverse:
             # another session also holding attribution proves nothing about whose
             # dirt it is).
-            own_dirty_paths = _own_uncommitted_paths(
+            own_dirty_paths = await _own_uncommitted_paths(
                 repo_path,
                 dirty_paths,
                 task_edited_file_times(
                     ctx.session_var_manager.get_variables(session_id), resolved_task_id
                 ),
             )
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return task_error(
                 f"Cannot verify task paths: {exc}",
                 TaskToolErrorCode.TASK_INVALID_STATUS,

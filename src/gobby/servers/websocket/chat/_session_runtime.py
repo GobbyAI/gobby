@@ -1,10 +1,10 @@
 """Runtime identity and worktree discovery for web-chat sessions."""
 
-import asyncio
 import logging
 from typing import Any
 
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.utils.daemon_git import GitOk, daemon_git
 
 logger = logging.getLogger(__name__)
 
@@ -57,33 +57,21 @@ async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str
     """
     if not project_path:
         return None, None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "branch",
-            "--show-current",
-            cwd=project_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        branch = stdout.decode().strip() or None
-        # For detached HEAD, show short SHA instead of nothing
-        if not branch:
-            proc2 = await asyncio.create_subprocess_exec(
-                "git",
-                "rev-parse",
-                "--short",
-                "HEAD",
-                cwd=project_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=5.0)
-            short_sha = stdout2.decode().strip()
-            if short_sha:
-                branch = f"detached:{short_sha}"
-        return branch, project_path
-    except Exception as exc:
-        logger.debug("Failed to resolve git branch: %s", exc)
+    result = await daemon_git.run(["branch", "--show-current"], cwd=project_path, timeout=5.0)
+    if not isinstance(result, GitOk):
+        logger.debug("Failed to resolve git branch: %s", result.stderr or result.status)
         return None, None
+    branch = result.stdout.strip() or None
+    if branch:
+        return branch, project_path
+
+    detached = await daemon_git.run(
+        ["rev-parse", "--short", "HEAD"],
+        cwd=project_path,
+        timeout=5.0,
+    )
+    if not isinstance(detached, GitOk):
+        logger.debug("Failed to resolve detached git head: %s", detached.stderr or detached.status)
+        return None, None
+    short_sha = detached.stdout.strip()
+    return (f"detached:{short_sha}" if short_sha else None), project_path

@@ -5,7 +5,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -79,19 +79,31 @@ def _make_registry_context(
     ctx.worktree_storage.get.return_value = wt
     ctx.git_manager = MagicMock()
     ctx.git_manager.repo_path = "/tmp/repo"
+    ctx.git_manager.sync_from_main = AsyncMock()
 
-    def run_git_command(args, cwd=None, timeout=30, check=False, env=None):
-        return ctx.git_manager._run_git(args, cwd=cwd, timeout=timeout, check=check)
+    async def run_git_command(
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 30,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> MagicMock:
+        return cast(
+            MagicMock,
+            await asyncio.to_thread(
+                ctx.git_manager._run_git, args, cwd=cwd, timeout=timeout, check=check
+            ),
+        )
 
-    ctx.git_manager.run_git_command.side_effect = run_git_command
+    ctx.git_manager.run_git_command = AsyncMock(side_effect=run_git_command)
 
-    def get_unmerged_files(cwd=None):
-        result = ctx.git_manager._run_git(
+    async def get_unmerged_files(cwd: str | Path | None = None) -> list[str]:
+        result = await run_git_command(
             ["diff", "--name-only", "--diff-filter=U"], cwd=cwd, timeout=10
         )
         return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
 
-    ctx.git_manager.get_unmerged_files.side_effect = get_unmerged_files
+    ctx.git_manager.get_unmerged_files = AsyncMock(side_effect=get_unmerged_files)
     ctx.project_id = "test-project"
     return ctx
 

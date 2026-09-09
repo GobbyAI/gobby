@@ -833,8 +833,7 @@ class WatchdogRecoveryCoordinator:
                     exc_info=True,
                 )
         if variables.get("blocker_handed_off") is True:
-            dirty_paths = await self._run_db(
-                agent_run_task_dirty_paths,
+            dirty_paths = await agent_run_task_dirty_paths(
                 self.db,
                 self._get_session_manager(),
                 run,

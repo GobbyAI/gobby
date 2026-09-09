@@ -230,8 +230,7 @@ def register_agent_query_tools(
                 "error_code": "daemon_resume_chain_corrupt",
             }
         run = await overlay_live_activity(run, ctx.transcript_reader)
-        dirty_paths = await asyncio.to_thread(
-            agent_run_task_dirty_paths,
+        dirty_paths = await agent_run_task_dirty_paths(
             ctx.db or ctx.agent_run_manager.db,
             ctx.session_manager or getattr(ctx.runner, "_session_manager", None),
             run,

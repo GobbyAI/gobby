@@ -1257,6 +1257,16 @@ class TestBaselineDirtyFilesSubtraction:
     def handler(self, rule_engine):
         return WorkflowHookHandler(rule_engine=rule_engine)
 
+    @pytest.fixture(autouse=True)
+    def git_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def resolve_root(*_paths: object) -> str:
+            return "/tmp"
+
+        monkeypatch.setattr(
+            "gobby.workflows.git_utils.resolve_git_worktree_root_async",
+            resolve_root,
+        )
+
     def _make_event(self, session_id: str = SESSION_ID) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -1284,7 +1294,7 @@ class TestBaselineDirtyFilesSubtraction:
         )
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_all_files_in_baseline(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1301,7 +1311,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_new_files_but_no_session_edits(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1319,7 +1329,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_no_baseline_lazy_init(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1334,7 +1344,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_not_blocked_when_no_dirty_files(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1350,7 +1360,7 @@ class TestBaselineDirtyFilesSubtraction:
     # --- Session-scoped has_dirty_files tests ---
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_scoped_to_session_edits_ignores_other_dirty(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1366,7 +1376,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_other_session_files_not_visible(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1382,7 +1392,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_session_edits_override_baseline(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1404,7 +1414,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_concurrent_sessions_isolated(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1427,7 +1437,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response_b.decision == "block"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_concurrent_session_not_blocked_by_other(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1448,7 +1458,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response_a.decision == "allow"  # a.py committed, b.py is not session-a's
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_lazy_init_baseline_persisted_to_session_variables(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1465,7 +1475,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert variables.get("session_edited_files") == []
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_lazy_init_then_new_file_allows_without_session_edits(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1487,7 +1497,7 @@ class TestBaselineDirtyFilesSubtraction:
     # --- Untracked file scoping tests ---
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_untracked_files_ignored_when_not_session_edited(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1504,7 +1514,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_untracked_files_block_when_session_created_them(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1520,7 +1530,7 @@ class TestBaselineDirtyFilesSubtraction:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_untracked_ignored_without_session_edits(
         self, mock_get_dirty, db, handler, session_var_manager
     ) -> None:
@@ -1849,7 +1859,7 @@ class TestProjectPathResolution:
         return database
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized_async")
     async def test_codex_after_tool_uses_project_repo_path_when_cwd_missing(
         self,
         mock_get_dirty: Any,
@@ -1919,7 +1929,7 @@ class TestProjectPathResolution:
             metadata={},
         )
 
-        result = handler._resolve_project_path(event)
+        result = handler._resolve_project_path(event, None)
 
         assert result == isolated.root_path
         assert event.metadata["project_path"] == isolated.root_path
@@ -1968,7 +1978,7 @@ class TestProjectPathResolution:
             metadata={},
         )
 
-        result = handler._resolve_project_path(event)
+        result = handler._resolve_project_path(event, str(overlay))
 
         assert result == str(overlay)
         assert event.metadata["project_path"] == str(overlay)
@@ -2005,7 +2015,7 @@ class TestProjectPathResolution:
             metadata={},
         )
 
-        result = handler._resolve_project_path(event)
+        result = handler._resolve_project_path(event, None)
 
         assert result == isolated.root_path
         assert require_calls == [isolated.project.id]
@@ -2050,7 +2060,7 @@ class TestHookBlockingWorkOffload:
         handler.rule_engine = rule_engine
         handler._session_var_manager = session_var_manager
 
-        def resolve_project(_event: HookEvent) -> str:
+        def resolve_project(_event: HookEvent, _worktree_root: str | None) -> str:
             collaborator_threads["resolve_project"] = threading.get_ident()
             return "/tmp/project"
 
@@ -2061,7 +2071,7 @@ class TestHookBlockingWorkOffload:
         handler._resolve_project_path = MagicMock(side_effect=resolve_project)
         handler._run_observers = MagicMock(side_effect=run_observers)
 
-        def dirty_files(
+        async def dirty_files(
             _project_path: str | None,
             *,
             timeout: float = DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
@@ -2080,7 +2090,7 @@ class TestHookBlockingWorkOffload:
         )
 
         with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
             side_effect=dirty_files,
         ):
             response = await handler._evaluate_rules(event)
@@ -2093,7 +2103,11 @@ class TestHookBlockingWorkOffload:
             "observers",
             "git_status",
         }
-        assert all(thread_id != loop_thread_id for thread_id in collaborator_threads.values())
+        assert collaborator_threads["git_status"] == loop_thread_id
+        assert all(
+            collaborator_threads[name] != loop_thread_id
+            for name in {"get_variables", "merge_variables", "resolve_project", "observers"}
+        )
 
 
 class TestStagedEffectsCrossRuntimeThread:

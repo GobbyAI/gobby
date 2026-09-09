@@ -101,9 +101,7 @@ async def create_worktree(
     resolved_use_local = use_local
     if resolved_use_local is None and create_branch:
         try:
-            has_unpushed, unpushed_count = await asyncio.to_thread(
-                git_manager.has_unpushed_commits, base_branch
-            )
+            has_unpushed, unpushed_count = await git_manager.has_unpushed_commits(base_branch)
             if has_unpushed:
                 resolved_use_local = True
                 logger.info(
@@ -120,8 +118,7 @@ async def create_worktree(
     if resolved_use_local is None:
         resolved_use_local = False
 
-    git_result = await asyncio.to_thread(
-        git_manager.create_worktree,
+    git_result = await git_manager.create_worktree(
         worktree_path=worktree_path,
         branch_name=branch_name,
         base_branch=base_branch,
@@ -253,8 +250,7 @@ async def _cleanup_git_worktree(
 ) -> None:
     """Best-effort rollback for a worktree not returned to a caller."""
     try:
-        await asyncio.to_thread(
-            git_manager.delete_worktree,
+        await git_manager.delete_worktree(
             worktree_path,
             force=True,
             delete_branch=create_branch,

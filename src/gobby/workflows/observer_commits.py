@@ -7,7 +7,6 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.commit_guard import parse_git_commit_invocations
-from gobby.workflows.git_utils import get_dirty_files_categorized
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
@@ -130,6 +129,7 @@ def release_clean_task_paths_after_commit(
     *,
     variable_manager: SessionVariableManager,
     project_path: str,
+    dirty_paths: set[str],
 ) -> list[str]:
     """Release active-task paths made clean by a successful owner commit."""
     task_id = active_task_id_for_edit(variables)
@@ -141,7 +141,6 @@ def release_clean_task_paths_after_commit(
     if not attributed:
         return []
 
-    dirty_paths = get_dirty_files_categorized(project_path).all
     clean_paths = sorted(attributed - dirty_paths)
     if not clean_paths:
         return []

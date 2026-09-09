@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.utils.daemon_git import GitOk, GitTimeout
 from gobby.workflows import task_dirty_state
 
 
@@ -31,6 +32,8 @@ def test_task_dirty_paths_batches_scoped_git_status(
         (
             [
                 "git",
+                "--literal-pathspecs",
+                "--no-optional-locks",
                 "status",
                 "--porcelain=v1",
                 "--untracked-files=all",
@@ -66,3 +69,55 @@ def test_task_dirty_paths_keeps_leading_space_status_on_first_line(
     )
 
     assert dirty == {"crates/gclient/src/app/live.rs", "docs/old.md", "notes.txt"}
+
+
+async def test_task_dirty_paths_async_uses_typed_status_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, set[str], float]] = []
+
+    async def fake_status(
+        cwd: str,
+        paths: set[str],
+        *,
+        timeout: float,
+    ) -> GitOk:
+        calls.append((cwd, paths, timeout))
+        return GitOk(
+            status="ok",
+            argv=("git", "status"),
+            stdout=" M first.py\0?? third.py\0",
+            stderr="",
+        )
+
+    monkeypatch.setattr(task_dirty_state.daemon_git, "status", fake_status)
+
+    dirty = await task_dirty_state.task_dirty_paths_async(
+        {"third.py", "second.py", "first.py"},
+        "/repo",
+    )
+
+    assert dirty == {"first.py", "third.py"}
+    assert calls == [
+        ("/repo", {"third.py", "second.py", "first.py"}, 10.0),
+    ]
+
+
+async def test_task_dirty_paths_async_preserves_unavailable_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_status(
+        cwd: str,
+        paths: set[str],
+        *,
+        timeout: float,
+    ) -> GitTimeout:
+        return GitTimeout(
+            status="timeout",
+            argv=("git", "status"),
+            timeout=timeout,
+        )
+
+    monkeypatch.setattr(task_dirty_state.daemon_git, "status", fake_status)
+
+    assert await task_dirty_state.task_dirty_paths_async({"first.py"}, "/repo") is None

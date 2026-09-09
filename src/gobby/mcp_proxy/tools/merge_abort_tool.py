@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -62,8 +61,7 @@ def register_merge_abort_tool(
 
             wt_path = worktree.worktree_path
             if await merge_head_exists(git_manager, wt_path):
-                abort_result = await asyncio.to_thread(
-                    git_manager.run_git_command,
+                abort_result = await git_manager.run_git_command(
                     ["merge", "--abort"],
                     cwd=wt_path,
                     timeout=30,

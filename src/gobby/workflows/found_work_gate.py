@@ -622,9 +622,9 @@ class FoundWorkStopAnalyzer:
             return set()
         try:
             from gobby.workflows.commit_guard import foreign_owned_dirty_paths
-            from gobby.workflows.git_utils import get_dirty_files_categorized
+            from gobby.workflows.git_utils import get_dirty_files_categorized_async
 
-            dirty = await asyncio.to_thread(get_dirty_files_categorized, project_path)
+            dirty = await get_dirty_files_categorized_async(project_path)
             ownership = await asyncio.to_thread(
                 foreign_owned_dirty_paths,
                 db,

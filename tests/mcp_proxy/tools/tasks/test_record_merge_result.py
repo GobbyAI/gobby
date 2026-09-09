@@ -203,7 +203,7 @@ def _merge_task_in_progress(
     return task
 
 
-def test_success_forwards_artifacts_and_completes_merge(
+async def test_success_forwards_artifacts_and_completes_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_stage_view(monkeypatch)
@@ -215,7 +215,7 @@ def test_success_forwards_artifacts_and_completes_merge(
         lambda db, task_id: cleanup_calls.append((db, task_id)),
     )
 
-    result = _record_merge_result(ctx)(
+    result = await _record_merge_result(ctx)(
         task_id="task-1",
         merge_sha="abc123",
         report_ref="merge-report.md",
@@ -236,7 +236,7 @@ def test_success_forwards_artifacts_and_completes_merge(
     assert cleanup_calls == [(ctx.task_manager.db, "task-1")]
 
 
-def test_success_transition_failure_does_not_write_merged_campaign(
+async def test_success_transition_failure_does_not_write_merged_campaign(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_stage_view(monkeypatch)
@@ -254,7 +254,7 @@ def test_success_transition_failure_does_not_write_merged_campaign(
     monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
 
     with pytest.raises(IllegalStageTransitionError):
-        _record_merge_result(ctx)(
+        await _record_merge_result(ctx)(
             task_id="task-1",
             merge_sha="merge-sha",
         )
@@ -270,12 +270,12 @@ def test_success_transition_failure_does_not_write_merged_campaign(
     }
 
 
-def test_success_closes_task_via_terminal_close(
+async def test_success_closes_task_via_terminal_close(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
-    result = _record_merge_result(_real_context(temp_db))(
+    result = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="mergeabc123",
         report_ref="merge-report.md",
@@ -286,13 +286,13 @@ def test_success_closes_task_via_terminal_close(
     assert task_row(temp_db, task.id)["closed_at"] is not None
 
 
-def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
+async def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
-    _record_merge_result(_real_context(temp_db))(
+    await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="mergeabc123",
         report_ref="merge-report.md",
@@ -313,7 +313,7 @@ def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
     assert count_row["campaign_count"] == 1
 
 
-def test_complete_stage_then_record_merge_result_enriches_one_campaign(
+async def test_complete_stage_then_record_merge_result_enriches_one_campaign(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -325,7 +325,7 @@ def test_complete_stage_then_record_merge_result_enriches_one_campaign(
         commit_sha="shared-merge-sha",
     )
 
-    result = _record_merge_result(_real_context(temp_db))(
+    result = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="shared-merge-sha",
         report_ref="enriched-report.md",
@@ -344,17 +344,17 @@ def test_complete_stage_then_record_merge_result_enriches_one_campaign(
     assert count_row["campaign_count"] == 1
 
 
-def test_success_is_idempotent_after_worker_recorded_merge(
+async def test_success_is_idempotent_after_worker_recorded_merge(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
-    first = _record_merge_result(_real_context(temp_db))(
+    first = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="merge-worker-sha",
         report_ref="merge-worker-report.md",
     )
-    second = _record_merge_result(_real_context(temp_db))(
+    second = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="merge-worker-sha",
         report_ref="merge-orchestrator-report.md",
@@ -372,20 +372,20 @@ def test_success_is_idempotent_after_worker_recorded_merge(
     }
 
 
-def test_success_idempotent_merge_rejects_different_completed_sha(
+async def test_success_idempotent_merge_rejects_different_completed_sha(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project)
 
-    _record_merge_result(_real_context(temp_db))(
+    await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="merge-worker-sha",
         report_ref="merge-worker-report.md",
     )
 
     with pytest.raises(ValueError, match="different merge_sha"):
-        _record_merge_result(_real_context(temp_db))(
+        await _record_merge_result(_real_context(temp_db))(
             task_id=task.id,
             merge_sha="different-orchestrator-sha",
             report_ref="merge-orchestrator-report.md",
@@ -397,18 +397,18 @@ def test_success_idempotent_merge_rejects_different_completed_sha(
     }
 
 
-def test_success_reconciles_ready_merge_after_prior_failure(
+async def test_success_reconciles_ready_merge_after_prior_failure(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     task = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=3)
 
-    failed = _record_merge_result(_real_context(temp_db))(
+    failed = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         failure_reason="verification failed",
         report_ref="merge-failure.md",
     )
-    result = _record_merge_result(_real_context(temp_db))(
+    result = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="merge-retry-sha",
         report_ref="merge-retry-report.md",
@@ -430,7 +430,7 @@ def test_success_reconciles_ready_merge_after_prior_failure(
     }
 
 
-def test_success_reconciles_ready_merge_when_campaign_already_merged(
+async def test_success_reconciles_ready_merge_when_campaign_already_merged(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -450,7 +450,7 @@ def test_success_reconciles_ready_merge_when_campaign_already_merged(
         last_error="",
     )
 
-    result = _record_merge_result(_real_context(temp_db))(
+    result = await _record_merge_result(_real_context(temp_db))(
         task_id=task.id,
         merge_sha="already-merged-sha",
         report_ref="reconcile-report.md",
@@ -467,7 +467,7 @@ def test_success_reconciles_ready_merge_when_campaign_already_merged(
     }
 
 
-def test_success_rejects_different_ready_campaign_sha(
+async def test_success_rejects_different_ready_campaign_sha(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -488,7 +488,7 @@ def test_success_rejects_different_ready_campaign_sha(
     )
 
     with pytest.raises(ValueError, match="different merge_sha"):
-        _record_merge_result(_real_context(temp_db))(
+        await _record_merge_result(_real_context(temp_db))(
             task_id=task.id,
             merge_sha="different-sha",
             report_ref="different-report.md",
@@ -502,7 +502,7 @@ def test_success_rejects_different_ready_campaign_sha(
     }
 
 
-def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
+async def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -545,7 +545,7 @@ def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
     )
 
     with session_context_for_test(worker_session_id):
-        result = _record_merge_result(_real_context(temp_db))(
+        result = await _record_merge_result(_real_context(temp_db))(
             task_id=task.id,
             merge_sha="merge-child-recorded",
             report_ref="merge-worker-report.md",
@@ -557,7 +557,7 @@ def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
     assert mutexes.get_mutex(task.id) is None
 
 
-def test_success_close_uses_cascade_descendants_true(
+async def test_success_close_uses_cascade_descendants_true(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     parent = _merge_task_in_progress(temp_db, sample_project)
@@ -586,7 +586,7 @@ def test_success_close_uses_cascade_descendants_true(
         ("2026-01-02T03:04:05+00:00", "completed", "original-sha", closed_child.id),
     )
 
-    _record_merge_result(_real_context(temp_db))(
+    await _record_merge_result(_real_context(temp_db))(
         task_id=parent.id,
         merge_sha="mergecascade123",
         report_ref="merge-cascade-report.md",
@@ -605,11 +605,11 @@ def test_success_close_uses_cascade_descendants_true(
     assert closed_child_row["closed_commit_sha"] == "original-sha"
 
 
-def test_success_does_not_invoke_public_close_task(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_success_does_not_invoke_public_close_task(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_stage_view(monkeypatch)
     ctx = _context()
 
-    _record_merge_result(ctx)(
+    await _record_merge_result(ctx)(
         task_id="task-1",
         merge_sha="abc123",
         report_ref="merge-report.md",
@@ -620,13 +620,13 @@ def test_success_does_not_invoke_public_close_task(monkeypatch: pytest.MonkeyPat
     assert not ctx.task_manager.close_task.called
 
 
-def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_stage_view(monkeypatch)
     ctx = _context()
     cleanup = Mock(side_effect=AssertionError("failure result must not cleanup worktrees"))
     monkeypatch.setattr(stage_ops, "cleanup_successful_merge_artifacts", cleanup)
 
-    result = _record_merge_result(ctx)(
+    result = await _record_merge_result(ctx)(
         task_id="task-1",
         failure_reason="merge conflict",
         report_ref="merge-failure.md",
@@ -704,10 +704,10 @@ async def test_close_linked_github_issue_tool_comments_labels_and_closes(
     assert github.calls[1][1]["state"] == "closed"
 
 
-def test_failure_path(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
+async def test_failure_path(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     under_cap = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=2)
 
-    result = _record_merge_result(_real_context(temp_db))(
+    result = await _record_merge_result(_real_context(temp_db))(
         task_id=under_cap.id,
         failure_reason="merge conflict",
         report_ref="merge-failure.md",
@@ -724,7 +724,7 @@ def test_failure_path(temp_db: HubDatabase, sample_project: dict[str, Any]) -> N
 
     over_cap = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=1)
 
-    _record_merge_result(_real_context(temp_db))(
+    await _record_merge_result(_real_context(temp_db))(
         task_id=over_cap.id,
         failure_reason="merge conflict again",
         report_ref="merge-failure-final.md",

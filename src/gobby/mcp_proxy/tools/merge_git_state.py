@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 from pathlib import Path
 from typing import Protocol
 
 
 class GitRunnerProtocol(Protocol):
-    def run_git_command(
+    async def run_git_command(
         self,
         args: list[str],
         cwd: str | Path | None = None,
@@ -23,8 +22,7 @@ def _returncode(result: subprocess.CompletedProcess[str]) -> int | None:
 
 
 async def current_branch(git_manager: GitRunnerProtocol, cwd: str | Path) -> str | None:
-    result = await asyncio.to_thread(
-        git_manager.run_git_command,
+    result = await git_manager.run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd=cwd,
         timeout=10,
@@ -38,8 +36,7 @@ async def current_branch(git_manager: GitRunnerProtocol, cwd: str | Path) -> str
 async def merge_head_exists(git_manager: GitRunnerProtocol | None, cwd: str | Path) -> bool:
     if git_manager is None:
         return False
-    result = await asyncio.to_thread(
-        git_manager.run_git_command,
+    result = await git_manager.run_git_command(
         ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
         cwd=cwd,
         timeout=10,
@@ -51,8 +48,7 @@ async def merge_head_exists(git_manager: GitRunnerProtocol | None, cwd: str | Pa
 async def rev_parse_head(git_manager: GitRunnerProtocol | None, cwd: str | Path) -> str | None:
     if git_manager is None:
         return None
-    result = await asyncio.to_thread(
-        git_manager.run_git_command,
+    result = await git_manager.run_git_command(
         ["rev-parse", "HEAD"],
         cwd=cwd,
         timeout=10,
@@ -70,8 +66,7 @@ async def is_ancestor(
     ancestor: str,
     descendant: str,
 ) -> bool:
-    result = await asyncio.to_thread(
-        git_manager.run_git_command,
+    result = await git_manager.run_git_command(
         ["merge-base", "--is-ancestor", ancestor, descendant],
         cwd=cwd,
         timeout=10,

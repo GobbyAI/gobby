@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -149,9 +148,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
 
             if delete_git and not dry_run and resolved_git_manager:
-                status = await asyncio.to_thread(
-                    resolved_git_manager.get_worktree_status, wt.worktree_path
-                )
+                status = await resolved_git_manager.get_worktree_status(wt.worktree_path)
                 if status is None:
                     result["git_skipped"] = True
                     result["git_skip_reason"] = "Could not verify worktree status"
@@ -162,8 +159,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     result["git_skip_reason"] = "Worktree has uncommitted changes"
                     results.append(result)
                     continue
-                git_result = await asyncio.to_thread(
-                    resolved_git_manager.delete_worktree,
+                git_result = await resolved_git_manager.delete_worktree(
                     wt.worktree_path,
                     force=False,
                     delete_branch=True,
@@ -190,24 +186,19 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
 
             if not dry_run and resolved_git_manager:
-                git_merged = await asyncio.to_thread(
-                    is_worktree_git_merged, wt, resolved_git_manager
-                )
+                git_merged = await is_worktree_git_merged(wt, resolved_git_manager)
                 if git_merged is not True and not force_delete_branch:
                     result["git_skipped"] = True
                     result["git_skip_reason"] = "Git no longer reports the branch as merged"
                     results.append(result)
                     continue
-                status = await asyncio.to_thread(
-                    resolved_git_manager.get_worktree_status, wt.worktree_path
-                )
+                status = await resolved_git_manager.get_worktree_status(wt.worktree_path)
                 if status is not None and status.has_uncommitted_changes:
                     result["git_skipped"] = True
                     result["git_skip_reason"] = "Worktree has uncommitted changes"
                     results.append(result)
                     continue
-                git_result = await asyncio.to_thread(
-                    resolved_git_manager.delete_worktree,
+                git_result = await resolved_git_manager.delete_worktree(
                     wt.worktree_path,
                     force=False,
                     delete_branch=True,

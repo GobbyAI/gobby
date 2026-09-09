@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.utils.git import is_path_gitignored, run_git_command
 
 
@@ -11,13 +12,15 @@ def committable_task_paths(paths: set[str], cwd: str) -> set[str]:
 
 
 def task_dirty_paths(paths: set[str], cwd: str) -> set[str] | None:
-    """Return dirty attributed paths, or ``None`` when Git inspection fails."""
+    """Inspect dirty paths synchronously for close transactions only."""
     scoped_paths = sorted(paths)
     if not scoped_paths:
         return set()
     status = run_git_command(
         [
             "git",
+            "--literal-pathspecs",
+            "--no-optional-locks",
             "status",
             "--porcelain=v1",
             "--untracked-files=all",
@@ -30,6 +33,16 @@ def task_dirty_paths(paths: set[str], cwd: str) -> set[str] | None:
     if status is None:
         return None
     return {_porcelain_path(line) for line in status.splitlines() if line.strip()}
+
+
+async def task_dirty_paths_async(paths: set[str], cwd: str) -> set[str] | None:
+    """Return dirty attributed paths without blocking the daemon runtime."""
+    if not paths:
+        return set()
+    result = await daemon_git.status(cwd, paths=paths, timeout=10.0)
+    if not isinstance(result, GitOk):
+        return None
+    return {entry.path for entry in parse_porcelain_v1_z(result.stdout)}
 
 
 def _porcelain_path(line: str) -> str:

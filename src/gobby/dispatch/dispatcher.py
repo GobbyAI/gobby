@@ -217,8 +217,7 @@ async def _run_heartbeat_unlocked(
     )
     if orphan_mutexes:
         logger.info("Dispatcher cleared %d orphan no-run mutex(es)", orphan_mutexes)
-    live_recovery = await run_db(
-        recover_expired_live_session_claims,
+    live_recovery = await recover_expired_live_session_claims(
         resolved_db,
         project_id=project_id,
     )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import stat
 import subprocess
 from pathlib import Path
@@ -11,6 +10,7 @@ import pytest
 
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.daemon_git import GitFailed, GitOk
 
 pytestmark = pytest.mark.unit
 
@@ -71,10 +71,15 @@ async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(  #
     plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n", encoding="utf-8")
 
-    async def fake_exec(*_args: str, **_kwargs: object) -> object:
-        return _Proc(stdout=b"feature-cleanup\n")
+    async def fake_run(*_args: object, **_kwargs: object) -> GitOk:
+        return GitOk(
+            status="ok",
+            argv=("git", "rev-parse", "--abbrev-ref", "HEAD"),
+            stdout="feature-cleanup\n",
+            stderr="",
+        )
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("gobby.build.target_branch.daemon_git.run", fake_run)
 
     result = await _build(str(plan_file), _options(), db=temp_db, project_id=project_id)
 
@@ -120,6 +125,30 @@ async def test_current_target_branch_resolves_git_from_fallback_path(
 
 
 @pytest.mark.asyncio
+async def test_current_target_branch_reports_git_unavailable(
+    monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
+) -> None:
+    from gobby.build.target_branch import _current_target_branch
+
+    project_id, repo_path = _project(temp_db, tmp_path, monkeypatch)
+    (repo_path / ".git").mkdir()
+
+    async def fake_run(*_args: object, **_kwargs: object) -> GitFailed:
+        return GitFailed(
+            status="failed",
+            argv=("git", "rev-parse", "--abbrev-ref", "HEAD"),
+            returncode=None,
+            stdout="",
+            stderr="git missing",
+        )
+
+    monkeypatch.setattr("gobby.build.target_branch.daemon_git.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="Git unavailable.*git missing"):
+        await _current_target_branch(temp_db, project_id)
+
+
+@pytest.mark.asyncio
 async def test_explicit_target_branch_validated(
     monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
 ) -> None:
@@ -129,15 +158,20 @@ async def test_explicit_target_branch_validated(
     (repo_path / ".git").mkdir()
     calls: list[tuple[str, ...]] = []
 
-    async def fake_exec(*args: str, **kwargs: object) -> object:
-        calls.append(args)
-        return _Proc(stdout=b"refs/heads/release\n")
+    async def fake_run(args: list[str], **_kwargs: object) -> GitOk:
+        calls.append(tuple(args))
+        return GitOk(
+            status="ok",
+            argv=("git", *args),
+            stdout="refs/heads/release\n",
+            stderr="",
+        )
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("gobby.build.target_branch.daemon_git.run", fake_run)
 
     await _validate_target_branch(temp_db, project_id, "release")
 
-    assert calls[0][:4] == ("git", "rev-parse", "--verify", "release")
+    assert calls[0] == ("rev-parse", "--verify", "release")
 
 
 @pytest.mark.asyncio
@@ -229,12 +263,3 @@ def test_clone_isolation_requires_existing_clones_dir(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="clones_dir must exist and be a directory"):
         _validate_clones_dir(_options(isolation="clone", clones_dir=tmp_path / "missing"))
-
-
-class _Proc:
-    def __init__(self, *, stdout: bytes) -> None:
-        self.returncode = 0
-        self._stdout = stdout
-
-    async def communicate(self) -> tuple[bytes, bytes]:
-        return self._stdout, b""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -75,15 +74,14 @@ async def execute_merge_workspace(
     services: object | None = None,
 ) -> str | None:
     """Merge source workspace into the target integration workspace."""
-    return await asyncio.to_thread(
-        _execute_merge_workspace_sync,
+    return await _execute_merge_workspace(
         action,
         db=db,
         services=services,
     )
 
 
-def _execute_merge_workspace_sync(
+async def _execute_merge_workspace(
     action: MergeWorkspaceAction,
     *,
     db: HubDatabase,
@@ -94,29 +92,29 @@ def _execute_merge_workspace_sync(
     if not _acquire_integration_mutex(db, key):
         raise RuntimeError(f"integration workspace is busy: {action.target_branch}")
     try:
-        paths = _resolve_paths(action, db=db, services=services)
+        paths = await _resolve_paths(action, db=db, services=services)
         source_branch = action.source_branch or paths.source_branch
         try:
-            _ensure_branch(paths.source_path, source_branch, "source")
-            _ensure_branch(paths.target_path, action.target_branch, "target")
-            _recover_stale_merge_state(paths.target_path, "target integration workspace")
+            await _ensure_branch(paths.source_path, source_branch, "source")
+            await _ensure_branch(paths.target_path, action.target_branch, "target")
+            await _recover_stale_merge_state(paths.target_path, "target integration workspace")
             source_ref = f"refs/heads/{source_branch}"
             target_ref = f"refs/heads/{action.target_branch}"
-            source_commit = _git_stdout(paths.source_path, ["rev-parse", source_ref])
-            target_staged_paths = _ensure_target_merge_safe(
+            source_commit = await _git_stdout(paths.source_path, ["rev-parse", source_ref])
+            target_staged_paths = await _ensure_target_merge_safe(
                 paths.target_path, source_commit, "target integration workspace"
             )
-            if _is_ancestor(paths.target_path, source_commit):
-                merge_sha = _git_stdout(paths.target_path, ["rev-parse", target_ref])
+            if await _is_ancestor(paths.target_path, source_commit):
+                merge_sha = await _git_stdout(paths.target_path, ["rev-parse", target_ref])
                 if action.backend == "clone" and not paths.target_is_local:
-                    _sync_source_repo_branch(
+                    await _sync_source_repo_branch(
                         db,
                         action.task_id,
                         paths.target_path,
                         action.target_branch,
                     )
                 _mark_source_merged(action, db=db, source_id=paths.source_id)
-                _complete_merge_stage(db, action.task_id, merge_sha)
+                await _complete_merge_stage(db, action.task_id, merge_sha)
                 return merge_sha
 
             if target_staged_paths:
@@ -127,7 +125,7 @@ def _execute_merge_workspace_sync(
                     if separate_repositories
                     else source_ref
                 )
-                fallback_result = land_by_fast_forward(
+                fallback_result = await land_by_fast_forward(
                     runner,
                     source_cwd=paths.source_path,
                     target_cwd=paths.target_path,
@@ -137,7 +135,9 @@ def _execute_merge_workspace_sync(
                     separate_repositories=separate_repositories,
                 )
                 if separate_repositories:
-                    cleanup_ref = _git(Path(paths.target_path), ["update-ref", "-d", landing_ref])
+                    cleanup_ref = await _git(
+                        Path(paths.target_path), ["update-ref", "-d", landing_ref]
+                    )
                     if cleanup_ref.returncode != 0:
                         logger.warning(
                             "Failed to delete workspace merge ref %s: %s",
@@ -152,41 +152,43 @@ def _execute_merge_workspace_sync(
                     _fail_merge_stage(db, action.task_id, reason, needs_human=False)
                     return None
 
-                merge_sha = _git_stdout(paths.target_path, ["rev-parse", target_ref])
+                merge_sha = await _git_stdout(paths.target_path, ["rev-parse", target_ref])
                 if action.backend == "clone" and not paths.target_is_local:
-                    _sync_source_repo_branch(
+                    await _sync_source_repo_branch(
                         db,
                         action.task_id,
                         paths.target_path,
                         action.target_branch,
                     )
                 _mark_source_merged(action, db=db, source_id=paths.source_id)
-                _complete_merge_stage(db, action.task_id, merge_sha)
+                await _complete_merge_stage(db, action.task_id, merge_sha)
                 return merge_sha
 
             merge_ref = source_commit
             if action.backend == "clone":
-                _git_ok(paths.target_path, ["fetch", paths.source_path, source_branch])
+                await _git_ok(paths.target_path, ["fetch", paths.source_path, source_branch])
                 merge_ref = "FETCH_HEAD"
-            result = _git(Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref])
+            result = await _git(
+                Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref]
+            )
             if result.returncode != 0:
-                conflicted = _conflicted_files(paths.target_path)
-                remaining = _resolve_worktree_local_conflicts(paths.target_path, conflicted)
+                conflicted = await _conflicted_files(paths.target_path)
+                remaining = await _resolve_worktree_local_conflicts(paths.target_path, conflicted)
                 if conflicted and not remaining:
-                    commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
+                    commit_result = await _git(Path(paths.target_path), ["commit", "--no-edit"])
                     if commit_result.returncode == 0:
-                        merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                        merge_sha = await _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
                         if action.backend == "clone" and not paths.target_is_local:
-                            _sync_source_repo_branch(
+                            await _sync_source_repo_branch(
                                 db,
                                 action.task_id,
                                 paths.target_path,
                                 action.target_branch,
                             )
                         _mark_source_merged(action, db=db, source_id=paths.source_id)
-                        _complete_merge_stage(db, action.task_id, merge_sha)
+                        await _complete_merge_stage(db, action.task_id, merge_sha)
                         return merge_sha
-                _abort_merge(paths.target_path)
+                await _abort_merge(paths.target_path)
                 detail_files = remaining or conflicted
                 detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
                 reason = f"merge_conflict:{detail or 'unknown'}"
@@ -194,16 +196,16 @@ def _execute_merge_workspace_sync(
                 _fail_merge_stage(db, action.task_id, reason, needs_human=False)
                 return None
 
-            merge_sha = _git_stdout(paths.target_path, ["rev-parse", target_ref])
+            merge_sha = await _git_stdout(paths.target_path, ["rev-parse", target_ref])
             if action.backend == "clone" and not paths.target_is_local:
-                _sync_source_repo_branch(
+                await _sync_source_repo_branch(
                     db,
                     action.task_id,
                     paths.target_path,
                     action.target_branch,
                 )
             _mark_source_merged(action, db=db, source_id=paths.source_id)
-            _complete_merge_stage(db, action.task_id, merge_sha)
+            await _complete_merge_stage(db, action.task_id, merge_sha)
             return merge_sha
         except _StaleMergeStateError as exc:
             reason = f"stale_merge_state:{exc}"
@@ -219,7 +221,7 @@ def _execute_merge_workspace_sync(
         _release_integration_mutex(db, key)
 
 
-def _resolve_paths(
+async def _resolve_paths(
     action: MergeWorkspaceAction,
     *,
     db: HubDatabase,
@@ -258,7 +260,7 @@ def _resolve_paths(
             )
         worktree_target = storage.get_by_branch(project_id, action.target_branch)
         if worktree_target is None:
-            _repair_parent_integration_workspace(
+            await _repair_parent_integration_workspace(
                 db,
                 action.task_id,
                 backend="worktree",
@@ -267,7 +269,7 @@ def _resolve_paths(
             )
             worktree_target = storage.get_by_branch(project_id, action.target_branch)
         if worktree_target is None:
-            local_target = _local_target_path_if_checked_out(
+            local_target = await _local_target_path_if_checked_out(
                 db,
                 action.task_id,
                 action.target_branch,
@@ -321,7 +323,7 @@ def _resolve_paths(
         )
     clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
     if clone_target is None:
-        _repair_parent_integration_workspace(
+        await _repair_parent_integration_workspace(
             db,
             action.task_id,
             backend="clone",
@@ -330,7 +332,7 @@ def _resolve_paths(
         )
         clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
     if clone_target is None:
-        local_target = _local_target_path_if_checked_out(
+        local_target = await _local_target_path_if_checked_out(
             db,
             action.task_id,
             action.target_branch,
@@ -369,7 +371,7 @@ def _is_root_task(db: HubDatabase, task_id: str) -> bool:
     return row["parent_task_id"] is None
 
 
-def _repair_parent_integration_workspace(
+async def _repair_parent_integration_workspace(
     db: HubDatabase,
     task_id: str,
     *,
@@ -379,7 +381,7 @@ def _repair_parent_integration_workspace(
 ) -> None:
     task_manager = LocalTaskManager(db)
     task = task_manager.get_task(task_id)
-    ensure_task_parent_integration_workspace(
+    await ensure_task_parent_integration_workspace(
         task_manager=task_manager,
         task=task,
         backend=backend,
@@ -393,20 +395,20 @@ def _require_integration_target(role: str) -> None:
         raise RuntimeError("target workspace is not an integration workspace")
 
 
-def _ensure_branch(path: str, expected: str, label: str) -> None:
-    current = _git_stdout(path, ["rev-parse", "--abbrev-ref", "HEAD"])
+async def _ensure_branch(path: str, expected: str, label: str) -> None:
+    current = await _git_stdout(path, ["rev-parse", "--abbrev-ref", "HEAD"])
     if current != expected:
         raise RuntimeError(f"{label} workspace branch mismatch: {current} != {expected}")
 
 
-def _recover_stale_merge_state(path: str, label: str) -> None:
+async def _recover_stale_merge_state(path: str, label: str) -> None:
     """Abort a merge left behind by an interrupted dispatch before starting another."""
-    merge_head = _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    merge_head = await _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
     if merge_head.returncode != 0:
         return
 
-    abort = _git(Path(path), ["merge", "--abort"])
-    remaining = _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    abort = await _git(Path(path), ["merge", "--abort"])
+    remaining = await _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
     if abort.returncode == 0 and remaining.returncode != 0:
         logger.warning("Recovered interrupted merge in %s", path)
         return
@@ -418,14 +420,14 @@ def _recover_stale_merge_state(path: str, label: str) -> None:
     )
 
 
-def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> set[str]:
-    status = _git_ok(path, ["status", "--porcelain"]).stdout
-    target_staged_paths = staged_paths(WorktreeGitManager(path), path)
+async def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> set[str]:
+    status = (await _git_ok(path, ["status", "--porcelain"])).stdout
+    target_staged_paths = await staged_paths(WorktreeGitManager(path), path)
     dirty_paths = _non_gobby_dirty_paths(status) | target_staged_paths
     if not dirty_paths:
         return set()
     incoming_paths = set(
-        _git_stdout(path, ["diff", "--name-only", "HEAD", source_commit]).splitlines()
+        (await _git_stdout(path, ["diff", "--name-only", "HEAD", source_commit])).splitlines()
     )
     overlapping = sorted(dirty_paths & incoming_paths)
     if overlapping:
@@ -434,37 +436,41 @@ def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> set[
     return target_staged_paths
 
 
-def _is_ancestor(target_path: str, commit_sha: str) -> bool:
-    result = _git(Path(target_path), ["merge-base", "--is-ancestor", commit_sha, "HEAD"])
+async def _is_ancestor(target_path: str, commit_sha: str) -> bool:
+    result = await _git(Path(target_path), ["merge-base", "--is-ancestor", commit_sha, "HEAD"])
     return result.returncode == 0
 
 
-def _conflicted_files(path: str) -> list[str]:
-    result = _git(Path(path), ["diff", "--name-only", "--diff-filter=U"])
+async def _conflicted_files(path: str) -> list[str]:
+    result = await _git(Path(path), ["diff", "--name-only", "--diff-filter=U"])
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def _resolve_worktree_local_conflicts(path: str, conflicted: list[str]) -> list[str]:
+async def _resolve_worktree_local_conflicts(path: str, conflicted: list[str]) -> list[str]:
     remaining: list[str] = []
     for file_path in conflicted:
-        if file_path in WORKTREE_LOCAL_METADATA_CONFLICTS and _same_project_config_except_local(
-            path,
-            file_path,
+        if file_path in WORKTREE_LOCAL_METADATA_CONFLICTS and (
+            await _same_project_config_except_local(
+                path,
+                file_path,
+            )
         ):
-            _git_ok(path, ["checkout", "--ours", "--", file_path])
-            _git_ok(path, ["add", "--", file_path])
+            await _git_ok(path, ["checkout", "--ours", "--", file_path])
+            await _git_ok(path, ["add", "--", file_path])
             continue
-        if file_path == DOCS_GUIDES_README and _resolve_docs_guides_readme_conflict(
-            path,
-            file_path,
+        if file_path == DOCS_GUIDES_README and (
+            await _resolve_docs_guides_readme_conflict(
+                path,
+                file_path,
+            )
         ):
             continue
         remaining.append(file_path)
     return remaining
 
 
-def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
-    staged = _staged_file_versions(path, file_path)
+async def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
+    staged = await _staged_file_versions(path, file_path)
     if staged is None:
         return False
     base, ours, theirs = staged
@@ -485,7 +491,7 @@ def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
     if not changed_theirs or any(key not in ours_rows for key in changed_theirs):
         if non_row_changes_represented:
             (Path(path) / file_path).write_text(ours)
-            _git_ok(path, ["add", "--", file_path])
+            await _git_ok(path, ["add", "--", file_path])
             return True
         return False
 
@@ -497,14 +503,14 @@ def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
     if ours.endswith("\n"):
         merged += "\n"
     (Path(path) / file_path).write_text(merged)
-    _git_ok(path, ["add", "--", file_path])
+    await _git_ok(path, ["add", "--", file_path])
     return True
 
 
-def _staged_file_versions(path: str, file_path: str) -> tuple[str, str, str] | None:
+async def _staged_file_versions(path: str, file_path: str) -> tuple[str, str, str] | None:
     versions = []
     for stage in ("1", "2", "3"):
-        result = _git(Path(path), ["show", f":{stage}:{file_path}"])
+        result = await _git(Path(path), ["show", f":{stage}:{file_path}"])
         if result.returncode != 0:
             return None
         versions.append(result.stdout)
@@ -547,8 +553,8 @@ def _normalize_guide_target(target: str) -> str:
     return target
 
 
-def _same_project_config_except_local(path: str, file_path: str) -> bool:
-    staged = _staged_file_versions(path, file_path)
+async def _same_project_config_except_local(path: str, file_path: str) -> bool:
+    staged = await _staged_file_versions(path, file_path)
     if staged is None:
         return False
     _, ours, theirs = staged
@@ -568,11 +574,11 @@ def _without_worktree_local_project_keys(value: dict[str, object]) -> dict[str, 
     return {key: item for key, item in value.items() if key not in WORKTREE_LOCAL_PROJECT_KEYS}
 
 
-def _abort_merge(path: str) -> None:
-    _git(Path(path), ["merge", "--abort"])
+async def _abort_merge(path: str) -> None:
+    await _git(Path(path), ["merge", "--abort"])
 
 
-def _complete_merge_stage(db: HubDatabase, task_id: str, commit_sha: str) -> None:
+async def _complete_merge_stage(db: HubDatabase, task_id: str, commit_sha: str) -> None:
     StageStatesManager(db, TaskLifecycleEventManager(db)).complete_stage(
         task_id,
         "merge",
@@ -581,7 +587,7 @@ def _complete_merge_stage(db: HubDatabase, task_id: str, commit_sha: str) -> Non
         artifact_updates={"integration_merge_sha": commit_sha},
     )
     try:
-        cleanup_successful_merge_artifacts(db, task_id)
+        await cleanup_successful_merge_artifacts(db, task_id)
     except Exception:
         logger.warning(
             "successful_workspace_merge_cleanup_failed",
@@ -642,25 +648,27 @@ def _mark_source_merged(
     LocalCloneManager(db).mark_merged(source_id, cleanup_after=cleanup_after)
 
 
-def _sync_source_repo_branch(
+async def _sync_source_repo_branch(
     db: HubDatabase,
     task_id: str,
     target_path: str,
     target_branch: str,
 ) -> None:
     repo_path = _repo_path_for_task(db, task_id)
-    merge_sha = _git_stdout(target_path, ["rev-parse", target_branch])
-    if _branch_contains(repo_path, target_branch, merge_sha):
+    merge_sha = await _git_stdout(target_path, ["rev-parse", target_branch])
+    if await _branch_contains(repo_path, target_branch, merge_sha):
         return
-    _git_ok(repo_path, ["fetch", target_path, f"{target_branch}:{target_branch}"])
-    if not _branch_contains(repo_path, target_branch, merge_sha):
+    await _git_ok(repo_path, ["fetch", target_path, f"{target_branch}:{target_branch}"])
+    if not (await _branch_contains(repo_path, target_branch, merge_sha)):
         raise RuntimeError(
             f"source repo branch {target_branch} does not contain integrated commit {merge_sha}"
         )
 
 
-def _branch_contains(repo_path: Path, branch: str, commit_sha: str) -> bool:
-    return _git(repo_path, ["merge-base", "--is-ancestor", commit_sha, branch]).returncode == 0
+async def _branch_contains(repo_path: Path, branch: str, commit_sha: str) -> bool:
+    return (
+        await _git(repo_path, ["merge-base", "--is-ancestor", commit_sha, branch])
+    ).returncode == 0
 
 
 def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:
@@ -671,13 +679,13 @@ def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:
     return Path(require_root(db, project_id, machine_id))
 
 
-def _local_target_path_if_checked_out(
+async def _local_target_path_if_checked_out(
     db: HubDatabase,
     task_id: str,
     target_branch: str,
 ) -> Path | None:
     repo_path = _repo_path_for_task(db, task_id)
-    current = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    current = await _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
     if current == target_branch:
         return repo_path
     return None
@@ -717,25 +725,22 @@ def _release_integration_mutex(db: HubDatabase, key: str) -> None:
         )
 
 
-def _git_stdout(path: str | Path, args: list[str]) -> str:
-    result = _git_ok(path, args)
+async def _git_stdout(path: str | Path, args: list[str]) -> str:
+    result = await _git_ok(path, args)
     return result.stdout.strip()
 
 
-def _git_ok(path: str | Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    result = _git(Path(path), args)
+async def _git_ok(path: str | Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    result = await _git(Path(path), args)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
     return result
 
 
-def _git(path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # nosec B603 # git args are fixed by callers.
-        ["git", *args],
-        cwd=path,
-        capture_output=True,
-        text=True,
+async def _git(path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return await WorktreeGitManager(path).run_git_command(
+        args,
         timeout=60,
         check=False,
         env={**os.environ, "GOBBY_MERGE": "1"},
