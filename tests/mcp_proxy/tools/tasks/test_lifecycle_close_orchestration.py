@@ -75,6 +75,7 @@ async def test_close_persists_and_launches_one_taskless_validator(
         validation_config=TaskValidationConfig(
             candidates=["codex/gpt-5.6-terra"],
             close_review_total_timeout_seconds=17,
+            close_review_validator_timeout_seconds=900,
         ),
     )
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
@@ -87,7 +88,7 @@ async def test_close_persists_and_launches_one_taskless_validator(
 
     assert store.created_arguments == {
         **arguments,
-        "_review_deadline_at": "2026-09-08T12:00:17+00:00",
+        "_review_deadline_at": "2026-09-08T12:15:00+00:00",
     }
     assert "_review_deadline_at" not in arguments
     assert evaluation.task is not None
@@ -101,6 +102,7 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert launch_args["model"] == "gpt-5.6-terra"
     # An unpinned candidate inherits the profile default, which is always `auto`.
     assert launch_args["reasoning_effort"] == "auto"
+    assert launch_args["timeout"] == 900
     assert "close caller is a spawned agent" in launch_args["prompt"]
     assert "state `pending_external`" in launch_args["prompt"]
     assert result["success"] is True
@@ -424,6 +426,7 @@ async def test_launch_omits_model_overrides_without_validation_config(
     assert "provider" not in launch_args
     assert "model" not in launch_args
     assert "reasoning_effort" not in launch_args
+    assert launch_args["timeout"] == 1200.0
 
 
 @pytest.mark.asyncio

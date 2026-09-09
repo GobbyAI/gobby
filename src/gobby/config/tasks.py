@@ -190,6 +190,13 @@ class TaskValidationConfig(FeatureDefaultConfig):
             "including fallbacks. Expiry fails closed into validation backoff."
         ),
     )
+    close_review_validator_timeout_seconds: float = Field(
+        default=1200.0,
+        gt=0,
+        description=(
+            "Wall-clock bound on a spawned task-close validator and its durable review deadline."
+        ),
+    )
     # Escalation settings
     escalation_enabled: bool = Field(
         default=True,
