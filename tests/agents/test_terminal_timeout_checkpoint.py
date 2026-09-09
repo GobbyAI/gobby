@@ -8,6 +8,7 @@ only then does the parent coordinator call `checkpoint_agent_worktree`.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ from gobby.worktrees.git import WorktreeGitManager
 
 TRACKED_PATH = "tracked.txt"
 UNTRACKED_PATH = "untracked.txt"
+UNLEDGERED_PATH = "formatted.py"
 
 
 def _git(repo: Path, *arguments: str) -> str:
@@ -96,6 +98,7 @@ def _harness(
     tmp_path: Path,
     *,
     extra_child_paths: tuple[str, ...] = (),
+    unledgered_child_paths: tuple[str, ...] = (),
 ) -> _TimeoutHarness:
     project_id = str(sample_project["id"])
     repo = Path(require_root(temp_db, project_id, require_machine_id()))
@@ -146,8 +149,20 @@ def _harness(
         workspace_role="task",
     )
 
-    # The child claims the task and edits a tracked and an untracked path; the
-    # edit ledger records both against this worktree checkout.
+    agent_runs = LocalAgentRunManager(temp_db)
+    pending_run = agent_runs.create(
+        parent_session_id=parent.id,
+        provider="claude",
+        prompt="implement the leaf",
+        child_session_id=child.id,
+        task_id=task.id,
+        worktree_id=worktree.id,
+    )
+    run = agent_runs.start(pending_run.id)
+    assert run is not None
+
+    # The child claims the task and edits tracked and untracked paths. Direct
+    # shell or formatter writes intentionally bypass the session edit ledger.
     variables = SessionVariableManager(temp_db)
     variables.merge_variables(child.id, add_claimed_task({}, task.id, f"#{task.seq_num}"))
     assert variables.record_edited_files(
@@ -157,16 +172,8 @@ def _harness(
     )
     (worktree_path / TRACKED_PATH).write_text("child work\n", encoding="utf-8")
     (worktree_path / UNTRACKED_PATH).write_text("child notes\n", encoding="utf-8")
-
-    agent_runs = LocalAgentRunManager(temp_db)
-    run = agent_runs.create(
-        parent_session_id=parent.id,
-        provider="claude",
-        prompt="implement the leaf",
-        child_session_id=child.id,
-        task_id=task.id,
-        worktree_id=worktree.id,
-    )
+    for path in unledgered_child_paths:
+        (worktree_path / path).write_text("formatter output\n", encoding="utf-8")
 
     registry = InternalToolRegistry(name="test-agents", description="test")
     register_agent_checkpoint_tools(
@@ -269,6 +276,29 @@ async def test_parent_checkpoints_pre_fix_timed_out_child_and_restores_worktree_
 
 
 @pytest.mark.asyncio
+async def test_parent_checkpoints_unledgered_shell_edit_from_legacy_child_run(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    harness = _harness(
+        temp_db,
+        sample_project,
+        tmp_path,
+        unledgered_child_paths=(UNLEDGERED_PATH,),
+    )
+    await _time_out_and_clean_up(harness)
+    _simulate_pre_fix_attribution_cleanup(harness)
+
+    result = await harness.checkpoint()
+
+    assert result["success"] is True
+    assert result["included_paths"] == [UNLEDGERED_PATH, TRACKED_PATH, UNTRACKED_PATH]
+    assert _git(harness.worktree_path, "show", f"HEAD:{UNLEDGERED_PATH}") == "formatter output"
+    assert _git(harness.worktree_path, "status", "--porcelain") == ""
+
+
+@pytest.mark.asyncio
 async def test_timeout_cleanup_keeps_the_child_task_edit_attribution(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -323,7 +353,13 @@ async def test_unattributed_dirt_after_timeout_cleanup_leaves_the_checkout_uncha
     harness = _harness(temp_db, sample_project, tmp_path)
     await _time_out_and_clean_up(harness)
     _simulate_pre_fix_attribution_cleanup(harness)
-    (harness.worktree_path / "stray.txt").write_text("nobody owns this\n", encoding="utf-8")
+    stray_path = harness.worktree_path / "stray.txt"
+    stray_path.write_text("nobody owns this\n", encoding="utf-8")
+    terminal_run = harness.agent_runs.get(harness.run.id)
+    assert terminal_run is not None
+    assert terminal_run.completed_at is not None
+    later_timestamp = terminal_run.completed_at.timestamp() + 1
+    os.utime(stray_path, (later_timestamp, later_timestamp))
     head = _git(harness.worktree_path, "rev-parse", "HEAD")
     status = _git(harness.worktree_path, "status", "--porcelain=v1")
 

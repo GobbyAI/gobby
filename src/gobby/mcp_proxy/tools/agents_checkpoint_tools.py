@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -202,6 +203,9 @@ def _checkpoint_agent_worktree(
                 checkout_root=checkout_root,
                 session_ids={caller_session_id, run.child_session_id},
                 legacy_child_session_id=run.child_session_id if task_owner is None else None,
+                legacy_dirty_paths=dirty_paths,
+                legacy_started_at=getattr(run, "started_at", None),
+                legacy_completed_at=getattr(run, "completed_at", None),
             )
             unattributed_paths = sorted(dirty_paths - authorized_paths)
             if unattributed_paths:
@@ -266,13 +270,17 @@ def _authorized_task_paths(
     checkout_root: str,
     session_ids: set[str],
     legacy_child_session_id: str | None,
+    legacy_dirty_paths: set[str],
+    legacy_started_at: datetime | None,
+    legacy_completed_at: datetime | None,
 ) -> set[str]:
     """Return task paths, including the narrow pre-#21897 terminal recovery case.
 
     Legacy terminal cleanup erased all task ledgers after releasing the child's
-    claim, but retained that child's session edit ledger. The caller supplies the
-    child only for an unclaimed recovered task; current or still-owned task states
-    continue to require checkout-scoped task attribution.
+    claim, but retained that child's session edit ledger. Shell edits missing from
+    that ledger are bounded by the run's persisted start and completion timestamps.
+    The caller supplies the child only for an unclaimed recovered task; current or
+    still-owned task states continue to require checkout-scoped task attribution.
     """
     variable_manager = SessionVariableManager(db)
     variables_by_session: dict[str, dict[str, Any]] = {}
@@ -301,6 +309,23 @@ def _authorized_task_paths(
                 for value in raw_session_paths
                 if (path := normalize_task_edited_path(value)) is not None
             )
+        if (
+            attribution_was_cleared
+            and legacy_started_at is not None
+            and legacy_completed_at is not None
+        ):
+            started_timestamp = legacy_started_at.timestamp()
+            completed_timestamp = legacy_completed_at.timestamp()
+            for value in legacy_dirty_paths:
+                path = normalize_task_edited_path(value)
+                if path is None:
+                    continue
+                try:
+                    modified_timestamp = (Path(checkout_root) / path).lstat().st_mtime
+                except OSError:
+                    continue
+                if started_timestamp <= modified_timestamp <= completed_timestamp:
+                    authorized.add(path)
     return authorized
 
 
