@@ -19,6 +19,7 @@ from gobby.agents.isolation import (
     repair_isolation_environment,
 )
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+from gobby.utils.daemon_git import GitOk
 from gobby.utils.project_context import IsolationProjectJsonError
 
 pytestmark = pytest.mark.unit
@@ -170,13 +171,20 @@ async def _prepare_with_git_head(
         patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
         patch(
-            "gobby.agents.isolation_clone.subprocess.run", return_value=_git_head("abc123")
-        ) as run,
+            "gobby.agents.isolation_clone.daemon_git.run",
+            new=AsyncMock(
+                return_value=GitOk(
+                    status="ok",
+                    argv=("git", "rev-parse", "HEAD"),
+                    stdout="abc123\n",
+                    stderr="",
+                )
+            ),
+        ) as git_run,
     ):
         ctx = await handler.prepare_environment(config)
 
-    run.assert_called_once()
-    assert run.call_args.args[0] == ["git", "-C", expected_git_cwd, "rev-parse", "HEAD"]
+    git_run.assert_awaited_once_with(["rev-parse", "HEAD"], cwd=expected_git_cwd, timeout=10)
     return ctx
 
 
@@ -226,7 +234,7 @@ def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler
 def _clone_handler(temp_db, tmp_path: Path) -> tuple[CloneIsolationHandler, str]:
     clone_path = str(tmp_path / "clone")
     clone_manager = MagicMock()
-    clone_manager.create_clone.return_value = MagicMock(success=True)
+    clone_manager.create_clone = AsyncMock(return_value=MagicMock(success=True))
     storage = MagicMock()
     storage.db = temp_db
     storage.get_by_branch.return_value = None

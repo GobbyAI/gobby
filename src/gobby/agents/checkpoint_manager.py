@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 import uuid
 from pathlib import Path
 
 from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class CheckpointManager:
     def __init__(self, checkpoint_storage: LocalCheckpointManager) -> None:
         self._storage = checkpoint_storage
 
-    def create_checkpoint(
+    async def create_checkpoint(
         self,
         cwd: str | Path,
         task_id: str,
@@ -50,7 +50,7 @@ class CheckpointManager:
             return None
 
         # 1. Check for uncommitted changes
-        status = self._run_git(["status", "--porcelain"], cwd_str)
+        status = await self._run_git(["status", "--porcelain"], cwd_str)
         if status is None or not status.strip():
             logger.debug("No uncommitted changes to checkpoint in %s", cwd_str)
             return None
@@ -58,7 +58,7 @@ class CheckpointManager:
         files_changed = len(status.strip().splitlines())
 
         # 2. Snapshot the original index so divergent staged blobs survive temporary staging.
-        original_index_tree = self._run_git(["write-tree"], cwd_str)
+        original_index_tree = await self._run_git(["write-tree"], cwd_str)
         if not original_index_tree:
             logger.error("Failed to snapshot index before checkpoint in %s", cwd_str)
             return None
@@ -67,19 +67,19 @@ class CheckpointManager:
         try:
             # 3. Stage tracked files only (needed for write-tree).
             # Uses -u to avoid capturing untracked artifacts.
-            if self._run_git(["add", "-u"], cwd_str) is None:
+            if await self._run_git(["add", "-u"], cwd_str) is None:
                 logger.error("Failed to stage files for checkpoint in %s", cwd_str)
                 return None
 
             # 4. Write tree (captures staged state as a tree object)
-            tree_sha = self._run_git(["write-tree"], cwd_str)
+            tree_sha = await self._run_git(["write-tree"], cwd_str)
             if not tree_sha:
                 logger.error("Failed to write tree for checkpoint in %s", cwd_str)
                 return None
             tree_sha = tree_sha.strip()
 
             # 5. Get parent commit
-            parent_sha = self._run_git(["rev-parse", "HEAD"], cwd_str)
+            parent_sha = await self._run_git(["rev-parse", "HEAD"], cwd_str)
             if not parent_sha:
                 logger.error("Failed to get HEAD for checkpoint in %s", cwd_str)
                 return None
@@ -87,7 +87,7 @@ class CheckpointManager:
 
             # 5. Create detached commit
             message = f"gobby: auto-checkpoint for task {task_id} (run {run_id[:8]})"
-            commit_sha = self._run_git(
+            commit_sha = await self._run_git(
                 ["commit-tree", tree_sha, "-p", parent_sha, "-m", message],
                 cwd_str,
             )
@@ -99,7 +99,7 @@ class CheckpointManager:
             # 6. Store as hidden ref
             seq = self._storage.count_for_task(task_id) + 1
             ref_name = f"refs/gobby/ckpt/{task_id}/{seq}"
-            if self._run_git(["update-ref", ref_name, commit_sha], cwd_str) is None:
+            if await self._run_git(["update-ref", ref_name, commit_sha], cwd_str) is None:
                 logger.error("Failed to update ref %s in %s", ref_name, cwd_str)
                 return None
 
@@ -131,32 +131,22 @@ class CheckpointManager:
             # 9. Restore the exact index we had before temporary staging.
             # Best-effort: must not propagate exceptions from cleanup
             try:
-                self._run_git(["read-tree", original_index_tree], cwd_str)
+                await self._run_git(["read-tree", original_index_tree], cwd_str)
             except Exception as e:
                 logger.warning("Failed to restore index after checkpoint in %s: %s", cwd_str, e)
 
-    def _run_git(self, args: list[str], cwd: str, timeout: int = 30) -> str | None:
-        """Run a git command synchronously. Returns stdout or None on failure."""
-        try:
-            result = subprocess.run(
-                ["git", *args],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                logger.debug(
-                    "git %s failed (rc=%s): %s",
-                    " ".join(args),
-                    result.returncode,
-                    result.stderr.strip(),
-                )
-                return None
+    async def _run_git(self, args: list[str], cwd: str, timeout: int = 30) -> str | None:
+        """Run a Git command. Returns stdout or None on failure."""
+        result = await daemon_git.run(args, cwd=cwd, timeout=timeout)
+        if isinstance(result, GitOk):
             return result.stdout
-        except subprocess.TimeoutExpired:
+        if isinstance(result, GitTimeout):
             logger.warning("git %s timed out after %ss", " ".join(args), timeout)
-            return None
-        except OSError as e:
-            logger.warning("git %s failed: %s", " ".join(args), e)
-            return None
+        else:
+            logger.debug(
+                "git %s failed (rc=%s): %s",
+                " ".join(args),
+                result.returncode,
+                result.stderr.strip(),
+            )
+        return None

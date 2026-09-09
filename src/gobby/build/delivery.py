@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -13,7 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
-from gobby.utils.git import get_github_url
+from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, GitTimeout, daemon_git
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ _GITHUB_OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def record_build_delivery_campaign(
+async def record_build_delivery_campaign(
     db: HubDatabase,
     *,
     project_id: str,
@@ -32,7 +33,7 @@ def record_build_delivery_campaign(
     if opts.delivery_mode != "pull_request":
         return
 
-    source_repo = resolve_project_source_repo(db, project_id)
+    source_repo = await resolve_project_source_repo_async(db, project_id)
     target_repo = (
         normalize_github_repo(opts.delivery_target_repo)
         if opts.delivery_target_repo
@@ -57,7 +58,37 @@ def record_build_delivery_campaign(
 
 
 def resolve_project_source_repo(db: HubDatabase, project_id: str) -> str:
-    """Resolve the GitHub source repo for a project as owner/repo."""
+    """Resolve configured GitHub project metadata without workspace I/O."""
+    configured = _configured_project_source_repo(db, project_id)
+    if configured is not None:
+        return configured
+    raise ValueError("pull_request delivery requires project github_repo or github_url")
+
+
+async def resolve_project_source_repo_async(db: HubDatabase, project_id: str) -> str:
+    """Resolve the GitHub source repo, including the local checkout remote."""
+    configured = await asyncio.to_thread(_configured_project_source_repo, db, project_id)
+    if configured is not None:
+        return configured
+    repo_path = await asyncio.to_thread(_project_checkout_path, db, project_id)
+    remote_url = await _git_remote_url(repo_path)
+    if remote_url:
+        parsed = github_repo_from_url(remote_url)
+        if parsed:
+            return parsed
+    raise ValueError("pull_request delivery requires project github_repo, github_url, or origin")
+
+
+def _project_checkout_path(db: HubDatabase, project_id: str) -> Path:
+    machine_id = require_local_machine_id(
+        None,
+        resource_kind="project_checkout",
+        resource_id=project_id,
+    )
+    return Path(require_root(db, project_id, machine_id))
+
+
+def _configured_project_source_repo(db: HubDatabase, project_id: str) -> str | None:
     project = LocalProjectManager(db).get(project_id)
     if project is None:
         raise ValueError(f"project {project_id!r} not found")
@@ -67,15 +98,42 @@ def resolve_project_source_repo(db: HubDatabase, project_id: str) -> str:
         parsed = github_repo_from_url(project.github_url)
         if parsed:
             return parsed
-    machine_id = require_local_machine_id(
-        None, resource_kind="project_checkout", resource_id=project_id
+    return None
+
+
+async def _git_remote_url(repo_path: Path) -> str | None:
+    origin = await daemon_git.run(
+        ["remote", "get-url", "origin"],
+        cwd=repo_path,
+        timeout=10,
     )
-    remote_url = get_github_url(Path(require_root(db, project_id, machine_id)))
-    if remote_url:
-        parsed = github_repo_from_url(remote_url)
-        if parsed:
-            return parsed
-    raise ValueError("pull_request delivery requires project github_repo, github_url, or origin")
+    origin_url = _remote_output(origin, operation="origin lookup")
+    if origin_url:
+        return origin_url
+
+    remotes = await daemon_git.run(["remote"], cwd=repo_path, timeout=10)
+    remote_names = _remote_output(remotes, operation="remote listing")
+    if not remote_names:
+        return None
+    first_remote = remote_names.splitlines()[0]
+    result = await daemon_git.run(
+        ["remote", "get-url", first_remote],
+        cwd=repo_path,
+        timeout=10,
+    )
+    return _remote_output(result, operation=f"remote {first_remote!r} lookup")
+
+
+def _remote_output(result: GitResult, *, operation: str) -> str | None:
+    if isinstance(result, GitOk):
+        return result.stdout.strip() or None
+    if isinstance(result, GitTimeout):
+        raise RuntimeError(f"Git {operation} timed out after {result.timeout:g}s")
+    assert isinstance(result, GitFailed)
+    if result.returncode is None:
+        detail = result.stderr.strip() or "Git daemon unavailable"
+        raise RuntimeError(f"Git {operation} unavailable: {detail}")
+    return None
 
 
 def normalize_github_repo(repo: str | None) -> str:

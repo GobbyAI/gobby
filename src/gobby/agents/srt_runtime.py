@@ -542,8 +542,7 @@ async def prepare_sandbox_launch(
     effective_env = {**env, **run_environment}
     compute_paths_started = start_spawn_phase()
     try:
-        paths = await asyncio.to_thread(
-            compute_sandbox_paths,
+        paths = await compute_sandbox_paths(
             effective_config,
             workspace_path,
             daemon_port,

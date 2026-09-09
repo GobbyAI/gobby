@@ -2036,7 +2036,7 @@ class TestHookCheckoutIngress:
         assert event.project_id == project.id
         assert _checkout_root(temp_db, machine_id, project.id) == str(canonical)
 
-    def test_isolation_copy_does_not_register(
+    async def test_isolation_copy_does_not_register(
         self,
         tmp_path: Path,
         temp_db: HubDatabase,
@@ -2051,7 +2051,7 @@ class TestHookCheckoutIngress:
         project = LocalProjectManager(temp_db).create(name="hook-isolation")
         write_project_marker(canonical, project_id=project.id, name="hook-isolation")
         LocalProjectCheckoutManager(temp_db).register(machine_id, project.id, str(canonical))
-        ensure_project_json_for_isolation(canonical, isolated)
+        await ensure_project_json_for_isolation(canonical, isolated)
 
         _resolve_cwd_marker(isolated, _hook_sessions(temp_db))
 

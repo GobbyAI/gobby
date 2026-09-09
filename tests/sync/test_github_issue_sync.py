@@ -328,7 +328,6 @@ async def test_sync_issue_offloads_synchronous_storage_and_manager_calls(
     assert {
         "get",
         "get_config",
-        "repositories_for",
         "fetchone",
         "create_task",
         "reconcile_task_state",

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -14,6 +15,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
@@ -90,6 +92,64 @@ def _claim_recovery_payloads(temp_db, task_id: str) -> list[dict[str, object]]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result,expected",
+    [
+        pytest.param(
+            GitOk("ok", ("git", "status"), " M modified.py\n?? new.py\n", ""),
+            ([" M modified.py", "?? new.py"], None),
+            id="ok",
+        ),
+        pytest.param(
+            GitTimeout("timeout", ("git", "status"), 10),
+            ([], "git_status_timeout"),
+            id="timeout",
+        ),
+        pytest.param(
+            GitFailed("failed", ("git", "status"), None, "", "daemon unavailable"),
+            ([], "git_status_error:daemon unavailable"),
+            id="unavailable",
+        ),
+        pytest.param(
+            GitFailed("failed", ("git", "status"), 128, "", "not a repository"),
+            ([], "git_status_failed:not a repository"),
+            id="git-failure",
+        ),
+    ],
+)
+async def test_git_status_lines_maps_daemon_git_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    result: GitOk | GitTimeout | GitFailed,
+    expected: tuple[list[str], str | None],
+) -> None:
+    from gobby.build import claim_recovery
+
+    async def run_git(*_args: object, **_kwargs: object) -> GitOk | GitTimeout | GitFailed:
+        return result
+
+    monkeypatch.setattr(daemon_git, "run", run_git)
+
+    assert await claim_recovery._git_status_lines(tmp_path) == expected
+
+
+@pytest.mark.asyncio
+async def test_git_status_lines_propagates_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import claim_recovery
+
+    async def run_git(*_args: object, **_kwargs: object) -> GitOk:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(claim_recovery.daemon_git, "run", run_git)
+
+    with pytest.raises(asyncio.CancelledError):
+        await claim_recovery._git_status_lines(tmp_path)
+
+
+@pytest.mark.asyncio
 async def test_kick_releases_claimed_needs_review_clean_workspace(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -107,7 +167,11 @@ async def test_kick_releases_claimed_needs_review_clean_workspace(
         tmp_path,
         stage_state="needs_review",
     )
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=([], None)),
+    )
     monkeypatch.setattr(
         "gobby.dispatch.dispatcher.run_heartbeat",
         AsyncMock(return_value=HeartbeatResult(scanned=1)),
@@ -122,7 +186,8 @@ async def test_kick_releases_claimed_needs_review_clean_workspace(
     assert payloads[-1]["outcome"] == "released"
 
 
-def test_recovery_releases_claimed_review_approved_clean_clone(
+@pytest.mark.asyncio
+async def test_recovery_releases_claimed_review_approved_clean_clone(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -137,9 +202,13 @@ def test_recovery_releases_claimed_review_approved_clean_clone(
         stage_state="review_approved",
         family="clone",
     )
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=([], None)),
+    )
 
-    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+    summary = await claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
 
     assert summary.released == 1
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is None
@@ -147,7 +216,8 @@ def test_recovery_releases_claimed_review_approved_clean_clone(
     assert payloads[-1]["outcome"] == "released"
 
 
-def test_recovery_refuses_claim_release_when_dispatch_mutex_active(
+@pytest.mark.asyncio
+async def test_recovery_refuses_claim_release_when_dispatch_mutex_active(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -167,9 +237,13 @@ def test_recovery_refuses_claim_release_when_dispatch_mutex_active(
         kind="spawn",
         ttl_seconds=30,
     )
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=([], None)),
+    )
 
-    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+    summary = await claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
 
     assert summary.refused == 1
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is not None
@@ -178,7 +252,8 @@ def test_recovery_refuses_claim_release_when_dispatch_mutex_active(
     assert payloads[-1]["reason"] == "active_dispatch_mutex"
 
 
-def test_recovery_refuses_claimed_in_progress_task(
+@pytest.mark.asyncio
+async def test_recovery_refuses_claimed_in_progress_task(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -193,9 +268,13 @@ def test_recovery_refuses_claimed_in_progress_task(
         stage_state="in_progress",
     )
     original_claim = LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=([], None)),
+    )
 
-    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+    summary = await claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
 
     assert summary.refused == 1
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == original_claim
@@ -204,7 +283,8 @@ def test_recovery_refuses_claimed_in_progress_task(
     assert payloads[-1]["reason"] == "unsafe_stage"
 
 
-def test_recovery_refuses_dirty_review_workspace_and_records_audit(
+@pytest.mark.asyncio
+async def test_recovery_refuses_dirty_review_workspace_and_records_audit(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -220,9 +300,13 @@ def test_recovery_refuses_dirty_review_workspace_and_records_audit(
         stage_state="needs_review",
     )
     original_claim = LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: (dirty_files, None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=(dirty_files, None)),
+    )
 
-    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+    summary = await claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
 
     assert summary.refused == 1
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == original_claim
@@ -232,7 +316,8 @@ def test_recovery_refuses_dirty_review_workspace_and_records_audit(
     assert payloads[-1]["workspace"]["dirty_files"] == dirty_files
 
 
-def test_recovery_defers_workspace_inspection_after_cap(
+@pytest.mark.asyncio
+async def test_recovery_defers_workspace_inspection_after_cap(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -258,13 +343,13 @@ def test_recovery_defers_workspace_inspection_after_cap(
         stage_state="needs_review",
     )
 
-    def clean_status(path: Path) -> tuple[list[str], str | None]:
+    async def clean_status(path: Path) -> tuple[list[str], str | None]:
         inspected.append(path)
         return [], None
 
     monkeypatch.setattr(claim_recovery, "_git_status_lines", clean_status)
 
-    summary = claim_recovery.recover_safe_build_claims(
+    summary = await claim_recovery.recover_safe_build_claims(
         temp_db,
         sample_project["id"],
         max_workspace_inspections=1,
@@ -281,7 +366,7 @@ def test_recovery_defers_workspace_inspection_after_cap(
 
 
 @pytest.mark.asyncio
-async def test_kick_dispatcher_tick_offloads_claim_recovery_with_cap(
+async def test_kick_dispatcher_tick_awaits_claim_recovery_with_cap(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -291,22 +376,13 @@ async def test_kick_dispatcher_tick_offloads_claim_recovery_with_cap(
     from gobby.build.dispatch_tick import kick_dispatcher_tick
     from gobby.dispatch.dispatcher import HeartbeatResult
 
-    to_thread_calls: list[dict[str, object]] = []
+    recovery_calls: list[dict[str, object]] = []
 
-    def recover_stub(*_args: object, **_kwargs: object) -> ClaimRecoverySummary:
+    async def recover_stub(*_args: object, **kwargs: object) -> ClaimRecoverySummary:
+        recovery_calls.append(kwargs)
         return ClaimRecoverySummary()
 
-    async def to_thread_stub(
-        func: Callable[..., object],
-        /,
-        *args: object,
-        **kwargs: object,
-    ) -> object:
-        to_thread_calls.append({"func": func, "args": args, "kwargs": kwargs})
-        return func(*args, **kwargs)
-
     monkeypatch.setattr(dispatch_tick, "recover_safe_build_claims", recover_stub)
-    monkeypatch.setattr(dispatch_tick.asyncio, "to_thread", to_thread_stub)
     monkeypatch.setattr(
         "gobby.dispatch.dispatcher.run_heartbeat",
         AsyncMock(return_value=HeartbeatResult(scanned=0, reason="no_ready_tasks")),
@@ -314,15 +390,16 @@ async def test_kick_dispatcher_tick_offloads_claim_recovery_with_cap(
 
     await kick_dispatcher_tick(temp_db, sample_project["id"], max_ticks=1)
 
-    assert to_thread_calls
-    assert to_thread_calls[0]["func"] is recover_stub
-    assert to_thread_calls[0]["kwargs"] == {
-        "project_id": sample_project["id"],
-        "max_workspace_inspections": 5,
-    }
+    assert recovery_calls == [
+        {
+            "project_id": sample_project["id"],
+            "max_workspace_inspections": 5,
+        }
+    ]
 
 
-def test_recovery_preserves_active_agent_owned_claim(
+@pytest.mark.asyncio
+async def test_recovery_preserves_active_agent_owned_claim(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -358,9 +435,13 @@ def test_recovery_preserves_active_agent_owned_claim(
         run_id="95a313d5-3aa5-512b-9730-96926fa48273",
     )
     run_manager.start(run.id)
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=([], None)),
+    )
 
-    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+    summary = await claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
 
     assert summary.refused == 1
     assert task_manager.get_task(task.id).claimed_by_session_id == owner_id
@@ -369,7 +450,8 @@ def test_recovery_preserves_active_agent_owned_claim(
     assert payloads[-1]["agent_run_id"] == run.id
 
 
-def test_recovery_releases_terminal_reviewer_owned_claim(
+@pytest.mark.asyncio
+async def test_recovery_releases_terminal_reviewer_owned_claim(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -407,9 +489,13 @@ def test_recovery_releases_terminal_reviewer_owned_claim(
     )
     run_manager.start(run.id)
     run_manager.complete(run.id, result="review done")
-    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+    monkeypatch.setattr(
+        claim_recovery,
+        "_git_status_lines",
+        AsyncMock(return_value=([], None)),
+    )
 
-    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+    summary = await claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
 
     assert summary.released == 1
     assert task_manager.get_task(task.id).claimed_by_session_id is None

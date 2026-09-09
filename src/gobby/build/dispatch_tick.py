@@ -248,8 +248,7 @@ async def kick_dispatcher_tick(
     if db is None:
         return DispatcherTickSummary(ticks=0, reason="database_missing")
 
-    await asyncio.to_thread(
-        recover_safe_build_claims,
+    await recover_safe_build_claims(
         db,
         project_id=project_id,
         max_workspace_inspections=_CLAIM_RECOVERY_WORKSPACE_INSPECTION_LIMIT,

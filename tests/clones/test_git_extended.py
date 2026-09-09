@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ def _managed_clones_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", tmp_path)
 
 
+@pytest.mark.asyncio
 class TestCloneGitManagerFullClone:
     """Tests for CloneGitManager.full_clone method."""
 
@@ -30,16 +31,16 @@ class TestCloneGitManagerFullClone:
 
     @pytest.fixture
     def mock_run(self):
-        """Mock subprocess.run."""
-        with patch("subprocess.run") as mock:
+        """Mock the async Git command boundary."""
+        with patch("gobby.clones.git.CloneGitManager._run_git", new_callable=AsyncMock) as mock:
             yield mock
 
-    def test_full_clone_success(self, manager, mock_run, tmp_path: Path) -> None:
+    async def test_full_clone_success(self, manager, mock_run, tmp_path: Path) -> None:
         """Full clone creates clone without depth limit."""
         mock_run.return_value = MagicMock(returncode=0, stdout="Cloning into 'clone'...", stderr="")
         clone_path = tmp_path / "test_clone"
 
-        result = manager.full_clone(
+        result = await manager.full_clone(
             remote_url="https://github.com/user/repo.git",
             clone_path=clone_path,
             branch="main",
@@ -54,7 +55,7 @@ class TestCloneGitManagerFullClone:
         assert "--depth" not in cmd
         assert "--single-branch" not in cmd
 
-    def test_full_clone_removes_partial_dir_after_git_error(
+    async def test_full_clone_removes_partial_dir_after_git_error(
         self, manager, mock_run, tmp_path: Path
     ) -> None:
         """Full clone cleans up a partial clone after git exits non-zero."""
@@ -67,7 +68,7 @@ class TestCloneGitManagerFullClone:
 
         mock_run.side_effect = run_clone_with_partial_dir
 
-        result = manager.full_clone(
+        result = await manager.full_clone(
             remote_url="https://github.com/user/nonexistent.git",
             clone_path=clone_path,
             branch="main",
@@ -77,6 +78,7 @@ class TestCloneGitManagerFullClone:
         assert not clone_path.exists()
 
 
+@pytest.mark.asyncio
 class TestCloneGitManagerCreateClone:
     """Tests for CloneGitManager.create_clone method."""
 
@@ -89,20 +91,22 @@ class TestCloneGitManagerCreateClone:
 
     @pytest.fixture
     def mock_run(self):
-        """Mock subprocess.run."""
-        with patch("subprocess.run") as mock:
+        """Mock the async Git command boundary."""
+        with patch("gobby.clones.git.CloneGitManager._run_git", new_callable=AsyncMock) as mock:
             yield mock
 
-    def test_create_shallow_clone_success(self, manager, mock_run, tmp_path: Path) -> None:
+    async def test_create_shallow_clone_success(self, manager, mock_run, tmp_path: Path) -> None:
         """Create clone executes shallow clone and returns success."""
         from gobby.clones.git import GitOperationResult
 
         # Mock get_remote_url
         with patch.object(
-            manager, "get_remote_url", return_value="https://github.com/user/repo.git"
+            manager,
+            "get_remote_url",
+            new=AsyncMock(return_value="https://github.com/user/repo.git"),
         ):
             # Mock shallow_clone
-            with patch.object(manager, "shallow_clone") as mock_shallow:
+            with patch.object(manager, "shallow_clone", new_callable=AsyncMock) as mock_shallow:
                 # Use real object instead of MagicMock
                 mock_shallow.return_value = GitOperationResult(
                     success=True, message="Cloned", output="Cloned"
@@ -112,7 +116,7 @@ class TestCloneGitManagerCreateClone:
                 mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
                 clone_path = tmp_path / "test_clone"
-                result = manager.create_clone(
+                result = await manager.create_clone(
                     clone_path=clone_path,
                     branch_name="feature-branch",
                     base_branch="main",
@@ -129,16 +133,24 @@ class TestCloneGitManagerCreateClone:
                 assert "-b" in cmd
                 assert "feature-branch" in cmd
 
-    def test_create_full_clone_success(self, manager, mock_run, tmp_path: Path) -> None:
+    async def test_create_full_clone_success(self, manager, mock_run, tmp_path: Path) -> None:
         """Create clone executes full clone when shallow=False."""
+        from gobby.clones.git import GitOperationResult
+
         with patch.object(
-            manager, "get_remote_url", return_value="https://github.com/user/repo.git"
-        ):
-            with patch.object(manager, "full_clone") as mock_full:
-                mock_full.return_value = MagicMock(success=True, output="Cloned")
+            manager,
+            "get_remote_url",
+            new=AsyncMock(return_value="https://github.com/user/repo.git"),
+        ) as mock_remote:
+            with patch.object(manager, "full_clone", new_callable=AsyncMock) as mock_full:
+                mock_full.return_value = GitOperationResult(
+                    success=True,
+                    message="Cloned",
+                    output="full clone output",
+                )
 
                 clone_path = tmp_path / "test_clone"
-                result = manager.create_clone(
+                result = await manager.create_clone(
                     clone_path=clone_path,
                     branch_name="main",  # Same branch, so no checkout -b
                     base_branch="main",
@@ -146,11 +158,20 @@ class TestCloneGitManagerCreateClone:
                 )
 
                 assert result.success is True
-                mock_full.assert_called_once()
-                # Should NOT call checkout -b since branches match
+                assert (
+                    result.message == f"Successfully created clone at {clone_path} on branch main"
+                )
+                assert result.output == "full clone output"
+                mock_remote.assert_awaited_once_with()
+                mock_full.assert_awaited_once_with(
+                    remote_url="https://github.com/user/repo.git",
+                    clone_path=clone_path,
+                    branch="main",
+                )
                 mock_run.assert_not_called()
 
 
+@pytest.mark.asyncio
 class TestCloneGitManagerMergeBranch:
     """Tests for CloneGitManager.merge_branch method."""
 
@@ -163,11 +184,11 @@ class TestCloneGitManagerMergeBranch:
 
     @pytest.fixture
     def mock_run(self):
-        """Mock subprocess.run."""
-        with patch("subprocess.run") as mock:
+        """Mock the async Git command boundary."""
+        with patch("gobby.clones.git.CloneGitManager._run_git", new_callable=AsyncMock) as mock:
             yield mock
 
-    def test_merge_branch_success(self, manager, mock_run, tmp_path: Path) -> None:
+    async def test_merge_branch_success(self, manager, mock_run, tmp_path: Path) -> None:
         """Merge branch succeeds when no conflicts."""
         # Sequence: rev-parse, fetch, checkout, pull, merge, checkout-restore
         mock_run.side_effect = [
@@ -179,14 +200,14 @@ class TestCloneGitManagerMergeBranch:
             MagicMock(returncode=0),  # checkout restore (finally)
         ]
 
-        result = manager.merge_branch(
+        result = await manager.merge_branch(
             source_branch="feature", target_branch="main", working_dir=tmp_path
         )
 
         assert result.success is True
         assert mock_run.call_count == 6
 
-    def test_merge_branch_conflict(self, manager, mock_run, tmp_path: Path) -> None:
+    async def test_merge_branch_conflict(self, manager, mock_run, tmp_path: Path) -> None:
         """Merge branch handles conflicts and restores original branch."""
         # Sequence: rev-parse, fetch, checkout, pull, merge (fail), diff, abort, checkout-restore
         mock_run.side_effect = [
@@ -202,7 +223,7 @@ class TestCloneGitManagerMergeBranch:
             MagicMock(returncode=0),  # checkout restore (finally)
         ]
 
-        result = manager.merge_branch(
+        result = await manager.merge_branch(
             source_branch="feature", target_branch="main", working_dir=tmp_path
         )
 
