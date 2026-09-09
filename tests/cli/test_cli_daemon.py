@@ -1099,6 +1099,7 @@ class TestStopCommand:
             quiet=False,
             shutdown_intent="stop",
             shutdown_source="cli_stop",
+            drain_terminals=False,
         )
         assert mock_stop_daemon.call_count == 1
         assert mock_stop_daemon.call_args is not None
@@ -1124,6 +1125,7 @@ class TestStopCommand:
             quiet=False,
             shutdown_intent="stop",
             shutdown_source="cli_stop",
+            drain_terminals=False,
         )
         assert mock_stop_daemon.call_count == 1
         assert mock_stop_daemon.call_args is not None
@@ -1162,6 +1164,7 @@ class TestStopCommand:
         mock_service_stop.assert_called_once_with(
             shutdown_intent="stop",
             shutdown_source="cli_stop",
+            drain_terminals=False,
         )
         mock_wait_for_service_stop.assert_called_once_with(
             4321,
@@ -1212,8 +1215,9 @@ class TestStopCommand:
             quiet=False,
             shutdown_intent="stop",
             shutdown_source="cli_stop",
+            drain_terminals=False,
         )
-        mock_write_shutdown_source.assert_called_once_with("cli_stop", intent="stop")
+        mock_write_shutdown_source.assert_called_once_with("cli_stop", intent="stop", details=None)
 
 
 class TestRestartCommand:
@@ -1298,6 +1302,7 @@ class TestRestartCommand:
         mock_service_stop.assert_called_once_with(
             shutdown_intent="restart",
             shutdown_source="cli_restart",
+            drain_terminals=False,
         )
         mock_service_start.assert_called_once()
         mock_wait_for_service_stop.assert_called_once_with(
@@ -1446,6 +1451,7 @@ class TestRestartCommand:
         mock_service_stop.assert_called_once_with(
             shutdown_intent="restart",
             shutdown_source="cli_restart",
+            drain_terminals=False,
         )
         mock_service_start.assert_called_once()
         mock_wait_for_service_stop.assert_called_once_with(
@@ -1503,6 +1509,7 @@ class TestRestartCommand:
         mock_service_stop.assert_called_once_with(
             shutdown_intent="restart",
             shutdown_source="cli_restart",
+            drain_terminals=False,
         )
         mock_wait_for_service_stop.assert_called_once_with(
             4321,
@@ -1592,6 +1599,7 @@ class TestRestartCommand:
             quiet=False,
             shutdown_intent="restart",
             shutdown_source="cli_restart",
+            drain_terminals=False,
         )
 
     @patch("gobby.cli.daemon.fetch_rich_status")
@@ -2563,6 +2571,7 @@ def test_stop_force_interrupts_a_protected_run(
         quiet=False,
         shutdown_intent="stop",
         shutdown_source="cli_stop",
+        drain_terminals=False,
     )
 
 

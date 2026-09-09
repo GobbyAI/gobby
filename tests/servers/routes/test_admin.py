@@ -43,9 +43,16 @@ class RunnerShutdownStub:
         self._shutdown_requested = False
         self._shutdown_intent: ShutdownIntent | None = None
         self.request_shutdown_calls: list[ShutdownIntent | None] = []
+        self.drain_terminals = False
 
-    def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
+    def request_shutdown(
+        self,
+        intent: ShutdownIntent | None = None,
+        *,
+        drain_terminals: bool = False,
+    ) -> None:
         self.request_shutdown_calls.append(intent)
+        self.drain_terminals = drain_terminals
         if intent is not None:
             self._shutdown_intent = intent
         self._shutdown_requested = True
@@ -1046,7 +1053,13 @@ class TestAdminRoutes:
     ) -> None:
         events: list[str] = []
 
-        def request_shutdown(_server: object, _intent: ShutdownIntent) -> bool:
+        def request_shutdown(
+            _server: object,
+            _intent: ShutdownIntent,
+            *,
+            drain_terminals: bool = False,
+        ) -> bool:
+            assert drain_terminals is False
             events.append("request_runner_shutdown")
             return True
 

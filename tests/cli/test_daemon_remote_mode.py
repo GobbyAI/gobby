@@ -72,6 +72,7 @@ def test_restart_skips_services_in_remote_mode(tmp_path: Path) -> None:
         quiet=False,
         shutdown_intent="restart",
         shutdown_source="cli_restart",
+        drain_terminals=False,
     )
     services_stop.assert_not_called()
     assert start_result.outcome == "skipped"

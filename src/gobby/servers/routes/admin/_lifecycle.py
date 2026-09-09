@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Response
 
 from gobby.paths import get_gobby_home
-from gobby.shutdown_intent import ShutdownIntent
+from gobby.shutdown_intent import ShutdownIntent, shutdown_marker_details
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -178,7 +178,12 @@ def _spawn_restart_helper(
     )
 
 
-def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bool:
+def _request_runner_shutdown(
+    server: "HTTPServer",
+    intent: ShutdownIntent,
+    *,
+    drain_terminals: bool = False,
+) -> bool:
     """Set the in-process runner shutdown state when this server owns one."""
     runner = getattr(server, "_runner", None)
     if runner is None:
@@ -189,7 +194,10 @@ def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bo
     request_shutdown = getattr(type(runner), "request_shutdown", None)
     if not callable(request_shutdown):
         return False
-    runner.request_shutdown(intent)
+    if drain_terminals:
+        runner.request_shutdown(intent, drain_terminals=True)
+    else:
+        runner.request_shutdown(intent)
     return True
 
 
@@ -207,9 +215,12 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         return {"runs": runs}
 
     @router.post("/shutdown")
-    async def shutdown(response: Response) -> dict[str, Any]:
+    async def shutdown(response: Response, terminals: bool = False) -> dict[str, Any]:
         """
         Graceful daemon shutdown endpoint.
+
+        ``terminals=true`` also drains the gterm host; by default it and its
+        native terminals survive the daemon (#22002).
 
         Returns:
             Shutdown confirmation
@@ -221,8 +232,17 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             logger.debug("Shutdown requested via HTTP endpoint")
             from gobby.runner_maintenance import write_shutdown_source
 
-            write_shutdown_source("http_shutdown", intent="stop")
-            runner_shutdown_requested = _request_runner_shutdown(server, ShutdownIntent.STOP)
+            if terminals:
+                write_shutdown_source(
+                    "http_shutdown",
+                    intent="stop",
+                    details=shutdown_marker_details(drain_terminals=True),
+                )
+            else:
+                write_shutdown_source("http_shutdown", intent="stop")
+            runner_shutdown_requested = _request_runner_shutdown(
+                server, ShutdownIntent.STOP, drain_terminals=terminals
+            )
 
             if not runner_shutdown_requested:
                 task = asyncio.create_task(server._process_shutdown())
@@ -246,12 +266,17 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
     @router.post("/restart")
-    async def restart(response: Response, force: bool = False) -> dict[str, Any]:
+    async def restart(
+        response: Response,
+        force: bool = False,
+        terminals: bool = False,
+    ) -> dict[str, Any]:
         """
         Graceful daemon restart endpoint.
 
         Spawns a detached restarter subprocess that waits for the current
         daemon to exit, then starts a new one. Returns immediately.
+        ``terminals=true`` also restarts the gterm host (#22002).
         """
         start_time = time.perf_counter()
 
@@ -287,8 +312,17 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             from gobby.runner_maintenance import write_shutdown_source
 
-            write_shutdown_source("http_restart", intent="restart")
-            runner_shutdown_requested = _request_runner_shutdown(server, ShutdownIntent.RESTART)
+            if terminals:
+                write_shutdown_source(
+                    "http_restart",
+                    intent="restart",
+                    details=shutdown_marker_details(drain_terminals=True),
+                )
+            else:
+                write_shutdown_source("http_restart", intent="restart")
+            runner_shutdown_requested = _request_runner_shutdown(
+                server, ShutdownIntent.RESTART, drain_terminals=terminals
+            )
 
             if runner_shutdown_requested:
                 shutdown_initiated = True

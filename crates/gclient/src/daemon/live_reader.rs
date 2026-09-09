@@ -241,16 +241,12 @@ fn decode_frame(message: Message) -> Result<Option<Value>, DaemonError> {
             .map(Some)
             .map_err(protocol_error),
         Message::Binary(bytes) => decode_message(&bytes).map(Some).map_err(protocol_error),
-        Message::Close(frame) => {
-            if frame
-                .as_ref()
-                .is_some_and(|frame| u16::from(frame.code) == 4401)
-            {
-                Err(DaemonError::Unauthorized)
-            } else {
-                Err(DaemonError::Unavailable { retry_after: None })
-            }
-        }
+        Message::Close(frame) => match frame.as_ref().map(|frame| u16::from(frame.code)) {
+            Some(4401) => Err(DaemonError::Unauthorized),
+            // 1001 "going away" is the daemon's own shutdown close (#22002).
+            Some(1001) => Err(DaemonError::GoingAway),
+            _ => Err(DaemonError::Unavailable { retry_after: None }),
+        },
         Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => Ok(None),
     }
 }

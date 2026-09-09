@@ -48,9 +48,17 @@ async def _agent_live_sessions_by_name(
 
 
 def _host_preserve_pids(runner: GobbyRunner) -> set[int]:
-    """Host PID from the live gterm supervisor, if identity-checked."""
+    """Identity-checked gterm host PID to keep out of the child reap.
+
+    The supervisor answers from its pidfile as well as its live handle, so a
+    host that was preserved by ``stop()`` still survives the reaper; a drained
+    host returns nothing and is reaped with the rest of the tree (#22002).
+    """
     host = getattr(runner, "terminal_host_manager", None)
-    pid = getattr(host, "host_pid", None)
+    preserved = getattr(host, "preserved_host_pid", None)
+    if not callable(preserved):
+        return set()
+    pid = preserved()
     if isinstance(pid, int) and pid > 0:
         return {pid}
     return set()

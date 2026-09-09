@@ -209,7 +209,7 @@ class ContractHarness:
             if self.sessions is not None and self.tmux_socket is not None:
                 cleanup.push_async_callback(self.sessions._run, "kill-server")
             if self.host is not None:
-                cleanup.push_async_callback(self.host.stop, preserve_host=False)
+                cleanup.push_async_callback(self.host.stop, drain_host=True)
             if self.frame_client is not None:
                 cleanup.push_async_callback(self.frame_client.close)
             cleanup.push_async_callback(self.runtime.terminate, self.terminal, 0.2)
@@ -311,10 +311,10 @@ async def _start_harness(backend: str) -> ContractHarness:
                 ),
                 terminal_config=TerminalConfig(),
             )
-            cleanup.push_async_callback(host.stop, preserve_host=False)
+            cleanup.push_async_callback(host.stop, drain_host=True)
             await host.start()
             if not host.native_available or host.host_epoch is None:
-                await host.stop(preserve_host=False)
+                await host.stop(drain_host=True)
                 shutil.rmtree(socket_dir, ignore_errors=True)
                 pytest.fail(f"gterm host failed to start: {host.last_error}")
             epoch = str(host.host_epoch)

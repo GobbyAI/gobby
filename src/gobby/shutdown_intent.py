@@ -47,6 +47,14 @@ class ShutdownIntentRecord:
     def preserve_agents(self) -> bool:
         return self.intent.preserve_agents
 
+    @property
+    def drain_terminals(self) -> bool:
+        """Operator opt-in to drain the gterm host with this shutdown (#22002)."""
+        details = (self.raw or {}).get("details")
+        if not isinstance(details, dict):
+            return False
+        return bool(details.get("drain_terminals"))
+
 
 def coerce_shutdown_intent(value: str | ShutdownIntent | None) -> ShutdownIntent:
     """Coerce raw marker values to a shutdown intent."""
@@ -74,6 +82,13 @@ def get_shutdown_source_path(home: Path | None = None) -> Path:
 
 
 get_active_shutdown_marker_path = get_shutdown_marker_path
+
+
+def shutdown_marker_details(*, drain_terminals: bool) -> dict[str, object] | None:
+    """Marker ``details`` for a shutdown; ``None`` unless an opt-in was given."""
+    if drain_terminals:
+        return {"drain_terminals": True}
+    return None
 
 
 def write_shutdown_intent(

@@ -671,11 +671,13 @@ async def _run_async_shutdown_cleanup(
         )
     host = getattr(runner, "terminal_host_manager", None)
     if host is not None:
-        preserve_host = shutdown_intent is ShutdownIntent.RESTART
+        # The host outlives every shutdown intent; only an explicit operator
+        # opt-in (`gobby stop --terminals`, `shutdown?terminals=true`) drains it.
+        drain_host = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
         stop = getattr(host, "stop", None)
         if callable(stop):
             await _best_effort(
-                lambda: stop(preserve_host=preserve_host),
+                lambda: stop(drain_host=drain_host),
                 "gterm host stop",
             )
     _best_effort_sync(

@@ -6,12 +6,11 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.shutdown_intent import (
-    ShutdownIntent,
     ShutdownIntentRecord,
     format_shutdown_source,
     read_shutdown_intent,
@@ -51,6 +50,7 @@ def write_shutdown_source(
     sender_pid: int | None = None,
     *,
     intent: str | None = None,
+    details: Mapping[str, object] | None = None,
 ) -> None:
     """Write a marker file identifying why/who is sending SIGTERM."""
     try:
@@ -61,6 +61,7 @@ def write_shutdown_source(
             intent or ShutdownIntent.STOP,
             sender_pid=sender_pid,
             home=get_gobby_home(),
+            details=details,
         )
     except Exception as e:
         logger.debug(
@@ -74,7 +75,7 @@ def write_shutdown_source(
 
 def setup_signal_handlers(
     shutdown_callback: Callable[[], None],
-    shutdown_intent_callback: Callable[[ShutdownIntent], None] | None = None,
+    shutdown_intent_callback: Callable[..., None] | None = None,
 ) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
@@ -111,7 +112,10 @@ def setup_signal_handlers(
                 logger.info("Shutdown source: %s", format_shutdown_source(shutdown_record))
                 if shutdown_intent_callback is not None:
                     try:
-                        shutdown_intent_callback(shutdown_record.intent)
+                        shutdown_intent_callback(
+                            shutdown_record.intent,
+                            drain_terminals=shutdown_record.drain_terminals,
+                        )
                     except Exception:
                         logger.exception("Shutdown intent callback failed")
             else:
