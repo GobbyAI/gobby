@@ -612,15 +612,19 @@ class TestRequireStepCompletion:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
     @pytest.mark.parametrize("review_status", ["pending", "running"])
+    @pytest.mark.parametrize("observer", [False, True])
     async def test_close_review_wait_yields_without_completing_step_and_rearms_after_verdict(
         self,
         db: HubDatabase,
         close_review_wait: tuple[str, str, LocalAgentRunManager],
         event_type: HookEventType,
         review_status: str,
+        observer: bool,
     ) -> None:
         _sync_bundled(db)
         caller_id, review_run_id, runs = close_review_wait
+        if observer:
+            caller_id = SESSION_ID
         if review_status == "running":
             assert runs.start(review_run_id) is not None
         subscribers = CompletionSubscriberManager(db)
@@ -655,8 +659,8 @@ class TestRequireStepCompletion:
         assert variables["stop_attempts"] == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("wait_state", ["missing", "foreign", "orphan"])
-    async def test_incomplete_step_blocks_without_an_owned_active_completion_wait(
+    @pytest.mark.parametrize("wait_state", ["missing", "orphan"])
+    async def test_incomplete_step_blocks_without_an_active_completion_wait(
         self,
         db: HubDatabase,
         close_review_wait: tuple[str, str, LocalAgentRunManager],
@@ -665,10 +669,7 @@ class TestRequireStepCompletion:
         _sync_bundled(db)
         caller_id, review_run_id, _runs = close_review_wait
         subscribers = CompletionSubscriberManager(db)
-        if wait_state == "foreign":
-            caller_id = SESSION_ID
-            subscribers.add_completion_subscriber(review_run_id, caller_id)
-        elif wait_state == "orphan":
+        if wait_state == "orphan":
             subscribers.add_completion_subscriber("22222222-2222-4222-8222-222222222222", caller_id)
         variables: dict[str, object] = {
             "is_spawned_agent": True,

@@ -84,7 +84,12 @@ class PipelineCompletionSubscriberMixin:
         return [str(row["completion_id"]) for row in rows]
 
     def has_active_agent_wait(self, session_id: str) -> bool:
-        """Return whether a session is durably waiting on one of its active agent runs."""
+        """Return whether a session has a durable subscription to an active agent.
+
+        ``wait_for_agent`` also supports observers of daemon-launched runs. The
+        subscription belongs to the waiting session even when it is not the parent.
+        Terminal and orphaned subscriptions cannot keep the stop gates suppressed.
+        """
         from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 
         try:
@@ -95,11 +100,10 @@ class PipelineCompletionSubscriberMixin:
                     FROM completion_subscribers AS subscribers
                     JOIN agent_runs AS runs ON runs.id = subscribers.completion_id
                     WHERE subscribers.session_id = %s
-                      AND runs.parent_session_id = %s
                       AND runs.status = ANY(%s)
                 ) AS has_active_agent_wait
                 """,
-                (session_id, session_id, list(ACTIVE_AGENT_RUN_STATUSES)),
+                (session_id, list(ACTIVE_AGENT_RUN_STATUSES)),
             )
         except Exception as exc:
             raise PipelineSubscriberStorageError(
