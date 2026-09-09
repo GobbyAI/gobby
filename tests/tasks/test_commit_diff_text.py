@@ -61,6 +61,18 @@ def test_single_commit_returns_exactly_its_patch(repo: Path) -> None:
     assert collect_commit_diff_text([sha], cwd=repo) == _show(repo, sha)
 
 
+def test_net_patch_preserves_crlf_bytes(repo: Path) -> None:
+    path = repo / "crlf.txt"
+    path.write_bytes(b"first\r\nsecond\r\n")
+    _git(repo, "add", path.name)
+    _git(repo, "commit", "--no-gpg-sign", "-q", "-m", "add crlf")
+    sha = _git(repo, "rev-parse", "HEAD")
+
+    diff = collect_commit_diff_text([sha], cwd=repo)
+
+    assert "+first\r\n+second" in diff
+
+
 def test_later_commit_supersedes_an_earlier_hunk(repo: Path) -> None:
     """The reviewer sees the code as it stands after every linked commit, not each step."""
     first = _commit(repo, "gate.py", "def fetch():\n    return get(url, timeout=3)\n", "add gate")

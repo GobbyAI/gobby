@@ -366,22 +366,24 @@ def _run_git_worker(
     input_text: str | None,
 ) -> None:
     """Own one process from spawn through communication and leader reap."""
-    process: subprocess.Popen[str] | None = None
+    process: subprocess.Popen[bytes] | None = None
     try:
+        input_bytes = (
+            input_text.encode("utf-8", errors="surrogateescape") if input_text is not None else None
+        )
         process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
             argv,
             cwd=cwd,
             stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="surrogateescape",
             env=env if env is not None else git_subprocess_env(),
             start_new_session=True,
         )
         control.attach(process)
-        stdout, stderr = process.communicate(input_text)
+        stdout_bytes, stderr_bytes = process.communicate(input_bytes)
+        stdout = stdout_bytes.decode("utf-8", errors="surrogateescape")
+        stderr = stderr_bytes.decode("utf-8", errors="surrogateescape")
         if process.returncode == 0:
             result: GitOk | GitFailed = GitOk("ok", argv, stdout, stderr)
         else:
