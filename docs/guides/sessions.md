@@ -255,9 +255,10 @@ call_tool("gobby-sessions", "get_session_commits", {
 
 `set_handoff` operates on the current session context. It requires a nonblank
 current state and at least one nonblank next step. Optional entries reject blanks;
-references are deduplicated in their original order. Feedback can be captured through
-the dedicated `gobby-sessions:feedback` tool or the `gobby_feedback` field on
-`set_handoff`. Both paths use the same validation and storage contract.
+references are deduplicated in their original order. Rendered handoff content is
+limited to 10,000 JSON-escaped characters including formatting. Oversized content
+is rejected before staging; shorten it and retry. Submit required feedback through
+`gobby-sessions:feedback` first, then call `set_handoff` last.
 
 Load the standalone `handoff-discipline` skill before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;
@@ -305,16 +306,15 @@ call_tool("gobby-sessions", "set_handoff", {
     "problems_encountered": ["Delivery state was previously implicit"],
     "what_didnt_work": ["Treating mutable Markdown as proof of delivery"],
     "references": ["#21140"],
-    "clear_session": False,
-    "gobby_feedback": []
+    "clear_session": False
 })
 ```
 
 When the session-feedback survey applies and this epoch has no response,
-`set_handoff` requires `gobby_feedback`; `[]` records a completed survey with
-nothing to report. Validation and persistence happen before handoff staging, so
-a staging retry does not duplicate feedback. The retired before-tool survey gate
-is no longer part of this path.
+call `feedback(observations=[])` if there is nothing to report, or submit up to
+three observations. Successful submission satisfies the epoch gate without marking
+feedback human-reviewed. Then call `set_handoff`; staging retries do not require
+resubmission.
 
 Context pressure is configured under `context_handoff`. Windows below
 `small_window_tokens` use the ratio thresholds; standard windows below
@@ -403,8 +403,10 @@ sequenceDiagram
     participant Provider
     participant Continuation
 
-    Session->>Gobby: set_handoff(structured fields, clear_session, gobby_feedback)
-    Gobby->>Gobby: validate/store survey and mark epoch reviewed
+    Session->>Gobby: feedback(observations)
+    Gobby->>Gobby: validate/store survey and mark epoch submitted
+    Gobby-->>Session: submission success
+    Session->>Gobby: set_handoff(bounded structured fields, clear_session)
     Gobby->>Gobby: atomically stage structured content, Markdown, and marker
     Gobby-->>Session: staged success (delivery_pending)
     Session->>Hook: normalized tool completion

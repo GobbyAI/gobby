@@ -48,6 +48,10 @@ class DeliveredHandoff:
     delivered_at: datetime
 
 
+MAX_HANDOFF_CONTENT_CHARS = 10_000
+MAX_HANDOFF_RESULT_CHARS = 12_000
+
+
 def build_handoff_payload(
     *,
     current_state: str,
@@ -86,6 +90,13 @@ def build_handoff_payload(
         if entries:
             sections.extend(("", f"## {heading}", "", *(f"- {entry}" for entry in entries)))
     markdown = "\n".join(sections).strip()
+    encoded_size = len(json.dumps(markdown))
+    if encoded_size > MAX_HANDOFF_CONTENT_CHARS:
+        raise ValueError(
+            f"Handoff is too large: {encoded_size} JSON-escaped characters; "
+            f"limit is {MAX_HANDOFF_CONTENT_CHARS}. Shorten the handoff and retry. "
+            "Keep only current state and next actions; reference existing evidence for details."
+        )
     return HandoffPayload(
         current_state=state,
         next_steps=normalized_next_steps,

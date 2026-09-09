@@ -511,7 +511,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `get_session_commits` | Git commits made during a session timeframe. |
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
 | `feedback` | Write Gobby-experience survey observations into `session_feedback` (enum `kind`/`frequency`/`disposition`; `kind` `other` requires `kind_other_label`). Empty `observations` is valid. |
-| `set_handoff` | Persist a structured handoff and compact or clear the current session. Accepts optional `gobby_feedback`; surveyed sessions must supply it once per context epoch, and `[]` means nothing to report. |
+| `set_handoff` | Persist a structured handoff and compact or clear the current session. Requires separate successful `feedback` submission when surveyed; call it last with at most 10,000 JSON-escaped characters of rendered handoff content. |
 | `get_handoff` | Read handoff context from a session. |
 | `get_handoff` | Wait for a session's `summary_markdown` to become available. |
 | `mark_loop_complete` | Mark the autonomous loop as complete to prevent session chaining. |

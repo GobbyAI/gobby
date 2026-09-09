@@ -125,6 +125,15 @@ class ToolResultOffloader:
             )
             return result
 
+        # Authored handoffs are capped before staging. Keep only bounded handoffs
+        # inline even when an operator lowers the generic offload threshold.
+        from gobby.sessions.handoff_records import MAX_HANDOFF_RESULT_CHARS
+
+        if (
+            identity == "gobby-sessions/get_handoff"
+            and len(serialized.text) <= MAX_HANDOFF_RESULT_CHARS
+        ):
+            return result
         if len(serialized.text) <= self._config.threshold_chars:
             return result
 

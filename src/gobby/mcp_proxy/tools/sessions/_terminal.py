@@ -15,10 +15,6 @@ from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
-from gobby.mcp_proxy.tools.sessions._handoff import (
-    FEEDBACK_OBSERVATION_INPUT_SCHEMA,
-    build_feedback_task_resolver,
-)
 from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
     _CLI_COMPACT_COMMANDS,
     _CLI_COMPACT_INTERRUPT_KEYS,
@@ -47,11 +43,9 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
     _read_transcript_tail_lines,
 )
 from gobby.sessions.handoff import (
-    normalize_feedback_observations,
     restore_handoff_attempt,
     stage_handoff_attempt,
     staged_handoff_tool_result,
-    write_feedback_batch,
 )
 from gobby.sessions.handoff_records import (
     HandoffPayload,
@@ -504,7 +498,6 @@ def register_terminal_tools(
         notes: list[str] | None = None,
         references: list[str] | None = None,
         clear_session: bool = False,
-        gobby_feedback: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         try:
             handoff = build_handoff_payload(
@@ -521,7 +514,7 @@ def register_terminal_tools(
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
 
-        feedback_status = _prepare_handoff_feedback(gobby_feedback)
+        feedback_status = _require_handoff_feedback()
         if feedback_status.get("success") is False:
             return feedback_status
 
@@ -542,9 +535,7 @@ def register_terminal_tools(
         result.update(feedback_status)
         return result
 
-    def _prepare_handoff_feedback(
-        gobby_feedback: list[dict[str, Any]] | None,
-    ) -> dict[str, Any]:
+    def _require_handoff_feedback() -> dict[str, Any]:
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
@@ -564,9 +555,9 @@ def register_terminal_tools(
         assert session is not None
 
         variable_manager = SessionVariableManager(db)
-        reviewed = (
+        submitted = (
             variable_manager.get_variables(resolved_session_id).get(
-                "_gobby_feedback_epoch_reviewed"
+                "_gobby_feedback_epoch_submitted"
             )
             is True
         )
@@ -577,43 +568,17 @@ def register_terminal_tools(
         scope = getattr(feedback_config, "survey", "gobby")
         survey_active = survey_is_active(scope, project.name if project is not None else "")
 
-        if survey_active and not reviewed and gobby_feedback is None:
+        if survey_active and not submitted:
             return {
                 "success": False,
                 "error_code": "feedback_required",
                 "error": (
                     "This project requires the bounded Gobby-experience survey before handoff. "
-                    "Pass gobby_feedback with at most 3 observations, or [] when there is "
-                    "nothing to report."
+                    "Call gobby-sessions:feedback with at most 3 observations, or "
+                    "observations=[] when there is nothing to report. Then call set_handoff last."
                 ),
             }
-        if reviewed:
-            return {"feedback_skipped": "already_surveyed"}
-        if gobby_feedback is None:
-            return {"feedback_skipped": "not_required"}
-
-        try:
-            task_resolver = build_feedback_task_resolver(
-                session_manager,
-                task_manager,
-                resolved_session_id,
-            )
-            observations = normalize_feedback_observations(
-                gobby_feedback,
-                resolve_task=(task_resolver.resolve_task if task_resolver is not None else None),
-                descendant_session_ids=(
-                    task_resolver.descendant_session_ids if task_resolver is not None else ()
-                ),
-                session_id=resolved_session_id,
-            )
-        except ValueError as exc:
-            return {"success": False, "error_code": "invalid_feedback", "error": str(exc)}
-        write_feedback_batch(db, resolved_session_id, observations)
-        variable_manager.merge_variables(
-            resolved_session_id,
-            {"_gobby_feedback_epoch_reviewed": True},
-        )
-        return {"feedback_recorded": len(observations)}
+        return {"feedback_submitted": submitted}
 
     async def _compact_with_handoff(
         handoff: HandoffPayload,
@@ -804,7 +769,10 @@ def register_terminal_tools(
         description=(
             "Persist a structured handoff, then compact "
             "the current session or clear into a successor when clear_session=true. "
-            "Requires nonblank current_state and at least one nonblank next step. In a "
+            "Requires nonblank current_state and at least one nonblank next step. "
+            "Rendered content is limited to 10,000 JSON-escaped characters including "
+            "formatting; shorten oversized content and retry. Submit required feedback "
+            "separately through feedback first, then call set_handoff last. In a "
             "terminal session the daemon interrupts the active turn, confirms the interrupt "
             "from the transcript, clears the composer, and submits the provider command; "
             "provider cancellation or rejection immediately after this call is the expected "
@@ -859,14 +827,6 @@ def register_terminal_tools(
                     "default": [],
                 },
                 "clear_session": {"type": "boolean", "default": False},
-                "gobby_feedback": {
-                    "type": "array",
-                    "items": FEEDBACK_OBSERVATION_INPUT_SCHEMA,
-                    "description": (
-                        "Required when the Gobby-experience survey applies and this context "
-                        "epoch has not answered it. Pass [] when there is nothing to report."
-                    ),
-                },
             },
             "required": ["current_state", "next_steps"],
             "additionalProperties": False,

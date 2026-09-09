@@ -1228,7 +1228,7 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
     assert schema is not None
     assert schema.input_schema["required"] == ["current_state", "next_steps"]
     properties = schema.input_schema["properties"]
-    assert properties["gobby_feedback"]["items"] is FEEDBACK_OBSERVATION_INPUT_SCHEMA
+    assert "gobby_feedback" not in properties
     assert tuple(properties) == (
         "current_state",
         "next_steps",
@@ -1240,7 +1240,6 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         "notes",
         "references",
         "clear_session",
-        "gobby_feedback",
     )
     assert properties["current_state"]["minLength"] == 1
     assert properties["next_steps"]["minItems"] == 1

@@ -2149,7 +2149,7 @@ class TestStagedEffectsCrossRuntimeThread:
 
         staged = {
             "session_id": SESSION_ID,
-            "session_variables": {"_gobby_feedback_epoch_reviewed": True},
+            "session_variables": {"_gobby_feedback_epoch_submitted": True},
         }
         runtime_thread: dict[str, str] = {}
 

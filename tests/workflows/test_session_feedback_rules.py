@@ -224,7 +224,8 @@ class TestSessionFeedbackRules:
         stop_body = RuleDefinitionBody.model_validate(stop.definition_json)
         stop_reason = stop_body.resolved_effects[0].reason or ""
         assert "gobby-sessions:feedback" in stop_reason
-        assert "set_handoff(gobby_feedback=...)" in stop_reason
+        assert "set_handoff" in stop_reason
+        assert "gobby_feedback=" not in stop_reason
         assert "missing-affordance" in stop_reason
         assert "kind_other_label" in stop_reason
         assert "gobby-<server>:<tool>" in stop_reason
@@ -249,7 +250,7 @@ class TestSessionFeedbackRules:
         assert variables[SURVEY_ACTIVE_VARIABLE] is True
 
     @pytest.mark.asyncio
-    async def test_stop_gate_blocks_once_when_completed_work_is_pending(
+    async def test_stop_gate_does_not_acknowledge_submission_on_prompt_delivery(
         self, db: HubDatabase
     ) -> None:
         _sync_bundled(db)
@@ -267,8 +268,8 @@ class TestSessionFeedbackRules:
         assert first.decision == "block"
         assert "gobby-sessions:feedback" in (first.reason or "")
         assert INBOX_PATH not in (first.reason or "")
-        assert variables["_gobby_feedback_epoch_reviewed"] is True
-        assert second.decision == "allow"
+        assert not variables.get("_gobby_feedback_epoch_submitted")
+        assert second.decision == "block"
 
     @pytest.mark.asyncio
     async def test_off_suppresses_stop_gate(self, db: HubDatabase) -> None:
@@ -323,7 +324,7 @@ class TestSessionFeedbackRules:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("event", "expected_reviewed"),
+        ("event", "expected_submitted"),
         [
             (_session_start_event("compact"), False),
             (_session_start_event("clear"), False),
@@ -337,19 +338,19 @@ class TestSessionFeedbackRules:
         self,
         db: HubDatabase,
         event: HookEvent,
-        expected_reviewed: bool,
+        expected_submitted: bool,
     ) -> None:
         _sync_bundled(db)
         _enable_rules(db, "reset-gobby-session-feedback-on-context-reset")
         variables: dict[str, Any] = {
             "project": _project(),
             "pending_context_reset": bool(event.data.get("_pending_context_reset")),
-            "_gobby_feedback_epoch_reviewed": True,
+            "_gobby_feedback_epoch_submitted": True,
         }
 
         await _engine(db).evaluate(event, SESSION_ID, variables)
 
-        assert variables["_gobby_feedback_epoch_reviewed"] is expected_reviewed
+        assert variables["_gobby_feedback_epoch_submitted"] is expected_submitted
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -367,7 +368,7 @@ class TestSessionFeedbackRules:
             "project": _project(),
             "task_claimed": True,
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
-            "_gobby_feedback_epoch_reviewed": True,
+            "_gobby_feedback_epoch_submitted": True,
         }
         engine = _engine(db)
 
@@ -375,21 +376,21 @@ class TestSessionFeedbackRules:
         stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
         handoff = await engine.evaluate(_sessions_tool_event("set_handoff"), SESSION_ID, variables)
 
-        assert variables["_gobby_feedback_epoch_reviewed"] is True
+        assert variables["_gobby_feedback_epoch_submitted"] is True
         assert stop.decision == "allow"
         assert handoff.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_successful_feedback_marks_epoch_reviewed(self, db: HubDatabase) -> None:
+    async def test_successful_feedback_marks_epoch_submitted(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         _enable_rules(db, "mark-gobby-session-feedback-submitted")
         variables: dict[str, Any] = {
             "project": _project(),
-            "_gobby_feedback_epoch_reviewed": False,
+            "_gobby_feedback_epoch_submitted": False,
         }
 
         await _engine(db).evaluate(
             _sessions_tool_event("feedback", after=True), SESSION_ID, variables
         )
 
-        assert variables["_gobby_feedback_epoch_reviewed"] is True
+        assert variables["_gobby_feedback_epoch_submitted"] is True

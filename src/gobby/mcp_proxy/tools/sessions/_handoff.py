@@ -19,6 +19,7 @@ from gobby.sessions.handoff import (
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
 from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -235,7 +236,11 @@ def register_handoff_tools(
                 ),
                 session_id=session_id,
             )
-            ids = write_feedback_batch(session_manager.db, session_id, normalized)
+            with session_manager.db.transaction():
+                ids = write_feedback_batch(session_manager.db, session_id, normalized)
+                SessionVariableManager(session_manager.db).merge_variables(
+                    session_id, {"_gobby_feedback_epoch_submitted": True}
+                )
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_feedback"}
         return {"success": True, "created": len(ids), "feedback_ids": ids}

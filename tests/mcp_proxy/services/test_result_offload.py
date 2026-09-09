@@ -238,6 +238,57 @@ async def test_mandatory_exemptions_cannot_be_removed_by_config(
     harness.store.save.assert_not_called()
 
 
+@pytest.mark.parametrize("agent_end", [False, True])
+@pytest.mark.parametrize("tool_name", ["get_handoff", "get_session_messages"])
+async def test_bounded_handoff_stays_inline_at_lower_configured_threshold(
+    agent_end: bool, tool_name: str
+) -> None:
+    from gobby.sessions.handoff_records import MAX_HANDOFF_CONTENT_CHARS, build_handoff_payload
+
+    seed = build_handoff_payload(current_state="Ready", next_steps=["Continue"])
+    remaining = MAX_HANDOFF_CONTENT_CHARS - len(json.dumps(seed.rendered_markdown))
+    payload = build_handoff_payload(
+        current_state="Ready" + "x" * remaining, next_steps=["Continue"]
+    )
+    result = {
+        "success": True,
+        "found": True,
+        "session_id": "s" * 36,
+        "handoff": payload.rendered_markdown,
+    }
+    if agent_end:
+        result.update(handoff_id="h" * 36, agent_run_id="r" * 36, boundary_kind="agent_end")
+    harness = _harness(
+        config=_config(threshold_chars=3_000, exempt_tools=[], max_stored_chars=20_000)
+    )
+    actual = await harness.offloader.maybe_offload(
+        server_name="gobby-sessions",
+        tool_name=tool_name,
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+    if tool_name == "get_handoff":
+        assert actual is result
+        harness.store.save.assert_not_called()
+    else:
+        assert actual["offloaded"] is True
+        harness.store.save.assert_called_once()
+
+
+async def test_handoff_inline_exception_is_bounded() -> None:
+    harness = _harness(config=_config(exempt_tools=[], max_stored_chars=30_000))
+    actual = await harness.offloader.maybe_offload(
+        server_name="gobby-sessions",
+        tool_name="get_handoff",
+        result={"success": True, "handoff": "x" * 12_001},
+        session_id="session",
+        intent=None,
+    )
+    assert actual["offloaded"] is True
+    harness.store.save.assert_called_once()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result",

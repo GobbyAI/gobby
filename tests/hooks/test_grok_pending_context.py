@@ -517,12 +517,12 @@ def test_in_place_compact_rearms_the_feedback_survey(
 ) -> None:
     """Grok emits no SessionStart(source=compact), so the bundled rearm rule misses it."""
     variables = SessionVariableManager(session_manager.db)
-    variables.merge_variables(grok_session_id, {"_gobby_feedback_epoch_reviewed": True})
+    variables.merge_variables(grok_session_id, {"_gobby_feedback_epoch_submitted": True})
     handler = SimpleNamespace(_session_manager=session_manager, _task_manager=None)
 
     apply_in_place_compact_context_loss(handler, grok_session_id)
 
-    assert variables.get_variables(grok_session_id)["_gobby_feedback_epoch_reviewed"] is False
+    assert variables.get_variables(grok_session_id)["_gobby_feedback_epoch_submitted"] is False
 
 
 def test_grok_pending_context_imports_before_the_event_handler_package() -> None:

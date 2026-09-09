@@ -282,10 +282,10 @@ TURN_END_OVERRIDES = [
 def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, Any]:
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,
-        "loaded_skills": ["memory"],
+        "loaded_skills": ["memory", "handoff-discipline"],
         "_memory_pending_task_reviews": list(pending),
         "_memory_review_stop_delivered": False,
-        "_gobby_feedback_epoch_reviewed": True,
+        "_gobby_feedback_epoch_submitted": True,
     }
     variables.update(overrides)
     return variables
@@ -516,7 +516,7 @@ class TestLayeredMemoryGuidance:
         )
         response = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
 
-        assert response.decision == "allow"
+        assert response.decision == "allow", response.reason
         assert variables["_memory_initial_stop_checked"] is False
 
     @pytest.mark.asyncio
@@ -646,7 +646,7 @@ class TestPostCloseMemoryReviewRules:
         )
         response = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
 
-        assert response.decision == "allow"
+        assert response.decision == "allow", response.reason
         assert variables["_memory_pending_task_reviews"] == [pending]
         assert variables["_memory_review_stop_delivered"] is False
 
@@ -687,7 +687,7 @@ class TestPostCloseMemoryReviewRules:
             _pending_review("#42", "Implemented layered memory guidance."),
             _pending_review("#43", "Documented the review tool."),
         ]
-        variables = _review_variables(*pending, _gobby_feedback_epoch_reviewed=True)
+        variables = _review_variables(*pending, _gobby_feedback_epoch_submitted=True)
         engine = RuleEngine(db)
         compact = _sessions_tool_event()
 
@@ -703,7 +703,7 @@ class TestPostCloseMemoryReviewRules:
         assert "retry `gobby-sessions:set_handoff`" in reason
         assert variables["_memory_review_stop_delivered"] is True
         assert variables["_memory_pending_task_reviews"] == pending
-        assert retry.decision == "allow"
+        assert retry.decision == "allow", retry.reason
         assert stop.decision == "allow"
         assert "review_task_memories" not in (stop.reason or "")
 
@@ -722,7 +722,7 @@ class TestPostCloseMemoryReviewRules:
         _sync_bundled(db)
         variables = _review_variables(
             _pending_review("#42", "Completed work."),
-            _gobby_feedback_epoch_reviewed=True,
+            _gobby_feedback_epoch_submitted=True,
             **overrides,
         )
         delivered_before = variables["_memory_review_stop_delivered"]
@@ -730,7 +730,7 @@ class TestPostCloseMemoryReviewRules:
 
         response = await engine.evaluate(_sessions_tool_event(tool_name), SESSION_ID, variables)
 
-        assert response.decision == "allow"
+        assert response.decision == "allow", response.reason
         assert variables["_memory_review_stop_delivered"] is delivered_before
 
     @pytest.mark.asyncio
@@ -747,7 +747,7 @@ class TestPostCloseMemoryReviewRules:
         """A close after a set_handoff delivery re-arms both delivery channels."""
         _sync_bundled(db)
         variables = _review_variables(
-            _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_reviewed=True
+            _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_submitted=True
         )
         engine = RuleEngine(db, task_manager=_closed_leaf_task_manager())
         compact = _sessions_tool_event()
@@ -777,7 +777,7 @@ class TestPostCloseMemoryReviewRules:
             open_tool_errors=[],
             # The research-feedback stop gate shares this trigger; keep it quiet
             # so the aggregate counts only the two memory gates.
-            _gobby_feedback_epoch_reviewed=True,
+            _gobby_feedback_epoch_submitted=True,
         )
         engine = RuleEngine(db)
         event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)

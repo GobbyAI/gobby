@@ -46,8 +46,8 @@ rules:
         reason: >-
           {{ variables.get('context_compact_block_message') or
           'Context limit reached. Call get_tool_schema(server_name="gobby-sessions",
-          tool_name="set_handoff"), then gobby-sessions:set_handoff with
-          gobby_feedback=[] when there is nothing to report. The block lifts after
+          tool_name="feedback"), then gobby-sessions:feedback (observations=[]
+          when there is nothing to report). Call set_handoff last with a bounded handoff. The block lifts after
           the handoff compacts the session.' }}
 
   block-tools-after-handoff-compact:

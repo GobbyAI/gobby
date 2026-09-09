@@ -14,7 +14,7 @@ rules:
       )
     effects:
       - type: set_variable
-        variable: _gobby_feedback_epoch_reviewed
+        variable: _gobby_feedback_epoch_submitted
         value: false
 
   mark-gobby-session-feedback-submitted:
@@ -28,7 +28,7 @@ rules:
       and tool_call_succeeded()
     effects:
       - type: set_variable
-        variable: _gobby_feedback_epoch_reviewed
+        variable: _gobby_feedback_epoch_submitted
         value: true
 
   review-gobby-session-feedback-on-stop:
@@ -39,22 +39,21 @@ rules:
     when: >
       variables.get('_gobby_feedback_survey_active')
       and bool(variables.get('_memory_pending_task_reviews'))
-      and not variables.get('_gobby_feedback_epoch_reviewed')
+      and not variables.get('_gobby_feedback_epoch_submitted')
     effects:
       - type: block
         delivery: on_receipt
-        acknowledge_variable: _gobby_feedback_epoch_reviewed
         reason: |
           Perform one bounded Gobby-experience survey using only first-hand
-          evidence from this session. Submit through `gobby-sessions:feedback`,
-          or inline through `gobby-sessions:set_handoff(gobby_feedback=...)`, with
+          evidence from this session. Submit through `gobby-sessions:feedback` before
+          calling `gobby-sessions:set_handoff` last, with
           at most 3 observations: source, kind (friction | bug | noise | surprise
           | missing-affordance | useful | other; 'other' needs
           kind_other_label), evidence, impact, frequency (once | repeated |
           always); optional suggestion and disposition (worked-around |
           filed-task | fixed | escalated | noted). Most sessions should send
-          `observations: []` through feedback or `gobby_feedback: []` inline;
-          either is valid and writes no rows.
+          `observations: []` through feedback; this is valid and writes no rows.
+          Submission satisfies this epoch's gate; it does not mark feedback human-reviewed.
 
           source must name a Gobby surface: gobby-<server>:<tool>;
           <surface>:<name> where surface is rule, hook, skill, workflow, agent,

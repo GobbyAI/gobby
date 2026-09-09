@@ -441,9 +441,9 @@ def _block_message(used: int, warn: int, block: int) -> str:
         f"Context is {_format_tokens(used)} tokens (warn {_format_tokens(warn)}; "
         f"block {_format_tokens(block)}). Tool use is blocked until a handoff compacts "
         'the session. Call get_tool_schema(server_name="gobby-sessions", '
-        'tool_name="set_handoff"), then gobby-sessions:set_handoff with '
-        "gobby_feedback when this project is surveyed; use gobby_feedback=[] when there "
-        "is nothing to report."
+        'tool_name="feedback"), then gobby-sessions:feedback with '
+        "observations=[] when there is nothing to report. Then call set_handoff last "
+        "with a bounded handoff."
     )
 
 

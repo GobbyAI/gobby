@@ -14,11 +14,12 @@ marker. It accepts:
 - optional nonblank `what_was_accomplished`, `key_decisions`,
   `problems_encountered`, `what_didnt_work`, `blockers`, `notes`, and `references`
   entries;
-- optional `gobby_feedback`, required when this session's survey is active and
-  unanswered; an empty list means surveyed with nothing to report;
 - `clear_session=false` for in-place compact or `true` for a bound clear successor.
 
-References are deduplicated in caller order. Validation completes before state mutation.
+References are deduplicated in caller order. Rendered content is limited to 10,000
+JSON-escaped characters, including formatting; oversized handoffs are rejected with
+shorten-and-retry guidance before state mutation. Required feedback must be submitted
+separately before calling `set_handoff` last.
 
 Planning, review, and ongoing task work use `clear_session=false`. The
 `clear_session=true` boundary is reserved for a root or coordinator that has closed the
@@ -45,7 +46,7 @@ version, authored timestamp, and SHA-256 of the exact UTF-8 Markdown. Successful
 compact and clear boundaries create one immutable `session_handoff_deliveries` receipt;
 authorship alone is not delivery.
 
-Feedback enters through `gobby-sessions:feedback` or `set_handoff.gobby_feedback`.
+Feedback enters through `gobby-sessions:feedback`.
 Each observation becomes one `session_feedback` row
 with session, source, kind, evidence, impact, frequency, optional suggestion and
 disposition, `reviewed=false`, and a UTC creation timestamp. `kind` is an enum
@@ -54,7 +55,8 @@ disposition, `reviewed=false`, and a UTC creation timestamp. `kind` is an enum
 `worked-around`, `filed-task`, `fixed`, `escalated`, or `noted`. `kind` `other`
 requires `kind_other_label` (a short label naming the unlisted kind, rejected when
 it restates a listed kind); every other kind forbids it. Empty feedback writes no
-rows. Both feedback entry points use the same transactional batch writer.
+rows. A successful submission satisfies the epoch gate; it does not mark any
+observation human-reviewed.
 `source` must name a Gobby surface as `gobby-<server>:<tool>`;
 `<surface>:<name>` where surface is `rule`, `hook`, `skill`, `workflow`, `agent`,
 `pipeline`, `prompt`, `cli`, `binary`, `daemon`, `ui`, `docs`, or `config`; or a
@@ -71,15 +73,16 @@ disposition are shirked found work; intake validation rejects invalid ladder cla
 the stop gate blocks unclaimed filings, and the nightly digest flags them.
 
 The stop gate prompts unanswered in-scope sessions after completed work.
-`set_handoff` enforces the same survey in the tool itself and accepts the response
-inline, so no before-tool survey gate can wedge context-pressure handoff.
+`set_handoff` checks successful survey submission before staging. Submit feedback
+first, then call `set_handoff` last. The context-pressure gate permits feedback and
+its schema discovery. Merely receiving a survey prompt does not satisfy the gate.
 Daemon config `session_feedback.survey` is `gobby` (default; only exact
 `projects.name == "gobby"`), `all` (every project), or `off` (prompts off).
 Projects outside the Gobby repository receive gates only after an operator explicitly
 selects `all`. The manual feedback tool remains callable from every repository, and
 capture stays on the local machine; email and form delivery are outside this contract.
 The computed flag `_gobby_feedback_survey_active` is injected per event; epoch
-acknowledgment lives in `_gobby_feedback_epoch_reviewed`. Only a context reset
+acknowledgment lives in `_gobby_feedback_epoch_submitted`. Only a context reset
 re-arms it — SessionStart with source `clear` or `compact`, a `resume` carrying
 `pending_context_reset`, or the equivalent Grok PostCompact closeout. Task closure
 is not a context boundary, so one epoch is surveyed once however many tasks it
@@ -121,9 +124,9 @@ compaction and clear remain synchronous because they do not replace a terminal c
 
 ## Compact Path
 
-Before compact staging, `set_handoff` validates any inline feedback, writes its rows,
-and marks the survey epoch reviewed. A later staging failure can be retried without
-duplicating those rows. Compact dispatch interrupts the provider, clears its composer, submits `/compact` for
+Before compact staging, `set_handoff` validates bounded handoff content and checks
+the separate feedback submission. A staging failure can be retried without
+resubmitting feedback. Compact dispatch interrupts the provider, clears its composer, submits `/compact` for
 Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the same
 session row. The continuation prompt instructs the agent to call `get_handoff()`. Compact
 SessionStart/PostCompact handling resets context-epoch tracking and consumes only the

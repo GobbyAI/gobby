@@ -196,7 +196,7 @@ def test_turn_start_repeats_guidance_and_writes_block_message_only_in_block(
     assert bool(variables[BLOCK_MESSAGE_VARIABLE]) is (expected_band == "block")
     if expected_band == "block":
         assert 'get_tool_schema(server_name="gobby-sessions"' in second
-        assert "gobby_feedback=[]" in second
+        assert "observations=[]" in second
 
 
 def test_after_tool_warns_on_crossing_then_every_configured_calls() -> None:
