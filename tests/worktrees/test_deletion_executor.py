@@ -64,18 +64,18 @@ class _TaskManager:
 
 class _BarrierGitManager:
     def __init__(self, worker_count: int) -> None:
-        self.started = threading.Event()
-        self.release = threading.Event()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
         self.thread_ids: set[int] = set()
         self.active = 0
         self.max_active = 0
         self._worker_count = worker_count
         self._lock = threading.Lock()
 
-    def get_worktree_status(self, _path: str) -> SimpleNamespace:
+    async def get_worktree_status(self, _path: str) -> SimpleNamespace:
         return SimpleNamespace(has_uncommitted_changes=False)
 
-    def delete_worktree(self, _path: str, **_kwargs: Any) -> SimpleNamespace:
+    async def delete_worktree(self, _path: str, **_kwargs: Any) -> SimpleNamespace:
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -83,7 +83,7 @@ class _BarrierGitManager:
             if self.active == self._worker_count:
                 self.started.set()
         try:
-            assert self.release.wait(timeout=2)
+            await asyncio.wait_for(self.release.wait(), timeout=2)
             return SimpleNamespace(success=True, message="deleted", error=None)
         finally:
             with self._lock:
@@ -107,7 +107,7 @@ def _worktree(worktree_id: str, path: Path) -> Worktree:
 
 
 @pytest.mark.asyncio
-async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
+async def test_four_concurrent_deletions_keep_loop_responsive_and_finish_cleanup(
     tmp_path: Path,
 ) -> None:
     worktrees = {
@@ -120,7 +120,6 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
     git_manager = _BarrierGitManager(worker_count=4)
     executor = WorktreeDeleteExecutor(
         max_workers=4,
-        thread_name_prefix="test-worktree-delete-barrier",
     )
     main_thread = threading.get_ident()
     heartbeat_ticks = 0
@@ -148,7 +147,7 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
         for worktree_id in worktrees
     ]
     try:
-        assert await asyncio.to_thread(git_manager.started.wait, 1)
+        await asyncio.wait_for(git_manager.started.wait(), timeout=1)
         await wait_for_async_condition(
             lambda: heartbeat_ticks > 1,
             description="event-loop heartbeat while deletes run off-loop",
@@ -156,7 +155,7 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
         stats = executor.stats()
         assert stats.active == 4
         assert stats.max_workers == 4
-        assert stats.threads <= 4
+        assert stats.threads == 0
 
         git_manager.release.set()
         results = await asyncio.gather(*delete_tasks)
@@ -166,9 +165,7 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
         assert storage.rows == {}
         assert task_manager.artifacts.refs == set()
         assert git_manager.max_active == 4
-        assert main_thread not in (
-            storage.thread_ids | task_manager.artifacts.thread_ids | git_manager.thread_ids
-        )
+        assert git_manager.thread_ids == {main_thread}
     finally:
         git_manager.release.set()
         stop_heartbeat.set()
@@ -181,13 +178,13 @@ async def test_four_concurrent_transactions_stay_off_loop_and_finish_cleanup(
 @pytest.mark.asyncio
 async def test_cancellation_before_mutation_abandons_work() -> None:
     executor = WorktreeDeleteExecutor(max_workers=1)
-    precheck_started = threading.Event()
-    release_precheck = threading.Event()
-    mutated = threading.Event()
+    precheck_started = asyncio.Event()
+    release_precheck = asyncio.Event()
+    mutated = asyncio.Event()
 
-    def operation(boundary: DestructiveBoundary) -> str:
+    async def operation(boundary: DestructiveBoundary) -> str:
         precheck_started.set()
-        assert release_precheck.wait(timeout=2)
+        await asyncio.wait_for(release_precheck.wait(), timeout=2)
         if not boundary.begin_mutation():
             return "abandoned"
         mutated.set()
@@ -195,7 +192,7 @@ async def test_cancellation_before_mutation_abandons_work() -> None:
 
     task = asyncio.create_task(executor.run_delete(operation))
     try:
-        assert await asyncio.to_thread(precheck_started.wait, 1)
+        await asyncio.wait_for(precheck_started.wait(), timeout=1)
         task.cancel()
         await drain_asyncio_tasks()
         release_precheck.set()
@@ -211,19 +208,19 @@ async def test_cancellation_before_mutation_abandons_work() -> None:
 @pytest.mark.asyncio
 async def test_cancellation_after_mutation_waits_for_cleanup() -> None:
     executor = WorktreeDeleteExecutor(max_workers=1)
-    mutation_started = threading.Event()
-    release_cleanup = threading.Event()
-    cleanup_finished = threading.Event()
+    mutation_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
 
-    def operation(boundary: DestructiveBoundary) -> None:
+    async def operation(boundary: DestructiveBoundary) -> None:
         assert boundary.begin_mutation()
         mutation_started.set()
-        assert release_cleanup.wait(timeout=2)
+        await asyncio.wait_for(release_cleanup.wait(), timeout=2)
         cleanup_finished.set()
 
     task = asyncio.create_task(executor.run_delete(operation))
     try:
-        assert await asyncio.to_thread(mutation_started.wait, 1)
+        await asyncio.wait_for(mutation_started.wait(), timeout=1)
         task.cancel()
         await drain_asyncio_tasks()
         assert task.done() is False
@@ -240,24 +237,24 @@ async def test_cancellation_after_mutation_waits_for_cleanup() -> None:
 @pytest.mark.asyncio
 async def test_shutdown_cancels_queue_drains_active_and_closes_admission() -> None:
     executor = WorktreeDeleteExecutor(max_workers=1)
-    active_started = threading.Event()
-    release_active = threading.Event()
-    queued_started = threading.Event()
+    active_started = asyncio.Event()
+    release_active = asyncio.Event()
+    queued_started = asyncio.Event()
 
-    def active(boundary: DestructiveBoundary) -> str:
+    async def active(boundary: DestructiveBoundary) -> str:
         assert boundary.begin_mutation()
         active_started.set()
-        assert release_active.wait(timeout=2)
+        await asyncio.wait_for(release_active.wait(), timeout=2)
         return "active"
 
-    def queued(_boundary: DestructiveBoundary) -> str:
+    async def queued(_boundary: DestructiveBoundary) -> str:
         queued_started.set()
         return "queued"
 
     active_task = asyncio.create_task(executor.run_delete(active))
     queued_task = asyncio.create_task(executor.run_delete(queued))
     try:
-        assert await asyncio.to_thread(active_started.wait, 1)
+        await asyncio.wait_for(active_started.wait(), timeout=1)
         await drain_asyncio_tasks()
         assert executor.stats().queued == 1
         executor.shutdown(cancel_futures=True)

@@ -114,7 +114,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
         def reserve(self, task_id: str) -> None:
             raise AssertionError("reserve should not run when no action reserves files")
 
-    def record_live_recovery(
+    async def record_live_recovery(
         db: object,
         *,
         project_id: str | None = None,

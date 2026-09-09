@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,7 +77,7 @@ def defer_preserved_worktree_artifacts(
     return artifacts_to_delete
 
 
-def classify_dirty_descendant_worktree_artifacts(
+async def classify_dirty_descendant_worktree_artifacts(
     db: HubDatabase,
     artifacts: list[BuildArtifactSummary],
     *,
@@ -100,7 +101,7 @@ def classify_dirty_descendant_worktree_artifacts(
         if not Path(artifact.path).exists():
             artifacts_to_delete.append(artifact)
             continue
-        is_dirty = _worktree_is_dirty(worktree_git, artifact.path)
+        is_dirty = await _worktree_is_dirty(worktree_git, artifact.path)
         if is_dirty is None:
             artifact.deferred = True
             artifact.cleanup_reason = "worktree_status_unknown_deferred"
@@ -114,13 +115,13 @@ def classify_dirty_descendant_worktree_artifacts(
                 artifact.deferred = True
                 artifact.cleanup_reason = "dirty_open_task_deferred"
                 continue
-            head = _git_text(worktree_git, ["rev-parse", "HEAD"], cwd=artifact.path)
+            head = await _git_text(worktree_git, ["rev-parse", "HEAD"], cwd=artifact.path)
             if not head or task.closed_commit_sha != head:
                 artifact.deferred = True
                 artifact.cleanup_reason = "dirty_closed_commit_mismatch_deferred"
                 continue
-            if target_ref and head and _is_ancestor(worktree_git, head, target_ref):
-                evidence = _dirty_worktree_evidence(
+            if target_ref and head and (await _is_ancestor(worktree_git, head, target_ref)):
+                evidence = await _dirty_worktree_evidence(
                     worktree_git,
                     artifact=artifact,
                     head=head,
@@ -236,7 +237,7 @@ def collect_clean_artifacts(
     return summaries
 
 
-def delete_artifacts(
+async def delete_artifacts(
     db: HubDatabase,
     project_id: str,
     artifacts: list[BuildArtifactSummary],
@@ -279,9 +280,11 @@ def delete_artifacts(
                         target_branch = task_manager.artifacts.get_artifacts(
                             artifact.task_id
                         ).target_branch
-                        if target_branch and _local_branch_exists(worktree_git, target_branch):
+                        if target_branch and (
+                            await _local_branch_exists(worktree_git, target_branch)
+                        ):
                             preflight_base = target_branch
-                    worktree_result = worktree_git.delete_worktree(
+                    worktree_result = await worktree_git.delete_worktree(
                         path,
                         force=force,
                         delete_branch=True,
@@ -296,7 +299,7 @@ def delete_artifacts(
                     if not worktree_result.success:
                         prune = getattr(worktree_git, "prune_worktrees", None)
                         if callable(prune):
-                            prune()
+                            (await prune())
                 if worktree_id:
                     worktrees.delete(worktree_id)
                     artifact_refs_cleared = task_manager.artifacts.clear_worktree_references(
@@ -313,7 +316,9 @@ def delete_artifacts(
                         )
             else:
                 if path.exists():
-                    clone_result = clone_git.delete_clone(path, force=force)
+                    clone_result = await asyncio.to_thread(
+                        clone_git.delete_clone, path, force=force
+                    )
                     if not clone_result.success:
                         artifact.error = clone_result.error or clone_result.message
                         continue
@@ -396,27 +401,27 @@ def _root_cleanup_target(root: Task, artifacts: object) -> str | None:
     return None
 
 
-def _local_branch_exists(worktree_git: WorktreeGitManager, branch: str) -> bool:
+async def _local_branch_exists(worktree_git: WorktreeGitManager, branch: str) -> bool:
     ref = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
-    result = worktree_git.run_git_command(
+    result = await worktree_git.run_git_command(
         ["rev-parse", "--verify", "--quiet", ref],
         timeout=10,
     )
     return result.returncode == 0
 
 
-def _is_ancestor(worktree_git: WorktreeGitManager, head: str, target_ref: str) -> bool:
-    result = worktree_git.run_git_command(
+async def _is_ancestor(worktree_git: WorktreeGitManager, head: str, target_ref: str) -> bool:
+    result = await worktree_git.run_git_command(
         ["merge-base", "--is-ancestor", head, target_ref],
         timeout=10,
     )
     return result.returncode == 0
 
 
-def _worktree_is_dirty(worktree_git: WorktreeGitManager, path: str | Path) -> bool | None:
+async def _worktree_is_dirty(worktree_git: WorktreeGitManager, path: str | Path) -> bool | None:
     get_status = getattr(worktree_git, "get_worktree_status", None)
     if callable(get_status):
-        status = get_status(path)
+        status = await get_status(path)
         if status is None:
             return None
         return bool(
@@ -424,7 +429,7 @@ def _worktree_is_dirty(worktree_git: WorktreeGitManager, path: str | Path) -> bo
             or getattr(status, "has_staged_changes", False)
             or getattr(status, "has_untracked_files", False)
         )
-    porcelain = _git_text_or_none(
+    porcelain = await _git_text_or_none(
         worktree_git,
         ["status", "--porcelain", "--untracked-files=all"],
         cwd=path,
@@ -434,7 +439,7 @@ def _worktree_is_dirty(worktree_git: WorktreeGitManager, path: str | Path) -> bo
     return bool(porcelain)
 
 
-def _dirty_worktree_evidence(
+async def _dirty_worktree_evidence(
     worktree_git: WorktreeGitManager,
     *,
     artifact: BuildArtifactSummary,
@@ -442,14 +447,14 @@ def _dirty_worktree_evidence(
     target_ref: str,
 ) -> str:
     path = artifact.path
-    branch = _git_text(worktree_git, ["branch", "--show-current"], cwd=path) or "(detached)"
-    porcelain = _git_text(
+    branch = (await _git_text(worktree_git, ["branch", "--show-current"], cwd=path)) or "(detached)"
+    porcelain = await _git_text(
         worktree_git,
         ["status", "--porcelain", "--untracked-files=all"],
         cwd=path,
     )
-    cached_stat = _git_text(worktree_git, ["diff", "--cached", "--stat"], cwd=path)
-    unstaged_stat = _git_text(worktree_git, ["diff", "--stat"], cwd=path)
+    cached_stat = await _git_text(worktree_git, ["diff", "--cached", "--stat"], cwd=path)
+    unstaged_stat = await _git_text(worktree_git, ["diff", "--stat"], cwd=path)
     return "\n".join(
         [
             "## Closed Dirty Worktree Cleanup",
@@ -501,27 +506,27 @@ def _append_system_task_comment_once(db: HubDatabase, task_id: str, body: str) -
     )
 
 
-def _git_text(
+async def _git_text(
     worktree_git: WorktreeGitManager,
     args: list[str],
     *,
     cwd: str | Path | None = None,
     timeout: int = 10,
 ) -> str:
-    result = worktree_git.run_git_command(args, cwd=cwd, timeout=timeout)
+    result = await worktree_git.run_git_command(args, cwd=cwd, timeout=timeout)
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
 
 
-def _git_text_or_none(
+async def _git_text_or_none(
     worktree_git: WorktreeGitManager,
     args: list[str],
     *,
     cwd: str | Path | None = None,
     timeout: int = 10,
 ) -> str | None:
-    result = worktree_git.run_git_command(args, cwd=cwd, timeout=timeout)
+    result = await worktree_git.run_git_command(args, cwd=cwd, timeout=timeout)
     if result.returncode != 0:
         return None
     return result.stdout.strip()

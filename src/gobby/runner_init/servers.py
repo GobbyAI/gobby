@@ -327,6 +327,7 @@ def init_servers(runner: GobbyRunner) -> None:
                 services.terminal_runtime_registry,
                 services.terminal_config,
                 terminal_services=services.terminal_services,
+                host_manager=services.terminal_host_manager,
             )
             _bind_proxy_frame_opener(runner)
         runner.http_server.websocket_server = runner.websocket_server

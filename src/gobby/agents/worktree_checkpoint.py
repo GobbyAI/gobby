@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import tempfile
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.utils.daemon_git import GitOk, GitResult, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.task_claim_state import normalize_task_edited_path
 
 CHECKPOINT_AUTHOR_NAME = "Gobby Coordinator"
@@ -41,7 +41,7 @@ def checkpoint_commit_message(*, task_seq_num: int, run_id: str) -> str:
     )
 
 
-def checkpoint_worktree(
+async def checkpoint_worktree(
     *,
     worktree_path: str | Path,
     expected_paths: Collection[str],
@@ -55,7 +55,7 @@ def checkpoint_worktree(
         for item in expected_paths
         if (normalized := normalize_task_edited_path(item)) is not None
     }
-    observed_paths = _status_paths(path)
+    observed_paths = await _status_paths(path)
     if not observed_paths:
         raise WorktreeCheckpointError(
             "The terminal agent worktree is already clean",
@@ -67,10 +67,10 @@ def checkpoint_worktree(
             error_code="dirty_set_changed",
         )
 
-    branch_ref = _git_output(path, ["symbolic-ref", "--quiet", "HEAD"])
-    old_head = _git_output(path, ["rev-parse", "HEAD"])
+    branch_ref = await _git_output(path, ["symbolic-ref", "--quiet", "HEAD"])
+    old_head = await _git_output(path, ["rev-parse", "HEAD"])
     index_path = Path(
-        _git_output(path, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+        await _git_output(path, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
     )
     message = checkpoint_commit_message(task_seq_num=task_seq_num, run_id=run_id)
 
@@ -83,16 +83,16 @@ def checkpoint_worktree(
             shutil.copy2(index_path, index_backup)
 
         alternate_env = {**os.environ, "GIT_INDEX_FILE": str(alternate_index)}
-        _git_checked(path, ["read-tree", old_head], env=alternate_env)
-        _git_checked(path, ["add", "-A", "--", "."], env=alternate_env)
-        staged_paths = _status_paths(path, env=alternate_env)
+        await _git_checked(path, ["read-tree", old_head], env=alternate_env)
+        await _git_checked(path, ["add", "-A", "--", "."], env=alternate_env)
+        staged_paths = await _status_paths(path, env=alternate_env)
         if staged_paths != normalized_expected:
             raise WorktreeCheckpointError(
                 "The staged checkpoint does not match the authorized dirty set",
                 error_code="dirty_set_changed",
             )
 
-        tree_sha = _git_output(path, ["write-tree"], env=alternate_env)
+        tree_sha = await _git_output(path, ["write-tree"], env=alternate_env)
         commit_env = {
             **alternate_env,
             "GIT_AUTHOR_NAME": CHECKPOINT_AUTHOR_NAME,
@@ -100,7 +100,7 @@ def checkpoint_worktree(
             "GIT_COMMITTER_NAME": CHECKPOINT_AUTHOR_NAME,
             "GIT_COMMITTER_EMAIL": CHECKPOINT_AUTHOR_EMAIL,
         }
-        commit_sha = _git_output(
+        commit_sha = await _git_output(
             path,
             ["commit-tree", tree_sha, "-p", old_head],
             env=commit_env,
@@ -109,17 +109,17 @@ def checkpoint_worktree(
 
         ref_updated = False
         try:
-            _git_checked(path, ["update-ref", branch_ref, commit_sha, old_head])
+            await _git_checked(path, ["update-ref", branch_ref, commit_sha, old_head])
             ref_updated = True
-            _git_checked(path, ["reset", "--mixed", "--quiet", commit_sha])
-            remaining_paths = _status_paths(path)
+            await _git_checked(path, ["reset", "--mixed", "--quiet", commit_sha])
+            remaining_paths = await _status_paths(path)
             if remaining_paths:
                 raise WorktreeCheckpointError(
                     "The checkpoint commit did not leave the worktree clean",
                     error_code="checkpoint_not_clean",
                 )
         except Exception as exc:
-            rollback_error = _rollback_checkpoint(
+            rollback_error = await _rollback_checkpoint(
                 path=path,
                 branch_ref=branch_ref,
                 old_head=old_head,
@@ -145,7 +145,7 @@ def checkpoint_worktree(
     )
 
 
-def _rollback_checkpoint(
+async def _rollback_checkpoint(
     *,
     path: Path,
     branch_ref: str,
@@ -158,8 +158,8 @@ def _rollback_checkpoint(
 ) -> str | None:
     errors: list[str] = []
     if ref_updated:
-        result = _run_git(path, ["update-ref", branch_ref, old_head, commit_sha])
-        if result.returncode != 0:
+        result = await _run_git(path, ["update-ref", branch_ref, old_head, commit_sha])
+        if not isinstance(result, GitOk):
             errors.append(_git_failure(result))
     try:
         if original_index_exists:
@@ -171,40 +171,32 @@ def _rollback_checkpoint(
     return "; ".join(errors) or None
 
 
-def _status_paths(path: Path, *, env: Mapping[str, str] | None = None) -> set[str]:
-    result = _run_git_bytes(
-        path,
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        env=env,
-    )
-    if result.returncode != 0:
-        raise WorktreeCheckpointError(_git_failure_bytes(result))
+async def _status_paths(path: Path, *, env: Mapping[str, str] | None = None) -> set[str]:
+    result = await daemon_git.status(path, timeout=_GIT_TIMEOUT_SECONDS, env=env)
+    if not isinstance(result, GitOk):
+        raise WorktreeCheckpointError(_git_failure(result))
 
     paths: set[str] = set()
-    records = iter(result.stdout.split(b"\0"))
-    for record in records:
-        if len(record) < 4:
-            continue
-        status = record[:2]
-        normalized = normalize_task_edited_path(os.fsdecode(record[3:]))
+    for entry in parse_porcelain_v1_z(result.stdout):
+        normalized = normalize_task_edited_path(entry.path)
         if normalized is not None:
             paths.add(normalized)
-        if b"R" in status or b"C" in status:
-            original = normalize_task_edited_path(os.fsdecode(next(records, b"")))
+        if entry.original_path is not None:
+            original = normalize_task_edited_path(entry.original_path)
             if original is not None:
                 paths.add(original)
     return paths
 
 
-def _git_output(
+async def _git_output(
     path: Path,
     arguments: Sequence[str],
     *,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
 ) -> str:
-    result = _run_git(path, arguments, env=env, input_text=input_text)
-    if result.returncode != 0:
+    result = await _run_git(path, arguments, env=env, input_text=input_text)
+    if not isinstance(result, GitOk):
         raise WorktreeCheckpointError(_git_failure(result))
     output = result.stdout.strip()
     if not output:
@@ -212,63 +204,36 @@ def _git_output(
     return output
 
 
-def _git_checked(
+async def _git_checked(
     path: Path,
     arguments: Sequence[str],
     *,
     env: Mapping[str, str] | None = None,
 ) -> None:
-    result = _run_git(path, arguments, env=env)
-    if result.returncode != 0:
+    result = await _run_git(path, arguments, env=env)
+    if not isinstance(result, GitOk):
         raise WorktreeCheckpointError(_git_failure(result))
 
 
-def _run_git(
+async def _run_git(
     path: Path,
     arguments: Sequence[str],
     *,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(  # Hardcoded Git command. # nosec B603 B607
-            ["git", *arguments],
-            cwd=path,
-            env=dict(env) if env is not None else None,
-            input=input_text,
-            text=True,
-            check=False,
-            capture_output=True,
-            timeout=_GIT_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise WorktreeCheckpointError(f"git {arguments[0]} failed: {exc}") from exc
+) -> GitResult:
+    return await daemon_git.run(
+        arguments,
+        cwd=path,
+        env=env,
+        input_text=input_text,
+        timeout=_GIT_TIMEOUT_SECONDS,
+    )
 
 
-def _run_git_bytes(
-    path: Path,
-    arguments: Sequence[str],
-    *,
-    env: Mapping[str, str] | None = None,
-) -> subprocess.CompletedProcess[bytes]:
-    try:
-        return subprocess.run(  # Hardcoded Git command. # nosec B603 B607
-            ["git", *arguments],
-            cwd=path,
-            env=dict(env) if env is not None else None,
-            check=False,
-            capture_output=True,
-            timeout=_GIT_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise WorktreeCheckpointError(f"git {arguments[0]} failed: {exc}") from exc
-
-
-def _git_failure(result: subprocess.CompletedProcess[str]) -> str:
-    detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-    return f"git {result.args[1]} failed: {detail}"
-
-
-def _git_failure_bytes(result: subprocess.CompletedProcess[bytes]) -> str:
-    detail = os.fsdecode(result.stderr).strip() or os.fsdecode(result.stdout).strip()
-    return f"git {os.fsdecode(result.args[1])} failed: {detail or f'exit {result.returncode}'}"
+def _git_failure(result: GitResult) -> str:
+    if result.status == "timeout":
+        detail = f"timed out after {result.timeout:g}s"
+    else:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+    return f"git {result.argv[1]} failed: {detail}"

@@ -185,3 +185,43 @@ async def test_startup_vector_rebuild_includes_project_id_payload() -> None:
     await runner._vector_rebuild_task
 
     assert captured == [{"id": "memory-1", "content": "content", "project_id": "project-1"}]
+
+
+@pytest.mark.asyncio
+async def test_terminal_host_starts_before_agent_and_mcp_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clients reconnect as soon as HTTP serves; the surviving gterm host must be
+    adopted before the slow recovery steps so their attaches find it (#22002)."""
+    _patch_init_dependencies(monkeypatch)
+    order: list[str] = []
+    runner = _minimal_init_runner()
+    tracker = SimpleNamespace(complete=Mock(), error=Mock(), finish=Mock())
+
+    def record(name: str) -> AsyncMock:
+        async def step(*_args: object, **_kwargs: object) -> None:
+            order.append(name)
+
+        return AsyncMock(side_effect=step)
+
+    steps = ("_run_agent_hook_replay_barrier", "_connect_mcp_servers", "_start_terminal_host")
+    mocks = {name: record(name) for name in steps}
+    for name, mock in mocks.items():
+        monkeypatch.setattr(lifecycle_subsystems, name, mock)
+    monkeypatch.setattr(lifecycle_subsystems, "_maybe_start_ui_dev_server", lambda _runner: None)
+
+    await lifecycle_subsystems.init_subsystems(
+        cast("GobbyRunner", runner),
+        AsyncMock(),
+        cast("StartupTracker", tracker),
+        reap_orphaned_srt_runners=AsyncMock(),
+        recover_agent_completion_subscribers=AsyncMock(return_value=0),
+    )
+
+    assert order == [
+        "_start_terminal_host",
+        "_run_agent_hook_replay_barrier",
+        "_connect_mcp_servers",
+    ]
+    mocks["_start_terminal_host"].assert_awaited_once_with(runner, tracker)
+    assert runner.http_server.services.startup_ready is True

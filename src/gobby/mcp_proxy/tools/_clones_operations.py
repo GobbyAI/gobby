@@ -26,6 +26,7 @@ from gobby.utils.git import (
     stash_oid_for_marker,
     stash_ref_for_oid,
 )
+from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +169,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             "origin",
             resolved_path,
         )
-        base_branch = await asyncio.to_thread(git_manager.get_default_branch)
+        base_branch = await git_manager.get_default_branch()
 
         try:
             clone, _ = ctx.clone_storage.register_adopted(
@@ -463,9 +464,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             target_staged_paths: set[str] = set()
             if has_staged_status:
                 try:
-                    target_staged_paths = await asyncio.to_thread(
-                        staged_paths,
-                        git_manager,
+                    target_staged_paths = await staged_paths(
+                        WorktreeGitManager(git_manager.repo_path),
                         git_manager.repo_path,
                     )
                 except RuntimeError as error:
@@ -622,9 +622,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     # Step 3: Merge the fetched ref into target branch.
                     if target_staged_paths:
                         try:
-                            fallback_result = await asyncio.to_thread(
-                                land_by_fast_forward,
-                                git_manager,
+                            fallback_result = await land_by_fast_forward(
+                                WorktreeGitManager(git_manager.repo_path),
                                 source_cwd=clone.clone_path,
                                 target_cwd=git_manager.repo_path,
                                 source_ref=source_ref,

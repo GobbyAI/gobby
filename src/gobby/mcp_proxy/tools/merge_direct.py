@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -30,8 +29,7 @@ async def _dirty_worktree_result(
     if git_manager is None:
         return {"success": False, "error": "git_manager not configured for clean-tree check"}
 
-    status_result = await asyncio.to_thread(
-        git_manager.run_git_command,
+    status_result = await git_manager.run_git_command(
         ["status", "--porcelain"],
         cwd=wt_path,
         timeout=10,
@@ -71,8 +69,7 @@ async def _complete_direct_merge(
     if dirty_result is not None:
         return dirty_result
 
-    original_branch_result = await asyncio.to_thread(
-        git_manager.run_git_command,
+    original_branch_result = await git_manager.run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd=repo_path,
         timeout=10,
@@ -102,8 +99,7 @@ async def _complete_direct_merge(
 
     try:
         if restore_original:
-            checkout_result = await asyncio.to_thread(
-                git_manager.run_git_command,
+            checkout_result = await git_manager.run_git_command(
                 ["checkout", target_branch],
                 cwd=repo_path,
                 timeout=30,
@@ -122,8 +118,7 @@ async def _complete_direct_merge(
             if strategy_name == "no-ff"
             else ["merge", "--ff-only", source_branch]
         )
-        merge_result = await asyncio.to_thread(
-            git_manager.run_git_command,
+        merge_result = await git_manager.run_git_command(
             merge_args,
             cwd=repo_path,
             timeout=60,
@@ -167,8 +162,7 @@ async def _complete_direct_merge(
         }
     finally:
         if restore_original:
-            restore_result = await asyncio.to_thread(
-                git_manager.run_git_command,
+            restore_result = await git_manager.run_git_command(
                 restore_args,
                 cwd=repo_path,
                 timeout=30,

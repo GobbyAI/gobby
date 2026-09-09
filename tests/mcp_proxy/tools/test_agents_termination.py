@@ -439,7 +439,8 @@ async def test_blocker_exit_reports_blocked_status_and_dirty_paths(
             return_value="/repo",
         ),
         patch(
-            "gobby.agents.run_completion.task_dirty_paths",
+            "gobby.agents.run_completion.task_dirty_paths_async",
+            new_callable=AsyncMock,
             return_value={"src/dirty.py"},
         ) as dirty_paths,
     ):

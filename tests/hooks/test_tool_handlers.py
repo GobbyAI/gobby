@@ -241,7 +241,6 @@ class TestToolHandlerEdgeCases:
 
         with (
             caplog.at_level(logging.WARNING),
-            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
                 side_effect=RuntimeError("primary write failed"),
@@ -465,10 +464,10 @@ class TestToolHandlerEdgeCases:
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
-    def test_after_tool_gitignored_edit_skips_tracking(
+    def test_after_tool_records_candidate_without_sync_git(
         self, mock_dependencies: dict, tmp_path: Path
     ) -> None:
-        """Gitignored paths stay out of edit ledgers and never mark had_edits."""
+        """The sync hook records candidates; async status later filters clean or ignored paths."""
         mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -481,18 +480,18 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(tmp_path)
 
-        with (
-            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=True),
-            patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
-            ) as record_files,
-        ):
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+        ) as record_files:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        record_files.assert_not_called()
-        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
-        mock_dependencies["task_manager"].list_tasks.assert_not_called()
+        record_files.assert_called_once_with(
+            "sess-123",
+            ["target/output.bin"],
+            checkout_root=str(tmp_path),
+        )
+        mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
     def test_after_tool_non_ignored_edit_still_marks_had_edits(
         self, mock_dependencies: dict, tmp_path: Path
@@ -510,13 +509,10 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(tmp_path)
 
-        with (
-            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
-            patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
-                return_value=True,
-            ) as record_files,
-        ):
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+            return_value=True,
+        ) as record_files:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
@@ -554,7 +550,6 @@ class TestToolHandlerEdgeCases:
 
         with (
             patch.object(handlers, "_notify_code_index", notify_code_index),
-            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
             patch(
                 "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
                 return_value=True,
@@ -682,13 +677,10 @@ class TestToolHandlerEdgeCases:
         event.cwd = str(main_root)
         event.project_id = project_id
 
-        with (
-            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
-            patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
-                return_value=True,
-            ) as record_files,
-        ):
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+            return_value=True,
+        ) as record_files:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
@@ -735,13 +727,10 @@ class TestToolHandlerEdgeCases:
         event.cwd = str(worktree_root)
         event.project_id = project_id
 
-        with (
-            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
-            patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
-                return_value=True,
-            ) as record_files,
-        ):
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+            return_value=True,
+        ) as record_files:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"

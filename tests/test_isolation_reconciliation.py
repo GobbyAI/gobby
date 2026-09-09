@@ -192,7 +192,7 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
     inspected_paths: list[Path] = []
     registrations: list[tuple[object, ...]] = []
 
-    def inspect_worktree(path: Path) -> WorktreeInfo:
+    async def inspect_worktree(path: Path) -> WorktreeInfo:
         inspected_paths.append(path)
         return inspected
 
@@ -200,7 +200,7 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
         registrations.append(args)
         return object(), True
 
-    def list_worktrees(
+    async def list_worktrees(
         _manager: object,
         *,
         failure_log_level: int,
@@ -208,9 +208,12 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
         assert failure_log_level == logging.DEBUG
         return worktrees
 
+    async def get_default_branch() -> str:
+        return "trunk"
+
     manager = SimpleNamespace(
         inspect_worktree=inspect_worktree,
-        get_default_branch=lambda: "trunk",
+        get_default_branch=get_default_branch,
     )
     monkeypatch.setattr(reconciliation, "WorktreeGitManager", lambda _path: manager)
     monkeypatch.setattr(worktree_git_status, "list_worktrees", list_worktrees)
@@ -246,7 +249,7 @@ async def test_worktree_scan_skips_git_probe_failure_without_error_log(
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    mock_run = MagicMock(
+    mock_run = AsyncMock(
         return_value=subprocess.CompletedProcess(
             args=["git", "worktree", "list", "--porcelain"],
             returncode=128,
@@ -275,7 +278,7 @@ async def test_worktree_scan_skips_git_probe_failure_without_error_log(
     assert adopted == 0
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
     assert any(
-        record.levelno == logging.DEBUG and "Failed to list worktrees" in record.message
+        record.levelno == logging.DEBUG and "failed to list worktrees" in record.message
         for record in caplog.records
     )
 

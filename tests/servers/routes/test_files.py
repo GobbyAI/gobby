@@ -467,7 +467,7 @@ class TestFilesRoutes:
         resp = client.get("/api/files/git-status", params={"project_id": UNKNOWN_PROJECT_ID})
         assert resp.status_code == 404
 
-    def test_git_status_expected_process_failure_returns_empty_status(
+    def test_git_status_expected_process_failure_returns_unavailable(
         self, client: TestClient
     ) -> None:
         with patch(
@@ -476,8 +476,8 @@ class TestFilesRoutes:
         ):
             resp = client.get("/api/files/git-status", params={"project_id": PROJECT_ID})
 
-        assert resp.status_code == 200
-        assert resp.json() == {"branch": None, "files": {}}
+        assert resp.status_code == 503
+        assert "unavailable" in resp.json()["detail"]
 
     def test_git_status_unexpected_error_propagates(self, client: TestClient) -> None:
         with (

@@ -345,7 +345,7 @@ async def spawn_agent_impl(
     # Auto-detect current branch if no base_branch specified
     if effective_base_branch is None and target_git_manager:
         try:
-            effective_base_branch = await asyncio.to_thread(target_git_manager.get_current_branch)
+            effective_base_branch = await target_git_manager.get_current_branch()
         except Exception as e:
             logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
             effective_base_branch = None

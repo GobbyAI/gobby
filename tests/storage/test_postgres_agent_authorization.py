@@ -75,12 +75,14 @@ def _agent_url(database_url: str, role_name: str, password: str, execution_id: U
 
 
 def _require_isolated_hub(database_url: str) -> None:
-    from tests.fixtures.postgres import _LOOPBACK_HOSTS
+    from tests.fixtures.postgres import _LOOPBACK_HOSTS, _TEST_SCHEMA_PREFIX
 
     parsed = conninfo_to_dict(database_url)
     assert parsed.get("host") in _LOOPBACK_HOSTS
     assert parsed.get("port") == "60892"
-    assert parsed.get("dbname") == "gobby_test"
+    # ``postgres_database_url`` yields a throwaway ``gobby_test_<pid>_<nonce>``
+    # database per worker; the hub's own ``gobby_test`` is never handed out.
+    assert str(parsed.get("dbname", "")).startswith(_TEST_SCHEMA_PREFIX)
 
 
 def _as_runtime(

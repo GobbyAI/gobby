@@ -21,7 +21,6 @@ from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
 from gobby.utils.git import (
     get_checkout_mutation_lock,
     new_stash_marker,
-    run_thread_to_completion,
     run_to_completion,
     stash_oid_for_marker,
     stash_ref_for_oid,
@@ -128,8 +127,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         strategy_literal = cast(Literal["rebase", "merge"], strategy)
 
-        result = await asyncio.to_thread(
-            resolved_git_mgr.sync_from_main,
+        result = await resolved_git_mgr.sync_from_main(
             worktree.worktree_path,
             base_branch=worktree.base_branch,
             strategy=strategy_literal,
@@ -232,8 +230,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         )
         merge_cwd = target_worktree_path or repo_path
 
-        target_ref_result = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command,
+        target_ref_result = await resolved_git_mgr.run_git_command(
             ["show-ref", "--verify", "--quiet", target_ref],
             cwd=repo_path,
             timeout=10,
@@ -248,8 +245,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "target_branch": merge_target,
             }
 
-        source_ref_result = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command,
+        source_ref_result = await resolved_git_mgr.run_git_command(
             ["show-ref", "--verify", "--quiet", source_ref],
             cwd=repo_path,
             timeout=10,
@@ -273,11 +269,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         async def _restore_stash() -> None:
             """Restore stashed .gobby/ files if any were stashed."""
             if stash_oid:
-                stash_list = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["stash", "list", "--format=%gd%x00%H"],
-                    cwd=merge_cwd,
-                    timeout=10,
+                stash_list = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["stash", "list", "--format=%gd%x00%H"],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
                 if stash_list.returncode != 0:
                     detail = stash_list.stderr or stash_list.stdout or "git stash list failed"
@@ -285,11 +282,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 stash_ref = stash_ref_for_oid(stash_list.stdout, stash_oid)
                 if stash_ref is None:
                     raise RuntimeError(f"Failed to locate exact merge_worktree stash {stash_oid}")
-                pop_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["stash", "pop", stash_ref],
-                    cwd=merge_cwd,
-                    timeout=10,
+                pop_result = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["stash", "pop", stash_ref],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
                 if pop_result.returncode != 0:
                     detail = pop_result.stderr or pop_result.stdout or "git stash pop failed"
@@ -304,11 +302,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 return
 
             try:
-                merge_head = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["rev-parse", "--verify", "-q", "MERGE_HEAD"],
-                    cwd=merge_cwd,
-                    timeout=10,
+                merge_head = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["rev-parse", "--verify", "-q", "MERGE_HEAD"],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
             except (subprocess.TimeoutExpired, OSError) as error:
                 raise RuntimeError(f"Failed to inspect failed merge state: {error}") from error
@@ -325,11 +324,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 raise RuntimeError(f"Failed to inspect failed merge state: {detail}")
 
             try:
-                abort_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["merge", "--abort"],
-                    cwd=merge_cwd,
-                    timeout=10,
+                abort_result = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["merge", "--abort"],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
             except (subprocess.TimeoutExpired, OSError) as error:
                 raise RuntimeError(f"Failed to abort merge_worktree merge: {error}") from error
@@ -343,16 +343,17 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             merge_cleanup_required = False
 
         async def _source_is_merged_into_target() -> bool:
-            ancestor_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                [
-                    "merge-base",
-                    "--is-ancestor",
-                    source_ref,
-                    target_ref,
-                ],
-                cwd=merge_cwd,
-                timeout=10,
+            ancestor_result = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    [
+                        "merge-base",
+                        "--is-ancestor",
+                        source_ref,
+                        target_ref,
+                    ],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             return ancestor_result.returncode == 0
 
@@ -361,16 +362,17 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         ) -> bool:
             if effective_source == worktree.branch_name and merge_target == worktree.base_branch:
                 return effective_merge_result
-            ancestor_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                [
-                    "merge-base",
-                    "--is-ancestor",
-                    f"refs/heads/{worktree.branch_name}",
-                    f"refs/heads/{worktree.base_branch}",
-                ],
-                cwd=merge_cwd,
-                timeout=10,
+            ancestor_result = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    [
+                        "merge-base",
+                        "--is-ancestor",
+                        f"refs/heads/{worktree.branch_name}",
+                        f"refs/heads/{worktree.base_branch}",
+                    ],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             return ancestor_result.returncode == 0
 
@@ -393,11 +395,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     return False
                 revisions = [artifacts.base_commit_sha, source_ref]
 
-            diff_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["diff", "--quiet", *revisions, "--", SCHEMA_IDENTITY_PATH],
-                cwd=repo_path,
-                timeout=10,
+            diff_result = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["diff", "--quiet", *revisions, "--", SCHEMA_IDENTITY_PATH],
+                    cwd=repo_path,
+                    timeout=10,
+                )
             )
             if diff_result.returncode not in (0, 1):
                 detail = diff_result.stderr or diff_result.stdout or "git diff failed"
@@ -408,8 +411,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         cutover_required = await _source_changed_schema_identity()
 
         if source_is_reconciled:
-            target_sha_result = await asyncio.to_thread(
-                resolved_git_mgr.run_git_command,
+            target_sha_result = await resolved_git_mgr.run_git_command(
                 ["rev-parse", target_ref],
                 cwd=merge_cwd,
                 timeout=10,
@@ -459,11 +461,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         try:
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
-            current_branch_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=merge_cwd,
-                timeout=10,
+            current_branch_result = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             if current_branch_result.returncode != 0:
                 return {
@@ -494,11 +497,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
             checked_out_target = original_branch == merge_target
             if original_branch != merge_target:
-                checkout_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["checkout", merge_target],
-                    cwd=merge_cwd,
-                    timeout=30,
+                checkout_result = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["checkout", merge_target],
+                        cwd=merge_cwd,
+                        timeout=30,
+                    )
                 )
                 if checkout_result.returncode != 0:
                     return {
@@ -515,11 +519,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     }
                 checked_out_target = True
 
-            status_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["status", "--porcelain"],
-                cwd=merge_cwd,
-                timeout=10,
+            status_result = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["status", "--porcelain"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             if status_result.returncode != 0:
                 return {
@@ -532,8 +537,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "target_branch": merge_target,
                 }
             try:
-                target_staged_paths = await asyncio.to_thread(
-                    staged_paths,
+                target_staged_paths = await staged_paths(
                     resolved_git_mgr,
                     merge_cwd,
                 )
@@ -550,11 +554,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
             dirty_paths = _non_gobby_dirty_paths(status_result.stdout) | target_staged_paths
             if dirty_paths:
-                incoming_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["diff", "--name-only", "HEAD", source_ref],
-                    cwd=merge_cwd,
-                    timeout=10,
+                incoming_result = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["diff", "--name-only", "HEAD", source_ref],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
                 if incoming_result.returncode != 0:
                     return {
@@ -588,11 +593,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             # Stash dirty .gobby/ sync files and retain the exact object identity.
             stash_marker = new_stash_marker("merge-worktree")
-            stash_head_before = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["stash", "list", "-1", "--format=%H"],
-                cwd=merge_cwd,
-                timeout=10,
+            stash_head_before = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["stash", "list", "-1", "--format=%H"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             if stash_head_before.returncode != 0:
                 detail = (
@@ -610,11 +616,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "source_branch": effective_source,
                     "target_branch": merge_target,
                 }
-            stash_push = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["stash", "push", "-m", stash_marker, "--", ".gobby/"],
-                cwd=merge_cwd,
-                timeout=10,
+            stash_push = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["stash", "push", "-m", stash_marker, "--", ".gobby/"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             if stash_push.returncode != 0:
                 detail = stash_push.stderr or stash_push.stdout or "git stash push failed"
@@ -628,11 +635,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "source_branch": effective_source,
                     "target_branch": merge_target,
                 }
-            stash_head_after = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["stash", "list", "--format=%H%x00%gs"],
-                cwd=merge_cwd,
-                timeout=10,
+            stash_head_after = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["stash", "list", "--format=%H%x00%gs"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             if stash_head_after.returncode != 0:
                 detail = (
@@ -668,11 +676,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "target_branch": merge_target,
                 }
 
-            merge_head_result = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command,
-                ["rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=merge_cwd,
-                timeout=10,
+            merge_head_result = await run_to_completion(
+                resolved_git_mgr.run_git_command(
+                    ["rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
             )
             if (
                 merge_head_result.returncode != 0
@@ -694,8 +703,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             landing = "merge"
             if target_staged_paths:
-                fallback_result = await asyncio.to_thread(
-                    land_by_fast_forward,
+                fallback_result = await land_by_fast_forward(
                     resolved_git_mgr,
                     source_cwd=wt_path,
                     target_cwd=merge_cwd,
@@ -739,20 +747,21 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 # Treat the transaction as cleanup-required before starting merge and
                 # clear the flag only after Git proves the merge command succeeded.
                 merge_cleanup_required = True
-                merge_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["merge", source_ref, "--no-ff", "--no-edit"],
-                    cwd=merge_cwd,
-                    timeout=MERGE_COMMAND_TIMEOUT_SECONDS,
-                    env={"GOBBY_MERGE": "1"},
+                merge_result = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["merge", source_ref, "--no-ff", "--no-edit"],
+                        cwd=merge_cwd,
+                        timeout=MERGE_COMMAND_TIMEOUT_SECONDS,
+                        env={"GOBBY_MERGE": "1"},
+                    )
                 )
                 if merge_result.returncode == 0:
                     merge_cleanup_required = False
                 if merge_result.returncode != 0:
                     # Detect unmerged (conflicted) files via git index — more reliable
                     # than parsing human-readable merge output for "CONFLICT" strings
-                    conflicted_files = await run_thread_to_completion(
-                        resolved_git_mgr.get_unmerged_files, cwd=merge_cwd
+                    conflicted_files = await run_to_completion(
+                        resolved_git_mgr.get_unmerged_files(cwd=merge_cwd)
                     )
                     if conflicted_files:
                         # The transaction cleanup below aborts before the checkout
@@ -789,11 +798,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if git_merged:
                 if await _worktree_branch_is_merged_into_base(git_merged):
                     ctx.worktree_storage.mark_merged(worktree_id)
-                target_sha_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["rev-parse", target_ref],
-                    cwd=merge_cwd,
-                    timeout=10,
+                target_sha_result = await run_to_completion(
+                    resolved_git_mgr.run_git_command(
+                        ["rev-parse", target_ref],
+                        cwd=merge_cwd,
+                        timeout=10,
+                    )
                 )
                 if target_sha_result.returncode != 0:
                     return {
@@ -844,11 +854,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     cleanup_errors.append(abort_error)
                     logger.error("%s", abort_error)
                 if checked_out_target and original_branch != merge_target:
-                    restore_branch = await run_thread_to_completion(
-                        resolved_git_mgr.run_git_command,
-                        ["checkout", original_branch],
-                        cwd=merge_cwd,
-                        timeout=30,
+                    restore_branch = await run_to_completion(
+                        resolved_git_mgr.run_git_command(
+                            ["checkout", original_branch],
+                            cwd=merge_cwd,
+                            timeout=30,
+                        )
                     )
                     if restore_branch.returncode != 0:
                         detail = (
@@ -946,8 +957,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             command.append("--force-with-lease")
         command.extend([remote, f"{source_branch}:{destination_branch}"])
 
-        result = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command,
+        result = await resolved_git_mgr.run_git_command(
             command,
             cwd=worktree.worktree_path,
             timeout=60,

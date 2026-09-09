@@ -196,8 +196,7 @@ class EnforcementCompletionMixin:
         blocker_exit = variables.get("blocker_handed_off") is True and run_row is not None
         if blocker_exit:
             agent_run_task_dirty_paths = _facade_attr("agent_run_task_dirty_paths")
-            dirty_paths = await offload(
-                agent_run_task_dirty_paths,
+            dirty_paths = await agent_run_task_dirty_paths(
                 self.db,
                 getattr(self._runner, "_session_manager", None),
                 run_row,

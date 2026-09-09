@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for git operations
@@ -60,6 +61,13 @@ def _validate_git_ref(ref: str, param_name: str = "ref") -> None:
         raise HTTPException(400, f"Invalid git ref for {param_name}: {ref!r}")
 
 
+def _require_git_success(result: subprocess.CompletedProcess[str], operation: str) -> None:
+    if result.returncode == 0:
+        return
+    detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+    raise HTTPException(503, f"{operation} unavailable: {detail}")
+
+
 def create_source_control_router(server: HTTPServer) -> APIRouter:
     """Create the source control API router."""
     router = APIRouter(prefix="/api/source-control", tags=["source-control"])
@@ -86,14 +94,16 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         behind = None
         if repo_path:
             try:
-                r = await _run_git(["branch", "--show-current"], repo_path)
-                if r.returncode == 0:
-                    current_branch = r.stdout.strip()
-                r2 = await _run_git(["branch", "--list"], repo_path)
-                if r2.returncode == 0:
-                    branch_count = len(
-                        [line for line in r2.stdout.strip().split("\n") if line.strip()]
-                    )
+                branch_result, list_result = await asyncio.gather(
+                    _run_git(["branch", "--show-current"], repo_path),
+                    _run_git(["branch", "--list"], repo_path),
+                )
+                _require_git_success(branch_result, "Current branch")
+                _require_git_success(list_result, "Branch list")
+                current_branch = branch_result.stdout.strip()
+                branch_count = len(
+                    [line for line in list_result.stdout.strip().split("\n") if line.strip()]
+                )
                 if current_branch:
                     tracking = await _run_git(
                         [
@@ -103,12 +113,14 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                         ],
                         repo_path,
                     )
-                    if tracking.returncode == 0:
-                        upstream, _, track = tracking.stdout.rstrip("\n").partition("\t")
-                        if upstream:
-                            ahead, behind = parse_upstream_track(track)
-            except (OSError, ValueError) as e:
-                logger.warning("Failed to count branches: %s", e)
+                    _require_git_success(tracking, "Upstream status")
+                    upstream, _, track = tracking.stdout.rstrip("\n").partition("\t")
+                    if upstream:
+                        ahead, behind = parse_upstream_track(track)
+            except subprocess.TimeoutExpired:
+                raise HTTPException(504, "Git status timed out") from None
+            except OSError as exc:
+                raise HTTPException(503, f"Git status unavailable: {exc}") from exc
 
         worktree_count = 0
         clone_count = 0

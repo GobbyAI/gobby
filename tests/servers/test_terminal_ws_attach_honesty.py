@@ -219,3 +219,71 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     control = ws.messages_of_type("terminal_control_result")[-1]
     assert control["granted"] is False
     assert control["reason"] == "stale_attachment"
+
+
+class _StartupHost:
+    """Host manager stand-in that records whether attach waited on startup."""
+
+    def __init__(self, settled: bool) -> None:
+        self._settled = settled
+        self.waits: list[float] = []
+
+    async def wait_startup_settled(self, timeout: float) -> bool:
+        self.waits.append(timeout)
+        return self._settled
+
+
+class _AfterStartupRuntime(_LocatorRuntime):
+    """Locator runtime that proves the host startup wait ran first."""
+
+    def __init__(self, host: _StartupHost) -> None:
+        super().__init__(result=_valid_locator())
+        self._host = host
+        self.resolved = 0
+
+    async def attach_locator(self, row: object) -> object:
+        assert self._host.waits, "attach_locator ran before the host startup wait"
+        self.resolved += 1
+        return await super().attach_locator(row)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settled", [True, False])
+async def test_proxy_attach_waits_for_terminal_host_startup(
+    settled: bool, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A client reconnecting during daemon startup attaches once the gterm host
+    has been adopted or spawned; a host that never settles is a typed refusal
+    rather than an epoch mismatch against an unset host (#22002)."""
+    from gobby.servers.websocket import terminal_ws
+
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    host = _StartupHost(settled)
+    runtime = _AfterStartupRuntime(host)
+    registry = TerminalRuntimeRegistry()
+    registry.register(cast(TerminalRuntime, runtime))
+    server.configure_terminals(TerminalManager(temp_db), registry, MagicMock(), host_manager=host)
+    server.open_proxy_frame = _raising_opener
+    ws = MockWebSocket()
+    server.clients[ws] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "request_id": "startup-wait",
+            "terminal_id": terminal_id,
+            "frame_delivery": "proxy",
+        },
+    )
+    result = ws.messages_of_type("terminal_attach_result")[-1]
+    assert result["success"] is False
+    assert host.waits == [terminal_ws.HOST_STARTUP_ATTACH_WAIT_SECONDS]
+    if settled:
+        assert runtime.resolved == 1
+        assert result["code"] == "host_unavailable"
+    else:
+        assert runtime.resolved == 0
+        assert result["code"] == "host_not_ready"
+        assert result["reason"] == "terminal host has not finished starting"

@@ -7,7 +7,6 @@ Provides file tree browsing, reading, and image serving endpoints.
 import asyncio
 import logging
 import mimetypes
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +30,7 @@ from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
+from gobby.utils.daemon_git import GitOk, GitResult, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -140,52 +140,27 @@ def _require_project_checkout_root(server: "HTTPServer", project_id: str) -> str
         raise _checkout_http_error(exc) from exc
 
 
-async def _run_git(cwd: str, args: list[str], timeout: float = 10.0) -> tuple[int, str]:
+async def _run_git(cwd: str, args: list[str], timeout: float = 10.0) -> GitResult:
     """Run a git command asynchronously."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            *args,
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            raise
-
-        return proc.returncode or 0, stdout.decode("utf-8", errors="replace")
-    except (TimeoutError, OSError):
-        return 1, ""
+    return await daemon_git.run(args, cwd=cwd, timeout=timeout)
 
 
 async def _get_git_tracked_files(project_path: str) -> set[str] | None:
     """Get set of git-tracked files, or None if not a git repo."""
     try:
-        # Get tracked files
-        rc, stdout = await _run_git(project_path, ["ls-files"])
-        if rc != 0:
-            return None
-
-        # Get untracked but not ignored files
-        rc2, stdout2 = await _run_git(project_path, ["ls-files", "--others", "--exclude-standard"])
-
-        files: set[str] = set()
-        for line in stdout.strip().splitlines():
-            if line:
-                files.add(line)
-        if rc2 == 0:
-            for line in stdout2.strip().splitlines():
-                if line:
-                    files.add(line)
-        return files
-    except (OSError, subprocess.SubprocessError):
+        tracked, untracked = await asyncio.gather(
+            _run_git(project_path, ["ls-files"]),
+            _run_git(project_path, ["ls-files", "--others", "--exclude-standard"]),
+        )
+    except OSError:
         return None
+    if not isinstance(tracked, GitOk) or not isinstance(untracked, GitOk):
+        return None
+
+    files = set(tracked.stdout.strip().splitlines())
+    files.update(untracked.stdout.strip().splitlines())
+    files.discard("")
+    return files
 
 
 def _is_path_visible(
@@ -414,40 +389,23 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         """
         repo_path = await server.run_db(_require_project_checkout_root, server, project_id)
 
-        result: dict[str, Any] = {"branch": None, "files": {}}
+        branch_result, status_result = await asyncio.gather(
+            _run_git(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"], timeout=5),
+            daemon_git.status(repo_path, timeout=10),
+            return_exceptions=True,
+        )
+        if isinstance(branch_result, OSError):
+            raise HTTPException(503, f"Git status is unavailable: {branch_result}")
+        if isinstance(branch_result, BaseException):
+            raise branch_result
+        if not isinstance(branch_result, GitOk) or not isinstance(status_result, GitOk):
+            raise HTTPException(503, "Git status is unavailable")
 
-        try:
-            # Get branch name
-            rc_branch, stdout_branch = await _run_git(
-                repo_path, ["rev-parse", "--abbrev-ref", "HEAD"], timeout=5
-            )
-            if rc_branch == 0:
-                result["branch"] = stdout_branch.strip()
-
-            # Get file statuses
-            rc_status, stdout_status = await _run_git(
-                repo_path, ["status", "--porcelain"], timeout=10
-            )
-
-            if rc_status == 0:
-                files: dict[str, str] = {}
-                for line in stdout_status.splitlines():
-                    if not line or len(line) < GIT_PORCELAIN_STATUS_MIN_LINE_LENGTH:
-                        continue
-                    # Format: "XY PATH" — XY is exactly 2 chars, then space, then path
-                    xy = line[0:2]
-                    status_code = xy.strip() or "?"
-                    file_path = line[GIT_PORCELAIN_PATH_OFFSET:]
-                    # Handle renames: "R  old -> new"
-                    if " -> " in file_path:
-                        file_path = file_path.split(" -> ")[-1]
-                    if file_path:
-                        files[file_path] = status_code
-                result["files"] = files
-        except (OSError, subprocess.SubprocessError):
-            logger.debug("Failed to get git status", exc_info=True)
-
-        return result
+        files = {
+            entry.path: entry.code.strip() or "?"
+            for entry in parse_porcelain_v1_z(status_result.stdout)
+        }
+        return {"branch": branch_result.stdout.strip(), "files": files}
 
     @router.get("/git-diff")
     async def git_diff(
@@ -460,12 +418,13 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
         # Validate path
         _resolve_safe_path(repo_path, path)
 
-        try:
-            rc, stdout = await _run_git(repo_path, ["diff", "HEAD", "--", path], timeout=10)
-            diff = stdout if rc == 0 else ""
-        except Exception:
-            diff = ""
-
-        return {"diff": diff, "path": path}
+        result = await _run_git(
+            repo_path,
+            ["--literal-pathspecs", "diff", "HEAD", "--", path],
+            timeout=10,
+        )
+        if not isinstance(result, GitOk):
+            raise HTTPException(503, "Git diff is unavailable")
+        return {"diff": result.stdout, "path": path}
 
     return router

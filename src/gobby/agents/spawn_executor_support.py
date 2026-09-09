@@ -463,6 +463,9 @@ def _codex_mcp_config_overrides(
     overrides = [
         'mcp_servers.gobby.command="uv"',
         f"mcp_servers.gobby.args={args_toml}",
+        # Managed work cannot begin without task and workflow tools. Optional
+        # servers may be omitted from Codex's first-turn tool catalog.
+        "mcp_servers.gobby.required=true",
         "mcp_servers.gobby.startup_timeout_sec=120",
         f"mcp_servers.gobby.tool_timeout_sec={_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}",
     ]

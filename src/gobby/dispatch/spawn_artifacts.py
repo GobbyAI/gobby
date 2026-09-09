@@ -63,7 +63,7 @@ __all__ = [
 ]
 
 
-def _prepare_spawn_artifacts(
+async def _prepare_spawn_artifacts(
     *,
     db: HubDatabase,
     action: SpawnAgentAction,
@@ -80,12 +80,14 @@ def _prepare_spawn_artifacts(
     backend = cast(Literal["worktree", "clone"], isolation)
     if task.task_type != "epic":
         try:
-            ensure_task_parent_integration_workspace(
-                task_manager=task_manager,
-                task=task,
-                backend=backend,
-                project_id=project_id,
-                services=services,
+            (
+                await ensure_task_parent_integration_workspace(
+                    task_manager=task_manager,
+                    task=task,
+                    backend=backend,
+                    project_id=project_id,
+                    services=services,
+                )
             )
         except BuildWorkspaceError as exc:
             raise DispatchSpawnFailed(str(exc)) from exc
@@ -99,15 +101,17 @@ def _prepare_spawn_artifacts(
             raise BuildWorkspaceError(
                 f"target_branch is required for epic integration workspace #{task.seq_num}"
             )
-        ensure_epic_integration_workspaces(
-            task_manager=task_manager,
-            root_task=task,
-            backend=backend,
-            target_branch=artifacts.target_branch,
-            project_id=project_id,
-            services=services,
-            merge_closed_descendant_commits=True,
-            repair_only=True,
+        (
+            await ensure_epic_integration_workspaces(
+                task_manager=task_manager,
+                root_task=task,
+                backend=backend,
+                target_branch=artifacts.target_branch,
+                project_id=project_id,
+                services=services,
+                merge_closed_descendant_commits=True,
+                repair_only=True,
+            )
         )
     except BuildWorkspaceError as exc:
         raise DispatchSpawnFailed(

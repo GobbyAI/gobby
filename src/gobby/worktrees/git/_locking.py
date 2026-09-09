@@ -8,7 +8,7 @@ from gobby.worktrees.git._models import GitOperationResult
 from gobby.worktrees.git._runner import GitRunner
 
 
-def lock_worktree(
+async def lock_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
     reason: str | None = None,
@@ -29,7 +29,7 @@ def lock_worktree(
         args.extend(["--reason", reason])
 
     try:
-        result = runner._run_git(args, timeout=10)
+        result = await runner._run_git(args, timeout=10)
 
         if result.returncode == 0:
             return GitOperationResult(
@@ -51,7 +51,7 @@ def lock_worktree(
         )
 
 
-def unlock_worktree(runner: GitRunner, worktree_path: str | Path) -> GitOperationResult:
+async def unlock_worktree(runner: GitRunner, worktree_path: str | Path) -> GitOperationResult:
     """
     Unlock a worktree.
 
@@ -63,7 +63,7 @@ def unlock_worktree(runner: GitRunner, worktree_path: str | Path) -> GitOperatio
         GitOperationResult with success status
     """
     try:
-        result = runner._run_git(
+        result = await runner._run_git(
             ["worktree", "unlock", str(worktree_path)],
             timeout=10,
         )

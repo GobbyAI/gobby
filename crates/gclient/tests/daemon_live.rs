@@ -848,6 +848,97 @@ async fn single_reader_routes_replies_and_events() {
     mock.shutdown().await;
 }
 
+/// A daemon restart closes the socket with 1001, and the supervisor keeps
+/// retrying with the generation it observed at that loss. When the next
+/// handshake upgrades but dies before `subscribe_success`, the generation has
+/// already rolled forward; the stale caller must still open a fresh
+/// connection instead of replaying the cached failure forever (#22002).
+#[tokio::test]
+async fn stale_generation_reconnect_reopens_after_a_failed_handshake() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let (initial, mut events) = daemon.subscribe();
+    let observed = initial.generation;
+
+    mock.close_websockets_going_away();
+    let lost = timeout(Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Disconnected { generation, error } =
+                events.recv().await.expect("daemon event")
+            {
+                assert_eq!(generation, observed);
+                break error;
+            }
+        }
+    })
+    .await
+    .expect("going-away disconnect deadline");
+    assert!(matches!(lost, DaemonError::GoingAway), "{lost:?}");
+
+    // The next handshake upgrades but the daemon never confirms the
+    // subscription and then drops the socket: the attempt fails after the
+    // generation moved past `observed`.
+    mock.suppress_ws("subscribe");
+    let handshakes_before = mock.websocket_handshakes();
+    let subscribes_before = count_ws_requests(&mock, "subscribe");
+    let attempt = {
+        let daemon = daemon.clone();
+        tokio::spawn(async move { daemon.reconnect(observed).await })
+    };
+    timeout(Duration::from_secs(1), async {
+        while count_ws_requests(&mock, "subscribe") == subscribes_before {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("unanswered subscribe reached the mock");
+    mock.drop_websockets();
+    let failed = attempt.await.expect("reconnect task");
+    assert!(failed.is_err(), "the dropped handshake fails: {failed:?}");
+    assert!(!daemon.ready());
+    assert!(
+        daemon.generation() > observed,
+        "the failed handshake already rolled the generation forward"
+    );
+    assert_eq!(mock.websocket_handshakes(), handshakes_before + 1);
+
+    mock.allow_ws("subscribe");
+    let reconnected = daemon
+        .reconnect(observed)
+        .await
+        .expect("a stale generation still opens a fresh connection");
+    assert!(reconnected > observed);
+    assert!(daemon.ready());
+    assert_eq!(daemon.generation(), reconnected);
+    assert_eq!(
+        mock.websocket_handshakes(),
+        handshakes_before + 2,
+        "the stale-generation attempt opened a new socket"
+    );
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}
+
+fn count_ws_requests(mock: &MockDaemon, kind: &str) -> usize {
+    mock.requests()
+        .iter()
+        .filter(|request| {
+            request
+                .body
+                .as_ref()
+                .and_then(|body| body.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some(kind)
+        })
+        .count()
+}
+
 #[tokio::test]
 async fn disconnect_reconnects_once_and_fences_old_attachments() {
     let mock = MockDaemon::start("local-token").await;

@@ -760,22 +760,27 @@ async fn concurrent_reconnect_is_single_flight() {
     );
     assert_eq!(mock.websocket_handshakes(), 2);
 
+    // A stale observation with no live connection and no flight opens a fresh
+    // connection instead of replaying the cached error (#22002).
     mock.drop_websockets();
     wait_disconnected(&daemon).await;
-    assert_eq!(
-        daemon.reconnect(first_generation).await,
-        Err(gobby_client::daemon::DaemonError::Unavailable { retry_after: None })
-    );
-    assert_eq!(mock.websocket_handshakes(), 2);
+    let reopened = daemon
+        .reconnect(first_generation)
+        .await
+        .expect("stale observation reconnects without a live connection");
+    assert!(reopened > replacement);
+    assert_eq!(mock.websocket_handshakes(), 3);
 
+    mock.drop_websockets();
+    wait_disconnected(&daemon).await;
     mock.fail_next_websocket();
     let failed_gate = mock.pause_next_websocket();
     let failed_first = {
         let daemon = daemon.clone();
-        tokio::spawn(async move { daemon.reconnect(replacement).await })
+        tokio::spawn(async move { daemon.reconnect(reopened).await })
     };
     timeout(Duration::from_secs(1), async {
-        while mock.websocket_handshakes() < 3 {
+        while mock.websocket_handshakes() < 4 {
             tokio::task::yield_now().await;
         }
     })
@@ -793,14 +798,14 @@ async fn concurrent_reconnect_is_single_flight() {
         failed_second.await.expect("failed joiner task")
     );
     assert!(failed_result.is_err());
-    assert_eq!(mock.websocket_handshakes(), 3);
+    assert_eq!(mock.websocket_handshakes(), 4);
 
     let retried = daemon
-        .reconnect(replacement)
+        .reconnect(reopened)
         .await
         .expect("later retry succeeds");
-    assert!(retried > replacement);
-    assert_eq!(mock.websocket_handshakes(), 4);
+    assert!(retried > reopened);
+    assert_eq!(mock.websocket_handshakes(), 5);
     daemon
         .close(Instant::now() + Duration::from_secs(1))
         .await

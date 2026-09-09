@@ -651,7 +651,7 @@ async def test_shared_decoder_and_slow_browser(
 
 
 @pytest.mark.asyncio
-async def test_viewport_independent_of_resize_and_paste_is_leased(
+async def test_viewport_independent_of_resize_and_only_paste_is_leased(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
@@ -684,19 +684,8 @@ async def test_viewport_independent_of_resize_and_paste_is_leased(
     frames = [item for key, item in harness.frames.items() if not key.startswith("host-") or True]
     del frames
     await _until(lambda: sum(len(frame.viewports) for frame in harness.frame_list) >= 2)
-    await _send(
-        harness.server,
-        a,
-        {
-            "type": "terminal_resize",
-            "terminal_id": harness.native_row.id,
-            "attachment_id": att_a,
-            "rows": 30,
-            "cols": 90,
-        },
-    )
-    assert harness.native_rt.resize_calls == []
-    await _take(harness, a, harness.native_row, att_a)
+    # Size is arbitrated by viewer precedence, never by the write lease (#21983):
+    # the most recent same-rank resize owns the geometry without taking control.
     await _send(
         harness.server,
         a,
@@ -709,6 +698,7 @@ async def test_viewport_independent_of_resize_and_paste_is_leased(
         },
     )
     await _until(lambda: harness.native_rt.resize_calls == [(30, 90)])
+    await _take(harness, a, harness.native_row, att_a)
     await _send(
         harness.server,
         b,
@@ -727,7 +717,6 @@ async def test_viewport_independent_of_resize_and_paste_is_leased(
     ext_ws = MockWebSocket()
     ext_att = await _attach(harness, ext_ws, harness.external_row, request_id="ext")
     await _take(harness, ext_ws, harness.external_row, ext_att)
-    before = list(harness.tmux_rt.tmux_commands)
     await _send(
         harness.server,
         ext_ws,
@@ -739,8 +728,8 @@ async def test_viewport_independent_of_resize_and_paste_is_leased(
             "cols": 40,
         },
     )
-    assert harness.tmux_rt.tmux_commands == before
-    assert harness.tmux_rt.resize_calls == []
+    await _until(lambda: harness.tmux_rt.resize_calls == [(12, 40)])
+    assert harness.tmux_rt.tmux_commands[-1] == ["resize-pane", "12", "40"]
 
 
 @pytest.mark.asyncio

@@ -296,8 +296,7 @@ async def spawn_agent(
         action=action,
         agent_body=agent_body,
     )
-    artifacts = await asyncio.to_thread(
-        _prepare_spawn_artifacts,
+    artifacts = await _prepare_spawn_artifacts(
         db=db,
         action=action,
         task=task,

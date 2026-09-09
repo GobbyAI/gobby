@@ -16,8 +16,6 @@ from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.skills.formatting import format_skill_fetch_context
-from gobby.utils.git import is_path_gitignored
-from gobby.workflows.git_utils import get_dirty_files_categorized
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
@@ -270,7 +268,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def _record_dirty_generated_artifacts(self, event: HookEvent, session_id: str) -> None:
-        """Attribute known dirty generated files to the task owning their sources."""
+        """Attribute generated outputs whose source tree was edited by the task."""
         repo_edit = self._resolve_repo_edit_paths(
             ".",
             event.cwd,
@@ -293,12 +291,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
         )
         if not attributed:
             return
-        dirty = get_dirty_files_categorized(checkout_root).all
         generated = [
             artifact
             for artifact, source_prefixes in _GENERATED_ARTIFACT_SOURCES.items()
-            if artifact in dirty
-            and any(
+            if any(
                 path.startswith(source_prefix)
                 for source_prefix in source_prefixes
                 for path in attributed
@@ -351,8 +347,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if Path(repo_relative_path).parts[:1] == (".gobby",):
                 continue
 
-            if is_path_gitignored(repo_relative_path, os.fspath(repo_root)):
-                continue
             if repo_relative_path not in committable_paths:
                 committable_paths.append(repo_relative_path)
                 self._notify_code_index(repo_root, repo_relative_path)

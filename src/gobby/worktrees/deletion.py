@@ -1,14 +1,17 @@
-"""Synchronous worktree deletion transaction shared by transport adapters."""
+"""Worktree deletion with asynchronous Git and guarded database cleanup."""
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
 
@@ -57,7 +60,7 @@ class WorktreeDeletionResult:
 type GitManagerResolver = Callable[[Worktree], WorktreeGitManager | None]
 
 
-def delete_worktree_transaction(
+async def delete_worktree_transaction(
     boundary: DestructiveBoundary,
     *,
     request: WorktreeDeletionRequest,
@@ -65,33 +68,56 @@ def delete_worktree_transaction(
     resolve_git_manager: GitManagerResolver,
     task_manager: LocalTaskManager | None,
 ) -> WorktreeDeletionResult:
-    """Perform lookup, Git mutation, storage cleanup, and event emission off-loop."""
+    """Perform lookup, nonblocking Git mutation, storage cleanup, and event emission."""
+    context = contextvars.copy_context()
     if request.surface is DeletionSurface.MAINTENANCE:
-        with worktree_storage.lock_for_cleanup(request.worktree_id) as worktree:
+        guard = worktree_storage.lock_for_cleanup(request.worktree_id)
+        entered = False
+
+        def enter_guard() -> Worktree | None:
+            nonlocal entered
+            worktree = guard.__enter__()
+            entered = True
+            return worktree
+
+        try:
+            worktree = await run_thread_to_completion(context.run, enter_guard)
             if worktree is None:
                 return WorktreeDeletionResult(
                     success=False, git_deleted=False, error="Worktree is no longer eligible"
                 )
-            return _delete_worktree(
-                boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager
+            return await _delete_worktree(
+                boundary,
+                request,
+                worktree,
+                worktree_storage,
+                resolve_git_manager,
+                task_manager,
+                context,
             )
-    worktree = worktree_storage.get(request.worktree_id)
+        finally:
+            if entered:
+                await run_thread_to_completion(context.run, guard.__exit__, *sys.exc_info())
+    worktree = await run_thread_to_completion(
+        context.run, worktree_storage.get, request.worktree_id
+    )
     if worktree is None:
         return WorktreeDeletionResult(success=True, found=False)
-    return _delete_worktree(
-        boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager
+    return await _delete_worktree(
+        boundary, request, worktree, worktree_storage, resolve_git_manager, task_manager, context
     )
 
 
-def _delete_worktree(
+async def _delete_worktree(
     boundary: DestructiveBoundary,
     request: WorktreeDeletionRequest,
     worktree: Worktree,
     worktree_storage: LocalWorktreeManager,
     resolve_git_manager: GitManagerResolver,
     task_manager: LocalTaskManager | None,
+    context: contextvars.Context,
 ) -> WorktreeDeletionResult:
-    git_manager = resolve_git_manager(worktree)
+    git_manager = await run_thread_to_completion(context.run, resolve_git_manager, worktree)
     if request.merged_into is not None and git_manager is None:
         return WorktreeDeletionResult(
             success=False,
@@ -101,17 +127,28 @@ def _delete_worktree(
         )
     worktree_exists = Path(worktree.worktree_path).exists()
     if request.surface is not DeletionSurface.HTTP:
-        precheck = _mcp_precheck(request, worktree, git_manager, worktree_exists)
+        precheck = await _mcp_precheck(request, worktree, git_manager, worktree_exists)
         if precheck is not None:
             return precheck
 
     if not boundary.begin_mutation():
         return WorktreeDeletionResult(success=False, abandoned=True)
 
-    git_failure = _delete_git_worktree(request, worktree, git_manager)
+    git_failure = await _delete_git_worktree(request, worktree, git_manager)
     if git_failure is not None:
         return git_failure
 
+    return await run_thread_to_completion(
+        context.run, _finish_storage_deletion, request, worktree, worktree_storage, task_manager
+    )
+
+
+def _finish_storage_deletion(
+    request: WorktreeDeletionRequest,
+    worktree: Worktree,
+    worktree_storage: LocalWorktreeManager,
+    task_manager: LocalTaskManager | None,
+) -> WorktreeDeletionResult:
     if not worktree_storage.delete(request.worktree_id):
         return WorktreeDeletionResult(
             success=False,
@@ -134,7 +171,7 @@ def _delete_worktree(
     )
 
 
-def _mcp_precheck(
+async def _mcp_precheck(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
     git_manager: WorktreeGitManager | None,
@@ -150,7 +187,7 @@ def _mcp_precheck(
             return WorktreeDeletionResult(
                 success=False, git_deleted=False, error="Cannot safely verify expired worktree"
             )
-        status = git_manager.get_worktree_status(worktree.worktree_path)
+        status = await git_manager.get_worktree_status(worktree.worktree_path)
         if status is None or status.branch != worktree.branch_name or status.branch is None:
             return WorktreeDeletionResult(
                 success=False, git_deleted=False, error="Cannot verify the expired worktree branch"
@@ -166,8 +203,15 @@ def _mcp_precheck(
     if git_manager is None or not worktree_exists:
         return None
 
-    status = git_manager.get_worktree_status(worktree.worktree_path)
-    if status and status.has_uncommitted_changes and not request.force:
+    status = await git_manager.get_worktree_status(worktree.worktree_path)
+    if status is None:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error="Cannot verify worktree cleanliness; the worktree record was preserved",
+            error_code="worktree_status_unavailable",
+        )
+    if status.has_uncommitted_changes and not request.force:
         return WorktreeDeletionResult(
             success=False,
             error="Worktree has uncommitted changes. Use force=True to delete anyway.",
@@ -176,7 +220,7 @@ def _mcp_precheck(
     return None
 
 
-def _delete_git_worktree(
+async def _delete_git_worktree(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
     git_manager: WorktreeGitManager | None,
@@ -189,7 +233,7 @@ def _delete_git_worktree(
         return None
 
     try:
-        result = git_manager.delete_worktree(
+        result = await git_manager.delete_worktree(
             worktree.worktree_path,
             force=True if request.surface is DeletionSurface.HTTP else request.force,
             delete_branch=True,
@@ -238,7 +282,7 @@ def _delete_git_worktree(
             git_deleted=False,
             error=result.error or "Failed to prune missing git worktree",
         )
-    prune_result = prune()
+    prune_result = await prune()
     if prune_result.success:
         return None
     return WorktreeDeletionResult(

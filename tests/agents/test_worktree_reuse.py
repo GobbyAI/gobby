@@ -23,7 +23,7 @@ class FakeGitManager:
         self.responses = responses
         self.calls: list[tuple[list[str], str | Path | None, int]] = []
 
-    def run_git_command(
+    async def run_git_command(
         self,
         args: list[str],
         *,

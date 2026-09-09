@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from gobby.build.options import BuildOptions
@@ -11,7 +10,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
-from gobby.utils.git import git_subprocess_env
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 
 async def _resolve_target_branch(
@@ -39,32 +38,31 @@ async def _validate_target_branch(
     if not (repo_path / ".git").exists():
         return
 
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "rev-parse",
-        "--verify",
-        target_branch,
+    result = await daemon_git.run(
+        ["rev-parse", "--verify", target_branch],
         cwd=repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=git_subprocess_env(),
+        timeout=10.0,
     )
-    stdout_bytes, stderr_bytes = await proc.communicate()
-    if proc.returncode == 0 and stdout_bytes.decode().strip():
+    if isinstance(result, GitOk) and result.stdout.strip():
         return
+    if isinstance(result, GitTimeout):
+        raise RuntimeError(f"Git timed out validating target branch {target_branch}")
+    if isinstance(result, GitFailed) and result.returncode is None:
+        raise RuntimeError(f"Git unavailable while validating target branch: {result.stderr}")
 
-    list_proc = await asyncio.create_subprocess_exec(
-        "git",
-        "branch",
-        "--format",
-        "%(refname:short)",
+    branches_result = await daemon_git.run(
+        ["branch", "--format", "%(refname:short)"],
         cwd=repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=git_subprocess_env(),
+        timeout=10.0,
     )
-    branches_stdout, _ = await list_proc.communicate()
-    available = ", ".join(branches_stdout.decode().split()) or "main"
+    if not isinstance(branches_result, GitOk):
+        detail = (
+            f"timed out after {branches_result.timeout:g}s"
+            if isinstance(branches_result, GitTimeout)
+            else branches_result.stderr.strip() or f"exit {branches_result.returncode}"
+        )
+        raise RuntimeError(f"Git unavailable while listing target branches: {detail}")
+    available = ", ".join(branches_result.stdout.split()) or "main"
     raise ValueError(f"target branch {target_branch} is missing; available branches: {available}")
 
 
@@ -80,20 +78,19 @@ async def _current_target_branch(db: HubDatabase, project_id: str) -> str | None
     if not (repo_path / ".git").exists():
         return None
 
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "rev-parse",
-        "--abbrev-ref",
-        "HEAD",
+    result = await daemon_git.run(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd=repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=git_subprocess_env(),
+        timeout=10.0,
     )
-    stdout_bytes, _ = await proc.communicate()
-    if proc.returncode != 0:
-        return None
-    branch = stdout_bytes.decode().strip()
+    if not isinstance(result, GitOk):
+        detail = (
+            f"timed out after {result.timeout:g}s"
+            if isinstance(result, GitTimeout)
+            else result.stderr.strip() or f"exit {result.returncode}"
+        )
+        raise RuntimeError(f"Git unavailable while resolving the target branch: {detail}")
+    branch = result.stdout.strip()
     return branch or None
 
 

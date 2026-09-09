@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import subprocess  # nosec B404 # subprocess.TimeoutExpired re-raised from runner
@@ -16,7 +17,7 @@ from gobby.worktrees.git._status import get_worktree_status, list_worktrees
 logger = logging.getLogger(__name__)
 
 
-def inspect_linked_worktree(runner: GitRunner, worktree_path: str | Path) -> WorktreeInfo:
+async def inspect_linked_worktree(runner: GitRunner, worktree_path: str | Path) -> WorktreeInfo:
     """Inspect an existing linked worktree and return canonical Git metadata."""
     try:
         canonical_path = Path(worktree_path).expanduser().resolve(strict=True)
@@ -26,7 +27,7 @@ def inspect_linked_worktree(runner: GitRunner, worktree_path: str | Path) -> Wor
     if not canonical_path.is_dir():
         raise ValueError(f"Worktree path is not a directory: {canonical_path}")
 
-    registered = list_worktrees(runner)
+    registered = await list_worktrees(runner)
     if not registered:
         raise ValueError(f"Unable to inspect linked worktrees for {runner.repo_path}")
 
@@ -55,7 +56,7 @@ def inspect_linked_worktree(runner: GitRunner, worktree_path: str | Path) -> Wor
     raise ValueError(f"Path is not a linked worktree: {canonical_path}")
 
 
-def create_worktree(
+async def create_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
     branch_name: str,
@@ -100,7 +101,9 @@ def create_worktree(
             if use_local:
                 # Create worktree from local branch (preserves unpushed commits)
                 # Verify local branch exists
-                verify_result = runner._run_git(["rev-parse", "--verify", base_branch], timeout=5)
+                verify_result = await runner._run_git(
+                    ["rev-parse", "--verify", base_branch], timeout=5
+                )
                 if verify_result.returncode != 0:
                     return GitOperationResult(
                         success=False,
@@ -109,7 +112,7 @@ def create_worktree(
                     )
 
                 # Create worktree with new branch based on local ref
-                result = runner._run_git(
+                result = await runner._run_git(
                     [
                         "worktree",
                         "add",
@@ -123,7 +126,7 @@ def create_worktree(
             else:
                 # Create worktree with new branch based on origin (original behavior)
                 # First, fetch to ensure we have latest refs
-                fetch_result = runner._run_git(["fetch", "origin", base_branch], timeout=60)
+                fetch_result = await runner._run_git(["fetch", "origin", base_branch], timeout=60)
                 if fetch_result.returncode != 0:
                     return GitOperationResult(
                         success=False,
@@ -132,7 +135,7 @@ def create_worktree(
                     )
 
                 # Create worktree with new branch
-                result = runner._run_git(
+                result = await runner._run_git(
                     [
                         "worktree",
                         "add",
@@ -145,7 +148,7 @@ def create_worktree(
                 )
         else:
             # Use existing branch
-            result = runner._run_git(
+            result = await runner._run_git(
                 ["worktree", "add", str(worktree_path), branch_name],
                 timeout=60,
             )
@@ -155,7 +158,7 @@ def create_worktree(
                 "Branch %s already exists while creating worktree; reusing existing branch",
                 branch_name,
             )
-            result = runner._run_git(
+            result = await runner._run_git(
                 ["worktree", "add", str(worktree_path), branch_name],
                 timeout=60,
             )
@@ -173,10 +176,18 @@ def create_worktree(
                 error=result.stderr,
             )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        )
+        stdout = (
+            exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+        )
         return GitOperationResult(
             success=False,
-            message="Git command timed out",
+            message=f"Git command timed out after {exc.timeout}s",
+            error=f"{exc}\n{stderr}" if stderr else str(exc),
+            output=stdout,
         )
     except Exception as e:
         return GitOperationResult(
@@ -193,7 +204,7 @@ def _is_branch_exists_error(stderr: str | None) -> bool:
     return "branch" in normalized and "already exists" in normalized
 
 
-def _refuse_unmerged_branch_deletion(
+async def _refuse_unmerged_branch_deletion(
     runner: GitRunner,
     branch_name: str,
     base_branch: str | None,
@@ -244,21 +255,21 @@ def _refuse_unmerged_branch_deletion(
             error="merge_target_is_source_branch",
         )
     if merged_into is not None:
-        valid_ref = runner._run_git(["check-ref-format", target_ref], timeout=5)
+        valid_ref = await runner._run_git(["check-ref-format", target_ref], timeout=5)
         if valid_ref.returncode != 0:
             return GitOperationResult(
                 success=False,
                 message=f"Invalid local merge target branch: '{merged_into}'",
                 error="invalid_merge_target_branch",
             )
-        symbolic = runner._run_git(["symbolic-ref", "--quiet", target_ref], timeout=5)
+        symbolic = await runner._run_git(["symbolic-ref", "--quiet", target_ref], timeout=5)
         if symbolic.returncode != 1:
             return GitOperationResult(
                 success=False,
                 message=f"Merge target '{merged_into}' must be a direct local branch ref",
                 error="merge_target_requires_direct_branch",
             )
-    result = runner._run_git(
+    result = await runner._run_git(
         ["merge-base", "--is-ancestor", source_ref, target_ref],
         timeout=10,
     )
@@ -298,7 +309,7 @@ def _refuse_unmerged_branch_deletion(
     )
 
 
-def delete_worktree(
+async def delete_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
     force: bool = False,
@@ -336,7 +347,7 @@ def delete_worktree(
             )
         # Get branch name before removal (for optional branch deletion)
         if delete_branch and not branch_name:
-            status = get_worktree_status(runner, worktree_path)
+            status = await get_worktree_status(runner, worktree_path)
             if status:
                 branch_name = status.branch
             if not branch_name:
@@ -356,7 +367,7 @@ def delete_worktree(
         # Preflight before anything is removed: refusing here keeps the
         # directory, the branch, and the caller's DB record fully intact.
         if delete_branch and branch_name and not force_delete_branch:
-            refusal = _refuse_unmerged_branch_deletion(
+            refusal = await _refuse_unmerged_branch_deletion(
                 runner, branch_name, base_branch, merged_into
             )
             if refusal is not None:
@@ -373,13 +384,13 @@ def delete_worktree(
         # carries a build directory (cargo target/, node_modules) needs minutes,
         # and a timeout here kills git mid-deletion, leaving a prunable stub
         # (#21058). The MCP caller's budget for delete_worktree is 300s.
-        result = runner._run_git(args, timeout=240)
+        result = await runner._run_git(args, timeout=240)
         output = result.stdout
         remove_warning = ""
 
         if result.returncode != 0:
             if not path_existed_before_remove:
-                prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                prune_result = await runner._run_git(["worktree", "prune"], timeout=10)
                 output = prune_result.stdout
                 detail = result.stderr.strip() or result.stdout.strip()
                 remove_warning = f"; git remove reported: {detail}" if detail else ""
@@ -391,7 +402,7 @@ def delete_worktree(
                         error=prune_detail,
                     )
             elif path_existed_before_remove and not worktree_path.exists():
-                prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                prune_result = await runner._run_git(["worktree", "prune"], timeout=10)
                 output = prune_result.stdout
                 detail = result.stderr.strip() or result.stdout.strip()
                 remove_warning = f"; git remove reported: {detail}" if detail else ""
@@ -407,8 +418,8 @@ def delete_worktree(
                     worktree_path,
                     result.stderr.strip(),
                 )
-                shutil.rmtree(worktree_path, ignore_errors=True)
-                prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                await asyncio.to_thread(shutil.rmtree, worktree_path, ignore_errors=True)
+                prune_result = await runner._run_git(["worktree", "prune"], timeout=10)
                 output = prune_result.stdout
                 if not worktree_path.exists():
                     logger.info("Removed worktree via fallback (rmtree + prune): %s", worktree_path)
@@ -431,7 +442,7 @@ def delete_worktree(
         # both weaker (upstream can be a pushed-but-unmerged remote ref) and
         # wrong-target (HEAD is whatever the main checkout happens to be on).
         if delete_branch and branch_name:
-            branch_result = runner._run_git(
+            branch_result = await runner._run_git(
                 ["branch", "-D", branch_name],
                 timeout=10,
             )
@@ -464,7 +475,7 @@ def delete_worktree(
         )
 
 
-def sync_from_main(
+async def sync_from_main(
     runner: GitRunner,
     worktree_path: str | Path,
     base_branch: str = "main",
@@ -493,9 +504,9 @@ def sync_from_main(
             message=f"Worktree path does not exist: {worktree_path}",
         )
 
-    def abort_sync() -> tuple[bool, str]:
+    async def abort_sync() -> tuple[bool, str]:
         try:
-            abort_result = runner._run_git(
+            abort_result = await runner._run_git(
                 [strategy, "--abort"],
                 cwd=worktree_path,
                 timeout=30,
@@ -509,7 +520,7 @@ def sync_from_main(
         sync_source = source_branch or base_branch
         if sync_source.startswith("origin/"):
             remote_branch = sync_source.removeprefix("origin/")
-            fetch_result = runner._run_git(
+            fetch_result = await runner._run_git(
                 ["fetch", "origin", remote_branch],
                 cwd=worktree_path,
                 timeout=60,
@@ -523,14 +534,14 @@ def sync_from_main(
 
         # Perform rebase or merge
         if strategy == "rebase":
-            sync_result = runner._run_git(
+            sync_result = await runner._run_git(
                 ["rebase", sync_source],
                 cwd=worktree_path,
                 timeout=120,
                 env=env,
             )
         else:
-            sync_result = runner._run_git(
+            sync_result = await runner._run_git(
                 ["merge", sync_source, "--no-edit"],
                 cwd=worktree_path,
                 timeout=120,
@@ -541,7 +552,7 @@ def sync_from_main(
             has_conflicts = "CONFLICT" in sync_result.stdout or "CONFLICT" in sync_result.stderr
             conflicted_files: list[str] = []
             if has_conflicts:
-                conflict_result = runner._run_git(
+                conflict_result = await runner._run_git(
                     ["diff", "--name-only", "--diff-filter=U"],
                     cwd=worktree_path,
                     timeout=10,
@@ -550,7 +561,7 @@ def sync_from_main(
                     conflicted_files = [
                         path.strip() for path in conflict_result.stdout.splitlines() if path.strip()
                     ]
-            aborted, abort_error = abort_sync()
+            aborted, abort_error = await abort_sync()
             abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
 
             # Check if there are conflicts
@@ -574,7 +585,7 @@ def sync_from_main(
         )
 
     except subprocess.TimeoutExpired:
-        aborted, abort_error = abort_sync()
+        aborted, abort_error = await abort_sync()
         abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
         return GitOperationResult(
             success=False,

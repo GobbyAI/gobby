@@ -60,15 +60,14 @@ async def sync_reused_worktree_to_base(
 ) -> ReusedWorktreeSyncResult:
     """Rebase a clean reused worktree onto the current local base branch."""
 
-    return await asyncio.to_thread(
-        _sync_reused_worktree_to_base_sync,
+    return await _sync_reused_worktree_to_base(
         git_manager,
         worktree_path,
         base_branch,
     )
 
 
-def capture_worktree_base_commit_sha(
+async def capture_worktree_base_commit_sha(
     *,
     git_manager: Any,
     worktree_path: str,
@@ -76,19 +75,19 @@ def capture_worktree_base_commit_sha(
     use_local: bool,
 ) -> str:
     base_ref = base_branch if use_local else f"origin/{base_branch}"
-    result = _run_git(git_manager, ["merge-base", base_ref, "HEAD"], cwd=Path(worktree_path))
+    result = await _run_git(git_manager, ["merge-base", base_ref, "HEAD"], cwd=Path(worktree_path))
     if result.returncode != 0:
         detail = _detail(result)
         raise RuntimeError(f"Failed to capture base_commit_sha from {base_ref}: {detail}")
     return result.stdout.strip()
 
 
-def cleanup_stale_worktree_registration(
+async def cleanup_stale_worktree_registration(
     git_manager: Any,
     worktree_storage: Any,
     worktree: Any,
 ) -> None:
-    delete_result = git_manager.delete_worktree(
+    delete_result = await git_manager.delete_worktree(
         worktree_path=worktree.worktree_path,
         force=True,
         delete_branch=True,
@@ -102,7 +101,7 @@ def cleanup_stale_worktree_registration(
     worktree_storage.delete(worktree.id)
 
 
-def _sync_reused_worktree_to_base_sync(
+async def _sync_reused_worktree_to_base(
     git_manager: Any,
     worktree_path: str,
     base_branch: str,
@@ -111,10 +110,12 @@ def _sync_reused_worktree_to_base_sync(
     if not path.is_dir():
         raise RuntimeError(f"Cannot sync reused worktree; path does not exist: {worktree_path}")
 
-    base_ref, base_sha = _resolve_base_ref(git_manager, base_branch)
-    _ensure_clean_worktree(git_manager, path)
+    base_ref, base_sha = await _resolve_base_ref(git_manager, base_branch)
+    await _ensure_clean_worktree(git_manager, path)
 
-    ancestor = _run_git(git_manager, ["merge-base", "--is-ancestor", base_ref, "HEAD"], cwd=path)
+    ancestor = await _run_git(
+        git_manager, ["merge-base", "--is-ancestor", base_ref, "HEAD"], cwd=path
+    )
     if ancestor.returncode == 0:
         return ReusedWorktreeSyncResult("already_current", base_ref, base_sha)
     if ancestor.returncode not in {0, 1}:
@@ -122,13 +123,13 @@ def _sync_reused_worktree_to_base_sync(
         raise RuntimeError(f"Failed to compare reused worktree with {base_ref}: {detail}")
 
     try:
-        result = _run_git(git_manager, ["rebase", base_ref], cwd=path, timeout=120)
+        result = await _run_git(git_manager, ["rebase", base_ref], cwd=path, timeout=120)
     except subprocess.TimeoutExpired as exc:
-        abort_detail = _abort_rebase(git_manager, path)
+        abort_detail = await _abort_rebase(git_manager, path)
         message = f"Timed out rebasing reused worktree onto {base_ref}: {exc}{abort_detail}"
         raise RuntimeError(message) from exc
     if result.returncode != 0:
-        abort_detail = _abort_rebase(git_manager, path)
+        abort_detail = await _abort_rebase(git_manager, path)
         detail = _detail(result)
         message = f"Failed to rebase reused worktree onto {base_ref}: {detail}{abort_detail}"
         if _looks_like_rebase_conflict(detail):
@@ -144,25 +145,25 @@ def _sync_reused_worktree_to_base_sync(
     return ReusedWorktreeSyncResult("rebased", base_ref, base_sha)
 
 
-def _resolve_base_ref(git_manager: Any, base_branch: str) -> tuple[str, str]:
-    local = _run_git(git_manager, ["rev-parse", "--verify", f"{base_branch}^{{commit}}"])
+async def _resolve_base_ref(git_manager: Any, base_branch: str) -> tuple[str, str]:
+    local = await _run_git(git_manager, ["rev-parse", "--verify", f"{base_branch}^{{commit}}"])
     if local.returncode == 0:
         return base_branch, local.stdout.strip()
 
-    fetch = _run_git(git_manager, ["fetch", "origin", base_branch], timeout=60)
+    fetch = await _run_git(git_manager, ["fetch", "origin", base_branch], timeout=60)
     if fetch.returncode != 0:
         detail = _detail(fetch) or _detail(local)
         raise RuntimeError(f"Failed to resolve base branch {base_branch}: {detail}")
 
     remote_ref = f"origin/{base_branch}"
-    remote = _run_git(git_manager, ["rev-parse", "--verify", f"{remote_ref}^{{commit}}"])
+    remote = await _run_git(git_manager, ["rev-parse", "--verify", f"{remote_ref}^{{commit}}"])
     if remote.returncode != 0:
         detail = _detail(remote)
         raise RuntimeError(f"Failed to resolve base branch {base_branch}: {detail}")
     return remote_ref, remote.stdout.strip()
 
 
-def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
+async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
     main_repo_path = _main_repo_path(git_manager)
     if main_repo_path is not None:
         try:
@@ -171,8 +172,8 @@ def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
             raise RuntimeError(
                 f"Failed to write isolation sidecar for reused worktree {path}: {exc}"
             ) from exc
-    apply_isolation_git_hygiene(path, main_repo_path=main_repo_path)
-    status = _run_git(git_manager, ["status", "--porcelain"], cwd=path)
+    await asyncio.to_thread(apply_isolation_git_hygiene, path, main_repo_path=main_repo_path)
+    status = await _run_git(git_manager, ["status", "--porcelain"], cwd=path)
     if status.returncode != 0:
         detail = _detail(status)
         raise RuntimeError(f"Failed to inspect reused worktree cleanliness: {detail}")
@@ -183,8 +184,8 @@ def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
         )
 
 
-def _abort_rebase(git_manager: Any, path: Path) -> str:
-    abort = _run_git(git_manager, ["rebase", "--abort"], cwd=path, timeout=30)
+async def _abort_rebase(git_manager: Any, path: Path) -> str:
+    abort = await _run_git(git_manager, ["rebase", "--abort"], cwd=path, timeout=30)
     if abort.returncode == 0:
         return "; rebase aborted"
     return f"; rebase abort failed: {_detail(abort)}"
@@ -203,7 +204,7 @@ def _looks_like_rebase_conflict(detail: str) -> bool:
     )
 
 
-def _run_git(
+async def _run_git(
     git_manager: Any,
     args: list[str],
     *,
@@ -212,7 +213,7 @@ def _run_git(
 ) -> subprocess.CompletedProcess[str]:
     return cast(
         subprocess.CompletedProcess[str],
-        git_manager.run_git_command(args, cwd=cwd, timeout=timeout),
+        await git_manager.run_git_command(args, cwd=cwd, timeout=timeout),
     )
 
 

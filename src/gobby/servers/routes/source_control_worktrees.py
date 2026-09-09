@@ -214,8 +214,7 @@ def create_source_control_worktrees_router(
             raise HTTPException(404, "Worktree not found")
 
         if server.services.git_manager:
-            result = await server.run_db(
-                server.services.git_manager.sync_from_main,
+            result = await server.services.git_manager.sync_from_main(
                 worktree.worktree_path,
                 base_branch=worktree.base_branch,
                 source_branch=source_branch,

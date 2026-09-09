@@ -628,6 +628,10 @@ async def init_subsystems(
     else:
         monitor.set_reconciliation_callback(lambda: _reconcile_agent_lifecycle_state(runner))
         monitor.set_non_task_resume_callback(lambda: _retry_parked_non_task_resumes(runner))
+    # First: clients reconnect as soon as HTTP serves and re-attach their
+    # terminals, so the surviving gterm host must be adopted (or a fresh one
+    # spawned) before the slow recovery steps below (#22002).
+    await _start_terminal_host(runner, tracker)
     await _run_agent_hook_replay_barrier(runner)
     reconciled_runs = (
         await reconcile_agent_runs_after_restart(runner)
@@ -660,7 +664,6 @@ async def init_subsystems(
     await _initialize_vector_store(runner, rebuild_vector_store, tracker)
     await _start_core_services(runner, tracker)
     await _check_tmux_health(tracker)
-    await _start_terminal_host(runner, tracker)
     await _start_agent_lifecycle_monitor(
         runner,
         tracker,

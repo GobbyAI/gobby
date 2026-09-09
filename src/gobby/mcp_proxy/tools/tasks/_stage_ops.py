@@ -603,7 +603,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         func=record_pr_opened,
     )
 
-    def record_merge_result(
+    async def record_merge_result(
         task_id: str,
         merge_sha: str | None = None,
         report_ref: str | None = None,
@@ -714,7 +714,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if idempotent_completed_merge:
             return _idempotent_operation_response(resolved_id, stage)
         try:
-            cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
+            await cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
         except Exception:
             logger.warning(
                 "successful_recorded_merge_cleanup_failed",

@@ -311,7 +311,7 @@ async def test_missing_worktree_requires_absent_source_ref(
     storage.update(workspace.id, status="merged", cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))
     if ref_state == "lookup_failed":
 
-        def failed_lookup(
+        async def failed_lookup(
             _manager: WorktreeGitManager,
             args: list[str],
             *,
@@ -356,7 +356,7 @@ def _install_project(
     return isolated.project
 
 
-def test_cleanup_missing_isolation_records_removes_dead_paths(
+async def test_cleanup_missing_isolation_records_removes_dead_paths(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -392,7 +392,7 @@ def test_cleanup_missing_isolation_records_removes_dead_paths(
         clone_path=str(existing_clone_path),
     )
 
-    counts = _cleanup_missing_isolation_records(worktrees, clones)
+    counts = await _cleanup_missing_isolation_records(worktrees, clones)
 
     assert counts == {"worktrees": 1, "clones": 1}
     assert worktrees.get(missing_worktree.id) is None
@@ -528,7 +528,7 @@ async def test_expired_isolation_loop_runs_git_in_parent_repo(
     run_git = WorktreeGitManager._run_git
     git_cwds: list[tuple[list[str], Path]] = []
 
-    def record_git_cwd(
+    async def record_git_cwd(
         manager: WorktreeGitManager,
         args: list[str],
         cwd: str | Path | None = None,
@@ -537,7 +537,7 @@ async def test_expired_isolation_loop_runs_git_in_parent_repo(
         env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         git_cwds.append((args, Path(cwd) if cwd is not None else manager.repo_path))
-        return run_git(manager, args, cwd=cwd, timeout=timeout, check=check, env=env)
+        return await run_git(manager, args, cwd=cwd, timeout=timeout, check=check, env=env)
 
     monkeypatch.setattr(WorktreeGitManager, "_run_git", record_git_cwd)
     shutdown_checks = 0
@@ -606,7 +606,7 @@ async def test_expired_isolation_loop_preserves_failed_git_cleanup(
     )
     worktrees.mark_merged(worktree.id)
 
-    def refuse_removal(
+    async def refuse_removal(
         manager: WorktreeGitManager,
         args: list[str],
         cwd: str | Path | None = None,
@@ -616,7 +616,7 @@ async def test_expired_isolation_loop_preserves_failed_git_cleanup(
     ) -> subprocess.CompletedProcess[str]:
         if args[:2] == ["worktree", "remove"]:
             return subprocess.CompletedProcess(args, 1, "", "worktree removal refused")
-        return run_git(manager, args, cwd=cwd, timeout=timeout, check=check, env=env)
+        return await run_git(manager, args, cwd=cwd, timeout=timeout, check=check, env=env)
 
     run_git = WorktreeGitManager._run_git
     monkeypatch.setattr(WorktreeGitManager, "_run_git", refuse_removal)

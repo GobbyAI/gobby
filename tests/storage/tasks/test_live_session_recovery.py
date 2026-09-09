@@ -113,7 +113,7 @@ def _set_claim_variables(
     )
 
 
-def test_releases_clean_claim_and_clears_session_variables(
+async def test_releases_clean_claim_and_clears_session_variables(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -122,7 +122,7 @@ def test_releases_clean_claim_and_clears_session_variables(
     task = _live_task(temp_db, project_id, session.id, title="Clean live task")
     _set_claim_variables(temp_db, session.id, [task])
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     assert result.released == 1
     assert result.escalated == 0
@@ -133,7 +133,7 @@ def test_releases_clean_claim_and_clears_session_variables(
 
 
 @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
-def test_preserves_claims_for_live_owner_statuses(
+async def test_preserves_claims_for_live_owner_statuses(
     temp_db: HubDatabase,
     tmp_path: Path,
     status: str,
@@ -142,14 +142,14 @@ def test_preserves_claims_for_live_owner_statuses(
     session = _session(temp_db, project_id, tmp_path, status=status)
     task = _live_task(temp_db, project_id, session.id, title=f"{status} live task")
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     assert result.released == 0
     assert result.escalated == 0
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == session.id
 
 
-def test_ignores_foreign_session_before_inspecting_matching_local_path(
+async def test_ignores_foreign_session_before_inspecting_matching_local_path(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -174,10 +174,10 @@ def test_ignores_foreign_session_before_inspecting_matching_local_path(
     )
 
     with patch(
-        "gobby.storage.tasks._live_session_recovery.task_dirty_paths",
+        "gobby.storage.tasks._live_session_recovery.task_dirty_paths_async",
         side_effect=AssertionError("foreign path was inspected"),
     ):
-        result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+        result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     assert result.released == 0
     assert result.escalated == 0
@@ -185,7 +185,7 @@ def test_ignores_foreign_session_before_inspecting_matching_local_path(
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == session.id
 
 
-def test_ignores_checkout_free_sentinel_before_filesystem_inspection(
+async def test_ignores_checkout_free_sentinel_before_filesystem_inspection(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -199,10 +199,10 @@ def test_ignores_checkout_free_sentinel_before_filesystem_inspection(
     )
 
     with patch(
-        "gobby.storage.tasks._live_session_recovery.task_dirty_paths",
+        "gobby.storage.tasks._live_session_recovery.task_dirty_paths_async",
         side_effect=AssertionError("sentinel path was inspected"),
     ):
-        result = recover_expired_live_session_claims(temp_db, project_id=GLOBAL_PROJECT_ID)
+        result = await recover_expired_live_session_claims(temp_db, project_id=GLOBAL_PROJECT_ID)
 
     assert result.released == 0
     assert result.escalated == 0
@@ -210,7 +210,7 @@ def test_ignores_checkout_free_sentinel_before_filesystem_inspection(
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == session.id
 
 
-def test_escalates_only_task_with_attributed_dirty_paths(
+async def test_escalates_only_task_with_attributed_dirty_paths(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -235,7 +235,7 @@ def test_escalates_only_task_with_attributed_dirty_paths(
         task_edited_files={dirty_task.id: ["dirty.txt"]},
     )
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     manager = LocalTaskManager(temp_db)
     recovered_dirty = manager.get_task(dirty_task.id)
@@ -248,7 +248,7 @@ def test_escalates_only_task_with_attributed_dirty_paths(
     assert recovered_clean.claimed_by_session_id is None
 
 
-def test_escalates_when_attributed_dirty_state_is_indeterminate(
+async def test_escalates_when_attributed_dirty_state_is_indeterminate(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -262,7 +262,7 @@ def test_escalates_when_attributed_dirty_state_is_indeterminate(
         task_edited_files={task.id: ["missing-workspace.txt"]},
     )
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     recovered = LocalTaskManager(temp_db).get_task(task.id)
     assert result.escalated == 1
@@ -271,7 +271,7 @@ def test_escalates_when_attributed_dirty_state_is_indeterminate(
     assert "missing-workspace.txt" in (recovered.escalation_reason or "")
 
 
-def test_escalates_when_session_variable_state_is_missing(
+async def test_escalates_when_session_variable_state_is_missing(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -279,7 +279,7 @@ def test_escalates_when_session_variable_state_is_missing(
     session = _session(temp_db, project_id, tmp_path)
     task = _live_task(temp_db, project_id, session.id, title="Missing state live task")
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     recovered = LocalTaskManager(temp_db).get_task(task.id)
     assert result.escalated == 1
@@ -288,7 +288,7 @@ def test_escalates_when_session_variable_state_is_missing(
     assert "Task-attributed paths: (unavailable)" in (recovered.escalation_reason or "")
 
 
-def test_escalates_when_owner_session_lookup_fails(
+async def test_escalates_when_owner_session_lookup_fails(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -303,7 +303,7 @@ def test_escalates_when_owner_session_lookup_fails(
 
     monkeypatch.setattr(SessionManager, "get", fail_get)
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     recovered = LocalTaskManager(temp_db).get_task(task.id)
     assert result.escalated == 1
@@ -316,7 +316,7 @@ def test_escalates_when_owner_session_lookup_fails(
     [{"tmux_pane": "%20"}, {"tty": "/dev/ttys004"}],
     ids=["tmux-pane", "plain-tty"],
 )
-def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expiry(
+async def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expiry(
     temp_db: HubDatabase,
     tmp_path: Path,
     terminal: dict[str, str],
@@ -346,7 +346,7 @@ def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expir
         task_edited_files={task.id: ["dirty.txt"]},
     )
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     recovered = LocalTaskManager(temp_db).get_task(task.id)
     assert (result.released, result.escalated, result.raced) == (0, 0, 0)
@@ -356,7 +356,7 @@ def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expir
     assert variables["task_edited_files"] == {task.id: ["dirty.txt"]}
 
 
-def test_recovers_a_contested_claim_once_the_revival_horizon_passes(
+async def test_recovers_a_contested_claim_once_the_revival_horizon_passes(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -375,13 +375,13 @@ def test_recovers_a_contested_claim_once_the_revival_horizon_passes(
     task = _live_task(temp_db, project_id, session.id, title="Unrevivable live task")
     _set_claim_variables(temp_db, session.id, [task])
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     assert result.released == 1
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is None
 
 
-def test_recovers_a_claim_whose_owner_expired_for_a_final_reason(
+async def test_recovers_a_claim_whose_owner_expired_for_a_final_reason(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -396,7 +396,7 @@ def test_recovers_a_claim_whose_owner_expired_for_a_final_reason(
     task = _live_task(temp_db, project_id, session.id, title="Finished owner's live task")
     _set_claim_variables(temp_db, session.id, [task])
 
-    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+    result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
 
     assert result.released == 1
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is None

@@ -115,14 +115,14 @@ class MergeStorageProtocol(Protocol):
     ) -> Any: ...
 
 
-def _git(
+async def _git(
     git_manager: WorktreeGitManager,
     args: list[str],
     cwd: str | Path,
     timeout: int = 30,
 ) -> tuple[int, str, str]:
     """Run git via the manager and return (returncode, stdout, stderr)."""
-    proc = git_manager.run_git_command(args, cwd=cwd, timeout=timeout, check=False)
+    proc = await git_manager.run_git_command(args, cwd=cwd, timeout=timeout, check=False)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -132,7 +132,7 @@ async def _git_async(
     cwd: str | Path,
     timeout: int = 30,
 ) -> tuple[int, str, str]:
-    return await asyncio.to_thread(_git, git_manager, args, cwd, timeout)
+    return await _git(git_manager, args, cwd, timeout)
 
 
 def _resolve_worktree_path(

@@ -17,7 +17,7 @@ MERGE_ENV = {"GOBBY_MERGE": "1"}
 class GitCommandRunner(Protocol):
     """Git command surface shared by worktree and clone managers."""
 
-    def run_git_command(
+    async def run_git_command(
         self,
         args: list[str],
         cwd: str | Path | None = None,
@@ -70,9 +70,9 @@ def _non_gobby_dirty_paths(status_output: str) -> set[str]:
     return paths
 
 
-def staged_paths(runner: GitCommandRunner, cwd: str | Path) -> set[str]:
+async def staged_paths(runner: GitCommandRunner, cwd: str | Path) -> set[str]:
     """Return staged paths outside .gobby/ for one checkout."""
-    result = runner.run_git_command(
+    result = await runner.run_git_command(
         ["diff", "--name-only", "--cached"],
         cwd=cwd,
         timeout=10,
@@ -93,7 +93,7 @@ def _qualified_branch_ref(ref: str, label: str) -> str:
     return ref
 
 
-def _sync_source_branch(
+async def _sync_source_branch(
     runner: GitCommandRunner,
     source_cwd: str | Path,
     target_ref: str,
@@ -102,14 +102,14 @@ def _sync_source_branch(
     if callable(sync_method):
         return cast(
             GitOperationResult,
-            sync_method(
+            await sync_method(
                 source_cwd,
                 strategy="merge",
                 source_branch=target_ref,
                 env=MERGE_ENV,
             ),
         )
-    return sync_from_main(
+    return await sync_from_main(
         cast(GitRunner, runner),
         source_cwd,
         strategy="merge",
@@ -118,7 +118,7 @@ def _sync_source_branch(
     )
 
 
-def land_by_fast_forward(
+async def land_by_fast_forward(
     runner: GitCommandRunner,
     *,
     source_cwd: str | Path,
@@ -134,7 +134,7 @@ def land_by_fast_forward(
     effective_landing_ref = _qualified_branch_ref(landing_ref or source_ref, "landing_ref")
 
     if separate_repositories:
-        fetch_target = runner.run_git_command(
+        fetch_target = await runner.run_git_command(
             ["fetch", str(target_cwd), f"+{target_ref}:{target_ref}"],
             cwd=source_cwd,
             timeout=120,
@@ -147,7 +147,7 @@ def land_by_fast_forward(
                 error=f"Failed to fetch target branch into source: {detail.strip()}",
             )
 
-    sync_result = _sync_source_branch(runner, source_cwd, target_ref)
+    sync_result = await _sync_source_branch(runner, source_cwd, target_ref)
     if not sync_result.success:
         conflicts = tuple(
             path.strip() for path in (sync_result.output or "").splitlines() if path.strip()
@@ -160,7 +160,7 @@ def land_by_fast_forward(
         )
 
     if separate_repositories:
-        fetch_source = runner.run_git_command(
+        fetch_source = await runner.run_git_command(
             ["fetch", str(source_cwd), f"+{source_ref}:{effective_landing_ref}"],
             cwd=target_cwd,
             timeout=120,
@@ -173,7 +173,7 @@ def land_by_fast_forward(
                 error=f"Failed to refresh source branch for landing: {detail.strip()}",
             )
 
-    merge_result = runner.run_git_command(
+    merge_result = await runner.run_git_command(
         ["merge", "--ff-only", effective_landing_ref],
         cwd=target_cwd,
         timeout=240,
