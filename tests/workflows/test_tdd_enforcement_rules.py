@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -34,7 +35,7 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -333,6 +334,7 @@ class TestEnforceTddTrackTestsStructure:
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
+        assert body.effects is not None
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "tdd_tests_written"
         assert "tdd_tests_written" in body.effects[0].value
