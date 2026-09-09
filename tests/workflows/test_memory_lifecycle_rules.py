@@ -85,7 +85,9 @@ def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
 class TestMemoryLifecycleSync:
     """Test that memory-lifecycle rules sync correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All memory-lifecycle rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -97,7 +99,7 @@ class TestMemoryLifecycleSync:
         for removed_name in REMOVED_HELPER_RULES:
             assert removed_name not in rule_names, f"Removed helper rule synced: {removed_name}"
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All memory-lifecycle rules should have group='memory-lifecycle'."""
         _sync_bundled(db)
 
@@ -107,7 +109,9 @@ class TestMemoryLifecycleSync:
                 body = row.definition_json
                 assert body.get("group") == "memory-lifecycle", f"{row.name} missing group"
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -124,7 +128,9 @@ class TestMemoryLifecycleSync:
                         "block",
                     }
 
-    def test_removed_bootstrap_title_rule_is_orphan_pruned(self, db, manager) -> None:
+    def test_removed_bootstrap_title_rule_is_orphan_pruned(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         obsolete = manager.create(
             name="bootstrap-session-title-on-prompt",
             definition_json=json.dumps(
@@ -162,10 +168,12 @@ class TestShadowRelevanceOnResponse:
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_end"
-        assert body.effects[0].type == "mcp_call"
-        assert body.effects[0].server == "gobby-memory"
-        assert body.effects[0].tool == "judge_shadow_relevance"
-        assert body.effects[0].background is True
+        assert body.effects is not None
+        effect = body.effects[0]
+        assert effect.type == "mcp_call"
+        assert effect.server == "gobby-memory"
+        assert effect.tool == "judge_shadow_relevance"
+        assert effect.background is True
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -176,18 +184,21 @@ class TestShadowRelevanceOnResponse:
 class TestResetMemoryTrackingOnStart:
     """Reset injected_memory_ids on context loss (session_start)."""
 
-    def test_event_and_effect(self, db, manager) -> None:
+    def test_event_and_effect(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-memory-tracking-on-start")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
-        assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "injected_memory_ids"
+        assert body.effects is not None
+        effect = body.effects[0]
+        assert effect.type == "set_variable"
+        assert effect.variable == "injected_memory_ids"
 
-    def test_has_when_condition(self, db, manager) -> None:
+    def test_has_when_condition(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-memory-tracking-on-start")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "clear" in body.when
@@ -201,7 +212,9 @@ class TestResetMemoryTrackingOnStart:
 class TestIncrementParentTurnSeq:
     """Increment the parent turn counter before daemon recall."""
 
-    def test_event_priority_and_effect(self, db, manager) -> None:
+    def test_event_priority_and_effect(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("increment-parent-turn-seq")
         assert row is not None
@@ -210,11 +223,15 @@ class TestIncrementParentTurnSeq:
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
-        assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "parent_turn_seq"
-        assert body.effects[0].value == "{{ (variables.parent_turn_seq | int) + 1 }}"
+        assert body.effects is not None
+        effect = body.effects[0]
+        assert effect.type == "set_variable"
+        assert effect.variable == "parent_turn_seq"
+        assert effect.value == "{{ (variables.parent_turn_seq | int) + 1 }}"
 
-    def test_has_fail_closed_when_condition(self, db, manager) -> None:
+    def test_has_fail_closed_when_condition(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("increment-parent-turn-seq")
         assert row is not None
@@ -224,6 +241,7 @@ class TestIncrementParentTurnSeq:
         assert "is_spawned_agent" in body.when
         assert "variables.get('parent_turn_seq') is not none" in body.when
         assert "memory_recall_helper_enabled" not in body.when
+        assert body.effects is not None
         assert "default(0)" not in body.effects[0].value
 
 
