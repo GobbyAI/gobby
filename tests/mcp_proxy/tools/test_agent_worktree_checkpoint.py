@@ -246,7 +246,9 @@ async def test_path_ownership_failures_release_worktree(
     ):
         result = await harness.registry._tools["checkpoint_agent_worktree"].func(run_id="run-1")
 
+    assert result["success"] is False
     assert result["error_code"] == error_code
+    harness.worktrees.claim_if_available.assert_called_once()
     harness.worktrees.release.assert_called_once_with("wt-1")
     checkpoint.assert_not_awaited()
 
@@ -270,10 +272,13 @@ async def test_commit_failure_releases_worktree_without_releasing_task_claim(
         patch(
             "gobby.mcp_proxy.tools.agents_checkpoint_tools.checkpoint_worktree",
             new=AsyncMock(side_effect=WorktreeCheckpointError("commit failed")),
-        ),
+        ) as checkpoint,
     ):
         result = await harness.registry._tools["checkpoint_agent_worktree"].func(run_id="run-1")
 
+    assert result["success"] is False
     assert result["error_code"] == "checkpoint_failed"
+    assert result["error"] == "commit failed"
+    checkpoint.assert_awaited_once()
     harness.worktrees.release.assert_called_once_with("wt-1")
     harness.task_manager.release_task_claim.assert_not_called()

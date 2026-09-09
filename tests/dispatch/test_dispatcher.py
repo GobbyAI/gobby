@@ -3041,10 +3041,13 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
     async def unexpected_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
         raise AssertionError("merge-ready contaminated branch must fail before spawn")
 
+    async def no_parent_workspace(**_kwargs: object) -> None:
+        return None
+
     monkeypatch.setattr("gobby.dispatch.spawn_artifacts._artifact_ref_sha", fake_ref_sha)
     monkeypatch.setattr(
         "gobby.dispatch.spawn_artifacts.ensure_task_parent_integration_workspace",
-        lambda **_kwargs: None,
+        no_parent_workspace,
     )
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -3102,7 +3105,7 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
     prepare_calls: list[dict[str, object]] = []
     spawn_kwargs: dict[str, object] = {}
 
-    def fake_prepare(**kwargs: object) -> None:
+    async def fake_prepare(**kwargs: object) -> None:
         prepare_calls.append(kwargs)
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:

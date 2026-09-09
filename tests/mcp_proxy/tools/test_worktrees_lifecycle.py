@@ -4,7 +4,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -57,7 +57,7 @@ def mock_worktree_storage() -> MagicMock:
 
 @pytest.fixture
 def mock_git_manager() -> MagicMock:
-    manager = MagicMock(spec=WorktreeGitManager)
+    manager: MagicMock = MagicMock(spec=WorktreeGitManager)
     manager.repo_path = "/tmp/repo"
 
     async def run_git_command(
@@ -67,7 +67,10 @@ def mock_git_manager() -> MagicMock:
         check: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> MagicMock:
-        return await manager._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
+        return cast(
+            MagicMock,
+            await manager._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env),
+        )
 
     manager.run_git_command.side_effect = run_git_command
 

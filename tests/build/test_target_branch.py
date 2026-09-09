@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.daemon_git import GitFailed, GitOk
@@ -228,7 +229,7 @@ async def test_leaf_build_inherits_target_branch_via_cascade(
 
 @pytest.mark.asyncio
 async def test_worktree_leaf_build_persists_target_branch(
-    temp_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path, monkeypatch)
     manager = LocalTaskManager(temp_db)

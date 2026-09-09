@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.utils.daemon_git import GitOk, GitTimeout
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows import task_dirty_state
 
 
@@ -90,7 +90,7 @@ async def test_task_dirty_paths_async_uses_typed_status_boundary(
             stderr="",
         )
 
-    monkeypatch.setattr(task_dirty_state.daemon_git, "status", fake_status)
+    monkeypatch.setattr(daemon_git, "status", fake_status)
 
     dirty = await task_dirty_state.task_dirty_paths_async(
         {"third.py", "second.py", "first.py"},
@@ -118,6 +118,6 @@ async def test_task_dirty_paths_async_preserves_unavailable_state(
             timeout=timeout,
         )
 
-    monkeypatch.setattr(task_dirty_state.daemon_git, "status", fake_status)
+    monkeypatch.setattr(daemon_git, "status", fake_status)
 
     assert await task_dirty_state.task_dirty_paths_async({"first.py"}, "/repo") is None

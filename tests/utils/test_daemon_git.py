@@ -70,12 +70,17 @@ async def _wait_for_file(path: Path) -> None:
             await asyncio.sleep(0.01)
 
 
-async def _assert_process_group_gone(process_group: int) -> None:
+async def _assert_processes_gone(*process_ids: int) -> None:
     async with asyncio.timeout(2):
         while True:
-            try:
-                os.killpg(process_group, 0)
-            except ProcessLookupError:
+            alive: list[int] = []
+            for process_id in process_ids:
+                try:
+                    os.getpgid(process_id)
+                except ProcessLookupError:
+                    continue
+                alive.append(process_id)
+            if not alive:
                 return
             await asyncio.sleep(0.01)
 
@@ -235,8 +240,8 @@ async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> N
     )
 
     assert isinstance(result, GitTimeout)
-    leader, _child = map(int, pids.read_text(encoding="utf-8").split())
-    await _assert_process_group_gone(leader)
+    leader, child = map(int, pids.read_text(encoding="utf-8").split())
+    await _assert_processes_gone(leader, child)
 
 
 @pytest.mark.asyncio
@@ -258,8 +263,8 @@ async def test_cancellation_kills_process_group_and_reaps_leader(tmp_path: Path)
 
     with pytest.raises(asyncio.CancelledError):
         await request
-    leader, _child = map(int, pids.read_text(encoding="utf-8").split())
-    await _assert_process_group_gone(leader)
+    leader, child = map(int, pids.read_text(encoding="utf-8").split())
+    await _assert_processes_gone(leader, child)
 
 
 @pytest.mark.asyncio
@@ -301,7 +306,7 @@ async def test_deadline_includes_slow_spawn(
         release_spawn.set()
         assert await asyncio.to_thread(finished.wait, 2)
     assert len(created) == 1
-    await _assert_process_group_gone(created[0].pid)
+    await _assert_processes_gone(created[0].pid)
     assert created[0].poll() is not None
 
 

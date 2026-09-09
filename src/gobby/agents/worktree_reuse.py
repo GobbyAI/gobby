@@ -113,7 +113,9 @@ async def _sync_reused_worktree_to_base(
     base_ref, base_sha = await _resolve_base_ref(git_manager, base_branch)
     await _ensure_clean_worktree(git_manager, path)
 
-    ancestor = await _run_git(git_manager, ["merge-base", "--is-ancestor", base_ref, "HEAD"], cwd=path)
+    ancestor = await _run_git(
+        git_manager, ["merge-base", "--is-ancestor", base_ref, "HEAD"], cwd=path
+    )
     if ancestor.returncode == 0:
         return ReusedWorktreeSyncResult("already_current", base_ref, base_sha)
     if ancestor.returncode not in {0, 1}:

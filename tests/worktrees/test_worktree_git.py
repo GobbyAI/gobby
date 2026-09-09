@@ -2407,7 +2407,7 @@ class TestWorktreeGitManagerMergeBranch:
         mock_run.assert_not_called()
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
-    async def test_merge_timeout(self, mock_run, manager) -> None:
+    async def test_merge_timeout(self, mock_run: AsyncMock, manager: WorktreeGitManager) -> None:
         """Merge handles timeout."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2426,7 +2426,9 @@ class TestWorktreeGitManagerMergeBranch:
         assert result.error == "timeout"
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
-    async def test_merge_generic_exception(self, mock_run, manager) -> None:
+    async def test_merge_generic_exception(
+        self, mock_run: AsyncMock, manager: WorktreeGitManager
+    ) -> None:
         """Merge handles generic exception."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
