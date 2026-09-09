@@ -457,6 +457,10 @@ async def test_context_limit_blocks_bash_with_self_contained_handoff_sequence(
             id="review-task-memories",
         ),
         pytest.param(
+            {"mcp_server": "gobby-agents", "mcp_tool": "send_message"},
+            id="send-message",
+        ),
+        pytest.param(
             {"mcp_server": "gobby-agents", "mcp_tool": "end_agent_run"},
             id="end-agent-run",
         ),
@@ -488,6 +492,50 @@ async def test_context_limit_allows_handoff_prerequisite_tools(
     )
 
     assert allowed.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_context_limit_message_coordination_does_not_release_handoff_gate(
+    handler: WorkflowHookHandler,
+    session_manager: Any,
+) -> None:
+    session_manager.session.context_window = 1_000_000
+    session_manager.session.context_used_tokens = 300_000
+    await handler._evaluate_rules(_arbitrary_after_tool_event())
+
+    schema = await handler._evaluate_rules(
+        _arbitrary_tool_event(tool_name="mcp__gobby__get_tool_schema")
+    )
+    first_message = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-agents",
+            mcp_tool="send_message",
+        )
+    )
+    second_message = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-agents",
+            mcp_tool="send_message",
+        )
+    )
+    unrelated_agent_tool = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-agents",
+            mcp_tool="list_agents",
+        )
+    )
+    write = await handler._evaluate_rules(_arbitrary_tool_event(tool_name="Write"))
+    shell = await handler._evaluate_rules(_arbitrary_tool_event(tool_name="Bash"))
+
+    assert schema.decision == "allow"
+    assert first_message.decision == "allow"
+    assert second_message.decision == "allow"
+    assert unrelated_agent_tool.decision == "block"
+    assert write.decision == "block"
+    assert shell.decision == "block"
 
 
 @pytest.mark.parametrize(
