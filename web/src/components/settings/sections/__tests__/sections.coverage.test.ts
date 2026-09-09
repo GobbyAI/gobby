@@ -162,7 +162,7 @@ describe("settings overlay section coverage", () => {
   it("parses a non-trivial DaemonConfig keep-row set from the audit", () => {
     // Guards against a silently-empty parse (e.g. moved audit file or reshaped
     // table) that would make every coverage assertion vacuously pass.
-    expect(expectedByPath.size).toBeGreaterThan(300);
+    expect(expectedByPath.size).toBeGreaterThan(250);
     expect(expectedByPath.get("daemon_port")).toBe("runtime-infrastructure");
     expect(expectedByPath.get("memory.enabled")).toBe("memory-knowledge");
     expect(expectedByPath.get("cors_origins")).toBe("runtime-infrastructure");

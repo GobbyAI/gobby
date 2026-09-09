@@ -68,7 +68,7 @@ Section ids are stable kebab-case ids. The matrix below assigns every `keep` row
 | 7 | prompts-templates | Prompt overrides, full YAML template, import/export. |
 | 8 | automation-workflows | Tasks, workflows, cron, pipelines, tmux automation, variables. |
 | 9 | mcp-tools | MCP proxy, tool search/recommendation, skills hub configuration. |
-| 10 | memory-knowledge | Memory, embeddings, Qdrant/FalkorDB, and the wiki watcher. |
+| 10 | memory-knowledge | Memory, embeddings, and Qdrant/FalkorDB. |
 | 11 | observability | Telemetry, logs, metrics, tracing, exporters. |
 | 12 | integrations-hooks | Communications channels, webhooks, hook broadcasts. |
 | 13 | runtime-infrastructure | Daemon ports, CORS, directories, UI serving, code index, search, freshness. |
@@ -453,12 +453,12 @@ already-created registry continue to use the live per-epoch configuration contra
 | bin_freshness.interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | bin_freshness.jitter_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | bin_freshness.github_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| wiki.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
-| wiki.roots | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | memory-knowledge | array items=object map= |
-| wiki.debounce_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| wiki.poll_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| wiki.ignore_globs | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | memory-knowledge | array items=string map= |
-| wiki.codewiki_on_commit | DaemonConfig schema via /api/config/schema; save via /api/config/values | none (toggle removed from memory-knowledge) | dormant | drop |  | CodeWiki generation is dormant pending the wiki redesign (#19665); the config key is retained but not surfaced. |
+| wiki.enabled | Retired WikiConfig (#21796) | (none — UI retired in #21816) | retired | drop | (none) | Removed from the runtime config contract. |
+| wiki.roots | Retired WikiConfig (#21796) | (none — UI retired in #21816) | retired | drop | (none) | Removed from the runtime config contract. |
+| wiki.debounce_interval | Retired WikiConfig (#21796) | (none — UI retired in #21816) | retired | drop | (none) | Removed from the runtime config contract. |
+| wiki.poll_interval | Retired WikiConfig (#21796) | (none — UI retired in #21816) | retired | drop | (none) | Removed from the runtime config contract. |
+| wiki.ignore_globs | Retired WikiConfig (#21796) | (none — UI retired in #21816) | retired | drop | (none) | Removed from the runtime config contract. |
+| wiki.codewiki_on_commit | Retired WikiConfig (#21796) | (none — UI retired in #21816) | retired | drop | (none) | Removed from the runtime config contract. |
 | clones_dir | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
 | worktrees_dir | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
 
@@ -510,8 +510,6 @@ These are the rows that P13 must either fix before/while building the overlay or
 | skill_description.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | context_window_overrides | ConfigFormTab -> SchemaField text input fallback for map/object | providers-models |
 | code_index.symbol_summary.candidates | ConfigFormTab -> string list | runtime-infrastructure |
-| wiki.roots | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
-| wiki.ignore_globs | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
 
 ### Fix: Missing Validation
 
@@ -549,7 +547,7 @@ These rows should not be rebuilt as settings overlay controls:
 | hub_backend | retired operator setting; runtime is fixed to postgres |
 | database_url | sole PostgreSQL selector; should stay out of the overlay and secret-backed storage |
 | auth.session_secret | auto-generated session cookie signing secret; schema marks it ui_hidden |
-| wiki.codewiki_on_commit | CodeWiki generation is dormant pending the wiki redesign (#19665); the retained config key gets a control again only when the daemon surface re-enables. |
+| wiki.* | WikiConfig was removed in #21796 and the legacy wiki UI was retired in #21816. |
 
 ## Sign-off
 
