@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from pathlib import Path
 
@@ -13,10 +12,11 @@ from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
 
 
-def delete_orphan_build_branches(
+async def delete_orphan_build_branches(
     db: HubDatabase,
     project_id: str,
     tasks: list[Task],
@@ -30,8 +30,13 @@ def delete_orphan_build_branches(
     if not candidates:
         return 0, []
 
-    existing = local_branches(repo_path)
-    current = current_branch(repo_path)
+    try:
+        existing = await local_branches(repo_path)
+        if not existing:
+            return 0, []
+        current = await current_branch(repo_path)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return 0, [f"failed to inspect build branches: {exc}"]
     deleted = 0
     errors: list[str] = []
 
@@ -39,7 +44,7 @@ def delete_orphan_build_branches(
         if branch == current:
             errors.append(f"refusing to delete current branch {branch}")
             continue
-        result = git(repo_path, ["branch", "-D", branch], timeout=30)
+        result = await git(repo_path, ["branch", "-D", branch], timeout=30)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip()
             if is_missing_branch_delete(branch, detail):
@@ -113,17 +118,21 @@ def integration_branch_name(task: Task) -> str:
     return f"gobby/integration/{ref}-{slug or 'epic'}"
 
 
-def local_branches(repo_path: Path) -> set[str]:
-    result = git(repo_path, ["branch", "--format=%(refname:short)"], timeout=30)
+async def local_branches(repo_path: Path) -> set[str]:
+    result = await git(repo_path, ["branch", "--format=%(refname:short)"], timeout=30)
     if result.returncode != 0:
-        return set()
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown Git error"
+        if "not a git repository" in detail.lower():
+            return set()
+        raise RuntimeError(detail)
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
-def current_branch(repo_path: Path) -> str | None:
-    result = git(repo_path, ["branch", "--show-current"], timeout=10)
+async def current_branch(repo_path: Path) -> str | None:
+    result = await git(repo_path, ["branch", "--show-current"], timeout=10)
     if result.returncode != 0:
-        return None
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown Git error"
+        raise RuntimeError(detail)
     branch = result.stdout.strip()
     return branch or None
 
@@ -146,33 +155,25 @@ def project_path(db: HubDatabase, project_id: str) -> Path:
     return Path(require_root(db, project_id, machine_id))
 
 
-def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-    git_binary = shutil.which("git")
-    command = [git_binary, *args] if git_binary is not None else ["git", *args]
-    if git_binary is None:
-        return subprocess.CompletedProcess(
-            command,
-            returncode=127,
-            stdout="",
-            stderr="git executable not found",
-        )
-
-    env = git_subprocess_env()
-    if env is None:
-        return subprocess.run(  # nosec B603 # git args are fixed by callers.
-            command,
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    return subprocess.run(  # nosec B603 # git args are fixed by callers.
-        command,
+async def git(
+    repo_path: Path, args: list[str], *, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    result = await daemon_git.run(
+        args,
         cwd=repo_path,
-        capture_output=True,
-        text=True,
         timeout=timeout,
-        check=False,
-        env=env,
+        env=git_subprocess_env(),
+    )
+    if isinstance(result, GitTimeout):
+        raise subprocess.TimeoutExpired(
+            result.argv,
+            result.timeout,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+    return subprocess.CompletedProcess(
+        args=result.argv,
+        returncode=0 if isinstance(result, GitOk) else result.returncode or 127,
+        stdout=result.stdout,
+        stderr=result.stderr,
     )

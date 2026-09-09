@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -316,9 +315,7 @@ async def delete_artifacts(
                         )
             else:
                 if path.exists():
-                    clone_result = await asyncio.to_thread(
-                        clone_git.delete_clone, path, force=force
-                    )
+                    clone_result = await clone_git.delete_clone(path, force=force)
                     if not clone_result.success:
                         artifact.error = clone_result.error or clone_result.message
                         continue

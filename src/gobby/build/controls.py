@@ -167,7 +167,7 @@ async def build_clean_target(
         branches_deleted = 0
         branch_errors: list[str] = []
     else:
-        branches_deleted, branch_errors = delete_orphan_build_branches(
+        branches_deleted, branch_errors = await delete_orphan_build_branches(
             db,
             project_id,
             tasks,
@@ -243,7 +243,7 @@ async def cleanup_successful_merge_artifacts(
         _branches_deleted = 0
         branch_errors: list[str] = []
     else:
-        _branches_deleted, branch_errors = delete_orphan_build_branches(
+        _branches_deleted, branch_errors = await delete_orphan_build_branches(
             db,
             cleanup_project_id,
             tasks,

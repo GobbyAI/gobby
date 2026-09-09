@@ -68,6 +68,25 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
 
         clone_created = False
         record_created = False
+
+        async def _cleanup_created_clone() -> None:
+            if not clone_created or record_created:
+                return
+            try:
+                cleanup_result = await git_manager.delete_clone(clone_path, force=True)
+                if not cleanup_result.success:
+                    logger.warning(
+                        "Failed to clean up clone %s after create failure: %s",
+                        clone_path,
+                        cleanup_result.error or cleanup_result.message,
+                    )
+            except Exception:
+                logger.warning(
+                    "Failed to clean up clone %s after create failure",
+                    clone_path,
+                    exc_info=True,
+                )
+
         try:
             # Resolve task references before creating anything on disk. A bad task
             # reference must not leave a clone directory behind.
@@ -79,26 +98,24 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 # Clone from local repo path - always full clone
                 # Clone base_branch first, then create branch_name as new branch
                 source = str(git_manager.repo_path)
-                result = await asyncio.to_thread(
-                    git_manager.full_clone,
+                result = await git_manager.full_clone(
                     remote_url=source,
                     clone_path=clone_path,
                     branch=base_branch,
                 )
                 clone_created = result.success
                 if result.success and branch_name != base_branch:
-                    await asyncio.to_thread(
-                        git_manager.run_git_command,
+                    await git_manager.run_git_command(
                         ["checkout", "-b", branch_name],
                         cwd=clone_path,
                         check=True,
                     )
                 if not remote_url:
-                    remote_url = await asyncio.to_thread(git_manager.get_remote_url) or source
+                    remote_url = await git_manager.get_remote_url() or source
             else:
                 # Get remote URL if not provided
                 if not remote_url:
-                    remote_url = await asyncio.to_thread(git_manager.get_remote_url)
+                    remote_url = await git_manager.get_remote_url()
                     if not remote_url:
                         return {
                             "success": False,
@@ -108,8 +125,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     raise asyncio.CancelledError
 
                 # Create the clone
-                result = await asyncio.to_thread(
-                    git_manager.shallow_clone,
+                result = await git_manager.shallow_clone(
                     remote_url=remote_url,
                     clone_path=clone_path,
                     branch=branch_name,
@@ -140,26 +156,11 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 "message": f"Created clone at {clone_path}",
             }
 
+        except asyncio.CancelledError:
+            await _cleanup_created_clone()
+            raise
         except Exception as e:
-            if clone_created and not record_created:
-                try:
-                    cleanup_result = await asyncio.to_thread(
-                        git_manager.delete_clone,
-                        clone_path,
-                        force=True,
-                    )
-                    if not cleanup_result.success:
-                        logger.warning(
-                            "Failed to clean up clone %s after create failure: %s",
-                            clone_path,
-                            cleanup_result.error or cleanup_result.message,
-                        )
-                except Exception:
-                    logger.warning(
-                        "Failed to clean up clone %s after create failure",
-                        clone_path,
-                        exc_info=True,
-                    )
+            await _cleanup_created_clone()
             logger.exception("Error creating clone: %s", e)
             return {"success": False, "error": str(e)}
 

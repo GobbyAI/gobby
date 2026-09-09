@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
-import subprocess
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -23,6 +21,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import escalate_task
 from gobby.storage.tasks._updates import update_task
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 from gobby.utils.git import git_subprocess_env
 from gobby.utils.machine_id import require_machine_id
 
@@ -234,54 +233,44 @@ async def _workspace_dirty(workspace_path: str | None) -> bool:
     if not path.is_dir():
         return False
     git_env = git_subprocess_env()
-    git_executable = shutil.which("git", path=git_env.get("PATH") if git_env else None)
-    if git_executable is None:
-        logger.debug("Cannot inspect workspace dirty state for %s: git executable not found", path)
-        return True
-    try:
-        repo_result = await asyncio.to_thread(
-            subprocess.run,
-            [git_executable, "-C", str(path), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-            timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
-            check=False,
-            env=git_env,
-        )
-    except subprocess.TimeoutExpired:
-        logger.debug("Timed out probing workspace repository state for %s", path, exc_info=True)
-        return True
-    except (OSError, subprocess.SubprocessError):
-        logger.debug("Failed to probe workspace repository state for %s", path, exc_info=True)
-        return True
-    if repo_result.returncode != 0 or repo_result.stdout.strip().lower() != "true":
+    repo_result = await daemon_git.run(
+        ["rev-parse", "--is-inside-work-tree"],
+        cwd=path,
+        timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
+        env=git_env,
+    )
+    if isinstance(repo_result, GitOk):
+        if repo_result.stdout.strip().lower() != "true":
+            return False
+    elif isinstance(repo_result, GitFailed) and "not a git repository" in (
+        repo_result.stderr.lower()
+    ):
         logger.debug(
-            "Workspace path %s is not an inspectable git work tree: return code %s stderr=%r",
+            "Workspace path %s is not a git work tree: return code %s stderr=%r",
             path,
             repo_result.returncode,
             repo_result.stderr,
         )
         return False
-    try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            [git_executable, "-C", str(path), "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
-            check=False,
-            env=git_env,
-        )
-    except subprocess.TimeoutExpired:
-        logger.debug("Timed out inspecting workspace dirty state for %s", path, exc_info=True)
-        return True
-    except (OSError, subprocess.SubprocessError):
-        logger.debug("Failed to inspect workspace dirty state for %s", path, exc_info=True)
-        return True
-    if result.returncode != 0:
+    else:
         logger.debug(
-            "git status --porcelain failed for %s with return code %s stdout=%r stderr=%r",
+            "Failed to inspect Git repository state for %s: status=%s stderr=%r",
             path,
+            repo_result.status,
+            repo_result.stderr,
+        )
+        return True
+
+    result = await daemon_git.status(
+        path,
+        timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
+        env=git_env,
+    )
+    if not isinstance(result, GitOk):
+        logger.debug(
+            "Git status failed for %s: status=%s return code %s stdout=%r stderr=%r",
+            path,
+            result.status,
             result.returncode,
             result.stdout,
             result.stderr,

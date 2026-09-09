@@ -141,11 +141,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                 result_item["record_terminal"] = True
                 delete_error: str | None
                 try:
-                    git_result = await asyncio.to_thread(
-                        ctx.git_manager.delete_clone,
-                        c.clone_path,
-                        force=True,
-                    )
+                    git_result = await ctx.git_manager.delete_clone(c.clone_path, force=True)
                 except Exception as error:
                     delete_error = str(error)
                     result_item["files_deleted"] = False

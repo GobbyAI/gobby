@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._updates import update_task
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout
 from tests.storage.tasks.stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
@@ -104,7 +105,8 @@ async def test_workspace_dirty_treats_missing_git_as_dirty(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(daemon_resume.shutil, "which", lambda *_args, **_kwargs: None)
+    outcome = GitFailed("failed", ("git", "rev-parse"), None, "", "git not found")
+    monkeypatch.setattr(daemon_resume.daemon_git, "run", AsyncMock(return_value=outcome))
 
     assert await daemon_resume._workspace_dirty(str(workspace)) is True
 
@@ -117,24 +119,54 @@ async def test_workspace_dirty_uses_git_subprocess_env_path(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     fallback_env = {"PATH": "/fallback/bin"}
-    calls: list[tuple[list[str], dict[str, object]]] = []
-
-    def fake_which(name: str, *, path: str | None = None) -> str | None:
-        assert name == "git"
-        return "/fallback/bin/git" if path == fallback_env["PATH"] else None
-
-    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
-        calls.append((command, kwargs))
-        stdout = "true\n" if "rev-parse" in command else ""
-        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+    run = AsyncMock(return_value=GitOk("ok", ("git", "rev-parse"), "true\n", ""))
+    status = AsyncMock(return_value=GitOk("ok", ("git", "status"), "", ""))
 
     monkeypatch.setattr(daemon_resume, "git_subprocess_env", lambda: fallback_env)
-    monkeypatch.setattr(daemon_resume.shutil, "which", fake_which)
-    monkeypatch.setattr(daemon_resume.subprocess, "run", fake_run)
+    monkeypatch.setattr(daemon_resume.daemon_git, "run", run)
+    monkeypatch.setattr(daemon_resume.daemon_git, "status", status)
 
     assert await daemon_resume._workspace_dirty(str(workspace)) is False
-    assert [call[0][0] for call in calls] == ["/fallback/bin/git", "/fallback/bin/git"]
-    assert [call[1]["env"] for call in calls] == [fallback_env, fallback_env]
+    assert run.await_args is not None
+    assert status.await_args is not None
+    assert run.await_args.kwargs["env"] == fallback_env
+    assert status.await_args.kwargs["env"] == fallback_env
+
+
+@pytest.mark.asyncio
+async def test_workspace_dirty_treats_git_timeout_as_dirty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outcome = GitTimeout("timeout", ("git", "rev-parse"), 10)
+    monkeypatch.setattr(daemon_resume.daemon_git, "run", AsyncMock(return_value=outcome))
+
+    assert await daemon_resume._workspace_dirty(str(workspace)) is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_dirty_propagates_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    started = asyncio.Event()
+
+    async def blocked_run(*_args: object, **_kwargs: object) -> GitOk:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(daemon_resume.daemon_git, "run", blocked_run)
+    task = asyncio.create_task(daemon_resume._workspace_dirty(str(workspace)))
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 def _services(temp_db: HubDatabase) -> SimpleNamespace:
@@ -473,7 +505,13 @@ async def test_non_daemon_stop_dirty_workspace_uses_existing_spawn_policy(
     sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
-    from gobby.dispatch import daemon_resume, dispatcher
+    from gobby.dispatch import (
+        daemon_resume,
+        dispatcher,
+    )
+    from gobby.dispatch import (
+        rules as dispatch_rules,
+    )
 
     task = _task(temp_db, sample_project)
     workspace = _workspace(tmp_path, dirty=True)
@@ -497,7 +535,7 @@ async def test_non_daemon_stop_dirty_workspace_uses_existing_spawn_policy(
         raise AssertionError("non-daemon-stop run should not resume")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", unexpected_resume)
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
@@ -524,7 +562,13 @@ async def test_resume_supplies_owning_completion_registry(
 ) -> None:
     """Plan 1.4.10: the resume path threads the services' completion registry
     into resume_agent_run, so its failure branches can wake a registered waiter."""
-    from gobby.dispatch import daemon_resume, dispatcher
+    from gobby.dispatch import (
+        daemon_resume,
+        dispatcher,
+    )
+    from gobby.dispatch import (
+        rules as dispatch_rules,
+    )
 
     task = _task(temp_db, sample_project)
     workspace = _workspace(tmp_path, dirty=True)
@@ -544,7 +588,7 @@ async def test_resume_supplies_owning_completion_registry(
         return ResumeAgentResult(True, run_id="597d1971-2969-504a-b210-edfec22510d3")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", fake_resume_agent_run)
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",

@@ -2,7 +2,7 @@ import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,7 +25,7 @@ def mock_worktree_storage() -> MagicMock:
 
 @pytest.fixture
 def mock_git_manager() -> MagicMock:
-    manager = MagicMock()
+    manager = MagicMock(spec=WorktreeGitManager)
     manager.repo_path = "/tmp/repo"
     return manager
 
@@ -264,7 +264,7 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
     assert ctx is not None
     assert ctx["parent_project_path"] == str(repo_path.resolve())
     assert ctx["parent_project_id"] == project_id
-    copy_project_json_to_worktree(repo_path, worktree_path)
+    await copy_project_json_to_worktree(repo_path, worktree_path)
     status = subprocess.run(
         ["git", "status", "--porcelain=v1"],
         cwd=worktree_path,
@@ -299,7 +299,10 @@ async def test_create_worktree_installs_droid_hooks(
     )
 
     with (
-        patch("gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree"),
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree",
+            new_callable=AsyncMock,
+        ),
         patch(
             "gobby.mcp_proxy.tools.worktrees._create.install_provider_hooks",
             return_value=True,
@@ -341,7 +344,10 @@ async def test_create_worktree_installs_codex_hooks(
     )
 
     with (
-        patch("gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree"),
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree",
+            new_callable=AsyncMock,
+        ),
         patch(
             "gobby.mcp_proxy.tools.worktrees._create.install_provider_hooks",
             return_value=True,

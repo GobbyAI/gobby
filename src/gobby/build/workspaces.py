@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
 
@@ -103,8 +102,7 @@ async def ensure_epic_integration_workspaces(
             ),
         )
         if merge_closed_descendant_commits:
-            await asyncio.to_thread(
-                _merge_closed_descendant_commits,
+            await _merge_closed_descendant_commits(
                 tasks=tasks,
                 parent_by_id=parent_by_id,
                 epic_id=task.id,
@@ -302,7 +300,7 @@ def _task_by_id(db: HubDatabase, task_id: str) -> Task | None:
     return Task.from_row(row) if row is not None else None
 
 
-def _merge_closed_descendant_commits(
+async def _merge_closed_descendant_commits(
     *,
     tasks: list[Task],
     parent_by_id: dict[str, str | None],
@@ -317,7 +315,7 @@ def _merge_closed_descendant_commits(
     )
     if not commits:
         return
-    _merge_required_commits(
+    await _merge_required_commits(
         _workspace_record_path(workspace),
         commits=commits,
         source_repo_path=source_repo_path,

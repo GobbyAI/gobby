@@ -631,7 +631,7 @@ async def test_successful_merge_cleanup_deletes_inactive_worktree(
         "emit_worktree_event",
         lambda event_type, **payload: events.append((event_type, payload)),
     )
-    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", AsyncMock(return_value=(0, [])))
 
     artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
@@ -705,7 +705,7 @@ async def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
         "delete_artifacts",
         delete,
     )
-    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", AsyncMock(return_value=(0, [])))
     monkeypatch.setattr(
         control_artifacts, "get_project_path", lambda *_args, **_kwargs: "/tmp/build-controls"
     )
@@ -790,7 +790,7 @@ async def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
         "WorktreeGitManager",
         ForceOnlyWorktreeGitManager,
     )
-    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", AsyncMock(return_value=(0, [])))
 
     artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,
@@ -908,7 +908,7 @@ async def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descenda
         "WorktreeGitManager",
         IntegratedDirtyWorktreeGitManager,
     )
-    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", AsyncMock(return_value=(0, [])))
 
     artifacts = await controls.cleanup_successful_merge_artifacts(
         temp_db,

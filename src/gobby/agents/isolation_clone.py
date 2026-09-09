@@ -19,19 +19,17 @@ from gobby.agents.isolation_models import (
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 
 logger = logging.getLogger("gobby.agents.isolation")
 
 
-def _capture_base_commit_sha(isolation_path: str) -> str:
-    result = subprocess.run(  # nosec B603 B607 # fixed git argv on local isolation path.
-        ["git", "-C", isolation_path, "rev-parse", "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
+async def _capture_base_commit_sha(isolation_path: str) -> str:
+    result = await daemon_git.run(["rev-parse", "HEAD"], cwd=isolation_path, timeout=10)
+    if not isinstance(result, GitOk):
         detail = result.stderr.strip() or "git rev-parse HEAD failed"
+        if isinstance(result, GitTimeout):
+            detail = f"git rev-parse HEAD timed out after {result.timeout}s"
         raise RuntimeError(f"Failed to capture base_commit_sha for {isolation_path}: {detail}")
     return result.stdout.strip()
 
@@ -118,7 +116,7 @@ class CloneIsolationHandler(IsolationHandler):
 
         # If base_branch is the default "main", check if parent is on a different branch
         if self._git_manager is not None:
-            current_branch = await asyncio.to_thread(self._git_manager.get_current_branch)
+            current_branch = await self._git_manager.get_current_branch()
             if current_branch and base_branch == "main" and current_branch != "main":
                 # Use parent's current branch instead
                 base_branch = current_branch
@@ -127,8 +125,8 @@ class CloneIsolationHandler(IsolationHandler):
 
             # Check for unpushed commits on the base branch
             try:
-                has_unpushed, unpushed_count = await asyncio.to_thread(
-                    self._git_manager.has_unpushed_commits, base_branch
+                has_unpushed, unpushed_count = await self._git_manager.has_unpushed_commits(
+                    base_branch
                 )
                 if has_unpushed:
                     use_local = True
@@ -148,8 +146,7 @@ class CloneIsolationHandler(IsolationHandler):
         clone_path = self._generate_clone_path(branch_name, project_name)
 
         # Create clone (full when use_local, shallow otherwise)
-        result = await asyncio.to_thread(
-            self._clone_manager.create_clone,
+        result = await self._clone_manager.create_clone(
             clone_path=clone_path,
             branch_name=branch_name,
             base_branch=base_branch,
@@ -178,7 +175,7 @@ class CloneIsolationHandler(IsolationHandler):
 
         base_commit_sha: str | None = None
         if config.task_id is not None:
-            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, clone_path)
+            base_commit_sha = await _capture_base_commit_sha(clone_path)
             await asyncio.to_thread(
                 TaskArtifactManager(self._clone_storage.db).set_artifacts_atomic,
                 config.task_id,
@@ -221,8 +218,7 @@ class CloneIsolationHandler(IsolationHandler):
 
         if clone_path:
             try:
-                await asyncio.to_thread(
-                    self._clone_manager.delete_clone,
+                await self._clone_manager.delete_clone(
                     clone_path=clone_path,
                     force=True,
                 )

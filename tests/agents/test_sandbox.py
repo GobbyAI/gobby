@@ -50,6 +50,7 @@ from gobby.config.tmux import TmuxConfig, socket_root
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.terminals.tmux_discovery import socket_path_for
+from gobby.utils.daemon_git import GitFailed, GitTimeout
 
 pytestmark = pytest.mark.unit
 
@@ -570,15 +571,17 @@ class TestClaudeSandboxResolver:
         args, env = resolver.resolve(config, paths)
         assert env == {}
 
-    def test_materialize_claude_settings_merges_base_hooks(self, tmp_path: Path) -> None:
+    async def test_materialize_claude_settings_merges_base_hooks(self, tmp_path: Path) -> None:
         """Generated runtime settings should preserve base settings and add sandbox config."""
         base_settings = tmp_path / "headless.json"
         base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
 
-        settings_path = materialize_claude_settings(
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        settings_path = await materialize_claude_settings(
             base_settings_path=base_settings,
             config=SandboxConfig(enabled=True),
-            workspace_path="/project",
+            workspace_path=str(workspace),
             name="test",
         )
 
@@ -594,11 +597,13 @@ class TestClaudeSandboxResolver:
         """Async wrapper should preserve sync helper behavior while moving work off-loop."""
         base_settings = tmp_path / "headless.json"
         base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+        workspace = tmp_path / "project"
+        workspace.mkdir()
 
         settings_path = await materialize_claude_settings_async(
             base_settings_path=base_settings,
             config=SandboxConfig(enabled=True),
-            workspace_path="/project",
+            workspace_path=str(workspace),
             name="test-async",
         )
 
@@ -607,18 +612,20 @@ class TestClaudeSandboxResolver:
         assert payload["hooks"]["SessionStart"] == []
         assert payload["sandbox"]["enabled"] is True
 
-    def test_materialize_claude_settings_logs_invalid_base_settings(
+    async def test_materialize_claude_settings_logs_invalid_base_settings(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Invalid base settings should warn and still fall back to an empty payload."""
         base_settings = tmp_path / "headless.json"
         base_settings.write_text("{invalid", encoding="utf-8")
+        workspace = tmp_path / "project"
+        workspace.mkdir()
 
         with caplog.at_level("WARNING"):
-            settings_path = materialize_claude_settings(
+            settings_path = await materialize_claude_settings(
                 base_settings_path=base_settings,
                 config=SandboxConfig(enabled=True),
-                workspace_path="/project",
+                workspace_path=str(workspace),
                 name="test-invalid",
             )
 
@@ -829,7 +836,7 @@ class TestGetSandboxResolver:
 class TestComputeSandboxPaths:
     """Tests for compute_sandbox_paths helper function."""
 
-    def test_computes_paths_from_config(self) -> None:
+    async def test_computes_paths_from_config(self, tmp_path: Path) -> None:
         """Test computing paths from SandboxConfig."""
         config = SandboxConfig(
             enabled=True,
@@ -838,37 +845,43 @@ class TestComputeSandboxPaths:
             extra_write_paths=["/tmp/output"],
         )
 
-        paths = compute_sandbox_paths(
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        paths = await compute_sandbox_paths(
             config=config,
-            workspace_path="/project",
+            workspace_path=str(workspace),
             gobby_daemon_port=60887,
         )
 
-        assert paths.workspace_path == "/project"
+        assert paths.workspace_path == str(workspace)
         assert paths.gobby_daemon_port == 60887
         assert paths.allow_external_network is False
-        assert "/project" in paths.write_paths
+        assert str(workspace) in paths.write_paths
         assert str(Path("/tmp/output").resolve()) in paths.write_paths
         assert str(Path("/opt/data").resolve()) in paths.read_paths
 
-    def test_workspace_always_in_write_paths(self) -> None:
+    async def test_workspace_always_in_write_paths(self, tmp_path: Path) -> None:
         """Test that workspace is always included in write_paths."""
         config = SandboxConfig(enabled=True)
 
-        paths = compute_sandbox_paths(
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        paths = await compute_sandbox_paths(
             config=config,
-            workspace_path="/my/workspace",
+            workspace_path=str(workspace),
         )
 
-        assert "/my/workspace" in paths.write_paths
+        assert str(workspace) in paths.write_paths
 
-    def test_canonicalizes_workspace_symlink_before_granting_access(self, tmp_path: Path) -> None:
+    async def test_canonicalizes_workspace_symlink_before_granting_access(
+        self, tmp_path: Path
+    ) -> None:
         real_workspace = tmp_path / "real-workspace"
         real_workspace.mkdir()
         linked_workspace = tmp_path / "linked-workspace"
         linked_workspace.symlink_to(real_workspace, target_is_directory=True)
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(linked_workspace),
         )
@@ -877,7 +890,7 @@ class TestComputeSandboxPaths:
         assert str(real_workspace) in paths.write_paths
         assert str(linked_workspace) not in paths.write_paths
 
-    def test_sensitive_gobby_roots_are_effectively_denied(
+    async def test_sensitive_gobby_roots_are_effectively_denied(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -891,7 +904,7 @@ class TestComputeSandboxPaths:
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         runtime_home = Path(sandbox_policy.gcode_runtime_write_exceptions(workspace)[0])
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
@@ -983,19 +996,60 @@ class TestComputeSandboxPaths:
 
         assert _resolve_git_metadata_path(Path("/workspace"), ".git") == "/workspace/.git"
 
-    def test_custom_daemon_port(self) -> None:
+    async def test_custom_daemon_port(self, tmp_path: Path) -> None:
         """Test custom daemon port is set."""
         config = SandboxConfig(enabled=True)
 
-        paths = compute_sandbox_paths(
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        paths = await compute_sandbox_paths(
             config=config,
-            workspace_path="/project",
+            workspace_path=str(workspace),
             gobby_daemon_port=9999,
         )
 
         assert paths.gobby_daemon_port == 9999
 
-    def test_linked_worktree_git_metadata_dirs_are_writable(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "git_result",
+        [
+            pytest.param(
+                GitTimeout(status="timeout", argv=("git", "rev-parse"), timeout=2),
+                id="timeout",
+            ),
+            pytest.param(
+                GitFailed(
+                    status="failed",
+                    argv=("git", "rev-parse"),
+                    returncode=None,
+                    stdout="",
+                    stderr="daemon unavailable",
+                ),
+                id="unavailable",
+            ),
+        ],
+    )
+    async def test_git_metadata_failure_fails_closed(
+        self,
+        tmp_path: Path,
+        git_result: GitFailed | GitTimeout,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        run = AsyncMock(return_value=git_result)
+
+        with (
+            patch("gobby.agents.sandbox.daemon_git.run", new=run),
+            pytest.raises(RuntimeError, match="Failed to resolve Git metadata for sandbox"),
+        ):
+            await compute_sandbox_paths(
+                config=SandboxConfig(enabled=True),
+                workspace_path=str(workspace),
+            )
+
+        run.assert_awaited_once()
+
+    async def test_linked_worktree_git_metadata_dirs_are_writable(self, tmp_path: Path) -> None:
         """Linked worktree commits need write access to Git metadata outside the worktree."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1009,7 +1063,7 @@ class TestComputeSandboxPaths:
         worktree = tmp_path / "task-worktree"
         _git(repo, "worktree", "add", "-b", "task-worktree", str(worktree))
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True),
             workspace_path=str(worktree),
         )
@@ -1021,7 +1075,9 @@ class TestComputeSandboxPaths:
         assert _resolve_from(worktree, common_dir) in paths.write_paths
         assert len(paths.write_paths) == len(set(paths.write_paths))
 
-    def test_isolated_mcp_project_root_is_readable_but_not_writable(self, tmp_path: Path) -> None:
+    async def test_isolated_mcp_project_root_is_readable_but_not_writable(
+        self, tmp_path: Path
+    ) -> None:
         """The MCP server's `uv run --project <main repo>` target must be readable.
 
         Without it the proxy subprocess dies on the main repo's pyproject.toml
@@ -1046,7 +1102,7 @@ class TestComputeSandboxPaths:
             encoding="utf-8",
         )
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
         )
@@ -1054,23 +1110,27 @@ class TestComputeSandboxPaths:
         assert str(main_repo.resolve()) in paths.read_paths
         assert str(main_repo.resolve()) not in paths.write_paths
 
-    def test_missing_or_malformed_mcp_config_grants_nothing_extra(self, tmp_path: Path) -> None:
+    async def test_missing_or_malformed_mcp_config_grants_nothing_extra(
+        self, tmp_path: Path
+    ) -> None:
         workspace = tmp_path / "worktree"
         workspace.mkdir()
-        baseline = compute_sandbox_paths(
+        baseline = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
         )
 
         (workspace / ".mcp.json").write_text("{not json", encoding="utf-8")
-        malformed = compute_sandbox_paths(
+        malformed = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
         )
 
         assert malformed.read_paths == baseline.read_paths
 
-    def test_mcp_config_args_that_are_not_directories_are_ignored(self, tmp_path: Path) -> None:
+    async def test_mcp_config_args_that_are_not_directories_are_ignored(
+        self, tmp_path: Path
+    ) -> None:
         workspace = tmp_path / "worktree"
         workspace.mkdir()
         missing_dir = tmp_path / "gone"
@@ -1098,7 +1158,7 @@ class TestComputeSandboxPaths:
             encoding="utf-8",
         )
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
         )
@@ -1110,13 +1170,13 @@ class TestComputeSandboxPaths:
 class TestSharedTempRootsAreNotGranted:
     """Agent scratchpads are the per-run sandbox tmp, never a shared temp root."""
 
-    def test_shared_temp_roots_absent_from_computed_paths(self, tmp_path: Path) -> None:
+    async def test_shared_temp_roots_absent_from_computed_paths(self, tmp_path: Path) -> None:
         import tempfile as _tempfile
 
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
         )
@@ -1194,7 +1254,7 @@ class TestToolchainGrants:
                     f"{write_path} grants write access to {unsafe_path}"
                 )
 
-    def test_toolchain_credentials_are_effectively_denied(
+    async def test_toolchain_credentials_are_effectively_denied(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         credentials = (
@@ -1221,7 +1281,7 @@ class TestToolchainGrants:
         )
         workspace = tmp_path / "workspace"
         workspace.mkdir()
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
@@ -1236,7 +1296,7 @@ class TestToolchainGrants:
             assert not self._srt_can_read(credential, paths), relative
             assert not self._srt_can_write(credential, paths), relative
 
-    def test_installed_toolchains_and_shared_caches_are_read_only(
+    async def test_installed_toolchains_and_shared_caches_are_read_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Executables, SDKs, installed packages, and shared caches remain usable."""
@@ -1256,7 +1316,7 @@ class TestToolchainGrants:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
@@ -1267,7 +1327,7 @@ class TestToolchainGrants:
             assert str((home / relative).resolve()) in paths.read_paths, relative
             assert str((home / relative).resolve()) not in paths.write_paths, relative
 
-    def test_absent_toolchain_roots_are_not_emitted(
+    async def test_absent_toolchain_roots_are_not_emitted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Existence filtering keeps the emitted policy tight per machine."""
@@ -1275,7 +1335,7 @@ class TestToolchainGrants:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
@@ -1287,7 +1347,7 @@ class TestToolchainGrants:
             assert str((home / absent).resolve()) not in paths.read_paths, absent
             assert str((home / absent).resolve()) not in paths.write_paths, absent
 
-    def test_package_installs_use_explicit_per_run_cache_paths(
+    async def test_package_installs_use_explicit_per_run_cache_paths(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         shared_caches = (
@@ -1338,7 +1398,7 @@ class TestToolchainGrants:
             )
         )
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(
                 enabled=True,
                 backend="srt",
@@ -1360,7 +1420,7 @@ class TestToolchainGrants:
             assert resolved in paths.read_paths, resolved
             assert resolved in paths.write_paths, resolved
 
-    def test_registry_flag_gates_network_only(
+    async def test_registry_flag_gates_network_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """allow_package_registries controls egress; filesystem grants stay fixed."""
@@ -1368,13 +1428,13 @@ class TestToolchainGrants:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        offline = compute_sandbox_paths(
+        offline = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
             env={"PATH": ""},
         )
-        networked = compute_sandbox_paths(
+        networked = await compute_sandbox_paths(
             config=SandboxConfig(
                 enabled=True,
                 backend="srt",
@@ -1394,7 +1454,7 @@ class TestToolchainGrants:
 class TestRtkSandboxGrants:
     """RTK keeps its developer-wide state while sandboxed agents run."""
 
-    def test_rtk_binary_config_and_state_paths_are_granted(
+    async def test_rtk_binary_config_and_state_paths_are_granted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         home = tmp_path / "home"
@@ -1415,7 +1475,7 @@ class TestRtkSandboxGrants:
         expected = platform_paths(home=home)
         expected.data_dir.mkdir(parents=True, exist_ok=True)
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
@@ -1429,7 +1489,7 @@ class TestRtkSandboxGrants:
         assert str(custom_database.parent.resolve()) in paths.write_paths
         assert str(custom_tee.resolve()) in paths.write_paths
 
-    def test_rtk_grants_do_not_include_unrelated_sibling(
+    async def test_rtk_grants_do_not_include_unrelated_sibling(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         home = tmp_path / "home"
@@ -1441,7 +1501,7 @@ class TestRtkSandboxGrants:
         unrelated = expected.data_dir.parent / "other-tool"
         unrelated.mkdir()
 
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
             workspace_path=str(workspace),
             provider="codex",
@@ -1469,7 +1529,9 @@ class TestSandboxCacheProvisioning:
             assert cache_path.is_relative_to(session_root.parent), env_var
             assert str(cache_path) in config.extra_write_paths, env_var
 
-    def test_sandbox_spawn_enables_scoped_package_registry_egress(self, tmp_path: Path) -> None:
+    async def test_sandbox_spawn_enables_scoped_package_registry_egress(
+        self, tmp_path: Path
+    ) -> None:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         env_vars = {GOBBY_SESSION_ID: "registry-test-session", "PATH": ""}
@@ -1479,7 +1541,7 @@ class TestSandboxCacheProvisioning:
         )
 
         assert config is not None
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=config,
             workspace_path=str(workspace),
             provider="codex",
@@ -1489,7 +1551,7 @@ class TestSandboxCacheProvisioning:
         assert {"crates.io", "index.crates.io", "static.crates.io"} <= set(paths.allowed_domains)
         assert "github.com" not in paths.allowed_domains
 
-    def test_project_paths_merge_into_policy_and_resume_metadata(
+    async def test_project_paths_merge_into_policy_and_resume_metadata(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
@@ -1526,7 +1588,7 @@ class TestSandboxCacheProvisioning:
         assert config is not None
         assert config.extra_write_paths[:2] == [str(daemon_path), str(declared_path.resolve())]
         assert config.extra_write_paths.count(str(declared_path.resolve())) == 1
-        paths = compute_sandbox_paths(
+        paths = await compute_sandbox_paths(
             config=config,
             workspace_path=str(workspace),
             provider="codex",
@@ -1705,8 +1767,9 @@ class TestAgySandboxResolver:
                     f"{provider} domain {domain!r} is not an SRT-valid pattern"
                 )
 
-    def test_agy_sandbox_policy_uses_probe_recorded_domains_roots_and_masks_ambient_keys(
+    async def test_agy_sandbox_policy_uses_probe_recorded_domains_roots_and_masks_ambient_keys(
         self,
+        tmp_path: Path,
     ) -> None:
         domains = sandbox_policy._PROVIDER_DOMAINS.get("agy")
         assert domains is not None
@@ -1736,9 +1799,11 @@ class TestAgySandboxResolver:
             "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/creds.json",
             "UNRELATED_SECRET": "nope",
         }
-        paths = compute_sandbox_paths(
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        paths = await compute_sandbox_paths(
             config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
-            workspace_path="/project",
+            workspace_path=str(workspace),
             provider="agy",
             env=ambient_env,
         )
@@ -1827,7 +1892,7 @@ class TestTmuxSocketAllowance:
         assert os.path.dirname(socket_path) in roots
 
 
-def test_workspace_gcode_runtime_home_is_writable_under_srt_write_precedence(
+async def test_workspace_gcode_runtime_home_is_writable_under_srt_write_precedence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """denyWrite outranks allowWrite, so the gcode-runtime parent stays out of it."""
@@ -1838,7 +1903,7 @@ def test_workspace_gcode_runtime_home_is_writable_under_srt_write_precedence(
     runtime_home = Path(sandbox_policy.gcode_runtime_write_exceptions(workspace)[0])
     other_grant = gobby_home / "gcode-runtime" / "other-workspace" / "grant.json"
 
-    paths = compute_sandbox_paths(
+    paths = await compute_sandbox_paths(
         config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
         workspace_path=str(workspace),
         provider="codex",

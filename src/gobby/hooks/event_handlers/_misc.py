@@ -371,7 +371,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 self.logger.warning("WORKTREE_CREATE record creation failed: %s", e)
 
         try:
-            copy_project_json_to_worktree(git_manager.repo_path, worktree_path)
+            await copy_project_json_to_worktree(git_manager.repo_path, worktree_path)
             install_provider_hooks("claude", worktree_path)
         except Exception as e:
             self.logger.warning("WORKTREE_CREATE post-setup failed: %s", e)
