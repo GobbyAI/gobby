@@ -181,11 +181,10 @@ async def _reconcile_project_clones(
             resolved_path = await asyncio.to_thread(manager.resolve_managed_clone_path, candidate)
             if resolved_path is None or resolved_path.parent != project_directory:
                 continue
-            status = await asyncio.to_thread(manager.get_clone_status, resolved_path)
+            status = await manager.get_clone_status(resolved_path)
             if status is None or (status.branch is None and status.commit is None):
                 continue
-            remote_url = await asyncio.to_thread(
-                manager.get_remote_url,
+            remote_url = await manager.get_remote_url(
                 "origin",
                 resolved_path,
             )

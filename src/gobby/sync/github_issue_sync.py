@@ -10,7 +10,7 @@ from typing import Any
 
 import psycopg
 
-from gobby.build.delivery import resolve_project_source_repo, resolve_project_source_repo_async
+from gobby.build.delivery import resolve_project_source_repo_async
 from gobby.integrations.github_helper import parse_github_mcp_result, parse_github_repo
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.projects import LocalProjectManager, Project
@@ -51,13 +51,7 @@ class GitHubIssueSyncService:
         self.project_manager = project_manager or LocalProjectManager(db)
         self.config_store = GitHubTriageStore(db)
 
-    def repositories_for(self, project: Project, config: GitHubTriageConfig) -> tuple[str, ...]:
-        """Resolve configured repos, then the project's canonical GitHub repo."""
-        if config.repositories:
-            return config.repositories
-        return (resolve_project_source_repo(self.db, project.id),)
-
-    async def repositories_for_async(
+    async def repositories_for(
         self,
         project: Project,
         config: GitHubTriageConfig,
@@ -70,7 +64,7 @@ class GitHubIssueSyncService:
     async def check_access(self, project: Project, config: GitHubTriageConfig) -> tuple[str, ...]:
         """Verify the connector can read every configured repository."""
         try:
-            repositories = await self.repositories_for_async(project, config)
+            repositories = await self.repositories_for(project, config)
         except ValueError as exc:
             raise GitHubRepositoryReadinessError(
                 "GitHub repository is unresolved; configure github_repo, github_url, or a git origin"
@@ -117,7 +111,7 @@ class GitHubIssueSyncService:
         config = await asyncio.to_thread(self.config_store.get_config, project_id)
         if not (config.sync_enabled or config.triage_enabled):
             return {"action": "disabled"}
-        repositories = await self.repositories_for_async(project, config)
+        repositories = await self.repositories_for(project, config)
         if repo not in repositories:
             raise ValueError(f"Repository {repo!r} is not enabled for GitHub issue sync")
 
@@ -219,7 +213,7 @@ class GitHubIssueSyncService:
             return self._empty_stats()
 
         stats = self._empty_stats()
-        repositories = await self.repositories_for_async(project, config)
+        repositories = await self.repositories_for(project, config)
         for repo in repositories:
             owner, repo_name = parse_github_repo(repo)
             seen_pages: set[tuple[str, ...]] = set()

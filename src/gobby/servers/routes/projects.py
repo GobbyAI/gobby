@@ -58,8 +58,9 @@ from gobby.utils.checkout_root import (
     MarkerMismatchError,
     validate_checkout_root,
 )
+from gobby.utils.git import get_github_url_async
 from gobby.utils.machine_id import get_machine_id
-from gobby.utils.project_init import initialize_project
+from gobby.utils.project_init import initialize_project_from_resolved_metadata
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -309,6 +310,8 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
     async def init_project(body: ProjectInitBody) -> dict[str, Any]:
         """Initialize a local directory and return its project payload."""
         pm = _get_project_manager(server)
+        project_path = Path(body.path)
+        github_url = await get_github_url_async(project_path)
 
         def apply_init() -> tuple[Project, bool]:
             try:
@@ -317,7 +320,11 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     checkout.project_id
                     for checkout in LocalProjectCheckoutManager(pm.db).list_for_machine(machine_id)
                 }
-                result = initialize_project(cwd=Path(body.path), db=pm.db)
+                result = initialize_project_from_resolved_metadata(
+                    cwd=project_path,
+                    github_url=github_url,
+                    db=pm.db,
+                )
                 project = pm.get(result.project_id)
                 if project is None:
                     raise RuntimeError(f"Project {result.project_id} not found after init")
@@ -656,7 +663,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 project_manager=pm,
             )
             try:
-                repositories = github_service.repositories_for(project, github_config)
+                repositories = await github_service.repositories_for(project, github_config)
             except ValueError:
                 repositories = ()
             try:

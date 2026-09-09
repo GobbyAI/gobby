@@ -86,12 +86,26 @@ async def _check_github_access_result(
     return repositories, None
 
 
-async def _gather_github_access(
+async def _resolve_github_status_result(
+    readiness: GitHubIssueSyncService,
+    project: Project,
+    config: GitHubTriageConfig,
+    mcp_manager: MCPClientManager,
+) -> tuple[tuple[str, ...] | None, str | None]:
+    if config.sync_enabled or config.triage_enabled:
+        return await _check_github_access_result(readiness, project, config, mcp_manager)
+    try:
+        return await readiness.repositories_for(project, config), None
+    except ValueError:
+        return None, None
+
+
+async def _gather_github_status(
     checks: list[tuple[GitHubIssueSyncService, Project, GitHubTriageConfig, MCPClientManager]],
 ) -> list[tuple[tuple[str, ...] | None, str | None]]:
-    """Run enabled project readiness checks concurrently in one event loop."""
+    """Resolve all project repositories in one event loop and isolate failures."""
     results = await asyncio.gather(
-        *(_check_github_access_result(*check) for check in checks),
+        *(_resolve_github_status_result(*check) for check in checks),
         return_exceptions=True,
     )
     normalized: list[tuple[tuple[str, ...] | None, str | None]] = []
@@ -162,7 +176,7 @@ def github_setup(
         resolved = (
             asyncio.run(_check_github_access(readiness, project, candidate, mcp_manager))
             if candidate.sync_enabled or candidate.triage_enabled
-            else readiness.repositories_for(project, candidate)
+            else asyncio.run(readiness.repositories_for(project, candidate))
         )
         saved = store.upsert_config(candidate)
         payload = {**saved.to_dict(), "repositories": list(resolved)}
@@ -199,10 +213,10 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
         config_store = GitHubTriageStore(task_manager.db)
         status_store = ExternalIssueSyncStatusStore(task_manager.db)
         payloads: list[dict[str, object]] = []
-        readiness_checks: list[
+        status_checks: list[
             tuple[GitHubIssueSyncService, Project, GitHubTriageConfig, MCPClientManager]
         ] = []
-        readiness_payloads: list[dict[str, object]] = []
+        status_payloads: list[tuple[dict[str, object], bool]] = []
         for project in projects:
             if project is None or project.deleted_at:
                 continue
@@ -221,15 +235,12 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
             )
             ready = False
             readiness_error = None
-            try:
-                repositories = readiness.repositories_for(project, config)
-            except ValueError:
-                repositories = ()
+            verify_access = bool(config.sync_enabled or config.triage_enabled)
             payload = {
                 "project_id": project.id,
                 "project_name": project.name,
                 **config.to_dict(),
-                "repositories": list(repositories or config.repositories),
+                "repositories": list(config.repositories),
                 "ready": ready,
                 "readiness_error": readiness_error,
                 "state": status.state if status else "pending",
@@ -244,21 +255,21 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
                 "last_error": status.last_error if status else None,
             }
             payloads.append(payload)
-            if config.sync_enabled or config.triage_enabled:
-                readiness_checks.append((readiness, project, config, mcp_manager))
-                readiness_payloads.append(payload)
+            status_checks.append((readiness, project, config, mcp_manager))
+            status_payloads.append((payload, verify_access))
 
-        if readiness_checks:
-            readiness_results = asyncio.run(_gather_github_access(readiness_checks))
-            for payload, (checked_repositories, readiness_error) in zip(
-                readiness_payloads,
-                readiness_results,
+        if status_checks:
+            status_results = asyncio.run(_gather_github_status(status_checks))
+            for (payload, verify_access), (repositories, readiness_error) in zip(
+                status_payloads,
+                status_results,
                 strict=True,
             ):
-                if checked_repositories:
-                    payload["repositories"] = list(checked_repositories)
-                payload["ready"] = readiness_error is None
-                payload["readiness_error"] = readiness_error
+                if repositories:
+                    payload["repositories"] = list(repositories)
+                if verify_access:
+                    payload["ready"] = readiness_error is None
+                    payload["readiness_error"] = readiness_error
 
         if json_format:
             output = payloads if all_projects or not payloads else payloads[0]
