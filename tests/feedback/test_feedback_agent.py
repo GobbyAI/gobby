@@ -284,5 +284,7 @@ def test_feedback_reviewer_agent_requires_both_methodology_skills() -> None:
     assert review_step["allowed_mcp_tools"] == [
         "gobby-feedback:get_review_observations",
         "gobby-feedback:get_review_results",
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
         "gobby-agents:end_agent_run",
     ]

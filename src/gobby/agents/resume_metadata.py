@@ -19,6 +19,7 @@ _RESUME_CONFIG_OVERRIDE_KEYS = frozenset(
     {
         "mcp_servers.gobby.command",
         "mcp_servers.gobby.args",
+        "mcp_servers.gobby.required",
         "mcp_servers.gobby.startup_timeout_sec",
         "mcp_servers.gobby.tool_timeout_sec",
         "mcp_servers.gobby.env_vars",

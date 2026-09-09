@@ -643,6 +643,19 @@ class SessionCoordinator:
                 self._reap_agent_sandbox_roots(agent_run_id)
                 return
 
+            # A capture/kill owner persisted its decision before stopping the
+            # provider. SESSION_END is a consequence of that operation, not a
+            # competing completion decision. Interrupted owners are recovered by
+            # pending-termination reconciliation.
+            if getattr(agent_run, "pending_terminal_action", None) in (
+                "complete",
+                "fail",
+                "timeout",
+                "cancel",
+            ):
+                self.logger.debug("Deferring session-end to termination owner for %s", agent_run_id)
+                return
+
             # Use summary as result if available
             result = getattr(session, "summary_markdown", None) or ""
 

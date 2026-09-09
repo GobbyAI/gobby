@@ -148,7 +148,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         )
 
         if not result.success:
-            raise RuntimeError(f"Failed to create worktree: {result.error}")
+            raise RuntimeError(f"Failed to create worktree: {result.error or result.message}")
 
         # Track for cleanup — worktree exists on disk now
         partial_state["path"] = worktree_path
