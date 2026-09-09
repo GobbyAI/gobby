@@ -196,7 +196,9 @@ def register_release_task_paths(
         func=inspect_task_path_ownership,
     )
 
-    async def release_task_paths(task_id: str, paths: list[str]) -> dict[str, Any]:
+    async def release_task_paths(
+        task_id: str, paths: list[str], checkout_path: str | None = None
+    ) -> dict[str, Any]:
         """Release committed or abandoned paths from the current session's task ledger."""
         session_ref = get_current_session_id()
         if not session_ref:
@@ -260,10 +262,8 @@ def register_release_task_paths(
 
         artifacts = ctx.task_manager.artifacts.get_artifacts(resolved_task_id)
         try:
-            session_worktree_path = _claimed_session_worktree_path(
-                ctx,
-                session_id=session_id,
-                project_id=task.project_id,
+            session_worktree_path = checkout_path or _claimed_session_worktree_path(
+                ctx, session_id=session_id, project_id=task.project_id
             )
             repo_path = _lifecycle_checkout_root(
                 ctx,
@@ -369,6 +369,13 @@ def register_release_task_paths(
                     "items": {"type": "string"},
                     "minItems": 1,
                     "description": "Repository-relative paths to release",
+                },
+                "checkout_path": {
+                    "type": "string",
+                    "description": (
+                        "Registered checkout containing these edits. Defaults to the owner's "
+                        "active worktree; use when releasing committed edits in a handed-off tree."
+                    ),
                 },
             },
             "required": ["task_id", "paths"],

@@ -383,6 +383,76 @@ async def test_release_uses_claimed_integration_checkout_without_main_fallback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("dirty", [False, True])
+async def test_release_explicit_checkout_preserves_other_checkout_attribution(
+    temp_db: HubDatabase, tmp_path: Path, dirty: bool
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    integration = tmp_path / "integration"
+    worker = tmp_path / "worker"
+    worktrees = LocalWorktreeManager(temp_db)
+    for path, owner in [(integration, harness.owner.id), (worker, None)]:
+        subprocess.run(
+            ["git", "worktree", "add", "--detach", str(path), "HEAD"],
+            cwd=harness.repo,
+            check=True,
+        )
+        worktrees.create(
+            project_id=harness.project_id,
+            branch_name=None,
+            worktree_path=str(path),
+            agent_session_id=owner,
+        )
+    integration_root = normalize_task_checkout_root(str(integration))
+    worker_root = normalize_task_checkout_root(str(worker))
+    assert integration_root is not None and worker_root is not None
+    roots = [integration_root, worker_root]
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {"task_edited_file_checkouts": {harness.task.id: {root: [SHARED_PATH] for root in roots}}},
+    )
+    if dirty:
+        (worker / SHARED_PATH).write_text("uncommitted = True\n", encoding="utf-8")
+    before = harness.variables.get_variables(harness.owner.id)
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths",
+            {"task_id": harness.task.id, "paths": [SHARED_PATH], "checkout_path": str(worker)},
+        )
+    after = harness.variables.get_variables(harness.owner.id)
+    if dirty:
+        assert result["success"] is False
+        assert result["dirty_paths"] == [SHARED_PATH]
+        assert after == before
+    else:
+        assert result["success"] is True
+        assert result["released_paths"] == [SHARED_PATH]
+        assert after["task_edited_file_checkouts"][harness.task.id] == {
+            integration_root: [SHARED_PATH]
+        }
+
+
+@pytest.mark.asyncio
+async def test_release_rejects_explicit_unregistered_checkout(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    before = harness.variables.get_variables(harness.owner.id)
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths",
+            {
+                "task_id": harness.task.id,
+                "paths": [SHARED_PATH],
+                "checkout_path": str(tmp_path / "unregistered"),
+            },
+        )
+    assert result["success"] is False
+    assert result["error_type"] == "checkout_unresolved"
+    assert harness.variables.get_variables(harness.owner.id) == before
+
+
+@pytest.mark.asyncio
 async def test_release_refuses_own_edit_newer_than_the_last_commit_on_a_co_claimed_path(
     temp_db: HubDatabase,
     tmp_path: Path,
