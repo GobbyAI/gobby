@@ -9,6 +9,7 @@ from gobby.agents import terminal_delivery
 from gobby.agents.sandbox_reaper import reap_sandbox_run_roots
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.storage.attention import run_attention_entry_id
+from gobby.storage.hub.operation_deadline import detached_database_operation_deadline
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+# Bounded window owned by the critical ownership and dispatch-mutex releases.
+CRITICAL_TERMINAL_CLEANUP_TIMEOUT_SECONDS = 15.0
 
 
 def cleanup_merged_task_artifacts_after_agent_exit(
@@ -112,14 +116,23 @@ class TerminalResourceCleaner:
         session_coordinator = self._get_session_coordinator()
 
         if not parking:
-            await terminal_delivery.deliver_and_cleanup_terminal_run(
-                db=self._db,
-                completion_registry=self._completion_registry,
-                run_id=run.id,
-                result=notification_result,
-                message=notification_message,
-                run_db=self._run_db,
-            )
+            try:
+                await terminal_delivery.deliver_and_cleanup_terminal_run(
+                    db=self._db,
+                    completion_registry=self._completion_registry,
+                    run_id=run.id,
+                    result=notification_result,
+                    message=notification_message,
+                    run_db=self._run_db,
+                )
+            except Exception:
+                # Delivery is noncritical: the ownership and dispatch-mutex
+                # releases below must still run for this terminal agent (#21897).
+                logger.warning(
+                    "Failed to deliver terminal result for agent %s",
+                    run.id,
+                    exc_info=True,
+                )
 
         if self._attention_manager is not None:
             try:
@@ -167,25 +180,31 @@ class TerminalResourceCleaner:
         self._stall_classifier.clear(run.id)
         self._loop_tracker.clear(run.id)
 
-        if not parking and session_coordinator and session_id:
-            try:
-                session_coordinator.release_session_worktrees(session_id)
-            except Exception as exc:
-                logger.warning("Failed to release worktrees for agent %s: %s", run.id, exc)
+        # Ownership and the dispatch mutex are what the next same-task spawn needs
+        # back. They get their own bounded window so an operation deadline the
+        # noncritical steps above already burned cannot starve them (#21897).
+        with detached_database_operation_deadline(
+            timeout_seconds=CRITICAL_TERMINAL_CLEANUP_TIMEOUT_SECONDS
+        ):
+            if not parking and session_coordinator and session_id:
+                try:
+                    session_coordinator.release_session_worktrees(session_id)
+                except Exception as exc:
+                    logger.warning("Failed to release worktrees for agent %s: %s", run.id, exc)
 
-        if not parking and self._clone_storage and run.clone_id:
-            try:
-                await self._run_db(self._clone_storage.release, run.clone_id)
-            except Exception as exc:
-                logger.warning("Failed to release clone for agent %s: %s", run.id, exc)
+            if not parking and self._clone_storage and run.clone_id:
+                try:
+                    await self._run_db(self._clone_storage.release, run.clone_id)
+                except Exception as exc:
+                    logger.warning("Failed to release clone for agent %s: %s", run.id, exc)
 
-        cleanup = await self._run_db(
-            cleanup_agent_runtime_state,
-            self._db,
-            run_id=run.id,
-            child_session_id=run.child_session_id,
-            terminal_reason=run.terminal_reason if parking else None,
-        )
+            cleanup = await self._run_db(
+                cleanup_agent_runtime_state,
+                self._db,
+                run_id=run.id,
+                child_session_id=run.child_session_id,
+                terminal_reason=run.terminal_reason if parking else None,
+            )
         if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
             logger.debug(
                 "Cleaned runtime state for agent %s: dispatch_mutex=%s agent_step_instances=%s",

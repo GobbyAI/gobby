@@ -14,6 +14,7 @@ from gobby.storage.hub import operation_deadline
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
     database_operation_deadline,
+    detached_database_operation_deadline,
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import Transaction
@@ -237,6 +238,35 @@ def test_nested_deadline_settings_restore_to_each_owning_scope(
     assert all(value.endswith("ms") for value in restored_outer[1:])
     assert all(0 < int(value.removesuffix("ms")) <= 100 for value in inner[1:])
     assert all(100 < int(value.removesuffix("ms")) <= 400 for value in restored_outer[1:])
+
+
+def test_detached_deadline_ignores_an_exhausted_inherited_scope(
+    database: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with database_operation_deadline(timeout_seconds=0.04):
+        now += 0.06
+        with pytest.raises(DatabaseOperationDeadlineExceeded):
+            database.fetchone("SELECT 1 AS value")
+        with detached_database_operation_deadline(timeout_seconds=5):
+            assert database.fetchone("SELECT 1 AS value") == {"value": 1}
+        # The exhausted inherited deadline is restored on exit.
+        with pytest.raises(DatabaseOperationDeadlineExceeded):
+            database.fetchone("SELECT 1 AS value")
+
+
+def test_detached_deadline_bounds_its_own_window(
+    database: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with detached_database_operation_deadline(timeout_seconds=0.04):
+        now += 0.06
+        with pytest.raises(DatabaseOperationDeadlineExceeded):
+            database.fetchone("SELECT 1 AS value")
 
 
 def test_expired_deadline_rolls_back_before_commit(

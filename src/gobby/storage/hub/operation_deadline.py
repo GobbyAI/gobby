@@ -78,3 +78,27 @@ def database_operation_deadline(
         yield deadline
     finally:
         _CURRENT_DATABASE_OPERATION_DEADLINE.reset(token)
+
+
+@contextmanager
+def detached_database_operation_deadline(
+    *,
+    timeout_seconds: float,
+    operation_timeout_seconds: float = DEFAULT_DATABASE_OPERATION_TIMEOUT_SECONDS,
+) -> Iterator[DatabaseOperationDeadline]:
+    """Bound database work with a fresh deadline, ignoring any inherited one.
+
+    Cleanup that must still run after its caller's budget is spent owns its own
+    window: intersecting with an exhausted inherited deadline would fail every
+    operation before it starts. Use this only for work whose completion matters
+    more than the enclosing operation's latency bound.
+    """
+    token = _CURRENT_DATABASE_OPERATION_DEADLINE.set(None)
+    try:
+        with database_operation_deadline(
+            timeout_seconds=timeout_seconds,
+            operation_timeout_seconds=operation_timeout_seconds,
+        ) as deadline:
+            yield deadline
+    finally:
+        _CURRENT_DATABASE_OPERATION_DEADLINE.reset(token)
