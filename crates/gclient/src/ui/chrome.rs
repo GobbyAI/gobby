@@ -393,6 +393,9 @@ pub struct ViewState {
     pub settings_dialog_area: Option<Rect>,
     /// Settings rows drawn, as indexes into `SettingsRow::ALL`.
     pub settings_row_hit_areas: Vec<(usize, Rect)>,
+    /// Buttons of the open dialog, in its button order (confirm close:
+    /// `close`, `cancel`); empty while no dialog is drawn.
+    pub dialog_button_hit_areas: Vec<Rect>,
 }
 
 impl ViewState {
@@ -407,7 +410,9 @@ impl ViewState {
             settings,
             // The open menu owns its rows; `Chrome::apply_hits` places them.
             menu_rows: _,
+            dialog_buttons,
         } = hits;
+        self.dialog_button_hit_areas = dialog_buttons;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
         self.tab_scroll_right_hit_area = tab_bar.scroll_right;

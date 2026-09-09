@@ -360,6 +360,16 @@ impl MockDaemon {
         });
     }
 
+    /// Close every live websocket the way uvicorn does when the daemon's HTTP
+    /// server (which serves `/ws`) shuts down: close code 1012 "service
+    /// restart" (#22002).
+    pub fn close_websockets_service_restart(&self) {
+        let _ = self.events.send(MockEvent {
+            value: json!({"__mock_close": true, "code": 1012}),
+            delivered: None,
+        });
+    }
+
     pub async fn pause_websocket_reads(&self) -> Arc<Notify> {
         self.wait_for_websocket().await;
         let gate = Arc::new(Notify::new());

@@ -156,15 +156,16 @@ pub enum Dialog {
     },
 }
 
-/// Render `chrome.dialog`, if any, centred over `area`.
-pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) {
+/// Render `chrome.dialog`, if any, centred over `area`. Returns the button
+/// rects the dialog drew, in its button order, so clicks can reach them.
+pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
     match &chrome.dialog {
         Some(Dialog::ConfirmClose {
             target,
             title,
             scope,
         }) => {
-            render_confirm_close(frame, area, chrome, target, title, scope);
+            return render_confirm_close(frame, area, chrome, target, title, scope);
         }
         Some(Dialog::Rename {
             kind,
@@ -224,6 +225,7 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) {
         }) => render_respond(frame, area, chrome, prompt, options, *selected, text),
         None => {}
     }
+    Vec::new()
 }
 
 fn primary_button_style(chrome: &Chrome, bg: ratatui::style::Color) -> Style {
@@ -240,6 +242,8 @@ fn secondary_button_style(chrome: &Chrome) -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// Draw the confirm-close popup; returns the `[close, cancel]` button rects
+/// it drew, or nothing when the popup does not fit.
 pub fn render_confirm_close(
     frame: &mut Frame,
     area: Rect,
@@ -247,18 +251,18 @@ pub fn render_confirm_close(
     target: &CloseTarget,
     title: &str,
     scope: &CloseScope,
-) {
+) -> Vec<Rect> {
     let p = &chrome.palette;
     let Some(popup) =
         centered_popup_rect(area, CONFIRM_CLOSE_POPUP_WIDTH, CONFIRM_CLOSE_POPUP_HEIGHT)
     else {
-        return;
+        return Vec::new();
     };
     let Some(inner) = render_panel_shell(frame, popup, p.red, p.panel_bg) else {
-        return;
+        return Vec::new();
     };
     if inner.height < 3 {
-        return;
+        return Vec::new();
     }
 
     let warn = Style::default().fg(p.red).add_modifier(Modifier::BOLD);
@@ -304,22 +308,24 @@ pub fn render_confirm_close(
         2,
         3,
     );
-    if let [close_rect, cancel_rect] = rects[..] {
-        render_action_button(
-            frame,
-            close_rect,
-            Some("↵"),
-            "close",
-            primary_button_style(chrome, p.red),
-        );
-        render_action_button(
-            frame,
-            cancel_rect,
-            Some("esc"),
-            "cancel",
-            secondary_button_style(chrome),
-        );
-    }
+    let [close_rect, cancel_rect] = rects[..] else {
+        return Vec::new();
+    };
+    render_action_button(
+        frame,
+        close_rect,
+        Some("↵"),
+        "close",
+        primary_button_style(chrome, p.red),
+    );
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        secondary_button_style(chrome),
+    );
+    vec![close_rect, cancel_rect]
 }
 
 pub fn render_rename(

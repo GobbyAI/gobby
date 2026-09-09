@@ -132,6 +132,10 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::Menu { kind, action } => {
             return apply_live_menu_action(workspace, chrome, kind, action).await;
         }
+        MouseOutcome::Confirm(target) => {
+            return apply_live_modal_outcome(workspace, chrome, ModalOutcome::Confirm(target))
+                .await;
+        }
     }
     Ok(false)
 }

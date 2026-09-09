@@ -243,8 +243,10 @@ fn decode_frame(message: Message) -> Result<Option<Value>, DaemonError> {
         Message::Binary(bytes) => decode_message(&bytes).map(Some).map_err(protocol_error),
         Message::Close(frame) => match frame.as_ref().map(|frame| u16::from(frame.code)) {
             Some(4401) => Err(DaemonError::Unauthorized),
-            // 1001 "going away" is the daemon's own shutdown close (#22002).
-            Some(1001) => Err(DaemonError::GoingAway),
+            // 1001 "going away" is the daemon's own shutdown close; 1012
+            // "service restart" is how uvicorn, which serves `/ws`, closes
+            // when the daemon's HTTP server shuts down (#22002).
+            Some(1001 | 1012) => Err(DaemonError::GoingAway),
             _ => Err(DaemonError::Unavailable { retry_after: None }),
         },
         Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => Ok(None),

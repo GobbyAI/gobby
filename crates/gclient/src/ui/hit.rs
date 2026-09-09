@@ -71,6 +71,8 @@ pub enum Hit {
     SettingsRow(usize),
     /// Settings popup outside its rows.
     SettingsDialog,
+    /// A button of the open dialog, as an index into its button row.
+    DialogButton(usize),
     ControlIndicator,
     Status,
     Toast,
@@ -80,6 +82,13 @@ pub enum Hit {
 /// Classify the cell at (`column`, `row`) against the last drawn frame.
 pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     let at = Position::new(column, row);
+    if let Some(index) = view
+        .dialog_button_hit_areas
+        .iter()
+        .position(|button| button.contains(at))
+    {
+        return Hit::DialogButton(index);
+    }
     if let Some(dialog) = view.settings_dialog_area {
         if let Some((index, _)) = find_at(&view.settings_row_hit_areas, at) {
             return Hit::SettingsRow(*index);

@@ -2292,3 +2292,38 @@ fn terminal_row_decodes_the_daemons_dual_keyed_row() {
 
     assert_eq!(row.id(), "terminal-1");
 }
+
+/// The daemon's `/ws` route is served by uvicorn, which closes sockets with
+/// 1012 "service restart" on shutdown rather than 1001. A restart must read
+/// as the daemon going away so the bounded reconnect budget is not spent on
+/// it (#22002).
+#[tokio::test]
+async fn service_restart_close_reports_going_away() {
+    let mock = MockDaemon::start("local-token").await;
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let (initial, mut events) = daemon.subscribe();
+
+    mock.close_websockets_service_restart();
+    let lost = timeout(Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Disconnected { generation, error } =
+                events.recv().await.expect("daemon event")
+            {
+                assert_eq!(generation, initial.generation);
+                break error;
+            }
+        }
+    })
+    .await
+    .expect("service-restart disconnect deadline");
+    assert!(matches!(lost, DaemonError::GoingAway), "{lost:?}");
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}

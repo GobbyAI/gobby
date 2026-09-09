@@ -164,10 +164,12 @@ fn apply_scripted_mouse_outcome(
     outcome: MouseOutcome,
 ) -> Result<bool, FrameError> {
     match outcome {
+        // The scripted daemon has no terminal to close, as with the key path.
         MouseOutcome::Handled
         | MouseOutcome::Ignore
         | MouseOutcome::Spawn { .. }
-        | MouseOutcome::OpenLink(_) => {}
+        | MouseOutcome::OpenLink(_)
+        | MouseOutcome::Confirm(_) => {}
         MouseOutcome::Focus { pane, observe_only } => {
             scripted_focus(workspace, chrome, pane, observe_only)?;
         }

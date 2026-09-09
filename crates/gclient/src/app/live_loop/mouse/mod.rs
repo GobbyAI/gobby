@@ -11,6 +11,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_terminal::layout;
 
 use crate::ui::chrome::Tab;
+use crate::ui::dialogs::{CloseTarget, Dialog};
 use crate::ui::hit::{hit_test, Hit, SidebarSection};
 use crate::ui::settings::SettingsRow;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
@@ -125,6 +126,9 @@ pub enum MouseOutcome {
         kind: ContextMenuKind,
         action: MenuAction,
     },
+    /// The confirm-close dialog's `close` button was clicked: close
+    /// `target`, exactly as Enter in the dialog does.
+    Confirm(CloseTarget),
     /// Not ours: later routers (copy-mode selection) may still claim it.
     Ignore,
 }
@@ -166,8 +170,8 @@ pub fn route_mouse<W: WorkspaceView>(
     match chrome.mode {
         Mode::Copy => return MouseOutcome::Ignore,
         Mode::Settings => return settings_mouse(ws, chrome, mouse),
-        Mode::ConfirmClose
-        | Mode::Rename
+        Mode::ConfirmClose => return confirm_close_mouse(chrome, mouse),
+        Mode::Rename
         | Mode::Respond
         | Mode::ProjectDialog
         | Mode::KeybindHelp
@@ -230,6 +234,30 @@ fn menu_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
         _ => {}
     }
     MouseOutcome::Handled
+}
+
+/// Confirm-close dialog: a left press on `close` confirms the pending target
+/// and one on `cancel` dismisses the dialog, as their keys do; every other
+/// mouse event stays with the dialog.
+fn confirm_close_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return MouseOutcome::Handled;
+    }
+    match hit_test(&chrome.view, mouse.column, mouse.row) {
+        Hit::DialogButton(0) => {
+            let target = match chrome.dialog.take() {
+                Some(Dialog::ConfirmClose { target, .. }) => Some(target),
+                _ => None,
+            };
+            close_modal(chrome);
+            target.map_or(MouseOutcome::Handled, MouseOutcome::Confirm)
+        }
+        Hit::DialogButton(_) => {
+            close_modal(chrome);
+            MouseOutcome::Handled
+        }
+        _ => MouseOutcome::Handled,
+    }
 }
 
 /// Settings overlay: a left press on a row selects and activates it, the

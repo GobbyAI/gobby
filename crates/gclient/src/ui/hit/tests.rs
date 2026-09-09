@@ -4,6 +4,7 @@ use super::{hit_test, Hit, SidebarSection};
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SidebarRows, WorktreeRow};
 use crate::ui::chrome::{Chrome, Mode, ViewState};
+use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog};
 use crate::ui::render_workspace;
 use crate::ui::status::{Toast, ToastKind};
 use ratatui::backend::TestBackend;
@@ -206,6 +207,42 @@ fn sidebar_scrollbar_lane_hits_by_section() {
         row: lane.y + 2,
     };
     assert_eq!(hit_test(&chrome.view, lane.x, lane.y + 2), hit);
+}
+
+#[test]
+fn dialog_buttons_hit_first_and_clear_with_the_dialog() {
+    let (ws, mut chrome) = split_live();
+    chrome.dialog = Some(Dialog::ConfirmClose {
+        target: CloseTarget::Tab,
+        title: "alpha".to_string(),
+        scope: CloseScope::Panes(2),
+    });
+    chrome.mode = Mode::ConfirmClose;
+    rendered(&ws, &mut chrome);
+    let view = &chrome.view;
+
+    let buttons = &view.dialog_button_hit_areas;
+    assert_eq!(buttons.len(), 2, "close and cancel drawn: {buttons:?}");
+    for (index, rect) in buttons.iter().enumerate() {
+        assert_eq!(at(view, rect.x, rect.y), Hit::DialogButton(index));
+        assert_eq!(at(view, rect.right() - 1, rect.y), Hit::DialogButton(index));
+    }
+    // Beside a button the dialog sits over a pane, which is what the map
+    // still reports there.
+    let close = buttons[0];
+    assert!(matches!(
+        at(view, close.x, close.y - 1),
+        Hit::Pane { .. } | Hit::PaneBorder(_)
+    ));
+
+    chrome.dialog = None;
+    chrome.mode = Mode::Terminal;
+    rendered(&ws, &mut chrome);
+    assert!(chrome.view.dialog_button_hit_areas.is_empty());
+    assert!(!matches!(
+        at(&chrome.view, close.x, close.y),
+        Hit::DialogButton(_)
+    ));
 }
 
 #[test]

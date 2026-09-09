@@ -28,6 +28,8 @@ pub struct ChromeHits {
     /// Rows of the context menu as drawn, in item order, whenever the menu
     /// overlay ran; `Chrome::apply_hits` writes them into the open menu.
     pub menu_rows: Option<Vec<Rect>>,
+    /// Buttons of the open dialog as drawn, in its button order.
+    pub dialog_buttons: Vec<Rect>,
 }
 
 /// Compose the whole frame; `content` paints each pane's terminal grid.
@@ -66,9 +68,11 @@ pub fn render_workspace_with<W: WorkspaceView>(
         terminal_area
     };
     match chrome.mode {
-        Mode::ConfirmClose => render_dialog_overlay(frame, close_area, chrome),
+        Mode::ConfirmClose => {
+            hits.dialog_buttons = render_dialog_overlay(frame, close_area, chrome);
+        }
         Mode::Rename | Mode::Respond | Mode::ProjectDialog => {
-            render_dialog_overlay(frame, area, chrome)
+            hits.dialog_buttons = render_dialog_overlay(frame, area, chrome);
         }
         Mode::Settings => {
             dim_background(frame, area);
@@ -153,14 +157,14 @@ fn render_notifications(frame: &mut Frame, chrome: &Chrome) -> Option<Rect> {
     status::render_toast_notification(frame, area, chrome)
 }
 
-/// Dim `area` and draw the pending dialog over it; nothing when no dialog
-/// is set.
-fn render_dialog_overlay(frame: &mut Frame, area: Rect, chrome: &Chrome) {
+/// Dim `area` and draw the pending dialog over it, returning the button
+/// rects it drew; nothing when no dialog is set.
+fn render_dialog_overlay(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
     if chrome.dialog.is_none() {
-        return;
+        return Vec::new();
     }
     dim_background(frame, area);
-    dialogs::render_dialog(frame, area, chrome);
+    dialogs::render_dialog(frame, area, chrome)
 }
 
 /// herdr `dim_background`: DIM modifier over `area`.

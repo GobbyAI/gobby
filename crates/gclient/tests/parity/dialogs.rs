@@ -9,7 +9,7 @@ use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
 use gobby_client::ui::dialogs::{render_dialog, CloseScope, CloseTarget, Dialog, RenameKind};
 use gobby_client::ui::navigator::NavigatorState;
-use gobby_client::ui::widgets::centered_popup_rect;
+use gobby_client::ui::widgets::{action_button_row_rects, centered_popup_rect, ActionButtonSpec};
 use gobby_client::ui::{render_workspace, Action};
 use gobby_client::Workspace;
 use ratatui::layout::Rect;
@@ -61,7 +61,7 @@ fn confirm_close_overlay_text_for(
         scope,
     });
     let terminal = render(AREA.width, AREA.height, |frame| {
-        render_dialog(frame, AREA, &chrome)
+        render_dialog(frame, AREA, &chrome);
     });
     let popup = centered_popup_rect(AREA, CONFIRM_CLOSE_POPUP.0, CONFIRM_CLOSE_POPUP.1)
         .expect("confirm-close popup fits the test area");
@@ -159,6 +159,82 @@ fn left_click(column: u16, row: u16) -> MouseEvent {
         row,
         modifiers: KeyModifiers::NONE,
     }
+}
+
+/// The confirm-close dialog draws `↵ close` and `esc cancel` as buttons; a
+/// left click on either must do what its key does. Before #22002 every mouse
+/// event in `Mode::ConfirmClose` was swallowed, so the buttons were paint.
+fn confirm_close_dialog(chrome: &mut Chrome) {
+    chrome.dialog = Some(Dialog::ConfirmClose {
+        target: CloseTarget::Tab,
+        title: "%836".to_string(),
+        scope: CloseScope::Panes(1),
+    });
+    chrome.mode = Mode::ConfirmClose;
+}
+
+/// `[close, cancel]` button rects the confirm-close renderer draws inside
+/// the popup centred on `area`.
+fn confirm_close_button_rects(area: Rect) -> Vec<Rect> {
+    let popup = centered_popup_rect(area, CONFIRM_CLOSE_POPUP.0, CONFIRM_CLOSE_POPUP.1)
+        .expect("confirm-close popup fits the area");
+    let inner = Rect::new(
+        popup.x + 1,
+        popup.y + 1,
+        popup.width.saturating_sub(2),
+        popup.height.saturating_sub(2),
+    );
+    action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "close",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        3,
+    )
+}
+
+#[test]
+fn confirm_close_buttons_take_clicks() {
+    let ws = modal_workspace();
+    let mut chrome = Chrome::new(theme());
+    chrome.prefs.mouse_capture = true;
+    confirm_close_dialog(&mut chrome);
+    chrome.compute_view(&ws, AREA);
+    let mut hits = None;
+    render(AREA.width, AREA.height, |frame| {
+        hits = Some(render_workspace(frame, &ws, &chrome));
+    });
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    let rects = confirm_close_button_rects(chrome.view.terminal_area);
+    let [close, cancel] = rects[..] else {
+        panic!("two buttons drawn: {rects:?}");
+    };
+
+    let outcome = route_mouse(&ws, &mut chrome, &left_click(cancel.x + 1, cancel.y));
+    assert_eq!(outcome, MouseOutcome::Handled);
+    assert!(chrome.dialog.is_none(), "cancel dismisses the dialog");
+    assert_eq!(chrome.mode, Mode::Terminal);
+
+    confirm_close_dialog(&mut chrome);
+    let outcome = route_mouse(&ws, &mut chrome, &left_click(close.x + 1, close.y));
+    assert!(
+        chrome.dialog.is_none(),
+        "close dismisses the dialog: {outcome:?}"
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert_eq!(
+        outcome,
+        MouseOutcome::Confirm(CloseTarget::Tab),
+        "close asks the loop to act, as Enter does"
+    );
 }
 
 /// Two roster terminals plus one blocked attention entry on the first.
