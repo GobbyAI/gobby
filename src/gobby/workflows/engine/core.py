@@ -36,6 +36,7 @@ from gobby.storage.pipeline_subscribers import (
 )
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.telemetry.tracing import create_span
+from gobby.workflows.condition_helpers import all_tasks_have_durable_stop_wait
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     RuleDefinitionBody,
@@ -298,6 +299,7 @@ class RuleEngine(
                 eval_context.setdefault("_blocking_deadline", blocking_deadline)
 
                 active_agent_wait = False
+                durable_task_wait = False
                 if is_turn_end:
                     try:
                         active_agent_wait = await offload(
@@ -310,7 +312,25 @@ class RuleEngine(
                             session_id,
                             exc,
                         )
+                    claimed_tasks = variables.get("claimed_tasks")
+                    claimed_task_ids = (
+                        list(claimed_tasks) if isinstance(claimed_tasks, dict) else []
+                    )
+                    if variables.get("task_claimed") and claimed_task_ids:
+                        try:
+                            durable_task_wait = await offload(
+                                all_tasks_have_durable_stop_wait,
+                                self._task_manager,
+                                claimed_task_ids,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to determine durable task wait for session %s: %s",
+                                session_id,
+                                exc,
+                            )
                 eval_context["_has_active_agent_wait"] = active_agent_wait
+                eval_context["_has_durable_stop_wait"] = active_agent_wait or durable_task_wait
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
@@ -392,9 +412,9 @@ class RuleEngine(
                         )
                         variables["servers_listed"] = True
 
-                # Auto-increment ordinary turn-end attempts; active agent waits consume none.
+                # Auto-increment ordinary turn-end attempts; durable waits consume none.
                 if is_turn_end:
-                    if not active_agent_wait:
+                    if not (active_agent_wait or durable_task_wait):
                         variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
                         "TURN_END gate diagnostics",
@@ -408,6 +428,7 @@ class RuleEngine(
                             "edit_write_pending": variables.get("edit_write_pending"),
                             "tool_block_pending": variables.get("tool_block_pending"),
                             "active_agent_wait": active_agent_wait,
+                            "durable_task_wait": durable_task_wait,
                         },
                     )
 
