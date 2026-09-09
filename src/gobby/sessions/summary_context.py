@@ -17,7 +17,7 @@ from gobby.sessions.summary_transcripts import (
     _strip_injected_context_from_value,
     _summary_source_text,
 )
-from gobby.sessions.workspace_context import _session_git_paths
+from gobby.sessions.workspace_context import _missing_workspace_git_context, _session_git_paths
 from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
@@ -162,8 +162,14 @@ async def _build_summary_prompt_context(
         [str(path) for path in handoff_ctx.files_modified],
         project_root,
     )
+    missing_git_context = (
+        _missing_workspace_git_context(project_root) if has_session_edits else None
+    )
     structured_handoff_ctx = copy(handoff_ctx)
-    if has_session_edits:
+    if missing_git_context:
+        handoff_ctx.git_status = missing_git_context
+        structured_handoff_ctx.git_status = missing_git_context
+    elif has_session_edits:
         structured_handoff_ctx.git_status = _scoped_git_status(
             handoff_ctx.git_status,
             session_paths,
@@ -172,7 +178,10 @@ async def _build_summary_prompt_context(
         structured_handoff_ctx.git_status = ""
         structured_handoff_ctx.git_commits = []
 
-    if has_session_edits:
+    if missing_git_context:
+        file_changes = missing_git_context
+        git_diff_summary = ""
+    elif has_session_edits:
         file_changes, git_diff_summary = await asyncio.gather(
             get_file_changes_async(project_path=project_path, paths=session_paths),
             get_git_diff_summary_async(project_path=project_path, paths=session_paths),

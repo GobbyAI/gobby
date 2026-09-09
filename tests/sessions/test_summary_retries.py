@@ -19,6 +19,7 @@ from gobby.sessions.summary_transcripts import _read_transcript_window
 from gobby.sessions.transcripts.base import TranscriptReadError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.workflows.git_utils import GitStatusUnavailable
 from tests.config_runtime_helpers import static_session_capture
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -91,6 +92,78 @@ async def test_null_path_archive_reaches_canonical_summary(
     assert saved.summary_markdown and saved.summary_source_context_hash
     assert saved.transcript_path is None
     assert processed(lifecycle, session.id)
+
+
+@pytest.mark.asyncio
+async def test_deleted_session_checkout_does_not_strand_pending_summary(
+    lifecycle: SessionLifecycleManager,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "deleted-summary-checkout").project
+    transcript = tmp_path / "deleted-summary-checkout.jsonl"
+    transcript.write_bytes(GOLDEN.read_bytes())
+    deleted_checkout = tmp_path / "task-deleted-summary-checkout"
+    deleted_checkout.mkdir()
+    deleted_checkout.rmdir()
+    session = register(lifecycle, project.id, "deleted-summary-checkout", str(transcript))
+    lifecycle.session_manager.update(
+        session.id,
+        terminal_context={"cwd": str(deleted_checkout)},
+    )
+
+    assert await lifecycle._process_pending_transcripts(lifecycle._capture_active()) == 1
+
+    saved = lifecycle.session_manager.get(session.id)
+    assert saved is not None
+    assert saved.summary_markdown is not None
+    assert "git context unavailable" in saved.summary_markdown
+    assert str(deleted_checkout) in saved.summary_markdown
+    assert "abc1234" in saved.summary_markdown
+    assert saved.summary_source_context_hash
+    assert saved.transcript_processing_failure_count == 0
+    assert processed(lifecycle, session.id)
+    assert await lifecycle._process_pending_transcripts(lifecycle._capture_active()) == 0
+
+
+@pytest.mark.asyncio
+async def test_existing_session_checkout_git_failure_remains_retryable(
+    lifecycle: SessionLifecycleManager,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    isolated = isolated_checkout_factory(temp_db, "transient-summary-git")
+    transcript = tmp_path / "transient-summary-git.jsonl"
+    transcript.write_bytes(GOLDEN.read_bytes())
+    session = register(lifecycle, isolated.project.id, "transient-summary-git", str(transcript))
+    lifecycle.session_manager.update(
+        session.id,
+        terminal_context={"cwd": isolated.root_path},
+    )
+
+    with (
+        patch(
+            "gobby.workflows.git_utils.get_file_changes_async",
+            new_callable=AsyncMock,
+            side_effect=GitStatusUnavailable("temporary git failure"),
+        ) as file_changes,
+        patch(
+            "gobby.workflows.git_utils.get_git_diff_summary_async",
+            new_callable=AsyncMock,
+            side_effect=GitStatusUnavailable("temporary git failure"),
+        ) as diff_summary,
+    ):
+        assert await lifecycle._process_pending_transcripts(lifecycle._capture_active()) == 0
+
+    file_changes.assert_awaited_once()
+    diff_summary.assert_awaited_once()
+    saved = lifecycle.session_manager.get(session.id)
+    assert saved is not None
+    assert saved.summary_markdown is None
+    assert saved.transcript_processing_failure_count == 0
+    assert not processed(lifecycle, session.id)
 
 
 async def test_poison_fairness_equal_timestamps_wrap_and_new_arrivals(

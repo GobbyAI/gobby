@@ -47,9 +47,24 @@ def resolve_session_workspace(session: Session, transcript_path: str | None = No
     return Path.cwd()
 
 
+def _missing_workspace_git_context(cwd: Path) -> str | None:
+    try:
+        cwd.stat()
+    except FileNotFoundError:
+        return f"[git context unavailable: session workspace no longer exists: {cwd}]"
+    except OSError:
+        return None
+    return None
+
+
 async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
     """Enrich HandoffContext with real-time git status and commits."""
     if not handoff_ctx.files_modified:
+        return
+
+    missing_git_context = _missing_workspace_git_context(cwd)
+    if missing_git_context:
+        handoff_ctx.git_status = missing_git_context
         return
 
     paths = _session_git_paths(handoff_ctx.files_modified, cwd)
