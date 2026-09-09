@@ -22,8 +22,14 @@ State what is true now and give the receiving coordinator concrete next actions.
 Include decisions, blockers, commands, diagnostics, paths, impact, and references
 only when they help the receiver continue.
 
-Do not paste cumulative history, previous handoffs, raw logs, completed ledgers,
-or artificial shorthand.
+Write from the current context epoch only. Do not combine multiple epochs of
+session history or paste cumulative history, previous handoffs, raw logs, or
+completed ledgers. Earlier history is stored in the database; reference its task
+or session records when needed.
+
+Use readable sentences and ordinary technical terms. Do not overuse shorthand,
+invented abbreviations, compressed task-number chains, or cryptic notes. Shorten
+by removing unnecessary history and detail, not by making the text harder to read.
 
 When a detailed progress log is useful, create or update a Markdown file and
 include its path in the handoff's `references`. Reuse an existing relevant log

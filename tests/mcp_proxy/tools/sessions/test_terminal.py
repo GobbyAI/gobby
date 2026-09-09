@@ -326,7 +326,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=MagicMock(),
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
         set_handoff = registry.get_tool("set_handoff")
         assert set_handoff is not None
 
@@ -380,7 +382,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
         set_handoff = registry.get_tool("set_handoff")
         assert set_handoff is not None
 
@@ -449,7 +453,9 @@ class TestRegisterTerminalTools:
                 return_value=agent_run_manager,
             ),
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         send_keys_metadata = registry.get_tool_metadata("send_keys")
         assert send_keys_metadata is not None
@@ -501,7 +507,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
@@ -541,7 +549,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
@@ -602,7 +612,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
@@ -649,7 +661,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
@@ -705,7 +719,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         capture_metadata = registry.get_tool_metadata("capture_output")
         assert capture_metadata is not None
@@ -743,7 +759,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         capture_output = registry.get_tool("capture_output")
         assert capture_output is not None
@@ -771,7 +789,9 @@ class TestRegisterTerminalTools:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, MagicMock())
+            register_terminal_tools(
+                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+            )
 
         capture_output = registry.get_tool("capture_output")
         assert capture_output is not None
@@ -785,6 +805,24 @@ class TestRegisterTerminalTools:
 
 class TestSetHandoffFeedback:
     """Separate feedback submission is a prerequisite, never human review."""
+
+    def test_authoring_guidance_comes_from_installed_prompt(
+        self, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.prompts.loader import PromptLoader
+        from gobby.prompts.sync import sync_bundled_prompts
+
+        sync_bundled_prompts(temp_db)
+        manager, _session_id = _persistent_session(temp_db, tmp_path)
+        registry = _feedback_registry(temp_db, manager)
+        metadata = registry.get_tool_metadata("set_handoff")
+        assert metadata is not None
+        prompt = PromptLoader(db=temp_db).load("handoff/authoring").content
+        assert metadata.description == prompt
+        assert "current context epoch only" in prompt
+        assert "Earlier history is stored in the database" in prompt
+        assert "Do not overuse" in prompt
+        assert "call set_handoff last" in prompt
 
     @pytest.mark.parametrize("clear_session", [False, True])
     def test_feedback_required_returns_without_staging(

@@ -42,6 +42,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
     _capture_transcript_tail,
     _read_transcript_tail_lines,
 )
+from gobby.prompts.loader import PromptLoader
 from gobby.sessions.handoff import (
     restore_handoff_attempt,
     stage_handoff_attempt,
@@ -764,23 +765,16 @@ def register_terminal_tools(
             via=pane.backend,
         )
 
+    try:
+        handoff_description = PromptLoader(db=db).load("handoff/authoring").content
+    except FileNotFoundError:
+        # A registry can be constructed before bundled prompts have been synced.
+        # Keep discovery available; authoring guidance belongs to the prompt row.
+        handoff_description = "Store a structured handoff and compact or clear the current session."
+
     registry.register(
         name="set_handoff",
-        description=(
-            "Persist a structured handoff, then compact "
-            "the current session or clear into a successor when clear_session=true. "
-            "Requires nonblank current_state and at least one nonblank next step. "
-            "Rendered content is limited to 10,000 JSON-escaped characters including "
-            "formatting; shorten oversized content and retry. Submit required feedback "
-            "separately through feedback first, then call set_handoff last. In a "
-            "terminal session the daemon interrupts the active turn, confirms the interrupt "
-            "from the transcript, clears the composer, and submits the provider command; "
-            "provider cancellation or rejection immediately after this call is the expected "
-            "dispatch signal. A clear_acknowledgment_timeout with attempt_pending=true means "
-            "/clear was delivered and the successor binds on its SessionStart: do not call "
-            "set_handoff again (a retry reuses the pending attempt and never types a second "
-            "/clear). The continuation must call get_handoff()."
-        ),
+        description=handoff_description,
         brief="Store a structured handoff and compact or clear the current session.",
         input_schema={
             "type": "object",
