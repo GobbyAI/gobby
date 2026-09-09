@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from gobby.worktrees.git import (
+    BranchDivergenceUnavailableError,
     GitOperationResult,
     WorktreeGitManager,
     WorktreeInfo,
@@ -1911,28 +1912,70 @@ class TestWorktreeGitManagerBranchCoverage:
             timeout=5,
         )
 
-    @patch("subprocess.run")
-    def test_has_unpushed_commits_missing_branch_is_not_local_only(self, mock_run, manager) -> None:
-        """Missing local refs are not treated as local-only unpushed branches."""
-        mock_run.side_effect = [
-            subprocess.CompletedProcess(
-                args=["git", "rev-parse"],
-                returncode=128,
-                stdout="",
-                stderr="fatal: Needed a single revision",
-            ),
-            subprocess.CompletedProcess(
-                args=["git", "rev-list"],
-                returncode=128,
-                stdout="",
-                stderr="fatal: ambiguous argument",
-            ),
-        ]
+    def test_has_unpushed_commits_fails_closed_when_divergence_command_fails(self, manager) -> None:
+        """A failed divergence probe cannot be reported as verified no-divergence."""
+        manager._run_git = Mock(
+            side_effect=[
+                subprocess.CompletedProcess(
+                    args=["git", "rev-parse"],
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: Needed a single revision",
+                ),
+                subprocess.CompletedProcess(
+                    args=["git", "rev-list"],
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: ambiguous argument",
+                ),
+            ]
+        )
 
-        has_unpushed, count = manager.has_unpushed_commits("missing/integration")
+        with (
+            patch("gobby.worktrees.git._branch.get_default_branch", return_value="main"),
+            pytest.raises(BranchDivergenceUnavailableError) as exc_info,
+        ):
+            manager.has_unpushed_commits("missing/integration")
 
-        assert has_unpushed is False
-        assert count == 0
+        assert exc_info.value.code == "branch_divergence_unavailable"
+        assert "missing/integration" in str(exc_info.value)
+        assert "ambiguous argument" in str(exc_info.value)
+
+    def test_has_unpushed_commits_fails_closed_when_divergence_probe_times_out(
+        self, manager
+    ) -> None:
+        """A timed-out local-vs-remote comparison remains unavailable."""
+        manager._run_git = Mock(
+            side_effect=[
+                subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="origin/main\n", stderr=""
+                ),
+                subprocess.TimeoutExpired(
+                    cmd=["git", "rev-list", "--count", "origin/main..main"],
+                    timeout=5,
+                ),
+            ]
+        )
+
+        with pytest.raises(BranchDivergenceUnavailableError) as exc_info:
+            manager.has_unpushed_commits("main")
+
+        assert exc_info.value.code == "branch_divergence_unavailable"
+        assert "main" in str(exc_info.value)
+        assert "timed out" in str(exc_info.value)
+
+    def test_has_unpushed_commits_preserves_verified_no_divergence(self, manager) -> None:
+        """A successful zero-count comparison still permits the remote base."""
+        manager._run_git = Mock(
+            side_effect=[
+                subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="origin/main\n", stderr=""
+                ),
+                subprocess.CompletedProcess(args=[], returncode=0, stdout="0\n", stderr=""),
+            ]
+        )
+
+        assert manager.has_unpushed_commits("main") == (False, 0)
 
     @patch("subprocess.run")
     def test_get_status_porcelain_failure(self, mock_run, manager, tmp_path) -> None:
@@ -2378,7 +2421,7 @@ class TestWorktreeGitManagerMergeBranch:
         mock_run.assert_not_called()
 
     @patch("subprocess.run")
-    def test_merge_timeout(self, mock_run, manager) -> None:
+    def test_merge_timeout(self, mock_run: MagicMock, manager: WorktreeGitManager) -> None:
         """Merge handles timeout."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
@@ -2397,7 +2440,9 @@ class TestWorktreeGitManagerMergeBranch:
         assert result.error == "timeout"
 
     @patch("subprocess.run")
-    def test_merge_generic_exception(self, mock_run, manager) -> None:
+    def test_merge_generic_exception(
+        self, mock_run: MagicMock, manager: WorktreeGitManager
+    ) -> None:
         """Merge handles generic exception."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD

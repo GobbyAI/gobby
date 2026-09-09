@@ -19,7 +19,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.definitions import AgentDefinitionBody
-from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
 
 pytestmark = pytest.mark.integration
@@ -235,6 +235,82 @@ async def test_target_worktree_records_target_base_sha(
     assert artifacts.base_commit_sha == target_sha
     assert isolation_ctx.extra["base_commit_sha"] == target_sha
     assert _git(worktree_path, "rev-parse", "HEAD") == target_sha
+
+
+async def test_worktree_spawn_fails_closed_when_base_divergence_is_unavailable(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    mock_runner: MagicMock,
+    agent_body: AgentDefinitionBody,
+) -> None:
+    """The daemon spawn path creates no isolation or claim artifacts on an unsafe base."""
+    target_project = isolated_checkout_factory(temp_db, "target-divergence-timeout")
+    _initialize_repo(target_project, "target-base", "target")
+    parent_session_id = _register_parent(temp_db, target_project, "parent-divergence-timeout")
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=target_project.project.id,
+        title="Reject an unsafe worktree base",
+        validation_criteria="Spawn fails before isolation or task claim artifacts are created.",
+    )
+    target_git_manager = WorktreeGitManager(target_project.root_path)
+    git_manager_resolver = MagicMock(return_value=target_git_manager)
+    worktree_storage = LocalWorktreeManager(temp_db)
+    worktree_path = tmp_path / "unsafe-base-worktree"
+
+    from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+    registry = create_spawn_agent_registry(
+        mock_runner,
+        worktree_storage=worktree_storage,
+        git_manager=target_git_manager,
+        git_manager_resolver=git_manager_resolver,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        db=temp_db,
+    )
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+            return_value=agent_body,
+        ),
+        patch.object(
+            target_git_manager,
+            "has_unpushed_commits",
+            side_effect=BranchDivergenceUnavailableError(
+                "target-base", "git rev-list timed out after 5 seconds"
+            ),
+        ),
+        patch.object(
+            WorktreeIsolationHandler,
+            "_generate_worktree_path",
+            return_value=str(worktree_path),
+        ),
+    ):
+        result = await registry.call(
+            "spawn_agent",
+            {
+                "prompt": "Reject an unsafe worktree base",
+                "parent_session_id": parent_session_id,
+                "task_id": f"#{task.seq_num}",
+                "isolation": "worktree",
+                "branch_name": "agent/unsafe-base",
+            },
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "branch_divergence_unavailable"
+    assert "target-base" in result["error"]
+    assert not worktree_path.exists()
+    assert worktree_storage.get_by_branch(target_project.project.id, "agent/unsafe-base") is None
+    stored_task = task_manager.get_task(task.id)
+    assert stored_task is not None
+    assert stored_task.claimed_by_session_id is None
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
 
 
 @pytest.mark.asyncio

@@ -112,7 +112,11 @@ async def create_worktree(
                     base_branch,
                 )
         except Exception as exc:
-            logger.warning("Auto-detect unpushed commits failed: %s", exc)
+            return WorktreeCreationResult(
+                success=False,
+                error=f"Unable to safely select worktree base for '{base_branch}': {exc}",
+                error_code="branch_divergence_unavailable",
+            )
     if resolved_use_local is None:
         resolved_use_local = False
 
