@@ -266,6 +266,35 @@ def get_github_url(cwd: str | Path) -> str | None:
     return None
 
 
+async def get_github_url_async(cwd: str | Path) -> str | None:
+    """Extract the preferred repository remote without blocking the daemon event loop."""
+    from gobby.utils.daemon_git import GitOk, daemon_git
+
+    origin = await daemon_git.run(
+        ["remote", "get-url", "origin"],
+        cwd=Path(cwd),
+        timeout=5,
+    )
+    if isinstance(origin, GitOk) and origin.stdout.strip():
+        return origin.stdout.strip()
+
+    remotes = await daemon_git.run(["remote"], cwd=Path(cwd), timeout=5)
+    if not isinstance(remotes, GitOk) or not remotes.stdout.strip():
+        logger.debug("No git remotes found")
+        return None
+
+    first_remote = remotes.stdout.splitlines()[0]
+    fallback = await daemon_git.run(
+        ["remote", "get-url", first_remote],
+        cwd=Path(cwd),
+        timeout=5,
+    )
+    if isinstance(fallback, GitOk) and fallback.stdout.strip():
+        logger.debug("Using remote '%s' (origin not found)", first_remote)
+        return fallback.stdout.strip()
+    return None
+
+
 def get_git_branch(cwd: str | Path) -> str | None:
     """
     Get current git branch name.

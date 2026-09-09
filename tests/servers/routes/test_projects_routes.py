@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,7 @@ from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.sync.github_issue_sync import GitHubRepositoryReadinessError
 from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutProject,
     insert_isolated_machine,
@@ -561,6 +563,34 @@ class TestProjectRoutes:
             assert "provider" not in payload[provider]
             assert "last_outbound_success_at" in payload[provider]
 
+    def test_integrations_status_awaits_origin_repository_fallback(
+        self,
+        session_manager: SessionManager,
+        project_manager: LocalProjectManager,
+    ) -> None:
+        project = project_manager.create(
+            name=_unique_name("origin-only"),
+            github_url=None,
+        )
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+            mcp_manager=MagicMock(),
+        )
+        repositories_for = AsyncMock(return_value=("owner/from-origin",))
+        check_access = AsyncMock(
+            side_effect=GitHubRepositoryReadinessError("connector unavailable")
+        )
+
+        with patch.object(projects_routes, "GitHubIssueSyncService") as service_type:
+            service_type.return_value.repositories_for = repositories_for
+            service_type.return_value.check_access = check_access
+            response = TestClient(server.app).get(f"/api/projects/{project.id}/integrations/status")
+
+        assert response.status_code == 200
+        assert response.json()["github"]["repositories"] == ["owner/from-origin"]
+        repositories_for.assert_awaited_once()
+
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""
         response = client.put(
@@ -960,6 +990,33 @@ class TestProjectCheckoutHttp:
         assert conflict.status_code == 409
         assert _http_error(conflict) == "CheckoutRootTakenError"
         assert websocket_server.broadcast_project_event.await_count == 1
+
+    def test_init_project_route_resolves_origin_without_sync_git(
+        self,
+        session_manager: SessionManager,
+        tmp_path: Path,
+    ) -> None:
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+        )
+        repo = tmp_path / "origin-init"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/owner/from-origin.git"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        response = TestClient(server.app).post(
+            "/api/projects/init",
+            json={"path": str(repo)},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["github_url"] == "https://github.com/owner/from-origin.git"
 
     def test_project_json_has_calling_checkout_not_repo_path(
         self,

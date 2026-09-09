@@ -434,6 +434,8 @@ def _init_no_marker(
     root: Path,
     name: str | None,
     github_url: str | None,
+    *,
+    detect_github_remote: bool,
 ) -> InitResult:
     from gobby.storage.project_checkouts import (
         CheckoutRootTakenError,
@@ -452,7 +454,7 @@ def _init_no_marker(
         raise NameAttachRejectedError(
             f"project name {project_name!r} already exists; init is marker-authoritative"
         )
-    if github_url is None:
+    if github_url is None and detect_github_remote:
         github_url = detect_github_url(root)
 
     verification = detect_verification_commands(root)
@@ -523,11 +525,13 @@ def _init_no_marker(
     )
 
 
-def initialize_project(
+def _initialize_project(
     cwd: Path | None = None,
     name: str | None = None,
     github_url: str | None = None,
     db: HubDatabase | None = None,
+    *,
+    detect_github_remote: bool,
 ) -> InitResult:
     """Initialize a Gobby project. Marker id is authoritative; names do not attach."""
     from gobby.storage.hub.runtime import runtime_hub_database
@@ -536,7 +540,13 @@ def initialize_project(
 
     if db is None:
         with runtime_hub_database(apply_migrations=False) as owned_db:
-            return initialize_project(cwd=cwd, name=name, github_url=github_url, db=owned_db)
+            return _initialize_project(
+                cwd=cwd,
+                name=name,
+                github_url=github_url,
+                db=owned_db,
+                detect_github_remote=detect_github_remote,
+            )
 
     if cwd is None:
         cwd = Path.cwd()
@@ -555,7 +565,44 @@ def initialize_project(
         project_root = Path(str(context.get("project_path") or cwd))
         return _init_with_marker(db, project_root, context, github_url)
 
-    return _init_no_marker(db, cwd, name, github_url)
+    return _init_no_marker(
+        db,
+        cwd,
+        name,
+        github_url,
+        detect_github_remote=detect_github_remote,
+    )
+
+
+def initialize_project(
+    cwd: Path | None = None,
+    name: str | None = None,
+    github_url: str | None = None,
+    db: HubDatabase | None = None,
+) -> InitResult:
+    """Initialize a project, discovering its remote with synchronous Git when needed."""
+    return _initialize_project(
+        cwd=cwd,
+        name=name,
+        github_url=github_url,
+        db=db,
+        detect_github_remote=True,
+    )
+
+
+def initialize_project_from_resolved_metadata(
+    cwd: Path,
+    *,
+    github_url: str | None,
+    db: HubDatabase,
+) -> InitResult:
+    """Initialize a project after an async caller has resolved optional Git metadata."""
+    return _initialize_project(
+        cwd=cwd,
+        github_url=github_url,
+        db=db,
+        detect_github_remote=False,
+    )
 
 
 def _update_project_json_verification(
