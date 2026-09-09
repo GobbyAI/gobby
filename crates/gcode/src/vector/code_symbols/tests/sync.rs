@@ -31,6 +31,79 @@ fn sync_recovers_from_collection_creation_conflict() {
 }
 
 #[test]
+fn sync_waits_for_collection_readiness_after_creation_conflict() {
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]}),
+    )]);
+    let (url, handle) = spawn_http_responses(vec![
+        (404, json!({"status": "not found"})),
+        (409, json!({"status": {"error": "already exists"}})),
+        (
+            500,
+            json!({"status": {"error": "Service internal error: 0 of 0 read operations failed"}}),
+        ),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+        ),
+        (200, json!({"result": {"status": "completed"}})),
+    ]);
+    let mut lifecycle = conflict_test_lifecycle(url, embedding_url);
+    let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
+    let requests = handle.join();
+    let embedding_requests = embedding_handle.join();
+    assert_eq!(
+        result
+            .expect("wait for collection readiness")
+            .vectors_upserted,
+        1
+    );
+    let requests = requests.expect("qdrant requests");
+    assert_eq!(requests.len(), 5);
+    assert!(requests[1].starts_with("PUT /collections/"));
+    assert!(requests[2].starts_with("GET /collections/"));
+    assert!(requests[3].starts_with("GET /collections/"));
+    assert!(requests[4].contains("/points?wait=true"));
+    assert_eq!(embedding_requests.expect("embedding requests").len(), 1);
+}
+
+#[test]
+fn initial_collection_read_retries_server_errors_and_validates_schema() {
+    for dimension in [3, 4] {
+        let (url, handle) = spawn_http_responses(vec![
+            (
+                500,
+                json!({"status": {"error": "Service internal error: 0 of 0 read operations failed"}}),
+            ),
+            (502, json!({"status": "bad gateway"})),
+            (503, json!({"status": "unavailable"})),
+            (
+                200,
+                json!({"result": {"config": {"params": {"vectors": {"size": dimension, "distance": "Cosine"}}}}}),
+            ),
+        ]);
+        let mut lifecycle = conflict_test_lifecycle(url, "http://127.0.0.1:9".to_string());
+        let result = lifecycle.ensure_collection();
+        let requests = handle.join().expect("qdrant requests");
+        if dimension == 3 {
+            assert_eq!(result.expect("ready collection").size, 3);
+        } else {
+            assert!(matches!(
+                result,
+                Err(VectorLifecycleError::DimensionMismatch { .. })
+            ));
+        }
+        assert_eq!(requests.len(), 4);
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.starts_with("GET /collections/"))
+        );
+    }
+}
+
+#[test]
 fn collection_creation_conflict_rejects_unusable_collection() {
     for (status, body, expected_error) in [
         (
@@ -45,13 +118,21 @@ fn collection_creation_conflict_rejects_unusable_collection() {
         ),
         (200, json!({"result": {}}), "409"),
         (404, json!({"status": "not found"}), "409"),
+        (403, json!({"status": "forbidden"}), "403"),
+        (
+            500,
+            json!({"status": {"error": "Service internal error: 0 of 0 read operations failed"}}),
+            "500",
+        ),
         (503, json!({"status": "unavailable"}), "503"),
     ] {
-        let (url, handle) = spawn_http_responses(vec![
+        let read_attempts = if status >= 500 { 4 } else { 1 };
+        let mut responses = vec![
             (404, json!({"status": "not found"})),
             (409, json!({"status": {"error": "already exists"}})),
-            (status, body),
-        ]);
+        ];
+        responses.extend(std::iter::repeat_n((status, body), read_attempts));
+        let (url, handle) = spawn_http_responses(responses);
         let mut lifecycle = conflict_test_lifecycle(url, "http://127.0.0.1:9".to_string());
         let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
         let requests = handle.join();
@@ -65,7 +146,7 @@ fn collection_creation_conflict_rejects_unusable_collection() {
             assert!(error.to_string().contains(expected_error), "{error}");
         }
         let requests = requests.expect("qdrant requests");
-        assert_eq!(requests.len(), 3);
+        assert_eq!(requests.len(), 2 + read_attempts);
         assert!(requests.iter().all(|request| !request.contains("/points")));
     }
 }

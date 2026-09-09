@@ -227,10 +227,20 @@ impl CodeSymbolVectorLifecycle {
     fn get_collection_schema(
         &self,
     ) -> Result<Option<ExistingVectorCollectionSchema>, VectorLifecycleError> {
-        let resp = self
-            .qdrant_request(reqwest::Method::GET, &collection_path(&self.collection))?
-            .send()
-            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let mut retries = 0;
+        let resp = loop {
+            let resp = self
+                .qdrant_request(reqwest::Method::GET, &collection_path(&self.collection))?
+                .send()
+                .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+            if !resp.status().is_server_error() || retries == 3 {
+                break resp;
+            }
+            // Concurrent creation can expose a collection before its replica is readable.
+            drop(resp);
+            std::thread::sleep(Duration::from_millis(100 << retries));
+            retries += 1;
+        };
         let status = resp.status();
         if status == StatusCode::NOT_FOUND {
             return Ok(None);
