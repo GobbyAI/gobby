@@ -159,7 +159,7 @@ class CronExecutor:
             if job.action_type == "agent_spawn":
                 raw_output = await self._wait_for_action(
                     job,
-                    lambda: self._execute_agent_spawn(job),
+                    lambda: self._execute_agent_spawn(job, run),
                 )
             elif job.action_type == "pipeline":
                 raw_output = await self._wait_for_action(
@@ -282,7 +282,33 @@ class CronExecutor:
             return cast("PipelineExecutor | None", getter(project_id))
         return self.pipeline_executor
 
-    async def _execute_agent_spawn(self, job: CronJob) -> ActionOutcome:
+    async def _create_cron_session(
+        self,
+        job: CronJob,
+        run: CronRun,
+        session_manager: Any,
+        action_name: str,
+    ) -> str | None:
+        """Create a project-scoped cron session beneath the system session."""
+        from gobby.storage.sessions import system_session_id
+
+        try:
+            cron_session = await self._run_db(
+                session_manager.register,
+                external_id=f"cron-{job.id}-{run.id}-{action_name}",
+                machine_id=None,
+                source="cron",
+                project_id=job.project_id,
+                title=f"cron:{job.name}",
+                parent_session_id=system_session_id(),
+                agent_depth=0,
+            )
+        except Exception:
+            logger.warning("Failed to create session for cron %s", action_name, exc_info=True)
+            return None
+        return str(cron_session.id)
+
+    async def _execute_agent_spawn(self, job: CronJob, run: CronRun) -> ActionOutcome:
         """Execute an agent_spawn action."""
         skipped = cast(
             ActionOutcome | None,
@@ -352,16 +378,34 @@ class CronExecutor:
                 status="failed",
                 error=f"No Git manager available for project '{job.project_id}'",
             )
+        session_manager = getattr(self.services, "session_manager", None)
+        if session_manager is None:
+            return ActionOutcome(
+                status="failed",
+                error="Session manager not configured for cron executor",
+            )
+        parent_session_id = await self._create_cron_session(
+            job,
+            run,
+            session_manager,
+            "agent-spawn",
+        )
+        if parent_session_id is None:
+            return ActionOutcome(
+                status="failed",
+                error="Failed to create parent session for cron agent spawn",
+            )
         result = await spawn_agent_impl(
             prompt=prompt,
             runner=self.agent_runner,
             provider=provider,
             workflow=workflow,
             timeout=timeout,
-            parent_session_id=job.project_id,  # Cron jobs use project as parent context
+            parent_session_id=parent_session_id,
             project_path=str(project_git_manager.repo_path),
+            target_project_id=job.project_id,
             git_manager=project_git_manager,
-            session_manager=getattr(self.agent_runner, "child_session_manager", None),
+            session_manager=session_manager,
             db=self.storage.db,
             completion_registry=getattr(self.services, "completion_registry", None),
             daemon_config=daemon_config,
@@ -416,28 +460,8 @@ class CronExecutor:
                 output=f"Skipped: pipeline '{pipeline_name}' is disabled",
             )
 
-        # Create a session for the cron-triggered pipeline so spawned agents
-        # have a valid parent_session_id (required by spawn_agent).
-        # The system session is the root parent for all cron-triggered work.
-        from gobby.storage.sessions import system_session_id
-
-        session_id: str | None = None
         sm = pipeline_executor.session_manager
-        if sm:
-            try:
-                cron_session = await self._run_db(
-                    sm.register,
-                    external_id=f"cron-{job.id}-{run.id}-{pipeline_name}",
-                    machine_id=None,
-                    source="cron",
-                    project_id=job.project_id,
-                    title=f"cron:{job.name}",
-                    parent_session_id=system_session_id(),
-                    agent_depth=0,
-                )
-                session_id = cron_session.id
-            except Exception:
-                logger.warning("Failed to create session for cron pipeline", exc_info=True)
+        session_id = await self._create_cron_session(job, run, sm, pipeline_name) if sm else None
 
         # Set project context so MCP tools can resolve task refs like #9916
         # Must include project_path — spawn_agent_impl requires it.
