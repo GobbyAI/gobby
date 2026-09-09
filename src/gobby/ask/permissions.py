@@ -408,6 +408,7 @@ class AskPermissionStore:
         row = self.db.fetchone(
             """
             SELECT
+                pe.id AS pipeline_execution_id,
                 pe.project_id,
                 pe.status AS pipeline_status,
                 pe.inputs_json AS pipeline_inputs_json,
@@ -500,6 +501,7 @@ class AskPermissionStore:
             row = connection.execute(
                 """
                 SELECT
+                    pe.id AS pipeline_execution_id,
                     pe.project_id,
                     pe.status AS pipeline_status,
                     pe.inputs_json AS pipeline_inputs_json,
@@ -519,7 +521,7 @@ class AskPermissionStore:
             _assert_live(principal, allow_interrupted=True)
             successor = connection.execute(
                 """
-                SELECT provider, status, child_session_id
+                SELECT provider, status, child_session_id, workflow_name
                 FROM agent_runs WHERE id = %s
                 """,
                 (successor_agent_run_id,),
@@ -527,6 +529,7 @@ class AskPermissionStore:
             if (
                 successor is None
                 or successor["provider"] != principal.runtime_profile.provider
+                or successor["workflow_name"] != ASK_PIPELINE_NAME
                 or successor["status"] not in {"pending", "running"}
                 or not successor["child_session_id"]
             ):
@@ -630,6 +633,18 @@ def _principal_from_rows(
     binding = _json_object(ask_inputs.get("binding"), name="Ask binding")
     if immutable.get("binding_hash") != _fingerprint(binding):
         raise AskPermissionDenied("Ask binding hash mismatch")
+    pipeline_run_id = _required_string(
+        pipeline_row.get("pipeline_execution_id", pipeline_row.get("id")),
+        name="Ask pipeline run ID",
+    )
+    if immutable.get("ask_run_id") != pipeline_run_id:
+        raise AskPermissionDenied("Ask run ID does not match owning pipeline")
+    project_id = _required_string(pipeline_row.get("project_id"), name="Ask pipeline project ID")
+    if immutable.get("project_id") != project_id:
+        raise AskPermissionDenied("Ask project does not match owning pipeline")
+    deadline_at = _deadline(binding.get("deadline_at"))
+    if _deadline(immutable.get("deadline_at")) != deadline_at:
+        raise AskPermissionDenied("Ask deadline does not match immutable binding")
     stage = AskAgentStage(_required_string(immutable.get("stage"), name="Ask stage"))
     snapshot = _profile_snapshot(ask_inputs, stage)
     snapshot_hash = _required_string(snapshot.get("content_hash"), name="Ask profile snapshot hash")
@@ -646,13 +661,13 @@ def _principal_from_rows(
     if not isinstance(attempt, int) or attempt < 0:
         raise AskPermissionDenied("invalid persisted Ask attempt")
     return AskPrincipal(
-        ask_run_id=_required_string(immutable.get("ask_run_id"), name="Ask run ID"),
-        project_id=_required_string(immutable.get("project_id"), name="Ask project ID"),
+        ask_run_id=pipeline_run_id,
+        project_id=project_id,
         agent_run_id=_required_string(state.get("current_agent_run_id"), name="Ask agent run ID"),
         stage=stage,
         attempt=attempt,
         generation=generation,
-        deadline_at=_deadline(immutable.get("deadline_at")),
+        deadline_at=deadline_at,
         profile_snapshot_hash=snapshot_hash,
         runtime_profile=runtime_profile,
         runtime_profile_hash=runtime_profile.profile_hash,
@@ -701,7 +716,24 @@ def _policy_database(service: object) -> HubDatabase | None:
     if session_manager is None:
         session_manager = getattr(hook_manager, "_session_manager", None)
     database = getattr(session_manager, "db", None)
+    if database is None:
+        database = getattr(getattr(service, "services", None), "database", None)
     return cast(HubDatabase | None, database)
+
+
+def current_ask_allowed_tools(service: object) -> frozenset[tuple[str, str]] | None:
+    """Return the authenticated Ask allowlist, or ``None`` for an ordinary caller."""
+    agent_run_id = get_current_agent_run_id()
+    if agent_run_id is None:
+        return None
+    db = _policy_database(service)
+    if db is None:
+        raise AskPermissionDenied("Ask authorization database is unavailable")
+    principal = AskPermissionStore(db).resolve_authenticated(agent_run_id)
+    if principal is None:
+        return None
+    _assert_live(principal)
+    return principal.allowed_tools
 
 
 def ask_tool_denial_reason(
@@ -761,5 +793,6 @@ __all__ = [
     "AskRuntimeProfile",
     "UnsupportedAskRuntime",
     "compile_ask_runtime_profile",
+    "current_ask_allowed_tools",
     "filter_tools_for_current_ask_principal",
 ]

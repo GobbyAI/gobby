@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -42,7 +43,12 @@ from gobby.servers.routes.mcp.endpoints.discovery import (
     recommend_mcp_tools,
     search_mcp_tools,
 )
-from gobby.servers.routes.mcp.endpoints.execution import get_tool_schema, list_mcp_tools
+from gobby.servers.routes.mcp.endpoints.execution import (
+    call_mcp_tool,
+    get_tool_schema,
+    list_mcp_tools,
+    mcp_proxy,
+)
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -358,6 +364,33 @@ async def test_ask_agent_permission_boundary(
     assert authority.stage is AskAgentStage.INVESTIGATOR
     assert authority.generation == 1
 
+    authority_row = temp_db.fetchone(
+        "SELECT input_json FROM step_executions WHERE execution_id = %s",
+        (ask_run.run_id,),
+    )
+    assert authority_row is not None
+    original_authority = authority_row["input_json"]
+    if isinstance(original_authority, str):
+        original_authority = json.loads(original_authority)
+    assert isinstance(original_authority, dict)
+    mismatches = (
+        ("ask_run_id", "another-run", "run ID"),
+        ("project_id", "another-project", "project"),
+        ("deadline_at", "2026-09-09T12:09:59+00:00", "deadline"),
+    )
+    for key, value, expected_error in mismatches:
+        tampered = {**original_authority, key: value}
+        temp_db.execute(
+            "UPDATE step_executions SET input_json = %s WHERE execution_id = %s",
+            (json.dumps(tampered), ask_run.run_id),
+        )
+        with pytest.raises(AskPermissionDenied, match=expected_error):
+            permissions.find(first_run_id)
+    temp_db.execute(
+        "UPDATE step_executions SET input_json = %s WHERE execution_id = %s",
+        (json.dumps(original_authority), ask_run.run_id),
+    )
+
     permissions.authorize(
         first_run_id,
         "gobby-ask",
@@ -415,6 +448,19 @@ async def test_ask_agent_permission_boundary(
             },
             now=datetime(2026, 9, 9, 12, 1, tzinfo=UTC),
         )
+
+    with pytest.raises(AskPermissionDenied, match="successor"):
+        permissions.replace_for_resume(
+            original_agent_run_id=first_run_id,
+            successor_agent_run_id=foreign_run_id,
+        )
+    permissions.authorize(
+        first_run_id,
+        "gobby-ask",
+        "read_evidence",
+        {"run_id": ask_run.run_id, "evidence_id": "still-current"},
+        now=datetime(2026, 9, 9, 12, 2, tzinfo=UTC),
+    )
 
     permissions.replace_for_resume(
         original_agent_run_id=first_run_id,
@@ -551,20 +597,18 @@ async def test_ask_agent_permission_boundary(
         ),
         _semantic_search=semantic_search,
     )
-    server = cast(
-        "HTTPServer",
-        SimpleNamespace(
-            _internal_manager=registries,
-            _mcp_db_manager=None,
-            _tools_handler=tools_handler,
-            config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=30.0)),
-            mcp_manager=None,
-            resolve_project_id=lambda _project_id, _cwd: project_id,
-            run_db=run_db,
-            session_manager=sessions,
-            tool_proxy=proxy,
-        ),
+    server_namespace = SimpleNamespace(
+        _internal_manager=registries,
+        _mcp_db_manager=None,
+        _tools_handler=tools_handler,
+        config=SimpleNamespace(mcp_client_proxy=SimpleNamespace(tool_timeout=30.0)),
+        mcp_manager=None,
+        resolve_project_id=lambda _project_id, _cwd: project_id,
+        run_db=run_db,
+        session_manager=sessions,
+        tool_proxy=proxy,
     )
+    server = cast("HTTPServer", server_namespace)
     request_kwargs = {
         "project_id": project_id,
         "session_id": successor_child.id,
@@ -610,11 +654,7 @@ async def test_ask_agent_permission_boundary(
         "gobby-ask": [
             {
                 "name": "read_evidence",
-                "description": "Read run-scoped evidence",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"run_id": {"type": "string"}},
-                },
+                "brief": "Read run-scoped evidence",
             }
         ]
     }
@@ -639,6 +679,35 @@ async def test_ask_agent_permission_boundary(
         SearchResult("1", "gobby-ask", "read_evidence", "allowed", 1.0, 1).to_dict()
     ]
     assert searched["total_results"] == 1
+
+    server_namespace.tool_proxy = None
+    direct_call = await call_mcp_tool(
+        _mcp_request(
+            {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#1", "session_id": first_child.id},
+            },
+            **request_kwargs,
+        ),
+        server,
+    )
+    assert direct_call["success"] is False
+    assert direct_call["error_code"] == "TOOL_BLOCKED"
+
+    direct_proxy = await mcp_proxy(
+        "gobby-tasks",
+        "close_task",
+        _mcp_request(
+            {"task_id": "#1", "session_id": first_child.id},
+            **request_kwargs,
+        ),
+        server,
+    )
+    assert direct_proxy["success"] is False
+    assert direct_proxy["error_code"] == "TOOL_BLOCKED"
+    assert calls == []
+    server_namespace.tool_proxy = proxy
 
     token = set_current_agent_run_id(successor_run_id)
     try:
@@ -753,6 +822,42 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
     profile_start = -len(profile.provider_args) - 1
     assert tuple(plan.command[profile_start:-1]) == profile.provider_args
     directory_approval.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("profile_present", "authority_present"),
+    ((True, False), (False, True)),
+)
+async def test_ask_managed_profile_and_authority_must_be_paired(
+    tmp_path: Path,
+    profile_present: bool,
+    authority_present: bool,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _implementation
+
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    source_root.mkdir()
+    scratch_root.mkdir()
+    profile = compile_ask_runtime_profile(
+        provider="claude",
+        source_root=source_root,
+        scratch_root=scratch_root,
+    )
+
+    result = await _implementation.spawn_agent_impl(
+        "Investigate through run-scoped MCP tools",
+        MagicMock(),
+        terminal_backend="native",
+        managed_runtime_profile=profile if profile_present else None,
+        prelaunch_authority=(lambda _run_id: None) if authority_present else None,
+    )
+
+    assert result == {
+        "success": False,
+        "error": "managed runtime profile and authority callback must be paired",
+    }
 
 
 @pytest.mark.asyncio

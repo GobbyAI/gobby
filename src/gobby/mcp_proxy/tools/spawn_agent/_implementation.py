@@ -1,8 +1,4 @@
-"""Core spawn_agent implementation.
-
-Contains spawn_agent_impl() — the internal implementation used by both
-the spawn_agent MCP tool and direct callers.
-"""
+"""Core spawn-agent implementation used by MCP and direct callers."""
 
 from __future__ import annotations
 
@@ -57,6 +53,11 @@ from ._failure_cleanup import (
     remember_spawn_pid,
 )
 from ._idempotency import non_actionable_task_spawn_response
+from ._managed_runtime import (
+    managed_runtime_pair_error,
+    managed_runtime_path_error,
+    managed_runtime_selection_error,
+)
 from ._provider_resolution import (
     concrete_provider,
     resolve_spawn_provider,
@@ -65,6 +66,7 @@ from ._provider_resolution import (
 from ._runtime import (
     _normalize_optional_model,
     _normalize_string_list,
+    _parent_session_ref,
 )
 from ._spawn_guards import (
     TaskSpawnLease,
@@ -86,19 +88,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _spawn_background_tasks: dict[str, asyncio.Task[None]] = {}
-
-
-def _parent_session_ref(session_manager: Any | None, parent_session_id: str) -> str:
-    """Return the coordinator's ``#N`` ref so a leaf can address it by either form."""
-    if session_manager is None:
-        return parent_session_id
-    try:
-        parent_session = session_manager.get(parent_session_id)
-    except Exception:
-        logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
-        return parent_session_id
-    seq_num = getattr(parent_session, "seq_num", None)
-    return f"#{seq_num}" if seq_num else parent_session_id
 
 
 async def spawn_agent_impl(
@@ -158,9 +147,10 @@ async def spawn_agent_impl(
         resolved_terminal_backend = resolve_terminal_backend(terminal_backend, daemon_config)
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
-    # 0. Plan-validation gate for planning agents.
-    # Structural failures block planning roles. Authoring roles may continue
-    # past symbol-only failures with repair diagnostics appended to the prompt.
+    managed_error = managed_runtime_pair_error(managed_runtime_profile, prelaunch_authority)
+    if managed_error:
+        return {"success": False, "error": managed_error}
+    # Structural plan failures block planning roles; authoring roles may repair symbol failures.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
     gate_result = await asyncio.to_thread(
@@ -204,14 +194,13 @@ async def spawn_agent_impl(
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
-    if managed_runtime_profile is not None:
-        if effective_isolation != "none":
-            return {"success": False, "error": "managed runtime requires isolation='none'"}
-        if managed_runtime_profile.provider != effective_provider:
-            return {
-                "success": False,
-                "error": "managed runtime provider does not match resolved provider",
-            }
+    managed_error = managed_runtime_selection_error(
+        managed_runtime_profile,
+        isolation=effective_isolation,
+        provider=effective_provider,
+    )
+    if managed_error:
+        return {"success": False, "error": managed_error}
     if effective_provider == "agy":
         # Gate on the published support record before any isolation, slot,
         # session, or agent-run side effect exists to clean up.
@@ -333,15 +322,9 @@ async def spawn_agent_impl(
 
     if not resolved_project_path or not isinstance(resolved_project_path, str):
         return {"success": False, "error": "Could not resolve project_path from context"}
-    if managed_runtime_profile is not None:
-        if (
-            Path(resolved_project_path).resolve()
-            != Path(managed_runtime_profile.scratch_root).resolve()
-        ):
-            return {
-                "success": False,
-                "error": "managed runtime project path does not match immutable scratch root",
-            }
+    managed_error = managed_runtime_path_error(managed_runtime_profile, resolved_project_path)
+    if managed_error:
+        return {"success": False, "error": managed_error}
 
     target_clone_manager = clone_manager
     if target_git_manager is not None and (effective_isolation == "clone" or clone_id):
