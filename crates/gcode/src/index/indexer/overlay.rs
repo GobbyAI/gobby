@@ -8,14 +8,18 @@ use postgres::Client;
 use wait_timeout::ChildExt;
 
 use crate::config::{Context, ProjectIndexScope};
+use crate::db;
 use crate::index::api;
 use crate::index::{hasher, parser, walker};
 use crate::models::IndexedFile;
 use crate::visibility;
 
-use super::file::{create_semantic_resolver_if_needed, index_content_only, index_file};
+use super::file::{
+    ExplicitFileRoute, create_semantic_resolver_if_needed, index_content_only, index_file,
+};
 use super::lifecycle::{attach_projection_sync, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
+use super::pipeline::explicit_route_with_discovery_options;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
 use super::util::{
@@ -121,19 +125,50 @@ pub(super) fn index_overlay_files(
     });
 
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
-    let (candidates, content_only) = walker::discover_files_with_options(
-        root_path,
-        &excludes,
-        walker::DiscoveryOptions {
-            respect_gitignore: ctx.indexing.respect_gitignore,
-        },
-    );
-    let ast_by_rel = paths_by_relative(root_path, &candidates);
-    let content_by_rel = paths_by_relative(root_path, &content_only);
-    let import_context = parser::build_import_resolution_context(root_path, &candidates);
+    let explicit_request = !request.explicit_files.is_empty();
+    let explicit_rels = request
+        .explicit_files
+        .iter()
+        .map(|path| requested_relative_path(root_path, path))
+        .collect::<Vec<_>>();
+    let state_filter = explicit_request.then_some(explicit_rels.as_slice());
+    let parent_files = indexed_file_states(conn, &machine_id, parent_project_id, state_filter)?;
+    let overlay_files = indexed_file_states(conn, &machine_id, overlay_project_id, state_filter)?;
 
-    let parent_files = indexed_file_states(conn, &machine_id, parent_project_id)?;
-    let overlay_files = indexed_file_states(conn, &machine_id, overlay_project_id)?;
+    let (ast_by_rel, content_by_rel, import_candidates) = if explicit_request {
+        let (ast_by_rel, content_by_rel) = explicit_overlay_file_maps(
+            request,
+            root_path,
+            &excludes,
+            ctx.indexing.respect_gitignore,
+        );
+        let mut seen = HashSet::new();
+        let mut import_candidates = db::list_indexed_file_paths(conn, parent_project_id)?
+            .into_iter()
+            .chain(db::list_indexed_file_paths(conn, overlay_project_id)?)
+            .map(|path| root_path.join(path))
+            .filter(|path| seen.insert(path.clone()))
+            .collect::<Vec<_>>();
+        import_candidates.extend(
+            ast_by_rel
+                .values()
+                .filter(|path| seen.insert((*path).clone()))
+                .cloned(),
+        );
+        (ast_by_rel, content_by_rel, import_candidates)
+    } else {
+        let (candidates, content_only) = walker::discover_files_with_options(
+            root_path,
+            &excludes,
+            walker::DiscoveryOptions {
+                respect_gitignore: ctx.indexing.respect_gitignore,
+            },
+        );
+        let ast_by_rel = paths_by_relative(root_path, &candidates);
+        let content_by_rel = paths_by_relative(root_path, &content_only);
+        (ast_by_rel, content_by_rel, candidates)
+    };
+    let import_context = parser::build_import_resolution_context(root_path, &import_candidates);
     let mut rels = overlay_reconcile_candidates(
         request,
         root_path,
@@ -359,24 +394,75 @@ fn paths_by_relative(root_path: &Path, paths: &[PathBuf]) -> HashMap<String, Pat
         .collect()
 }
 
+pub(super) fn explicit_overlay_file_maps(
+    request: &IndexRequest,
+    root_path: &Path,
+    excludes: &[&str],
+    respect_gitignore: bool,
+) -> (HashMap<String, PathBuf>, HashMap<String, PathBuf>) {
+    let mut ast_by_rel = HashMap::new();
+    let mut content_by_rel = HashMap::new();
+    for file in &request.explicit_files {
+        let abs = if file.is_absolute() {
+            file.clone()
+        } else {
+            root_path.join(file)
+        };
+        let rel = requested_relative_path(root_path, file);
+        let route = explicit_route_with_discovery_options(
+            root_path,
+            &abs,
+            excludes,
+            walker::DiscoveryOptions { respect_gitignore },
+        );
+        match route {
+            ExplicitFileRoute::Ast => {
+                ast_by_rel.insert(rel, abs);
+            }
+            ExplicitFileRoute::ContentOnly => {
+                content_by_rel.insert(rel, abs);
+            }
+            ExplicitFileRoute::Skip => {}
+        }
+    }
+    (ast_by_rel, content_by_rel)
+}
+
 fn indexed_file_states(
     conn: &mut Client,
     machine_id: &str,
     project_id: &str,
+    file_paths: Option<&[String]>,
 ) -> anyhow::Result<HashMap<String, IndexedFileState>> {
     let mut files = HashMap::new();
     let machine_id = crate::db::id_param(machine_id)?;
     let project_id = crate::db::id_param(project_id)?;
-    for row in conn.query(
-        "SELECT s.file_path, s.content_hash, f.language
-         FROM code_indexed_file_states s
-         JOIN code_indexed_files f
-           ON f.project_id = s.project_id
-          AND f.file_path = s.file_path
-          AND f.content_hash = s.content_hash
-         WHERE s.machine_id = $1 AND s.project_id = $2",
-        &[&machine_id, &project_id],
-    )? {
+    let rows = if let Some(file_paths) = file_paths {
+        conn.query(
+            "SELECT s.file_path, s.content_hash, f.language
+             FROM code_indexed_file_states s
+             JOIN code_indexed_files f
+               ON f.project_id = s.project_id
+              AND f.file_path = s.file_path
+              AND f.content_hash = s.content_hash
+             WHERE s.machine_id = $1
+               AND s.project_id = $2
+               AND s.file_path = ANY($3)",
+            &[&machine_id, &project_id, &file_paths],
+        )?
+    } else {
+        conn.query(
+            "SELECT s.file_path, s.content_hash, f.language
+             FROM code_indexed_file_states s
+             JOIN code_indexed_files f
+               ON f.project_id = s.project_id
+              AND f.file_path = s.file_path
+              AND f.content_hash = s.content_hash
+             WHERE s.machine_id = $1 AND s.project_id = $2",
+            &[&machine_id, &project_id],
+        )?
+    };
+    for row in rows {
         files.insert(
             row.try_get("file_path")?,
             IndexedFileState {

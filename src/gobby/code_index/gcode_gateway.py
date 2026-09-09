@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePath, PureWindowsPath
@@ -30,6 +31,42 @@ _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
 # payload on stderr: {"error": "checkout_required" | "checkout_mismatch",
 # "message": ..., "recovery": ...} (since #21444).
 _CHECKOUT_ERROR_CODES = frozenset({"checkout_required", "checkout_mismatch"})
+_TIMEOUT_OUTPUT_LIMIT_BYTES = 4096
+
+
+def _bounded_timeout_output(data: bytes, *, suffix: bytes = b"") -> bytes:
+    """Keep the newest subprocess evidence within the timeout diagnostic budget."""
+    combined = data.rstrip() + suffix
+    if len(combined) <= _TIMEOUT_OUTPUT_LIMIT_BYTES:
+        return combined
+
+    omitted = len(combined) - _TIMEOUT_OUTPUT_LIMIT_BYTES
+    marker = f"[... {omitted} earlier bytes omitted ...]\n".encode()
+    tail_size = _TIMEOUT_OUTPUT_LIMIT_BYTES - len(marker)
+    return marker + combined[-tail_size:]
+
+
+async def _kill_collect_and_reap(
+    proc: asyncio.subprocess.Process,
+    communication: asyncio.Task[tuple[bytes, bytes]],
+    *,
+    collect_output: bool,
+) -> tuple[bytes, bytes]:
+    """Kill a subprocess and reap it, optionally draining its uncancelled pipes."""
+    with suppress(ProcessLookupError):
+        proc.kill()
+
+    if collect_output:
+        stdout, stderr = await communication
+    else:
+        communication.cancel()
+        with suppress(asyncio.CancelledError):
+            await communication
+        stdout, stderr = b"", b""
+
+    with suppress(ProcessLookupError):
+        await proc.wait()
+    return stdout, stderr
 
 
 def _typed_gcode_error(stderr_text: str) -> dict[str, Any] | None:
@@ -80,6 +117,11 @@ class GcodeVersionError(GcodeGatewayError):
 
 class GcodeTimeoutError(GcodeGatewayError):
     """Raised when a gcode subprocess exceeds its timeout."""
+
+    def __init__(self, message: str, *, stdout: str = "", stderr: str = "") -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(message)
 
 
 class GcodeCommandError(GcodeGatewayError):
@@ -688,6 +730,7 @@ class GcodeGateway:
         env: Mapping[str, str] | None = None,
     ) -> tuple[bytes, bytes]:
         proc: asyncio.subprocess.Process | None = None
+        communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command,
@@ -695,28 +738,38 @@ class GcodeGateway:
                 stderr=asyncio.subprocess.PIPE,
                 env=env if env is not None else self._child_env,
             )
+            communication = asyncio.create_task(proc.communicate())
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
+                asyncio.shield(communication),
                 timeout=timeout or self._timeout_seconds,
             )
         except FileNotFoundError as exc:
             raise GcodeUnavailableError(f"gcode binary not found: {command[0]}") from exc
         except asyncio.CancelledError:
-            if proc is not None:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
+            if proc is not None and communication is not None:
+                await _kill_collect_and_reap(proc, communication, collect_output=False)
             raise
         except TimeoutError as exc:
-            if proc is not None:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
-            raise GcodeTimeoutError(f"gcode timed out: {' '.join(command)}") from exc
+            stdout = b""
+            stderr = b""
+            if proc is not None and communication is not None:
+                stdout, stderr = await _kill_collect_and_reap(
+                    proc,
+                    communication,
+                    collect_output=True,
+                )
+            stdout = _bounded_timeout_output(stdout)
+            stderr = _bounded_timeout_output(stderr)
+            stdout_text = stdout.decode(errors="replace").strip()
+            stderr_text = stderr.decode(errors="replace").strip()
+            message = f"gcode timed out: {' '.join(command)}"
+            if stderr_text:
+                message = f"{message}; stderr tail: {stderr_text}"
+            raise GcodeTimeoutError(
+                message,
+                stdout=stdout_text,
+                stderr=stderr_text,
+            ) from exc
 
         stderr_text = stderr.decode(errors="replace").strip()
         if proc.returncode != 0:
@@ -741,6 +794,7 @@ class GcodeGateway:
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
         proc: asyncio.subprocess.Process | None = None
+        communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         started = datetime.now(UTC)
         started_at = started.isoformat()
         start = perf_counter()
@@ -752,8 +806,9 @@ class GcodeGateway:
                 stderr=asyncio.subprocess.PIPE,
                 env=env if env is not None else self._child_env,
             )
+            communication = asyncio.create_task(proc.communicate())
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
+                asyncio.shield(communication),
                 timeout=timeout_seconds,
             )
             returncode = proc.returncode
@@ -761,22 +816,21 @@ class GcodeGateway:
         except FileNotFoundError as exc:
             raise GcodeUnavailableError(f"gcode binary not found: {command[0]}") from exc
         except asyncio.CancelledError:
-            if proc is not None:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
+            if proc is not None and communication is not None:
+                await _kill_collect_and_reap(proc, communication, collect_output=False)
             raise
         except TimeoutError:
-            if proc is not None:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
             stdout = b""
-            stderr = f"gcode timed out after {timeout_seconds}s".encode()
+            stderr = b""
+            if proc is not None and communication is not None:
+                stdout, stderr = await _kill_collect_and_reap(
+                    proc,
+                    communication,
+                    collect_output=True,
+                )
+            timeout_message = f"\ngcode timed out after {timeout_seconds}s".encode()
+            stdout = _bounded_timeout_output(stdout)
+            stderr = _bounded_timeout_output(stderr, suffix=timeout_message)
             returncode = None
             timed_out = True
 

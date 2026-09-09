@@ -62,16 +62,18 @@ class FakeProcess:
         self.cancelled = cancelled
         self.killed = False
         self.waited = False
+        self._released = asyncio.Event()
 
     async def communicate(self) -> tuple[bytes, bytes]:
         if self.cancelled:
             raise asyncio.CancelledError
         if self.timeout:
-            raise TimeoutError
+            await self._released.wait()
         return self.stdout, self.stderr
 
     def kill(self) -> None:
         self.killed = True
+        self._released.set()
 
     async def wait(self) -> None:
         self.waited = True
@@ -289,6 +291,32 @@ async def test_gateway_builds_incremental_index_args(
         "json",
     )
     assert result.timeout_seconds == 11
+
+
+async def test_gateway_preserves_bounded_partial_output_on_incremental_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    timeout_proc = FakeProcess(
+        stdout=b"partial-json",
+        stderr=b"x" * 5000 + b"\nstage=discovery elapsed_ms=29900",
+        timeout=True,
+    )
+    processes = [FakeProcess(stdout=GCODE_PIN_STDOUT), timeout_proc]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=0.01)
+
+    result = await gateway.incremental_index(tmp_path, ["src/app.py"])
+
+    assert result.timed_out is True
+    assert result.returncode is None
+    assert result.stdout == "partial-json"
+    assert len(result.stderr.encode()) <= 4096
+    assert "earlier bytes omitted" in result.stderr
+    assert "stage=discovery elapsed_ms=29900" in result.stderr
+    assert "gcode timed out after 0.01s" in result.stderr
+    assert timeout_proc.killed is True
+    assert timeout_proc.waited is True
 
 
 async def test_gateway_vector_clear_by_project_id_can_drop_collection(
@@ -651,7 +679,11 @@ async def test_gateway_raises_for_invalid_json(monkeypatch: pytest.MonkeyPatch) 
 
 
 async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    timeout_proc = FakeProcess(timeout=True)
+    timeout_proc = FakeProcess(
+        stdout=b"",
+        stderr=b"stage=graph-clear elapsed_ms=9",
+        timeout=True,
+    )
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
         timeout_proc,
@@ -659,9 +691,11 @@ async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> No
     _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=0.01)
 
-    with pytest.raises(GcodeTimeoutError, match="gcode timed out"):
+    with pytest.raises(GcodeTimeoutError, match="stderr tail: stage=graph-clear") as exc_info:
         await gateway.graph_clear("proj-1")
 
+    assert exc_info.value.stdout == ""
+    assert exc_info.value.stderr == "stage=graph-clear elapsed_ms=9"
     assert timeout_proc.killed is True
     assert timeout_proc.waited is True
 
