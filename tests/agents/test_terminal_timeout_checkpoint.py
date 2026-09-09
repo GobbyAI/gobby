@@ -345,7 +345,7 @@ async def test_session_ledger_without_recovered_task_release_remains_unattribute
 
 
 @pytest.mark.asyncio
-async def test_unattributed_dirt_after_timeout_cleanup_leaves_the_checkout_unchanged(
+async def test_backdated_unattributed_dirt_after_timeout_leaves_checkout_unchanged(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
@@ -357,9 +357,15 @@ async def test_unattributed_dirt_after_timeout_cleanup_leaves_the_checkout_uncha
     stray_path.write_text("nobody owns this\n", encoding="utf-8")
     terminal_run = harness.agent_runs.get(harness.run.id)
     assert terminal_run is not None
+    assert terminal_run.started_at is not None
     assert terminal_run.completed_at is not None
-    later_timestamp = terminal_run.completed_at.timestamp() + 1
-    os.utime(stray_path, (later_timestamp, later_timestamp))
+    started_timestamp = terminal_run.started_at.timestamp()
+    completed_timestamp = terminal_run.completed_at.timestamp()
+    backdated_timestamp = (started_timestamp + completed_timestamp) / 2
+    os.utime(stray_path, (backdated_timestamp, backdated_timestamp))
+    path_stat = stray_path.stat()
+    assert started_timestamp <= path_stat.st_mtime <= completed_timestamp
+    assert path_stat.st_ctime > completed_timestamp
     head = _git(harness.worktree_path, "rev-parse", "HEAD")
     status = _git(harness.worktree_path, "status", "--porcelain=v1")
 

@@ -278,9 +278,10 @@ def _authorized_task_paths(
 
     Legacy terminal cleanup erased all task ledgers after releasing the child's
     claim, but retained that child's session edit ledger. Shell edits missing from
-    that ledger are bounded by the run's persisted start and completion timestamps.
-    The caller supplies the child only for an unclaimed recovered task; current or
-    still-owned task states continue to require checkout-scoped task attribution.
+    that ledger are bounded by the run's persisted start and completion timestamps
+    using both file modification and inode change times. The caller supplies the
+    child only for an unclaimed recovered task; current or still-owned task states
+    continue to require checkout-scoped task attribution.
     """
     variable_manager = SessionVariableManager(db)
     variables_by_session: dict[str, dict[str, Any]] = {}
@@ -321,10 +322,11 @@ def _authorized_task_paths(
                 if path is None:
                     continue
                 try:
-                    modified_timestamp = (Path(checkout_root) / path).lstat().st_mtime
+                    path_stat = (Path(checkout_root) / path).lstat()
                 except OSError:
                     continue
-                if started_timestamp <= modified_timestamp <= completed_timestamp:
+                changed_timestamp = max(path_stat.st_mtime, path_stat.st_ctime)
+                if started_timestamp <= changed_timestamp <= completed_timestamp:
                     authorized.add(path)
     return authorized
 
