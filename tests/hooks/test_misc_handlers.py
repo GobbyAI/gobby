@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.worktrees.git import BranchDivergenceUnavailableError
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 from ._event_handler_helpers import make_event
@@ -421,8 +422,9 @@ class TestNotificationHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_notification(event)
+        response = handlers.handle_notification(event)
 
+        assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
     def test_notification_status_update_error(self, mock_dependencies: dict) -> None:
@@ -540,6 +542,33 @@ class TestWorktreeHandlers:
         )
         assert mock_dependencies["worktree_manager"].create.call_count == 1
         assert mock_dependencies["worktree_manager"].create.call_args is not None
+
+    def test_worktree_create_fails_closed_when_base_divergence_is_unavailable(
+        self, mock_dependencies: dict
+    ) -> None:
+        mock_dependencies["worktree_manager"].get_by_branch.return_value = None
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE,
+            data={"name": "feature-unsafe"},
+            source="claude",
+        )
+        git_manager = MagicMock(repo_path="/repo")
+        git_manager.get_current_branch.return_value = "main"
+        git_manager.has_unpushed_commits.side_effect = BranchDivergenceUnavailableError(
+            "main", "git rev-list timed out after 5 seconds"
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._misc.resolve_project_context",
+            return_value=(git_manager, "proj-123", None),
+        ):
+            response = handlers.handle_worktree_create(event)
+
+        assert response.decision == "allow"
+        assert response.worktree_path is None
+        git_manager.create_worktree.assert_not_called()
+        mock_dependencies["worktree_manager"].create.assert_not_called()
 
     def test_worktree_remove_deletes_git_worktree_and_record(self, mock_dependencies: dict) -> None:
         mock_dependencies["worktree_manager"].has_path_on_other_machine.return_value = False
@@ -701,7 +730,7 @@ class TestAcpHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_after_model_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_after_model_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test AFTER_MODEL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(

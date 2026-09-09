@@ -95,7 +95,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         )
         if not result.success:
             response: dict[str, Any] = {"success": False, "error": result.error}
-            if result.error_code == "remote_base_branch_not_allowed":
+            if result.error_code is not None:
                 response["error_code"] = result.error_code
             if result.existing_worktree_id is not None:
                 response["existing_worktree_id"] = result.existing_worktree_id

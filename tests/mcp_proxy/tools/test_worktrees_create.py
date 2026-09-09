@@ -11,7 +11,7 @@ from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.mcp_proxy.tools.worktrees._helpers import copy_project_json_to_worktree
 from gobby.storage.worktrees import Worktree
 from gobby.utils.project_context import get_project_context
-from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
 
 STORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -613,6 +613,32 @@ async def test_create_worktree_no_unpushed_uses_remote(
         create_branch=True,
         use_local=False,
     )
+
+
+async def test_create_worktree_fails_closed_when_base_divergence_is_unavailable(
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+) -> None:
+    """An unavailable auto-detection probe creates no Git or storage artifacts."""
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_git_manager.has_unpushed_commits.side_effect = BranchDivergenceUnavailableError(
+        "main", "git rev-list timed out after 5 seconds"
+    )
+
+    result = await registry.call(
+        "create_worktree",
+        {
+            "branch_name": "feature/unsafe-base",
+            "worktree_path": "/tmp/wt/feature-unsafe-base",
+        },
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "branch_divergence_unavailable"
+    assert "main" in result["error"]
+    mock_git_manager.create_worktree.assert_not_called()
+    mock_worktree_storage.create.assert_not_called()
 
 
 @pytest.mark.asyncio

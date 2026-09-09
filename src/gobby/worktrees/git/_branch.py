@@ -11,6 +11,20 @@ from gobby.worktrees.git._runner import GitRunner
 logger = logging.getLogger(__name__)
 
 
+class BranchDivergenceUnavailableError(RuntimeError):
+    """Raised when Git cannot verify local-vs-remote branch divergence."""
+
+    code = "branch_divergence_unavailable"
+
+    def __init__(self, branch: str, detail: str) -> None:
+        self.branch = branch
+        self.detail = detail
+        super().__init__(
+            f"Unable to verify local-vs-remote divergence for branch '{branch}': {detail}. "
+            "Refusing to select a remote worktree base; retry after Git is responsive."
+        )
+
+
 class SupportsRunGit(Protocol):
     """Structural runner contract for read-only default-branch detection."""
 
@@ -109,7 +123,10 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
     Returns:
         Tuple of (has_unpushed, count) where:
         - has_unpushed: True if there are unpushed commits
-        - count: Number of unpushed commits (0 if none or error)
+        - count: Number of unpushed commits
+
+    Raises:
+        BranchDivergenceUnavailableError: Git could not verify divergence.
     """
     if branch is None:
         branch = get_current_branch(runner)
@@ -132,7 +149,10 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
             if count_result.returncode == 0:
                 count = int(count_result.stdout.strip())
                 return count > 0, count
-            return False, 0
+            detail = count_result.stderr.strip() or (
+                f"git rev-list exited with status {count_result.returncode}"
+            )
+            raise BranchDivergenceUnavailableError(branch, detail)
 
         # Count commits ahead of origin
         result = runner._run_git(
@@ -142,10 +162,12 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
         if result.returncode == 0:
             count = int(result.stdout.strip())
             return count > 0, count
-        return False, 0
-    except Exception as e:
-        logger.warning("Error checking unpushed commits: %s", e)
-        return False, 0
+        detail = result.stderr.strip() or f"git rev-list exited with status {result.returncode}"
+        raise BranchDivergenceUnavailableError(branch, detail)
+    except BranchDivergenceUnavailableError:
+        raise
+    except Exception as exc:
+        raise BranchDivergenceUnavailableError(branch, str(exc)) from exc
 
 
 def get_local_commit(runner: GitRunner, branch: str) -> str | None:
