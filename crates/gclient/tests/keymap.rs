@@ -1,7 +1,11 @@
 //! 3.1.6 / 3.1.7: herdr defaults, client-local overrides, collisions.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use gobby_client::ui::keymap::{Action, Keymap, KeymapError, Trigger, BINDINGS};
+use gobby_client::startup::{keymap_override_path, load_keymap, StartupError};
+use gobby_client::ui::keymap::{
+    default_override_path, Action, Keymap, KeymapError, Trigger, BINDINGS,
+};
+use gobby_client::ui::settings::ClientPrefs;
 use std::collections::HashSet;
 use std::fs;
 
@@ -309,4 +313,63 @@ fn default_bindings_cover_every_action_except_reserved() {
         err,
         KeymapError::UnknownAction("edit_scrollback".to_string())
     );
+}
+
+/// 4.2.2: `load_keymap` on the resolved path is the only keymap source at
+/// startup: the override chord wins over the default chord for the same
+/// action, and the path follows `[keymap] path` when prefs set it.
+#[test]
+fn override_chord_replaces_default_chord() {
+    let home = tempfile::tempdir().unwrap();
+    let mut prefs = ClientPrefs::default();
+
+    // No `[keymap] path`: the client-local file under the gobby home.
+    assert_eq!(
+        keymap_override_path(&prefs, home.path()),
+        home.path().join("client").join("keymap.toml")
+    );
+    assert_eq!(
+        keymap_override_path(&prefs, home.path()),
+        default_override_path(home.path())
+    );
+    // A relative path lands under the gobby home; an absolute one is used as is.
+    prefs.keybinds = "keys.toml".to_string();
+    assert_eq!(
+        keymap_override_path(&prefs, home.path()),
+        home.path().join("keys.toml")
+    );
+    let elsewhere = tempfile::tempdir().unwrap();
+    let absolute = elsewhere.path().join("mine.toml");
+    prefs.keybinds = absolute.display().to_string();
+    assert_eq!(keymap_override_path(&prefs, home.path()), absolute);
+
+    // The override chord replaces the default chord for the same action.
+    fs::write(&absolute, "[bindings]\nsettings = \"prefix+f4\"\n").unwrap();
+    let keymap = load_keymap(&prefs, home.path()).unwrap();
+    assert_eq!(
+        keymap.lookup_prefix(&key(KeyCode::F(4), KeyModifiers::NONE)),
+        Some(Action::Settings)
+    );
+    assert_eq!(
+        keymap.lookup_prefix(&ch('s')),
+        None,
+        "default chord released"
+    );
+
+    // A missing file is the default keymap.
+    prefs.keybinds = "absent.toml".to_string();
+    let keymap = load_keymap(&prefs, home.path()).unwrap();
+    assert_eq!(chords_by_name(&keymap), chords_by_name(&Keymap::defaults()));
+
+    // A rejected file names its resolved path and the keymap error.
+    let rejected = home.path().join("absent.toml");
+    fs::write(&rejected, "[bindings]\nsettings = \"prefix+x\"\n").unwrap();
+    let error = load_keymap(&prefs, home.path()).unwrap_err();
+    assert!(matches!(error, StartupError::Keymap { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(
+        message.contains(&rejected.display().to_string()),
+        "{message}"
+    );
+    assert!(message.contains("close_pane"), "{message}");
 }

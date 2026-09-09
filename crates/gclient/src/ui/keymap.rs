@@ -21,9 +21,9 @@ pub type KeyCombo = (KeyCode, KeyModifiers);
 
 pub const DEFAULT_PREFIX: &str = "ctrl+b";
 
-/// Where client-local overrides live.
-pub fn default_override_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".gobby/client/keymap.toml"))
+/// Where client-local overrides live when prefs name no other file.
+pub fn default_override_path(gobby_home: &Path) -> PathBuf {
+    gobby_home.join("client").join("keymap.toml")
 }
 
 mod names;
