@@ -11,9 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.scheduler.executor import CronExecutor
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
-from gobby.storage.sessions import SessionManager, system_session_id
+from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -48,8 +49,14 @@ def _agent_spawn_services(
     *,
     has_checkout: bool = True,
     completion_registry: object | None = None,
+    session_manager: object | None = None,
 ) -> SimpleNamespace:
     git_manager = SimpleNamespace(repo_path=Path("/target/project"))
+    if session_manager is None:
+        session_manager = MagicMock()
+        session_manager.register.return_value = SimpleNamespace(
+            id="cccccccc-cccc-4ccc-8ccc-cccccccc0001"
+        )
 
     def get_git_manager(project_id: str) -> object | None:
         assert project_id == PROJECT_ID
@@ -59,6 +66,7 @@ def _agent_spawn_services(
         completion_registry=completion_registry,
         git_manager=git_manager,
         get_git_manager=get_git_manager,
+        session_manager=session_manager,
     )
 
 
@@ -263,10 +271,12 @@ async def test_execute_agent_spawn_no_runner(
 @pytest.mark.asyncio
 async def test_execute_agent_spawn_with_mock_runner(
     cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
 ) -> None:
-    """agent_spawn delegates to spawn_agent_impl and reports success."""
+    """agent_spawn uses project cron lineage and retains durable completion state."""
     mock_runner = MagicMock()
-    services = _agent_spawn_services()
+    session_manager = SessionManager(temp_db)
+    services = _agent_spawn_services(session_manager=session_manager)
     executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner, services=services)
 
     job = _make_job(
@@ -275,23 +285,106 @@ async def test_execute_agent_spawn_with_mock_runner(
         {"prompt": "say hello", "provider": "claude", "timeout_seconds": 30},
     )
     run = cron_storage.create_run(job.id)
+    assert run is not None
 
-    mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"}
+    temp_db.execute("DELETE FROM sessions WHERE id = %s", (system_session_id(),))
+    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (system_session_id(),)) is None
+
+    agent_run_id = "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"
+    agent_runs = LocalAgentRunManager(temp_db)
+
+    async def spawn_agent(**kwargs: Any) -> dict[str, object]:
+        agent_runs.create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="claude",
+            prompt="say hello",
+            run_id=agent_run_id,
+        )
+        return {"success": True, "run_id": agent_run_id}
+
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         new_callable=AsyncMock,
-        return_value=mock_result,
+        side_effect=spawn_agent,
     ) as mock_spawn:
         result = await executor.execute(job, run)
 
     assert result.status == "dispatched"
-    assert result.agent_run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"
-    assert "run_id=dddddddd-dddd-4ddd-8ddd-dddddddd0abc" in (result.output or "")
+    assert result.agent_run_id == agent_run_id
+    assert f"run_id={agent_run_id}" in (result.output or "")
     mock_spawn.assert_called_once()
     spawn_call = mock_spawn.call_args
     assert spawn_call is not None
+    parent_session_id = spawn_call.kwargs["parent_session_id"]
+    assert parent_session_id != job.project_id
     assert spawn_call.kwargs["project_path"] == "/target/project"
+    assert spawn_call.kwargs["target_project_id"] == job.project_id
     assert spawn_call.kwargs["git_manager"] is services.git_manager
+    assert spawn_call.kwargs["session_manager"] is session_manager
+
+    cron_session = temp_db.fetchone(
+        "SELECT source, project_id, parent_session_id FROM sessions WHERE id = %s",
+        (parent_session_id,),
+    )
+    assert cron_session is not None
+    assert cron_session["source"] == "cron"
+    assert cron_session["project_id"] == job.project_id
+    assert cron_session["parent_session_id"] == system_session_id()
+    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (system_session_id(),))
+
+    assert agent_runs.complete(agent_run_id, result="done") is not None
+    completed = cron_storage.get_run(run.id)
+    assert completed is not None
+    assert completed.child is not None
+    assert completed.child.id == agent_run_id
+    assert completed.child.status == "success"
+    assert completed.child.terminal is True
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_spawn_default_overlap_skips_active_child(
+    cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
+) -> None:
+    """agent_spawn skips before creating cron lineage when a child remains active."""
+    ensure_system_session(temp_db)
+    job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
+    previous = cron_storage.create_run(job.id)
+    assert previous is not None
+
+    agent_runs = LocalAgentRunManager(temp_db)
+    active = agent_runs.create(
+        parent_session_id=system_session_id(),
+        provider="claude",
+        prompt="still working",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd0abd",
+    )
+    assert agent_runs.start(active.id) is not None
+    cron_storage.update_run(
+        previous.id,
+        status="dispatched",
+        agent_run_id=active.id,
+        completed_at="2026-09-09T00:00:00+00:00",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+
+    services = _agent_spawn_services()
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=MagicMock(),
+        services=services,
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        new_callable=AsyncMock,
+    ) as mock_spawn:
+        result = await executor.execute(job, run)
+
+    assert result.status == "skipped"
+    assert f"active child agent_run {active.id} is running" in (result.output or "")
+    services.session_manager.register.assert_not_called()
+    mock_spawn.assert_not_called()
 
 
 @pytest.mark.asyncio
