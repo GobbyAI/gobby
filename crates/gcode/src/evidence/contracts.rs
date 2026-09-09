@@ -134,6 +134,7 @@ pub enum ExclusionReason {
     Binary,
     Gitlink,
     Oversized,
+    SensitiveContent,
     SensitivePath,
     Symlink,
     UnsafePath,

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
 import subprocess
+import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,6 +19,7 @@ from uuid import UUID
 from gobby.agents.code_index import ensure_isolation_code_index
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.storage import AskRunStorage
+from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
@@ -33,6 +36,24 @@ _CLEANUP_TIMEOUT_SECONDS = 10.0
 
 class SnapshotDriftError(RuntimeError):
     """The retained checkout no longer matches its immutable manifest."""
+
+
+class SnapshotCleanupError(RuntimeError):
+    """Snapshot resources remain owned for a later recoverable cleanup."""
+
+
+class _PublishedLifecycleCancellation(asyncio.CancelledError):
+    """Cancellation delivered after a generation became authoritative."""
+
+
+async def _owned_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        with contextlib.suppress(BaseException):
+            await asyncio.shield(task)
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,11 +260,12 @@ class AskSnapshotManager:
         if self.run_storage.get_snapshot_generation(run_id) is not None:
             raise ValueError("Ask run already has a current snapshot generation")
         repository_root = repository_root.resolve()
+        snapshot_project_id = code_index_id_for_root(artifacts.run_root / "source")
         binding, inventory = await asyncio.to_thread(
             _native_snapshot,
             self.snapshot_executable,
             repository_root,
-            project_id=record.binding.project_id,
+            project_id=snapshot_project_id,
             commit_oid=record.binding.commit_oid,
             action="inspect",
             timeout=_remaining_seconds(deadline_at),
@@ -261,9 +283,14 @@ class AskSnapshotManager:
             "inventory": inventory,
         }
         _remaining_seconds(deadline_at)
-        identity_pointer = await asyncio.to_thread(artifacts.write_body, "snapshot", identity_body)
+        identity_pointer = await _owned_thread(
+            artifacts.write_body,
+            "snapshot",
+            identity_body,
+            timeout_seconds=_remaining_seconds(deadline_at),
+        )
         _remaining_seconds(deadline_at)
-        await asyncio.to_thread(
+        await _owned_thread(
             self.run_storage.attach_snapshot,
             run_id,
             inventory_digest=str(binding["inventory_digest"]),
@@ -318,7 +345,7 @@ class AskSnapshotManager:
             _native_snapshot,
             self.snapshot_executable,
             repository_root,
-            project_id=record.binding.project_id,
+            project_id=self._required_text(binding, "project_id"),
             commit_oid=record.binding.commit_oid,
             action="inspect",
             timeout=_remaining_seconds(deadline_at),
@@ -336,7 +363,7 @@ class AskSnapshotManager:
                 _native_snapshot,
                 self.snapshot_executable,
                 repository_root,
-                project_id=record.binding.project_id,
+                project_id=self._required_text(binding, "project_id"),
                 commit_oid=record.binding.commit_oid,
                 action="verify",
                 target_root=source_root,
@@ -346,7 +373,7 @@ class AskSnapshotManager:
             stale = self.worktree_storage.get(worktree_id)
             if stale is not None:
                 self.worktree_storage.delete(stale.id)
-            await asyncio.to_thread(
+            await _owned_thread(
                 _git,
                 repository_root,
                 "worktree",
@@ -368,7 +395,7 @@ class AskSnapshotManager:
                     deadline_at=deadline_at,
                 )
             except BaseException:
-                await asyncio.to_thread(
+                await _owned_thread(
                     self._delete_worktree,
                     repository_root,
                     source_root,
@@ -391,11 +418,15 @@ class AskSnapshotManager:
                 binding=binding,
                 artifacts=artifacts,
             )
+        except _PublishedLifecycleCancellation:
+            previous_runtime = self._runtime_from_lifecycle(lifecycle)
+            await _owned_thread(self._release_runtime, previous_runtime, "recovered")
+            raise
         except BaseException:
             if runtime is not None:
-                await asyncio.to_thread(self._release_runtime, runtime, "recovery_failed")
+                await _owned_thread(self._release_runtime, runtime, "recovery_failed")
             if created_worktree:
-                await asyncio.to_thread(
+                await _owned_thread(
                     self._delete_worktree,
                     repository_root,
                     source_root,
@@ -403,7 +434,7 @@ class AskSnapshotManager:
                 )
             raise
         previous_runtime = self._runtime_from_lifecycle(lifecycle)
-        await asyncio.to_thread(self._release_runtime, previous_runtime, "recovered")
+        await _owned_thread(self._release_runtime, previous_runtime, "recovered")
         return PreparedSnapshot(
             generation=current.generation + 1,
             commit_oid=record.binding.commit_oid,
@@ -475,10 +506,12 @@ class AskSnapshotManager:
                 binding=binding,
                 artifacts=artifacts,
             )
+        except _PublishedLifecycleCancellation:
+            raise
         except BaseException:
             if runtime is not None:
-                await asyncio.to_thread(self._release_runtime, runtime, "preparation_failed")
-            await asyncio.to_thread(
+                await _owned_thread(self._release_runtime, runtime, "preparation_failed")
+            await _owned_thread(
                 self._delete_worktree,
                 repository_root,
                 source_root,
@@ -507,17 +540,38 @@ class AskSnapshotManager:
     ) -> str:
         added = False
         try:
-            await asyncio.to_thread(
-                _git,
-                repository_root,
-                "worktree",
-                "add",
-                "--detach",
-                "--no-checkout",
-                str(source_root),
-                record.binding.commit_oid,
-                timeout=_remaining_seconds(deadline_at),
+            add_task = asyncio.create_task(
+                asyncio.to_thread(
+                    _git,
+                    repository_root,
+                    "worktree",
+                    "add",
+                    "--detach",
+                    "--no-checkout",
+                    str(source_root),
+                    record.binding.commit_oid,
+                    timeout=_remaining_seconds(deadline_at),
+                )
             )
+            try:
+                await asyncio.shield(add_task)
+            except asyncio.CancelledError:
+                try:
+                    await asyncio.shield(add_task)
+                except BaseException:
+                    pass
+                else:
+                    await asyncio.shield(
+                        asyncio.create_task(
+                            asyncio.to_thread(
+                                self._delete_worktree,
+                                repository_root,
+                                source_root,
+                                None,
+                            )
+                        )
+                    )
+                raise
             added = True
             source_root.chmod(0o700)
             remaining = _remaining_seconds(deadline_at)
@@ -538,7 +592,7 @@ class AskSnapshotManager:
             return worktree.id
         except BaseException:
             if added:
-                await asyncio.to_thread(
+                await _owned_thread(
                     self._delete_worktree,
                     repository_root,
                     source_root,
@@ -554,18 +608,18 @@ class AskSnapshotManager:
         source_root: Path,
         deadline_at: datetime,
     ) -> None:
-        await asyncio.to_thread(
+        await _owned_thread(
             _native_snapshot,
             self.snapshot_executable,
             repository_root,
-            project_id=record.binding.project_id,
+            project_id=code_index_id_for_root(source_root),
             commit_oid=record.binding.commit_oid,
             action="materialize",
             target_root=source_root,
             timeout=_remaining_seconds(deadline_at),
         )
         _remaining_seconds(deadline_at)
-        await asyncio.to_thread(ensure_project_json_for_isolation, repository_root, source_root)
+        await _owned_thread(ensure_project_json_for_isolation, repository_root, source_root)
         _remaining_seconds(deadline_at)
 
     async def _publish_lifecycle(
@@ -604,19 +658,33 @@ class AskSnapshotManager:
                 "credential_generation": runtime.credential_generation,
             },
         }
-        pointer = await asyncio.to_thread(artifacts.write_body, "snapshot-lifecycle", body)
-        _remaining_seconds(deadline_at)
-        await asyncio.to_thread(artifacts.verify_manifest)
-        _remaining_seconds(deadline_at)
-        await asyncio.to_thread(
-            self.run_storage.publish_snapshot_generation,
-            record.run_id,
-            generation=generation,
-            lifecycle_artifact=pointer,
-            expected_previous_generation=expected_previous_generation,
-            deadline_at=deadline_at,
+        pointer: dict[str, Any] = await _owned_thread(
+            artifacts.write_body,
+            "snapshot-lifecycle",
+            body,
+            timeout_seconds=_remaining_seconds(deadline_at),
         )
         _remaining_seconds(deadline_at)
+        await _owned_thread(artifacts.verify_manifest)
+        _remaining_seconds(deadline_at)
+        publish_task = asyncio.create_task(
+            asyncio.to_thread(
+                self.run_storage.publish_snapshot_generation,
+                record.run_id,
+                generation=generation,
+                lifecycle_artifact=pointer,
+                expected_previous_generation=expected_previous_generation,
+                deadline_at=deadline_at,
+            )
+        )
+        try:
+            await asyncio.shield(publish_task)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(publish_task)
+            except BaseException:
+                raise
+            raise _PublishedLifecycleCancellation from None
         return pointer
 
     async def _validate_lifecycle(
@@ -665,37 +733,59 @@ class AskSnapshotManager:
             return runtime
         if self.credential_manager is None or self.session_id is None:
             raise RuntimeError("managed Ask snapshot index services are unavailable")
-        with database_operation_deadline(
-            timeout_seconds=remaining,
-            operation_timeout_seconds=remaining,
-        ):
-            issued = await asyncio.to_thread(
-                self.credential_manager.issue_tool_request,
-                session_id=self.session_id,
-                requested_project_path=str(source_root),
-                expires_at=deadline_at,
+        issue_task = asyncio.create_task(
+            asyncio.to_thread(
+                self._issue_index_credential,
+                source_root,
+                deadline_at,
+                remaining,
             )
+        )
+        try:
+            issued = await asyncio.shield(issue_task)
+        except asyncio.CancelledError:
+            try:
+                issued = await asyncio.shield(issue_task)
+            except BaseException:
+                pass
+            else:
+                await _owned_thread(
+                    self.credential_manager.revoke,
+                    issued.credential.managed_execution_id,
+                    generation=issued.credential.credential_generation,
+                    reason="ask_snapshot_preparation_failed",
+                )
+            raise
         try:
             _remaining_seconds(deadline_at)
             if Path(issued.project_path).resolve() != source_root.resolve():
                 raise RuntimeError("managed Ask grant resolved a different project path")
             identity_env = {
+                "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
                 "GOBBY_MACHINE_ID": require_machine_id(),
                 "GOBBY_PROJECT_ID": str(issued.project_id),
                 "GOBBY_SESSION_ID": str(self.session_id),
             }
-            result = await ensure_isolation_code_index(
-                str(source_root),
-                timeout=_remaining_seconds(deadline_at),
-                credential=issued.credential,
-                identity_env=identity_env,
+            prepare_task = asyncio.create_task(
+                ensure_isolation_code_index(
+                    str(source_root),
+                    timeout=_remaining_seconds(deadline_at),
+                    gcode_bin=self.snapshot_executable,
+                    credential=issued.credential,
+                    principal_kind="tool_chat",
+                    identity_env=identity_env,
+                )
             )
-            executable = result.wrapper_path or resolve_native_bin("gcode")
-            if executable is None:
-                raise RuntimeError("gcode_not_installed")
+            try:
+                result = await asyncio.shield(prepare_task)
+            except asyncio.CancelledError:
+                with contextlib.suppress(BaseException):
+                    await asyncio.shield(prepare_task)
+                raise
+            executable = self.snapshot_executable
             _remaining_seconds(deadline_at)
         except BaseException:
-            await asyncio.to_thread(
+            await _owned_thread(
                 self.credential_manager.revoke,
                 issued.credential.managed_execution_id,
                 generation=issued.credential.credential_generation,
@@ -708,6 +798,24 @@ class AskSnapshotManager:
             managed_execution_id=str(issued.credential.managed_execution_id),
             credential_generation=issued.credential.credential_generation,
         )
+
+    def _issue_index_credential(
+        self,
+        source_root: Path,
+        deadline_at: datetime,
+        timeout_seconds: float,
+    ) -> Any:
+        assert self.credential_manager is not None
+        assert self.session_id is not None
+        with database_operation_deadline(
+            timeout_seconds=timeout_seconds,
+            operation_timeout_seconds=timeout_seconds,
+        ):
+            return self.credential_manager.issue_tool_request(
+                session_id=self.session_id,
+                requested_project_path=str(source_root),
+                expires_at=deadline_at,
+            )
 
     def _record_for_artifacts(self, run_id: str, artifacts: AskArtifactStore) -> AskRunRecord:
         record = self.run_storage.get(run_id)
@@ -723,6 +831,16 @@ class AskSnapshotManager:
         source_root: Path,
         worktree_id: str | None,
     ) -> None:
+        cutoff = time.monotonic() + _CLEANUP_TIMEOUT_SECONDS
+
+        def remaining() -> float:
+            value = cutoff - time.monotonic()
+            if value <= 0:
+                raise SnapshotCleanupError(
+                    f"snapshot cleanup deadline exceeded; ownership retained for {source_root}"
+                )
+            return value
+
         try:
             _git(
                 repository_root,
@@ -730,18 +848,34 @@ class AskSnapshotManager:
                 "remove",
                 "--force",
                 str(source_root),
-                timeout=_CLEANUP_TIMEOUT_SECONDS,
+                timeout=remaining(),
             )
-        except subprocess.CalledProcessError:
-            _git(
-                repository_root,
-                "worktree",
-                "prune",
-                timeout=_CLEANUP_TIMEOUT_SECONDS,
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            try:
+                _git(
+                    repository_root,
+                    "worktree",
+                    "prune",
+                    timeout=remaining(),
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                raise SnapshotCleanupError(
+                    f"snapshot Git cleanup failed; ownership retained for {source_root}"
+                ) from error
+        if source_root.exists():
+            raise SnapshotCleanupError(
+                f"snapshot checkout still exists; ownership retained for {source_root}"
             )
-        finally:
-            if worktree_id is not None and self.worktree_storage.get(worktree_id) is not None:
-                self.worktree_storage.delete(worktree_id)
+        if worktree_id is not None:
+            timeout_seconds = remaining()
+            with database_operation_deadline(
+                timeout_seconds=timeout_seconds,
+                operation_timeout_seconds=timeout_seconds,
+            ):
+                worktree = self.worktree_storage.get(worktree_id)
+                if worktree is not None:
+                    remaining()
+                    self.worktree_storage.delete(worktree_id)
 
     def _release_runtime(self, runtime: SnapshotIndexRuntime, reason: str) -> None:
         if self.index_releaser is not None:

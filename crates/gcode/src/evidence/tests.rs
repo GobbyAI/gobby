@@ -1269,6 +1269,35 @@ fn snapshot_excludes_sensitive_paths_before_every_evidence_lane() -> anyhow::Res
 }
 
 #[test]
+fn snapshot_excludes_known_credentials_in_ordinary_source_paths() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::create_dir(repo.join("src"))?;
+    std::fs::write(
+        repo.join("src/public.rs"),
+        "const DATABASE: &str = \"postgresql://worker:known-secret@127.0.0.1/db\";\n",
+    )?;
+    git(repo, &["add", "."])?;
+    let commit_oid = commit(repo, "ordinary source credential")?;
+    let snapshot = Snapshot::prepare(repo, "project-sensitive-content", &commit_oid)?;
+
+    let entry = snapshot.entry("src/public.rs")?;
+    assert_eq!(
+        serde_json::to_value(entry.exclusion)?,
+        serde_json::json!("sensitive_content")
+    );
+    assert_eq!(
+        snapshot
+            .read_blob("src/public.rs")
+            .expect_err("credential-bearing source must not be citeable")
+            .code(),
+        "excluded_path"
+    );
+    Ok(())
+}
+
+#[test]
 fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
     let (_temporary, snapshot) = source_repo()?;
     let mut facts = FakeFacts::from_snapshot(&snapshot);

@@ -271,7 +271,9 @@ async def ensure_isolation_code_index(
     isolated_path: str,
     *,
     timeout: float = 120.0,
+    gcode_bin: Path | None = None,
     credential: ManagedCredential | None = None,
+    principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
     runtime_root: Path | None = None,
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
@@ -307,25 +309,27 @@ async def ensure_isolation_code_index(
     if not workspace.is_dir():
         raise RuntimeError(f"gcode_index_workspace_missing:{isolated_path}")
 
-    gcode_bin = resolve_native_bin("gcode")
-    if gcode_bin is None:
+    resolved_gcode = gcode_bin or resolve_native_bin("gcode")
+    if resolved_gcode is None:
         raise RuntimeError("gcode_not_installed")
+    resolved_gcode = Path(resolved_gcode)
 
     identity = dict(identity_env or {})
     remaining()
     result = await asyncio.to_thread(
         _prepare_gcode_runtime,
         workspace=workspace,
-        gcode_bin=Path(gcode_bin),
+        gcode_bin=resolved_gcode,
         credential=credential,
         runtime_root=runtime_root,
         machine_id=identity.get("GOBBY_MACHINE_ID"),
         project_id=identity.get("GOBBY_PROJECT_ID"),
         session_id=identity.get("GOBBY_SESSION_ID"),
+        principal_kind=principal_kind,
     )
     remaining()
-    gcode_command = result.wrapper_path or gcode_bin
-    merged_probe_env = dict(identity_env or {})
+    gcode_command = str(resolved_gcode)
+    merged_probe_env = {**result.env, **dict(identity_env or {})}
     if api_token:
         merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = api_token
     probe_env = merged_probe_env or None
@@ -403,6 +407,7 @@ def _prepare_gcode_runtime(
     machine_id: str | None = None,
     project_id: str | None = None,
     session_id: str | None = None,
+    principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
 ) -> CodeIndexPreflightResult:
     if credential is None:
         return CodeIndexPreflightResult(env={})
@@ -435,6 +440,7 @@ def _prepare_gcode_runtime(
         project_id=project_id,
         session_id=session_id,
         context=context,
+        principal_kind=principal_kind,
     )
     remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
     launch = materialize_managed_launch(
