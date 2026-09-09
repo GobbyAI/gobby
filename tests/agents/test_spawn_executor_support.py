@@ -24,7 +24,7 @@ def test_managed_codex_requires_gobby_before_first_turn() -> None:
     server = config["mcp_servers"]["gobby"]
 
     assert server["required"] is True
-    assert server["args"] == ["run", "--project", "/main/repo", "gobby", "mcp-server"]
+    assert server["args"] == ["run", "--no-sync", "--project", "/main/repo", "gobby", "mcp-server"]
 
 
 def test_resume_retains_required_gobby_server() -> None:
@@ -36,3 +36,4 @@ def test_resume_retains_required_gobby_server() -> None:
     config = tomllib.loads("\n".join(restored))
 
     assert config["mcp_servers"]["gobby"]["required"] is True
+    assert "--no-sync" in config["mcp_servers"]["gobby"]["args"]
