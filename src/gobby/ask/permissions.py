@@ -27,6 +27,19 @@ from gobby.workflows.pipeline_state import StepStatus
 ASK_PIPELINE_NAME = "native-ask"
 _AUTHORITY_KIND = "ask-agent-authority"
 _AUTHORITY_VERSION = 1
+_RUNTIME_VALIDATION_VERSION = 1
+_REQUIRED_RUNTIME_CONTROLS = frozenset(
+    {
+        "mcp_allowlist_exact",
+        "native_execution_denied",
+        "native_mutation_denied",
+        "network_denied",
+        "resume_preserves_boundary",
+        "source_outside_writable_root",
+        "subagents_denied",
+    }
+)
+_SUPPORTED_CLAUDE_AUTH_MODES = frozenset({"claude.ai", "api_key", "api_key_helper"})
 
 
 class AskPermissionDenied(PermissionError):
@@ -45,9 +58,9 @@ class AskAgentStage(StrEnum):
 
 _INVESTIGATOR_TOOLS = frozenset(
     {
-        ("gobby-ask", "search_evidence"),
+        ("gobby-ask", "query_evidence"),
         ("gobby-ask", "read_evidence"),
-        ("gobby-ask", "submit_draft"),
+        ("gobby-ask", "submit_answer"),
         ("gobby-agents", "end_agent_run"),
     }
 )
@@ -106,6 +119,45 @@ def _resolved_root(path: Path, *, name: str) -> Path:
 
 
 @dataclass(frozen=True, slots=True)
+class AskRuntimeValidation:
+    """Trusted result of fresh and resumed managed-native boundary probes."""
+
+    provider: str
+    provider_version: str
+    auth_mode: str
+    controls: frozenset[str]
+    fresh_probe_passed: bool
+    resume_probe_passed: bool
+    evidence_sha256: str
+    schema_version: int = _RUNTIME_VALIDATION_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != _RUNTIME_VALIDATION_VERSION:
+            raise ValueError("unsupported Ask runtime validation version")
+        if not self.provider or not self.provider_version or not self.auth_mode:
+            raise ValueError("Ask runtime validation identity is incomplete")
+        if len(self.evidence_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in self.evidence_sha256
+        ):
+            raise ValueError("Ask runtime validation evidence hash must be lowercase SHA-256")
+
+    @property
+    def validation_digest(self) -> str:
+        return _fingerprint(
+            {
+                "schema_version": self.schema_version,
+                "provider": self.provider,
+                "provider_version": self.provider_version,
+                "auth_mode": self.auth_mode,
+                "controls": sorted(self.controls),
+                "fresh_probe_passed": self.fresh_probe_passed,
+                "resume_probe_passed": self.resume_probe_passed,
+                "evidence_sha256": self.evidence_sha256,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AskRuntimeProfile:
     """Effective native restrictions compiled independently of mutable agent metadata."""
 
@@ -116,6 +168,8 @@ class AskRuntimeProfile:
     sandbox_config: SandboxConfig
     source_root: str
     scratch_root: str
+    auth_mode: str
+    runtime_validation_digest: str
     profile_hash: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,6 +181,8 @@ class AskRuntimeProfile:
             "sandbox_config": self.sandbox_config.model_dump(mode="json"),
             "source_root": self.source_root,
             "scratch_root": self.scratch_root,
+            "auth_mode": self.auth_mode,
+            "runtime_validation_digest": self.runtime_validation_digest,
             "profile_hash": self.profile_hash,
         }
 
@@ -147,6 +203,11 @@ class AskRuntimeProfile:
             sandbox_config=SandboxConfig.model_validate(value.get("sandbox_config")),
             source_root=_required_string(value.get("source_root"), name="Ask source root"),
             scratch_root=_required_string(value.get("scratch_root"), name="Ask scratch root"),
+            auth_mode=_required_string(value.get("auth_mode"), name="Ask runtime auth mode"),
+            runtime_validation_digest=_required_string(
+                value.get("runtime_validation_digest"),
+                name="Ask runtime validation digest",
+            ),
             profile_hash=_required_string(value.get("profile_hash"), name="Ask profile hash"),
         )
         expected_hash = _runtime_profile_hash(profile.to_dict())
@@ -166,12 +227,21 @@ def compile_ask_runtime_profile(
     provider: str,
     source_root: Path,
     scratch_root: Path,
+    validation: AskRuntimeValidation | None = None,
 ) -> AskRuntimeProfile:
     """Compile a provider profile with an exact MCP-only native action surface."""
     source = _resolved_root(source_root, name="Ask source root")
     scratch = _resolved_root(scratch_root, name="Ask scratch root")
     if source == scratch or source in scratch.parents or scratch in source.parents:
         raise UnsupportedAskRuntime("Ask source and scratch roots must be disjoint")
+    if validation is None:
+        raise UnsupportedAskRuntime("Ask runtime requires trusted fresh and resume validation")
+    if validation.provider != provider:
+        raise UnsupportedAskRuntime("Ask runtime validation provider mismatch")
+    if not validation.fresh_probe_passed or not validation.resume_probe_passed:
+        raise UnsupportedAskRuntime("Ask runtime validation did not pass fresh and resume probes")
+    if validation.controls != _REQUIRED_RUNTIME_CONTROLS:
+        raise UnsupportedAskRuntime("Ask runtime validation controls are incomplete or widened")
     if provider != "claude":
         if provider == "codex":
             raise UnsupportedAskRuntime(
@@ -180,14 +250,15 @@ def compile_ask_runtime_profile(
         raise UnsupportedAskRuntime(
             f"Provider {provider!r} has no proven MCP-only native Ask profile"
         )
+    if validation.auth_mode not in _SUPPORTED_CLAUDE_AUTH_MODES:
+        raise UnsupportedAskRuntime("Ask runtime validation auth mode is unsupported")
 
-    # Claude's restricted+bare modes ignore repository/user customizations.
+    # Claude's restricted+safe modes ignore repository/user customizations.
     # --tools "" removes action-capable built-ins including Bash/Edit/Write/Web/Task;
     # the provider retains EndConversation as a non-mutating termination tool.
     # The strict MCP file contains only the managed Gobby proxy, whose three
     # exposed wrapper tools remain subject to the canonical policy below.
-    provider_args = (
-        "--bare",
+    provider_args: tuple[str, ...] = (
         "--safe-mode",
         "--restricted",
         "--disable-slash-commands",
@@ -202,6 +273,8 @@ def compile_ask_runtime_profile(
         "mcp__gobby__call_tool,mcp__gobby__get_tool_schema,mcp__gobby__list_tools",
         "--strict-mcp-config",
     )
+    if validation.auth_mode in {"api_key", "api_key_helper"}:
+        provider_args = ("--bare", *provider_args)
     sandbox = SandboxConfig(
         enabled=True,
         backend="srt",
@@ -220,6 +293,8 @@ def compile_ask_runtime_profile(
         "sandbox_config": sandbox.model_dump(mode="json"),
         "source_root": str(source),
         "scratch_root": str(scratch),
+        "auth_mode": validation.auth_mode,
+        "runtime_validation_digest": validation.validation_digest,
     }
     return AskRuntimeProfile(
         provider=provider,
@@ -229,6 +304,8 @@ def compile_ask_runtime_profile(
         sandbox_config=sandbox,
         source_root=str(source),
         scratch_root=str(scratch),
+        auth_mode=validation.auth_mode,
+        runtime_validation_digest=validation.validation_digest,
         profile_hash=_runtime_profile_hash(unhashed),
     )
 
@@ -791,6 +868,7 @@ __all__ = [
     "AskPermissionStore",
     "AskPrincipal",
     "AskRuntimeProfile",
+    "AskRuntimeValidation",
     "UnsupportedAskRuntime",
     "compile_ask_runtime_profile",
     "current_ask_allowed_tools",

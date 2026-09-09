@@ -100,6 +100,15 @@ class AskRunResult(BaseModel):
 
     run_id: str
     status: str
+    current_stage: str | None = None
+    answer_outcome: str | None = None
+    typed_error: dict[str, str] | None = None
+    deadline_at: datetime
+    profile_identities: dict[str, str] = Field(default_factory=dict)
+    tool_identities: tuple[str, ...] = ()
+    artifact_manifest: dict[str, Any] | None = None
+    attempt_count: int = Field(default=0, ge=0)
+    repair_count: int = Field(default=0, ge=0)
     binding: AskBinding
     evidence: tuple[EvidenceReference, ...] = ()
     result_artifact: dict[str, Any] | None = None
