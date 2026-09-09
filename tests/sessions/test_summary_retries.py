@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,29 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 pytestmark = pytest.mark.unit
 MACHINE_ID = "20000000-0000-4000-8000-000000000002"
 GOLDEN = Path(__file__).parent / "transcripts/fixtures/golden_path/claude.jsonl"
+
+
+def _initialize_git_head(root_path: str) -> None:
+    root = Path(root_path)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True, timeout=10)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Gobby Tests",
+            "-c",
+            "user.email=gobby-tests@example.com",
+            "commit",
+            "--allow-empty",
+            "--no-gpg-sign",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=root,
+        check=True,
+        timeout=10,
+    )
 
 
 @pytest.fixture
@@ -211,7 +235,9 @@ async def test_failed_refresh_preserves_valid_summary_and_success_resets_failure
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    project = isolated_checkout_factory(temp_db, "freshness").project
+    checkout = isolated_checkout_factory(temp_db, "freshness", root=tmp_path)
+    _initialize_git_head(checkout.root_path)
+    project = checkout.project
     transcript = tmp_path / "live.jsonl"
     transcript.write_bytes(GOLDEN.read_bytes())
     session = register(lifecycle, project.id, "refresh", str(transcript))
@@ -289,7 +315,9 @@ async def test_canonical_failures_preserve_summaries_and_classify_retry_budget(
     tmp_path: Path,
     failure: str,
 ) -> None:
-    project = isolated_checkout_factory(temp_db, "canonical-failures").project
+    checkout = isolated_checkout_factory(temp_db, "canonical-failures", root=tmp_path)
+    _initialize_git_head(checkout.root_path)
+    project = checkout.project
     transcript = tmp_path / "source.jsonl"
     transcript.write_bytes(GOLDEN.read_bytes())
     session = register(lifecycle, project.id, "canonical-failure", str(transcript))
@@ -403,7 +431,9 @@ async def test_stale_generation_preserves_replacement_summary(
     change: str,
     scheduled: bool,
 ) -> None:
-    project = isolated_checkout_factory(temp_db, "summary-race").project
+    checkout = isolated_checkout_factory(temp_db, "summary-race", root=tmp_path)
+    _initialize_git_head(checkout.root_path)
+    project = checkout.project
     transcript = tmp_path / "live.jsonl"
     transcript.write_bytes(GOLDEN.read_bytes())
     session = register(lifecycle, project.id, "summary-race", str(transcript))
