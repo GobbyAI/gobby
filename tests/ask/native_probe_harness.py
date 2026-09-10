@@ -515,7 +515,7 @@ def _capture_runtime_identity(project_root: Path) -> dict[str, object]:
         or not os.access(gterm_path, os.X_OK)
     ):
         raise RuntimeError("native Ask probe terminal runtime is not a regular executable")
-    source_head = run_git_command(["rev-parse", "HEAD"], source_root)
+    source_head = run_git_command(["git", "rev-parse", "HEAD"], source_root)
     if source_head is None or len(source_head) != 40:
         raise RuntimeError("native Ask probe source HEAD could not be resolved")
     fixture = (source_root / _HOSTILE_FIXTURE_PATH).resolve(strict=True)

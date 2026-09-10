@@ -6,6 +6,7 @@ import json
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -334,10 +335,32 @@ def test_runtime_identity_requires_branch_local_gcode_and_records_gterm(
         "gobby.utils.native_bin.resolve_native_bin",
         lambda name: str(binaries[name]),
     )
-    monkeypatch.setattr(
-        "gobby.utils.git.run_git_command",
-        lambda *_args, **_kwargs: "f" * 40,
+    subprocess.run(["git", "init", "-q", str(project_root)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Probe Test",
+            "-c",
+            "user.email=probe@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "probe fixture",
+        ],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
     )
+    expected_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     monkeypatch.setattr(
         harness,
         "_provider_identity",
@@ -348,7 +371,7 @@ def test_runtime_identity_requires_branch_local_gcode_and_records_gterm(
     gcode_identity = cast(dict[str, Any], identity["gcode"])
     gterm_identity = cast(dict[str, Any], identity["gterm"])
 
-    assert identity["source_head"] == "f" * 40
+    assert identity["source_head"] == expected_head
     assert gcode_identity["path"] == str(binaries["gcode"].resolve())
     assert gcode_identity["version"] == "1.7.0"
     assert gterm_identity["path"] == str(binaries["gterm"].resolve())
