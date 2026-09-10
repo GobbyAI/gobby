@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -262,7 +263,9 @@ async def ensure_isolation_code_index(
     isolated_path: str,
     *,
     timeout: float = 120.0,
+    gcode_bin: Path | None = None,
     credential: ManagedCredential | None = None,
+    principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
     runtime_root: Path | None = None,
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
@@ -284,31 +287,48 @@ async def ensure_isolation_code_index(
     variable, which the daemon process env does not provide.
     """
 
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("gcode index timeout must be finite and positive")
+    cutoff = time.monotonic() + timeout
+
+    def remaining(*, cap: float | None = None) -> float:
+        value = cutoff - time.monotonic()
+        if value <= 0:
+            raise RuntimeError("gcode_index_timeout:deadline_exceeded")
+        return value if cap is None else min(value, cap)
+
     workspace = Path(isolated_path)
     if not workspace.is_dir():
         raise RuntimeError(f"gcode_index_workspace_missing:{isolated_path}")
 
-    gcode_bin = resolve_native_bin("gcode")
-    if gcode_bin is None:
+    resolved_gcode = gcode_bin or resolve_native_bin("gcode")
+    if resolved_gcode is None:
         raise RuntimeError("gcode_not_installed")
+    resolved_gcode = Path(resolved_gcode)
 
     identity = dict(identity_env or {})
+    remaining()
     git_exclude_path = (
-        await _resolve_git_exclude_path(workspace) if credential is not None else None
+        await _resolve_git_exclude_path(workspace, timeout=remaining(cap=10.0))
+        if credential is not None
+        else None
     )
+    remaining()
     result = await asyncio.to_thread(
         _prepare_gcode_runtime,
         workspace=workspace,
-        gcode_bin=Path(gcode_bin),
+        gcode_bin=resolved_gcode,
         credential=credential,
         runtime_root=runtime_root,
         machine_id=identity.get("GOBBY_MACHINE_ID"),
         project_id=identity.get("GOBBY_PROJECT_ID"),
         session_id=identity.get("GOBBY_SESSION_ID"),
         git_exclude_path=git_exclude_path,
+        principal_kind=principal_kind,
     )
-    gcode_command = result.wrapper_path or gcode_bin
-    merged_probe_env = dict(identity_env or {})
+    remaining()
+    gcode_command = str(resolved_gcode)
+    merged_probe_env = {**result.env, **dict(identity_env or {})}
     if api_token:
         merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = api_token
     probe_env = merged_probe_env or None
@@ -331,7 +351,7 @@ async def ensure_isolation_code_index(
                 str(workspace),
             ],
             cwd=workspace,
-            timeout=config_probe_timeout,
+            timeout=remaining(cap=config_probe_timeout),
             timeout_code="gcode_index_unavailable_timeout",
             failure_code="gcode_index_unavailable",
             env=probe_env,
@@ -344,7 +364,7 @@ async def ensure_isolation_code_index(
         await _run_gcode(
             [gcode_command, "index", "--quiet", "--project", str(workspace)],
             cwd=workspace,
-            timeout=timeout,
+            timeout=remaining(),
             timeout_code="gcode_index_timeout",
             failure_code="gcode_index_failed",
             env=probe_env,
@@ -367,7 +387,7 @@ async def ensure_isolation_code_index(
                 str(workspace),
             ],
             cwd=workspace,
-            timeout=search_smoke_timeout,
+            timeout=remaining(cap=search_smoke_timeout),
             timeout_code="gcode_search_content_timeout",
             failure_code="gcode_search_content_failed",
             env=probe_env,
@@ -387,6 +407,7 @@ def _prepare_gcode_runtime(
     project_id: str | None = None,
     session_id: str | None = None,
     git_exclude_path: Path | None = None,
+    principal_kind: Literal["agent_run", "tool_chat"] = "agent_run",
 ) -> CodeIndexPreflightResult:
     if credential is None:
         return CodeIndexPreflightResult(env={})
@@ -419,6 +440,7 @@ def _prepare_gcode_runtime(
         project_id=project_id,
         session_id=session_id,
         context=context,
+        principal_kind=principal_kind,
     )
     remaining_seconds = (credential.expires_at - datetime.now(UTC)).total_seconds()
     launch = materialize_managed_launch(
@@ -608,11 +630,11 @@ def _gcode_wrapper_script(
     )
 
 
-async def _resolve_git_exclude_path(workspace: Path) -> Path | None:
+async def _resolve_git_exclude_path(workspace: Path, *, timeout: float = 10.0) -> Path | None:
     result = await daemon_git.run(
         ["rev-parse", "--git-path", "info/exclude"],
         cwd=workspace,
-        timeout=10,
+        timeout=timeout,
     )
     if not isinstance(result, GitOk):
         logger.debug(
