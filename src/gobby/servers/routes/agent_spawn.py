@@ -75,6 +75,8 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     base_branch: str | None = None
     timeout: float | None = None
     terminal_backend: Literal["tmux", "native"] | None = None
+    extra_write_paths: list[str] | None = None
+    write_paths_reason: str | None = None
 
 
 class AgentSpawnResponse(BaseModel):
@@ -90,6 +92,7 @@ class AgentSpawnResponse(BaseModel):
     pid: int | None = None
     message: str | None = None
     reasoning: dict[str, Any] | None = None
+    external_write_grant: dict[str, Any] | None = None
     error: str | None = None
 
 
@@ -181,6 +184,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         req: AgentSpawnRequest, project_id: str | None = None
     ) -> AgentSpawnResponse:
         """Execute a single spawn request."""
+        if req.web_chat and req.extra_write_paths:
+            return AgentSpawnResponse(
+                success=False, error="External write grants require a managed agent spawn"
+            )
         task_manager = server.services.task_manager
         if not task_manager:
             return AgentSpawnResponse(success=False, error="Task manager unavailable")
@@ -383,6 +390,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             completion_registry=server.services.completion_registry,
             daemon_config=config_snapshot.active,
             terminal_backend=req.terminal_backend,
+            extra_write_paths=req.extra_write_paths,
+            write_paths_reason=req.write_paths_reason,
         )
 
         if result.get("success"):
@@ -404,6 +413,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 pid=result.get("pid"),
                 message=result.get("message"),
                 reasoning=result.get("reasoning"),
+                external_write_grant=result.get("external_write_grant"),
             )
         else:
             return AgentSpawnResponse(

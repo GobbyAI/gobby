@@ -16,6 +16,7 @@ from gobby.agents.codex_oss import (
     codex_local_transport_strategy,
     codex_oss_provider_for_local_endpoint,
 )
+from gobby.agents.external_write_grants import revalidate_write_grant
 from gobby.agents.local_model import LocalModelError, ensure_local_model
 from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
@@ -112,6 +113,10 @@ async def resume_agent_run(
         session_manager: Session lookup used to recover provider-native IDs.
         daemon_config: Optional daemon config used for tmux spawn settings.
     """
+    try:
+        await asyncio.to_thread(revalidate_write_grant, resume_metadata)
+    except ValueError as exc:
+        return ResumeAgentResult(False, error=f"resume_external_write_grant_invalid:{exc}")
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     if provider not in SUPPORTED_RESUME_PROVIDERS:
         return ResumeAgentResult(False, error=f"resume_unsupported_provider:{provider}")

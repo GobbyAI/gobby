@@ -66,7 +66,7 @@ class TestCreateSpawnAgentRegistry:
 
         assert registry.get_schema("spawn_agent") is not None
 
-    def test_spawn_agent_schema_includes_lifecycle_defaults(self, mock_runner) -> None:
+    def test_spawn_agent_schema_includes_lifecycle_defaults(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -90,7 +90,7 @@ class TestSpawnAgentDefaults:
     """Tests for spawn_agent with default values."""
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_defaults_to_default_agent(self, mock_runner) -> None:
+    async def test_spawn_agent_defaults_to_default_agent(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = AgentDefinitionBody(
@@ -138,7 +138,7 @@ class TestSpawnAgentDefaults:
             assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_awaits_workflow_loader(self, mock_runner) -> None:
+    async def test_spawn_agent_awaits_workflow_loader(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         pipeline = PipelineDefinition(
@@ -193,7 +193,7 @@ class TestSpawnAgentDefaults:
 
     @pytest.mark.asyncio
     async def test_spawn_agent_forwards_disabled_parent_completion_notification(
-        self, mock_runner
+        self, mock_runner: MagicMock
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -243,8 +243,9 @@ class TestSpawnAgentDefaults:
         assert mock_spawn_impl.call_args.kwargs["notify_parent_on_completion"] is False
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["single", "batch-default", "batch-item"])
     async def test_spawn_agent_forwards_default_parent_completion_notification(
-        self, mock_runner
+        self, mock_runner: MagicMock, mode: str
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -279,13 +280,26 @@ class TestSpawnAgentDefaults:
                 return_value={"success": True, "run_id": "run-123"},
             ) as mock_spawn_impl,
         ):
-            result = await registry.call(
-                "spawn_agent",
-                {
-                    "prompt": "Test prompt",
-                    "parent_session_id": "parent-789",
-                },
-            )
+            arguments = {
+                "prompt": "Test prompt",
+                "parent_session_id": "parent-789",
+                "extra_write_paths": ["/external/workspace"],
+                "write_paths_reason": "Task authorization",
+            }
+            if mode == "single":
+                result = await registry.call("spawn_agent", arguments)
+            else:
+                suggestion: dict[str, Any] = {"ref": "#1", "prompt": "Test prompt"}
+                batch_arguments = {"parent_session_id": "parent-789", "suggestions": [suggestion]}
+                target = batch_arguments if mode == "batch-default" else suggestion
+                target.update(
+                    {
+                        "extra_write_paths": ["/external/workspace"],
+                        "write_paths_reason": "Task authorization",
+                    }
+                )
+                response = await registry.call("dispatch_batch", batch_arguments)
+                result = response["results"][0]
 
         assert result["success"] is True
         assert result["run_id"] == "run-123"
@@ -294,10 +308,13 @@ class TestSpawnAgentDefaults:
         assert mock_spawn_impl.call_args.kwargs["completion_registry"] is completion_registry
         assert mock_spawn_impl.call_args.kwargs["notify_parent_on_completion"] is True
 
+        assert mock_spawn_impl.call_args.kwargs["extra_write_paths"] == ["/external/workspace"]
+        assert mock_spawn_impl.call_args.kwargs["write_paths_reason"] == "Task authorization"
+
     @pytest.mark.asyncio
     async def test_spawn_agent_derives_project_path_from_parent_session(
         self,
-        mock_runner,
+        mock_runner: MagicMock,
         db: HubDatabase,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -492,7 +509,7 @@ class TestSpawnAgentDefaults:
     @pytest.mark.asyncio
     async def test_explicit_project_path_does_not_fall_back_to_current_context(
         self,
-        mock_runner,
+        mock_runner: MagicMock,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -541,7 +558,7 @@ class TestSpawnAgentParamOverrides:
 
     async def _spawn_request_for(
         self,
-        mock_runner,
+        mock_runner: MagicMock,
         agent_body: AgentDefinitionBody,
         call_params: dict[str, object],
     ) -> Any:
@@ -601,7 +618,7 @@ class TestSpawnAgentParamOverrides:
             return mock_execute.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_tool_params_override_agent_definition(self, mock_runner) -> None:
+    async def test_tool_params_override_agent_definition(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = AgentDefinitionBody(
@@ -658,7 +675,9 @@ class TestSpawnAgentParamOverrides:
             assert mock_execute.call_args[0][0].provider == "claude"
 
     @pytest.mark.asyncio
-    async def test_provider_override_omits_agent_definition_model(self, mock_runner) -> None:
+    async def test_provider_override_omits_agent_definition_model(
+        self, mock_runner: MagicMock
+    ) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -679,7 +698,7 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model is None
 
     @pytest.mark.asyncio
-    async def test_provider_override_preserves_explicit_model(self, mock_runner) -> None:
+    async def test_provider_override_preserves_explicit_model(self, mock_runner: MagicMock) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -701,7 +720,9 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "opus"
 
     @pytest.mark.asyncio
-    async def test_provider_override_blank_model_uses_provider_default(self, mock_runner) -> None:
+    async def test_provider_override_blank_model_uses_provider_default(
+        self, mock_runner: MagicMock
+    ) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -723,7 +744,9 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model is None
 
     @pytest.mark.asyncio
-    async def test_no_provider_override_keeps_agent_definition_model(self, mock_runner) -> None:
+    async def test_no_provider_override_keeps_agent_definition_model(
+        self, mock_runner: MagicMock
+    ) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -743,7 +766,9 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "gpt-5.4"
 
     @pytest.mark.asyncio
-    async def test_model_selector_does_not_override_agent_provider(self, mock_runner) -> None:
+    async def test_model_selector_does_not_override_agent_provider(
+        self, mock_runner: MagicMock
+    ) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -764,7 +789,7 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "claude/sonnet-4-6"
 
     @pytest.mark.asyncio
-    async def test_model_name_does_not_infer_provider(self, mock_runner) -> None:
+    async def test_model_name_does_not_infer_provider(self, mock_runner: MagicMock) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -785,7 +810,9 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "gpt-5.6-sol"
 
     @pytest.mark.asyncio
-    async def test_explicit_provider_accepts_opaque_model_selector(self, mock_runner) -> None:
+    async def test_explicit_provider_accepts_opaque_model_selector(
+        self, mock_runner: MagicMock
+    ) -> None:
         agent_body = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
@@ -807,7 +834,9 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "claude/sonnet-4-6"
 
     @pytest.mark.asyncio
-    async def test_missing_provider_sources_returns_actionable_error(self, mock_runner) -> None:
+    async def test_missing_provider_sources_returns_actionable_error(
+        self, mock_runner: MagicMock
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -845,7 +874,7 @@ class TestSpawnAgentTaskResolution:
 
     @pytest.mark.asyncio
     async def test_task_id_supports_hash_n_format(
-        self, mock_runner, agent_body, db: HubDatabase
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody, db: HubDatabase
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -926,7 +955,7 @@ class TestSpawnAgentSandbox:
 
     @pytest.mark.asyncio
     async def test_agent_sandbox_defaults_come_from_daemon_config(
-        self, mock_runner, agent_body
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -998,7 +1027,7 @@ class TestSpawnAgentSandbox:
 
     @pytest.mark.asyncio
     async def test_spawn_agent_schema_no_longer_exposes_sandbox_knobs(
-        self, mock_runner, agent_body
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -1017,7 +1046,9 @@ class TestSpawnAgentNotFound:
     """Tests for agent not found behavior."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_missing_non_default_agent(self, mock_runner) -> None:
+    async def test_returns_error_for_missing_non_default_agent(
+        self, mock_runner: MagicMock
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())

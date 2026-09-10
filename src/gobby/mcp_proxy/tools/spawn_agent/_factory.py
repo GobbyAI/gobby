@@ -337,6 +337,8 @@ def create_spawn_agent_registry(
         project_path: str | None = None,
         notify_parent_on_completion: bool = True,
         terminal_backend: Literal["tmux", "native"] | None = None,
+        extra_write_paths: list[str] | None = None,
+        write_paths_reason: str | None = None,
     ) -> dict[str, Any]:
         """
                 Spawn a subagent with the specified configuration.
@@ -361,6 +363,8 @@ def create_spawn_agent_registry(
                     timeout: Timeout in seconds
                     parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
                     project_path: Project path override
+                    extra_write_paths: Explicit external directories authorized for this run
+                    write_paths_reason: Required authorization reason for nonempty external roots
                     notify_parent_on_completion: Whether to notify the parent when the agent completes
 
                 Returns:
@@ -573,6 +577,8 @@ def create_spawn_agent_registry(
             daemon_config=config_resolver() if config_resolver is not None else None,
             code_index=code_index,
             terminal_backend=terminal_backend,
+            extra_write_paths=extra_write_paths,
+            write_paths_reason=write_paths_reason,
         )
 
         return result
@@ -600,6 +606,8 @@ def create_spawn_agent_registry(
         parent_session_id: str | None = None,
         timeout: float | None = None,
         notify_parent_on_completion: bool = True,
+        extra_write_paths: list[str] | None = None,
+        write_paths_reason: str | None = None,
     ) -> dict[str, Any]:
         """Dispatch multiple agents for non-conflicting tasks.
 
@@ -682,6 +690,8 @@ def create_spawn_agent_registry(
             suggestion_agent = _coalesce_string(suggestion, "agent", agent)
             try:
                 result = await spawn_agent(
+                    extra_write_paths=suggestion.get("extra_write_paths", extra_write_paths),
+                    write_paths_reason=suggestion.get("write_paths_reason", write_paths_reason),
                     prompt=prompt,
                     agent=suggestion_agent or "backend-developer",
                     task_id=task_id,
@@ -714,6 +724,7 @@ def create_spawn_agent_registry(
                     "run_id": result.get("run_id", ""),
                     "success": result.get("success", False),
                     "agent": suggestion_agent or "backend-developer",
+                    "external_write_grant": result.get("external_write_grant"),
                 }
                 if not out["success"] and result.get("error"):
                     out["error"] = result["error"]

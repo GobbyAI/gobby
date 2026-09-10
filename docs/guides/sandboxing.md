@@ -8,6 +8,39 @@ network access instead of granting unrestricted network access.
 For the test and lifecycle matrix, see
 [sandbox-compatibility.md](./sandbox-compatibility.md).
 
+## Explicit external workspace grants
+
+Managed `spawn_agent` accepts `extra_write_paths` (absolute existing directories)
+and `write_paths_reason` (a nonblank authorization explanation). For example:
+
+```json
+{
+  "extra_write_paths": ["/Users/josh/Projects/wiki-bakeoff-code-2026-09"],
+  "write_paths_reason": "User authorized this task's external bakeoff workspace"
+}
+```
+
+The same fields are available on HTTP managed spawn requests and individual
+batch entries. Omitting paths adds no grant and never inherits a parent's
+external roots. A top-level coordinator asserts authorization; a managed child
+can explicitly delegate only its recorded external roots or their subdirectories.
+The recorded caller session/run determines this boundary, even when the caller
+names another parent. This assertion is auditable, not proof of human approval.
+
+Requests resolve symlinks and `..`, deduplicate canonical roots, and reject
+missing/non-directory/relative paths, filesystem and home roots, and paths
+overlapping protected credential or daemon roots. Grants merge with existing
+daemon, worktree, runtime-cache and sensitive-path policy. Existing deny rules
+still win. A grant does not override a disabled sandbox configuration.
+
+Spawn results contain `external_write_grant`: requested and canonical roots,
+reason, asserting session, parent run and timestamp. Existing run inspection
+exposes the same object in `resume_metadata_json`. Resume preserves this grant
+and rejects removed roots, changed symlink targets or newly protected paths
+before allocating a successor. Ordinary nested writes, including `.vite-temp`,
+are allowed within the effective grant; an ungranted sibling or symlink escape
+does not gain write access.
+
 ## Backends
 
 Two explicit backends are supported:

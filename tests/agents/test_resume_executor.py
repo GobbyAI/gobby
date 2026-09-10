@@ -237,6 +237,7 @@ async def test_resume_reuses_child_session_and_finalizes_durable_phases(
 @pytest.mark.asyncio
 async def test_srt_resume_executes_resolved_provider_target(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     storage = MagicMock()
     runner = _runner(storage=storage)
@@ -267,6 +268,15 @@ async def test_srt_resume_executes_resolved_provider_target(
             },
         }
     )
+    from gobby.agents.external_write_grants import GRANT_KEY
+
+    roots = [str(tmp_path.resolve())]
+    metadata[GRANT_KEY] = {
+        "requested_roots": roots,
+        "canonical_roots": roots,
+        "reason": "authorized",
+    }
+    metadata["sandbox_config"]["extra_write_paths"] = roots
 
     result = await resume_executor.resume_agent_run(
         _original_run(provider="claude"),
@@ -289,6 +299,32 @@ async def test_srt_resume_executes_resolved_provider_target(
     assert prepare_sandbox.await_args is not None
     assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
     assert prepare_sandbox.await_args.kwargs["run_id"] == str(_SUCCESSOR_ID)
+    assert prepare_sandbox.await_args.kwargs["config"].extra_write_paths == roots
+
+
+async def test_resume_rejects_changed_grant_before_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.agents.external_write_grants import GRANT_KEY
+
+    prepare = MagicMock()
+    monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
+    metadata = _resume_metadata()
+    metadata[GRANT_KEY] = {
+        "requested_roots": [str(tmp_path)],
+        "canonical_roots": [str(tmp_path / "changed")],
+        "reason": "authorized",
+    }
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=_runner(),
+        session_manager=MagicMock(),
+    )
+    assert result.success is False
+    assert result.error is not None and "canonical identity changed" in result.error
+    prepare.assert_not_called()
 
 
 @pytest.mark.asyncio
