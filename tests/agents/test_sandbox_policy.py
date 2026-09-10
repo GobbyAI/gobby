@@ -12,6 +12,7 @@ import pytest
 
 from gobby.agents import sandbox_policy
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.utils.daemon_git import GitFailed
 
 pytestmark = pytest.mark.unit
@@ -45,7 +46,7 @@ def _run_cache(
     *,
     workspace: Path,
     run_id: str = "run-1",
-) -> tuple[sandbox_policy.SandboxRunPaths, Path]:
+) -> tuple[SandboxRunPaths, Path]:
     gobby_home = tmp_path / "gobby-home"
     monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
     paths = sandbox_policy.prepare_sandbox_run_paths(
