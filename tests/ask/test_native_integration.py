@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-from datetime import UTC, datetime, timedelta
+import time
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 
-from gobby.agents.code_index import _prepare_gcode_runtime
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
@@ -22,6 +21,7 @@ from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.ask import native_probe_harness as harness
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
@@ -63,62 +63,6 @@ def _branch_gcode() -> Path:
     executable = Path(__file__).parents[2] / "target" / "debug" / "gcode"
     assert executable.is_file(), "build the branch-local gcode binary before integration"
     return executable
-
-
-def _seed_parent_index(
-    *,
-    repo: Path,
-    manager: ManagedCredentialManager,
-    session_id: UUID,
-    project_id: str,
-    machine_id: str,
-    runtime_root: Path,
-    gcode_bin: Path,
-) -> None:
-    issued = manager.issue_tool_request(
-        session_id=session_id,
-        requested_project_path=str(repo),
-        expires_at=datetime.now(UTC) + timedelta(minutes=10),
-    )
-    try:
-        runtime = _prepare_gcode_runtime(
-            workspace=repo,
-            gcode_bin=gcode_bin,
-            credential=issued.credential,
-            runtime_root=runtime_root,
-            machine_id=machine_id,
-            project_id=project_id,
-            session_id=str(session_id),
-            principal_kind="tool_chat",
-        )
-        env = {
-            **os.environ,
-            **runtime.env,
-            "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
-            "GOBBY_MACHINE_ID": machine_id,
-            "GOBBY_PROJECT_ID": project_id,
-            "GOBBY_SESSION_ID": str(session_id),
-        }
-        subprocess.run(
-            [
-                str(gcode_bin),
-                "index",
-                "--quiet",
-                "--project",
-                str(repo),
-            ],
-            cwd=repo,
-            env=env,
-            check=True,
-            capture_output=True,
-            timeout=180,
-        )
-    finally:
-        manager.revoke(
-            issued.credential.managed_execution_id,
-            generation=issued.credential.credential_generation,
-            reason="ask_native_integration_parent_seed",
-        )
 
 
 @pytest.mark.asyncio
@@ -171,6 +115,10 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     historical_merge = _git(repo, "rev-parse", "HEAD")
     (repo / "src" / "tip.rs").write_text("pub fn later_tip() {}\n", encoding="utf-8")
     _commit(repo, "later tip")
+    (repo / "src" / "dirty.rs").write_text(
+        "pub fn dirty_parent_only() {}\n",
+        encoding="utf-8",
+    )
 
     project_id = isolated.project.id
     session = SessionManager(temp_db).register(
@@ -225,15 +173,28 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     )
     session_id = UUID(session.id)
     gcode_bin = _branch_gcode()
-    _seed_parent_index(
-        repo=repo,
+    schema_row = temp_db.fetchone("SELECT current_schema() AS schema")
+    assert schema_row is not None
+    database_scope = str(schema_row["schema"])
+    bootstrap = harness._provision_private_parent_index(
+        project_root=repo,
         manager=credential_manager,
+        database=temp_db,
         session_id=session_id,
         project_id=project_id,
         machine_id=isolated.machine_id,
         runtime_root=runtime_root / "parent",
         gcode_bin=gcode_bin,
+        source_commit=historical_merge,
+        deadline_monotonic=time.monotonic() + 600,
+        database_scope=database_scope,
+        evidence_path=tmp_path / "parent-index-bootstrap.json",
     )
+    assert bootstrap["status"] == "completed"
+    assert bootstrap["source_commit"] == historical_merge
+    assert bootstrap["database_scope"] == database_scope
+    assert all(command["returncode"] == 0 for command in bootstrap["commands"])
+    assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
     manager = AskSnapshotManager(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
@@ -276,6 +237,14 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         "search",
         {"lane": "literal", "query": "pub fn", "paths": ["src"], "limit": 1},
     )
+    newer_parent = await admission.query(
+        "search",
+        {"lane": "literal", "query": "later_tip", "paths": [], "limit": 100},
+    )
+    dirty_parent = await admission.query(
+        "search",
+        {"lane": "literal", "query": "dirty_parent_only", "paths": [], "limit": 100},
+    )
 
     assert snapshot.commit_oid == historical_merge
     assert len(snapshot.binding["commit"]["parent_oids"]) == 2
@@ -287,6 +256,8 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     assert partial["complete"] is False
     assert partial["completeness"] == "truncated_index"
     assert partial.get("continuation") is None
+    assert newer_parent["items"] == []
+    assert dirty_parent["items"] == []
     secret_entry = next(
         item for item in snapshot.inventory["entries"] if item["path"] == "src/public_config.rs"
     )
