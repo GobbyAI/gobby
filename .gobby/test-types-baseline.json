@@ -3111,56 +3111,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_normalization.py::::mypy:call-overload",
-      "issue_code": "mypy:call-overload",
-      "line": 733,
-      "message": "No overload variant of \"__getitem__\" of \"Sequence\" matches argument type \"str\"",
-      "occurrences": 2,
-      "path": "tests/hooks/test_normalization.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_normalization.py::::mypy:comparison-overlap",
-      "issue_code": "mypy:comparison-overlap",
-      "line": 593,
-      "message": "Non-overlapping equality check (left operand type: \"str\", right operand type: \"dict[str, str]\")",
-      "occurrences": 40,
-      "path": "tests/hooks/test_normalization.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_normalization.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 753,
-      "message": "Invalid index type \"str\" for \"str\"; expected type \"SupportsIndex | slice[Any, Any, Any]\"",
-      "occurrences": 22,
-      "path": "tests/hooks/test_normalization.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_normalization.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 1402,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 6,
-      "path": "tests/hooks/test_normalization.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_normalization.py::::mypy:var-annotated",
-      "issue_code": "mypy:var-annotated",
-      "line": 651,
-      "message": "Need type annotation for \"data\"",
-      "occurrences": 1,
-      "path": "tests/hooks/test_normalization.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_session_end_handlers.py::::mypy:type-arg",
       "issue_code": "mypy:type-arg",
       "line": 23,

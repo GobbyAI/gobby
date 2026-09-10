@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -19,6 +20,39 @@ pytestmark = pytest.mark.unit
 SHARED = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
 RULE = SHARED / "workflows/rules/worker-safety/block-direct-provider-launch.yaml"
 SESSION = "abababab-0000-4000-8000-000000000001"
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [("codex exec smoke", True), ("codex --help", False), ("git status --short", False)],
+)
+async def test_native_codex_command_alias_with_command_pattern_rules(
+    hub_db: HubDatabase, command: str, blocked: bool
+) -> None:
+    for path in (RULE, SHARED / "workflows/rules/task-enforcement/block-gobby-tasks-cli.yaml"):
+        assert sync_rule_file(hub_db, path, tag="gobby")["success"]
+    agent_body = yaml.safe_load((SHARED / "workflows/agents/default.yaml").read_text())
+    AgentDefinitionManager(hub_db).create(
+        name="default", definition_json=agent_body, source="custom"
+    )
+    event = CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "session_id": SESSION,
+                "tool_name": "exec_command",
+                "tool_input": {"cmd": command},
+            },
+        }
+    )
+    assert event is not None
+    assert event.data["tool_input"]["command"] == command
+    assert event.data["_raw_tool_input"] == {"cmd": command}
+    result = await RuleEngine(hub_db).evaluate(
+        event, session_id=SESSION, variables={"_agent_type": "default", "is_spawned_agent": False}
+    )
+    assert (result.decision == "block") is blocked
+    assert "block-gobby-tasks-cli" not in (result.reason or "")
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "droid", "grok", "qwen", "agy"])

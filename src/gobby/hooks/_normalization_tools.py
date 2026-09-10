@@ -13,6 +13,7 @@ from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
 from gobby.hooks.tool_outcomes import normalize_tool_outcome
 
 _TOOL_INPUT_FIELD_ALIASES = (
+    ("cmd", "command"),
     ("CommandLine", "command"),
     ("Cwd", "cwd"),
     ("TargetFile", "file_path"),
