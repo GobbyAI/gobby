@@ -1302,6 +1302,8 @@ def _terminate_owned_host_process(
     deadline_monotonic: float,
     runtime_root: Path,
 ) -> dict[str, object]:
+    from gobby.terminals.host_protocol import pidfile_path, read_pidfile
+
     launch = _terminal_host_record(snapshot)
     host_pid = launch.get("host_pid")
     pgid = launch.get("pgid")
@@ -1344,13 +1346,37 @@ def _terminate_owned_host_process(
         )
     if remaining:
         raise RuntimeError("native Ask terminal host process group did not terminate")
-    removed_sockets: list[str] = []
+    removable_sockets: list[Path] = []
     for field in ("control_socket", "frames_socket"):
         path_value = launch.get(field)
         if _owned_host_socket_exists(path_value, socket_dir=socket_dir):
-            path = Path(cast(str, path_value))
-            path.unlink()
-            removed_sockets.append(str(path))
+            removable_sockets.append(Path(cast(str, path_value)))
+    if removable_sockets:
+        current_pidfile = pidfile_path(socket_dir)
+        captured_pidfile = launch.get("pidfile")
+        try:
+            pidfile_stat = current_pidfile.lstat()
+        except FileNotFoundError as error:
+            raise RuntimeError(
+                "stale terminal host receipt cannot remove current endpoints"
+            ) from error
+        if (
+            not isinstance(captured_pidfile, str)
+            or Path(captured_pidfile) != current_pidfile
+            or stat.S_ISLNK(pidfile_stat.st_mode)
+            or not stat.S_ISREG(pidfile_stat.st_mode)
+            or pidfile_stat.st_uid != os.getuid()
+            or pidfile_stat.st_nlink != 1
+            or read_pidfile(socket_dir) != host_pid
+            or _process_start_identity(host_pid) is not None
+        ):
+            raise RuntimeError("stale terminal host receipt cannot remove current endpoints")
+    removed_sockets: list[str] = []
+    for path in removable_sockets:
+        if not _owned_host_socket_exists(str(path), socket_dir=socket_dir):
+            continue
+        path.unlink()
+        removed_sockets.append(str(path))
     observation = _terminal_host_observation(snapshot)
     _assert_terminal_host_absent(observation)
     return {
