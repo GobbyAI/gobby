@@ -78,14 +78,18 @@ _MAX_STREAM_STDERR_BYTES = 64 * 1024
 
 def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
     """Parse Git porcelain-v1 NUL records without interpreting path text."""
-    records = output.split("\0")
+    if not output:
+        return ()
+    if not output.endswith("\0"):
+        raise ValueError("invalid porcelain-v1 status output")
+    records = output[:-1].split("\0")
+    if any(not record for record in records):
+        raise ValueError("invalid porcelain-v1 status output")
     entries: list[GitStatusEntry] = []
     index = 0
     while index < len(records):
         record = records[index]
         index += 1
-        if not record:
-            continue
         if len(record) < 4 or record[2] != " ":
             raise ValueError("invalid porcelain-v1 status record")
 
@@ -93,7 +97,7 @@ def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
         path = record[3:]
         original_path = None
         if "R" in code or "C" in code:
-            if index >= len(records) or not records[index]:
+            if index >= len(records):
                 raise ValueError("rename status record is missing its original path")
             original_path = records[index]
             index += 1

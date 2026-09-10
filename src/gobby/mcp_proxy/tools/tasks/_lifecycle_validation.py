@@ -93,6 +93,7 @@ async def apply_task_cleanliness_gate(
     ctx: RegistryContext,
     evaluation: CloseEvaluation,
     *,
+    edited_paths: AbstractSet[str],
     owner_session_id: str,
     project_id: str,
     repo_path: str,
@@ -100,7 +101,7 @@ async def apply_task_cleanliness_gate(
     """Apply target-attributed clean-path proof to the close checklist."""
     proof = await evaluate_task_clean_proof(
         ctx,
-        edited_paths=evaluation.edited_paths,
+        edited_paths=edited_paths,
         repo_path=repo_path,
     )
     evaluation.extra["clean_proof"] = proof.as_dict()

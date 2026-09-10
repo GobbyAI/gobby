@@ -303,6 +303,59 @@ async def test_clean_linked_target_closes_amid_unowned_foreign_and_expired_dirt(
 
 
 @pytest.mark.asyncio
+async def test_released_target_path_reedited_by_foreign_task_does_not_block_close(
+    close_harness: CloseHarness,
+) -> None:
+    path = "shared.py"
+    (close_harness.repo_path / path).write_text("TARGET = True\n", encoding="utf-8")
+    _attribute_path(
+        close_harness,
+        session_id=close_harness.session_id,
+        task=close_harness.task,
+        path=path,
+    )
+    _git(close_harness.repo_path, "add", path)
+    _git(
+        close_harness.repo_path,
+        "-c",
+        "user.name=Gobby Tests",
+        "-c",
+        "user.email=gobby-tests@example.com",
+        "commit",
+        "--no-gpg-sign",
+        "-q",
+        "-m",
+        "target task commit",
+    )
+    close_harness.manager.link_commit(
+        close_harness.task.id,
+        _git(close_harness.repo_path, "rev-parse", "HEAD"),
+    )
+    released, remaining = close_harness.variable_manager.release_task_edited_files(
+        close_harness.session_id,
+        close_harness.task.id,
+        [path],
+        checkout_root=str(close_harness.repo_path),
+    )
+    assert released == [path]
+    assert remaining == []
+
+    _create_foreign_attribution(
+        close_harness,
+        external_id="later-foreign-owner",
+        path=path,
+        expired=False,
+    )
+    (close_harness.repo_path / path).write_text("FOREIGN = True\n", encoding="utf-8")
+
+    result = await _close_task(close_harness)
+
+    assert result["closed"] is True
+    assert result["clean_proof"] == {"status": "clean"}
+    assert close_harness.manager.get_task(close_harness.task.id).closed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_target_dirt_blocks_close_evaluation(close_harness: CloseHarness) -> None:
     (close_harness.repo_path / "target.py").write_text("DIRTY = True\n", encoding="utf-8")
 
@@ -355,6 +408,10 @@ async def test_target_dirt_added_during_review_blocks_close_finalization(
             ),
             id="malformed",
         ),
+        pytest.param(
+            GitOk(status="ok", argv=("status",), stdout="\0", stderr=""),
+            id="nul-only",
+        ),
     ],
 )
 async def test_unprovable_git_status_fails_close_evaluation(
@@ -377,14 +434,18 @@ async def test_unprovable_git_status_fails_close_evaluation(
 
 
 @pytest.mark.asyncio
-async def test_malformed_git_status_fails_close_finalization(close_harness: CloseHarness) -> None:
+@pytest.mark.parametrize("malformed_stdout", ["\0", "R  target.py\0"])
+async def test_malformed_git_status_fails_close_finalization(
+    close_harness: CloseHarness,
+    malformed_stdout: str,
+) -> None:
     status = AsyncMock(
         side_effect=[
             GitOk(status="ok", argv=("status",), stdout="", stderr=""),
             GitOk(
                 status="ok",
                 argv=("status",),
-                stdout="R  target.py\0",
+                stdout=malformed_stdout,
                 stderr="",
             ),
         ]

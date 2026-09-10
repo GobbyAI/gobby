@@ -227,6 +227,7 @@ def _ready_evaluation(
             attributed=False,
             raw_paths=frozenset(),
             edited_paths=frozenset(),
+            clean_proof_paths=frozenset(),
             had_attributed_edits=False,
             claim_started_at=None,
         )
@@ -1309,6 +1310,7 @@ async def test_same_owner_reclaim_window_change_returns_stale() -> None:
         attributed=False,
         raw_paths=frozenset(),
         edited_paths=frozenset(),
+        clean_proof_paths=frozenset(),
         had_attributed_edits=False,
         claim_started_at="2026-07-27T12:00:00Z",
     )
@@ -2358,6 +2360,7 @@ def test_fingerprint_differences_name_nested_attribution_fields() -> None:
         attributed=True,
         raw_paths=frozenset({"a.py"}),
         edited_paths=frozenset({"a.py"}),
+        clean_proof_paths=frozenset({"a.py"}),
         had_attributed_edits=True,
         claim_started_at=None,
     )

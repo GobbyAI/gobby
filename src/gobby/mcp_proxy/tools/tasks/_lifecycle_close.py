@@ -515,6 +515,7 @@ async def _evaluate_close(
     await apply_task_cleanliness_gate(
         ctx,
         evaluation,
+        edited_paths=attribution.clean_proof_paths,
         owner_session_id=attribution.owner_session_id,
         project_id=task.project_id,
         repo_path=repo_path,

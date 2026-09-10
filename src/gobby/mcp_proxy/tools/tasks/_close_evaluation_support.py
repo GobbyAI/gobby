@@ -39,6 +39,7 @@ class CloseAttributionSnapshot:
     attributed: bool
     raw_paths: frozenset[str]
     edited_paths: frozenset[str]
+    clean_proof_paths: frozenset[str]
     had_attributed_edits: bool
     claim_started_at: str | None
 

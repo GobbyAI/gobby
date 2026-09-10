@@ -37,6 +37,10 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
 )
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError, TaskStaleStateError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.workflows.commit_guard import (
+    DirtyEditOwnershipInspectionError,
+    foreign_owned_dirty_paths,
+)
 from gobby.workflows.task_dirty_state import (
     committable_task_paths_async as _committable_task_paths,
 )
@@ -95,6 +99,35 @@ async def _linked_commit_paths(
         return frozenset()
 
 
+async def _linked_commit_clean_proof_paths(
+    ctx: RegistryContext,
+    *,
+    paths: frozenset[str],
+    owner_session_id: str,
+    project_id: str,
+    repo_path: str,
+) -> frozenset[str]:
+    """Exclude paths currently attributed to another active task owner."""
+    try:
+        foreign_owned = await asyncio.to_thread(
+            foreign_owned_dirty_paths,
+            ctx.task_manager.db,
+            session_id=owner_session_id,
+            project_id=project_id,
+            checkout_root=repo_path,
+            paths=paths,
+        )
+    except DirtyEditOwnershipInspectionError:
+        logger.warning(
+            "Linked-commit ownership inspection failed during close_task; "
+            "retaining every fallback path",
+            extra={"project_id": project_id, "session_id": owner_session_id},
+            exc_info=True,
+        )
+        return paths
+    return paths.difference(foreign_owned)
+
+
 async def capture_attribution(
     ctx: RegistryContext,
     *,
@@ -112,6 +145,7 @@ async def capture_attribution(
 
     attributed = target_task_has_edits(session_vars, task_id)
     raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
+    used_commit_fallback = not raw_paths
     if not raw_paths:
         # Session variables are a volatile cache of what the task edited: escalation,
         # dead-session recovery, and a fresh claiming session all leave them empty for
@@ -125,11 +159,21 @@ async def capture_attribution(
         )
         attributed = attributed or bool(raw_paths)
     edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
+    clean_proof_paths = edited_paths
+    if used_commit_fallback and edited_paths:
+        clean_proof_paths = await _linked_commit_clean_proof_paths(
+            ctx,
+            paths=edited_paths,
+            owner_session_id=owner_session_id,
+            project_id=task.project_id,
+            repo_path=repo_path,
+        )
     return CloseAttributionSnapshot(
         owner_session_id=owner_session_id,
         attributed=attributed,
         raw_paths=raw_paths,
         edited_paths=edited_paths,
+        clean_proof_paths=clean_proof_paths,
         had_attributed_edits=attributed and bool(edited_paths),
         claim_started_at=_claimed_session_window_start(
             ctx,
@@ -256,7 +300,11 @@ async def commit_close(
     )
     clean_proof = await evaluate_task_clean_proof(
         ctx,
-        edited_paths=fresh_edited_paths,
+        edited_paths=(
+            set(fresh_attribution.clean_proof_paths)
+            if fresh_attribution is not None
+            else fresh_edited_paths
+        ),
         repo_path=evaluation.repo_path or "",
     )
     evaluation.extra["clean_proof"] = clean_proof.as_dict()
