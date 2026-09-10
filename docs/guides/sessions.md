@@ -203,9 +203,8 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_usage_breakdown` | Aggregate token usage by source and model. |
 | `get_session_messages` | Read rendered transcript messages. |
 | `search_session_messages` | Search rendered transcript messages by substring. |
-| `set_handoff` | Set or generate handoff context for the current session. |
-| `get_handoff` | Retrieve handoff context directly or from the latest same-project `awaiting_handoff` session. |
-| `get_handoff` | Wait for a session's `summary_markdown` to become available. |
+| `set_handoff` | Stage an authored handoff and dispatch the current session's compact or clear boundary. |
+| `get_handoff` | Consume the current session's pending handoff; with `agent_run_id`, read the child run's final handoff. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Mark an autonomous loop complete to prevent session chaining. |
@@ -214,7 +213,6 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_transcript_status` | Check archive availability and transcript file stats. |
 | `send_keys` | Send keystrokes to a session-backed tmux terminal. |
 | `capture_output` | Capture recent tmux output. |
-| `set_handoff` | Trigger the current CLI's compaction command. |
 
 ### Finding Your Own Session
 
@@ -259,6 +257,15 @@ references are deduplicated in their original order. Rendered handoff content is
 limited to 10,000 JSON-escaped characters including formatting. Oversized content
 is rejected before staging; shorten it and retry. Submit required feedback through
 `gobby-sessions:feedback` first, then call `set_handoff` last.
+
+Daemon stop and restart refuse while a live session has an unresolved handoff,
+including one delivered but not yet consumed by `get_handoff`. An expired clear
+predecessor remains protected while its live successor has not read the handoff.
+Abandoned markers on expired or deleted sessions do not block shutdown.
+`gobby stop --wait` and `gobby restart --wait` wait up to ten minutes for handoffs;
+`--force` does not bypass this protection. Once shutdown passes the check, new
+handoffs cannot stage until it finishes or is cancelled. A blocked restart names
+the sessions and attempts to finish; it never consumes or discards their content.
 
 Load the standalone `handoff-discipline` skill before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;
