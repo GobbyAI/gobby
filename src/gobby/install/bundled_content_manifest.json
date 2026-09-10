@@ -596,6 +596,7 @@
     "workflows/rules/tool-hygiene/block-web-chat-send-keys.yaml": "9cd15446741904835a30086eafdfab4e147070628d03481a01b2954bd20a0d97",
     "workflows/rules/tool-hygiene/require-pytest-guard-env.yaml": "f8378097d2c493b87e841952c4499ad7cc1e92bde0cd7c494d67fb9bb7e26765",
     "workflows/rules/tool-hygiene/require-uv.yaml": "80787035529caa6756d1a7947cbdf0fb34da1d88331ecb766e6cf196b5d07d09",
+    "workflows/rules/worker-safety/block-direct-provider-launch.yaml": "ed446fe338d79cc10fc3f3555c573ecb77a24ed5d18f99ef9effb8f179988e9d",
     "workflows/rules/worker-safety/block-docker-policy-edits.yaml": "f31ef9899d17b005bdc275025730de369a1a503af5a17fd5fc665ddf012f8604",
     "workflows/rules/worker-safety/block-git-clone-interactive.yaml": "f8babe754e883528938a9201248b99bbd12b1a6d8bca2d27a125ee050c00d37c",
     "workflows/rules/worker-safety/block-git-clone.yaml": "4b0e0cf8617efbeb87cccff80c0cb5d5bf47b76f7054e6609c8975d2ed720919",
