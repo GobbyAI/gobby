@@ -177,6 +177,9 @@ pub fn seed_test_checkout(
     project_id: &str,
     root: &std::path::Path,
 ) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize test checkout {}: {error}", root.display()))?;
     let machine_id = gobby_core::machine::read_local_machine_id()
         .map_err(|error| format!("read local machine id: {error:#}"))?;
     let machine_id = uuid::Uuid::parse_str(&machine_id)
