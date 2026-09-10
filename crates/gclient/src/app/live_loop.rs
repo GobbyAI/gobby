@@ -33,6 +33,7 @@ mod control;
 pub(super) mod menu;
 pub(super) mod modal_input;
 pub(super) mod mouse;
+pub(super) mod orphans;
 pub(super) mod projects;
 
 use actions::{

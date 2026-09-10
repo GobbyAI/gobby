@@ -22,6 +22,8 @@ use uuid::Uuid;
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 pub const CONTROL_REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 pub const BROADCAST_CAPACITY: usize = 256;
+/// Rows per WS `terminal_list` inventory page; the daemon caps at 500.
+const INVENTORY_PAGE_SIZE: u16 = 200;
 /// Gated event kinds the daemon delivers only to a socket that subscribed to
 /// them; everything the workspace reduces over is on this list.
 pub const SUBSCRIBED_EVENTS: [&str; 5] = [
@@ -532,6 +534,25 @@ impl Daemon for LiveDaemon {
         cursor: Option<&str>,
     ) -> Result<Page<TerminalRow>, DaemonError> {
         self.inner.rest.list_terminals(project, cursor).await
+    }
+
+    async fn inventory_page(
+        &self,
+        states: &[&str],
+        cursor: Option<&str>,
+    ) -> Result<Page<TerminalRow>, DaemonError> {
+        let reply = self
+            .request(json!({
+                "type": "terminal_list",
+                "request_id": Uuid::new_v4().to_string(),
+                "states": states,
+                "limit": INVENTORY_PAGE_SIZE,
+                "cursor": cursor,
+            }))
+            .await?;
+        serde_json::from_value(reply).map_err(|error| DaemonError::Protocol {
+            detail: error.to_string(),
+        })
     }
 
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {

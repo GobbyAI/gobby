@@ -17,7 +17,7 @@ use crate::daemon::Daemon;
 use crate::key_input::KeyInput;
 use crate::prefs::save_prefs;
 use crate::theme::ThemeKind;
-use crate::ui::dialogs::{CloseTarget, Dialog, RenameKind};
+use crate::ui::dialogs::{CloseTarget, Dialog, OrphanRow, RenameKind};
 use crate::ui::keybind_help::help_lines;
 use crate::ui::navigator::{
     navigator_rows, NavigatorRow, NavigatorState, NavigatorStateFilter, NavigatorTarget,
@@ -75,6 +75,8 @@ pub enum ModalOutcome {
     },
     /// The remove-worktree dialog confirmed; the dialog stays open.
     RemoveWorktree(String),
+    /// The destroy-orphans dialog confirmed these checked rows; it is closed.
+    DestroyOrphans(Vec<OrphanRow>),
     /// A context menu item was activated for the target it was opened on.
     Menu {
         kind: ContextMenuKind,

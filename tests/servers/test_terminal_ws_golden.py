@@ -61,6 +61,7 @@ class _GoldenRow:
     cols: int | None = 80
     locator_key: str | None = None
     created_at: datetime = FIXTURE_TIME
+    updated_at: datetime = FIXTURE_TIME
 
 
 class _GoldenManager:

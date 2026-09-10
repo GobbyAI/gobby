@@ -196,6 +196,11 @@ impl Board {
                     (state == RowState::Working).then(|| "running".to_string());
             }
             RowState::Idle => {}
+            RowState::Orphaned => {
+                let agent = self.agent_mut(name);
+                agent.state = RowState::Orphaned;
+                agent.terminal_state = Some("orphaned".to_string());
+            }
             RowState::Unknown => self.panes.retain(|pane| pane.terminal_id != name),
         }
     }

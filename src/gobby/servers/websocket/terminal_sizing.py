@@ -56,6 +56,8 @@ class TerminalSizingMixin:
         if sizing is None:
             return
         manager = self.terminal_manager
+        if manager is None:
+            return
         row = manager.get(terminal_id)
         if row is None:
             return

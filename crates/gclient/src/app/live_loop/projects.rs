@@ -11,7 +11,7 @@ use crate::frame_source::FrameError;
 use crate::persist::{save_session, save_snapshot, ClientSession, WorkspaceSnapshot};
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
-use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind, WorktreeChoice};
+use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, RenameKind, WorktreeChoice};
 use crate::ui::sidebar_rows::project_label;
 use crate::ui::{Chrome, Mode};
 
@@ -556,6 +556,41 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
             KeyCode::Esc | KeyCode::Char('n') => return close_modal(chrome),
             _ => {}
         },
+        Dialog::DestroyOrphans {
+            rows,
+            checked,
+            selected,
+        } => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *selected = selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = (*selected + 1).min(rows.len().saturating_sub(1));
+            }
+            KeyCode::Char(' ') => {
+                if let Some(flag) = checked.get_mut(*selected) {
+                    *flag = !*flag;
+                }
+            }
+            KeyCode::Char('a') => {
+                let all = checked.iter().all(|flag| *flag);
+                checked.iter_mut().for_each(|flag| *flag = !all);
+            }
+            KeyCode::Enter => {
+                let picked: Vec<OrphanRow> = rows
+                    .iter()
+                    .zip(checked.iter())
+                    .filter(|(_, flag)| **flag)
+                    .map(|(row, _)| row.clone())
+                    .collect();
+                close_modal(chrome);
+                return if picked.is_empty() {
+                    ModalOutcome::Close
+                } else {
+                    ModalOutcome::DestroyOrphans(picked)
+                };
+            }
+            KeyCode::Esc => return close_modal(chrome),
+            _ => {}
+        },
         Dialog::ConfirmClose { .. } | Dialog::Rename { .. } | Dialog::Respond { .. } => {
             return close_modal(chrome)
         }
@@ -636,4 +671,93 @@ fn daemon_reason(error: &DaemonError) -> String {
         .find_map(|key| detail_value.get(key).and_then(|value| value.as_str()))
         .or_else(|| detail_value.as_str())
         .map_or_else(|| detail.clone(), str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn orphan(terminal_id: &str) -> OrphanRow {
+        OrphanRow {
+            terminal_id: terminal_id.to_string(),
+            backend: "tmux".to_string(),
+            name: terminal_id.to_string(),
+            owner: None,
+            last_seen: None,
+        }
+    }
+
+    fn press(chrome: &mut Chrome, code: KeyCode) -> ModalOutcome {
+        project_dialog_key(chrome, &KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn checked(chrome: &Chrome) -> (Vec<bool>, usize) {
+        match &chrome.dialog {
+            Some(Dialog::DestroyOrphans {
+                checked, selected, ..
+            }) => (checked.clone(), *selected),
+            other => panic!("destroy-orphans dialog expected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn destroy_orphans_dialog_toggles_and_confirms_checked_rows() {
+        let mut chrome = Chrome::dark();
+        chrome.dialog = Some(Dialog::DestroyOrphans {
+            rows: vec![orphan("alpha"), orphan("beta"), orphan("gamma")],
+            checked: vec![true; 3],
+            selected: 0,
+        });
+        chrome.mode = Mode::ProjectDialog;
+
+        assert_eq!(
+            press(&mut chrome, KeyCode::Char('j')),
+            ModalOutcome::Consumed
+        );
+        assert_eq!(
+            press(&mut chrome, KeyCode::Char(' ')),
+            ModalOutcome::Consumed
+        );
+        assert_eq!(checked(&chrome), (vec![true, false, true], 1));
+        // `a` fills a partial set, then clears a full one.
+        press(&mut chrome, KeyCode::Char('a'));
+        assert_eq!(checked(&chrome).0, [true, true, true]);
+        press(&mut chrome, KeyCode::Char('a'));
+        assert_eq!(checked(&chrome).0, [false, false, false]);
+        press(&mut chrome, KeyCode::Down);
+        press(&mut chrome, KeyCode::Down);
+        press(&mut chrome, KeyCode::Down);
+        assert_eq!(checked(&chrome).1, 2, "selection stops at the last row");
+        press(&mut chrome, KeyCode::Char(' '));
+        press(&mut chrome, KeyCode::Char('k'));
+        press(&mut chrome, KeyCode::Char(' '));
+        assert_eq!(checked(&chrome), (vec![false, true, true], 1));
+
+        assert_eq!(
+            press(&mut chrome, KeyCode::Enter),
+            ModalOutcome::DestroyOrphans(vec![orphan("beta"), orphan("gamma")])
+        );
+        assert_eq!(
+            (chrome.mode, chrome.dialog.is_none()),
+            (Mode::Terminal, true)
+        );
+
+        // Nothing checked confirms as a plain close; esc always closes.
+        chrome.dialog = Some(Dialog::DestroyOrphans {
+            rows: vec![orphan("alpha")],
+            checked: vec![false],
+            selected: 0,
+        });
+        chrome.mode = Mode::ProjectDialog;
+        assert_eq!(press(&mut chrome, KeyCode::Enter), ModalOutcome::Close);
+        chrome.dialog = Some(Dialog::DestroyOrphans {
+            rows: vec![orphan("alpha")],
+            checked: vec![true],
+            selected: 0,
+        });
+        chrome.mode = Mode::ProjectDialog;
+        assert_eq!(press(&mut chrome, KeyCode::Esc), ModalOutcome::Close);
+        assert!(chrome.dialog.is_none());
+    }
 }

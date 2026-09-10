@@ -99,6 +99,8 @@ impl WorkspaceView for Workspace {
 pub enum RowState {
     /// An attention prompt is waiting on this terminal.
     Attention,
+    /// The terminal's host is gone; the row can only be destroyed.
+    Orphaned,
     /// Output is arriving on an attached pane.
     Working,
     /// New output landed since the pane was last focused.
@@ -111,8 +113,9 @@ pub enum RowState {
 }
 
 impl RowState {
-    pub const ALL: [RowState; 5] = [
+    pub const ALL: [RowState; 6] = [
         RowState::Attention,
+        RowState::Orphaned,
         RowState::Working,
         RowState::Unseen,
         RowState::Idle,

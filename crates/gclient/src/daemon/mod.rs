@@ -180,6 +180,9 @@ pub struct TaskRef {
 pub struct TerminalRef {
     pub terminal_id: String,
     pub backend: String,
+    /// The terminal row's lifecycle state (`live`, `orphaned`, ...); an
+    /// `orphaned` row lost its host and can only be destroyed.
+    pub state: Option<String>,
 }
 
 /// The daemon nests the tmux name as `tmux: {session_name}`; a `null` block
@@ -375,6 +378,15 @@ pub trait Daemon: Send + Sync {
         project: &str,
         cursor: Option<&str>,
     ) -> Result<Page<TerminalRow>, DaemonError>;
+    /// One page of the daemon's whole terminal inventory (every project, every
+    /// ownership) over WS `terminal_list`, restricted to rows in `states`.
+    /// The sweep behind it refreshes the external tmux rows first, so the
+    /// page carries `attached_clients` for those.
+    async fn inventory_page(
+        &self,
+        states: &[&str],
+        cursor: Option<&str>,
+    ) -> Result<Page<TerminalRow>, DaemonError>;
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError>;
     async fn projects(&self) -> Result<Vec<ProjectRow>, DaemonError>;
     async fn source_status(&self, project: &str) -> Result<SourceStatus, DaemonError>;
@@ -417,7 +429,10 @@ struct ScriptedState {
     roster: Value,
     sidebar_rows: SidebarRows,
     terminal_pages: VecDeque<Value>,
+    inventory_pages: VecDeque<Value>,
     live_terminals: Vec<String>,
+    /// Terminal ids whose `terminal_kill` the scripted daemon refuses.
+    kill_refusals: Vec<String>,
     spawn_response: Value,
     last_spawn_body: Value,
     respond_status: u16,
@@ -455,7 +470,9 @@ impl ScriptedDaemon {
                 roster: json!({"epoch": "e0", "seq": 0, "entries": []}),
                 sidebar_rows: SidebarRows::default(),
                 terminal_pages: VecDeque::new(),
+                inventory_pages: VecDeque::new(),
                 live_terminals: Vec::new(),
+                kill_refusals: Vec::new(),
                 spawn_response: json!({"success": true}),
                 last_spawn_body: Value::Null,
                 respond_status: 200,
@@ -538,6 +555,17 @@ impl ScriptedDaemon {
 
     pub fn set_terminal_pages(&self, pages: Vec<Value>) {
         self.state().terminal_pages = pages.into();
+    }
+
+    /// Pages the next `inventory_page` calls return, in order; an exhausted
+    /// queue answers with an empty page.
+    pub fn set_inventory_pages(&self, pages: Vec<Value>) {
+        self.state().inventory_pages = pages.into();
+    }
+
+    /// Terminal ids `terminate` answers with `KillOutcome::Refused`.
+    pub fn set_kill_refusals(&self, ids: Vec<String>) {
+        self.state().kill_refusals = ids;
     }
 
     pub fn set_live_terminals(&self, ids: Vec<String>) {
@@ -828,8 +856,38 @@ impl Daemon for ScriptedDaemon {
         })
     }
 
+    async fn inventory_page(
+        &self,
+        states: &[&str],
+        cursor: Option<&str>,
+    ) -> Result<Page<TerminalRow>, DaemonError> {
+        self.send_ws(json!({
+            "type": "terminal_list",
+            "states": states,
+            "cursor": cursor,
+        }))?;
+        let page = self
+            .state()
+            .inventory_pages
+            .pop_front()
+            .unwrap_or_else(|| json!({"items": [], "next_cursor": null}));
+        serde_json::from_value(page).map_err(|error| DaemonError::Protocol {
+            detail: error.to_string(),
+        })
+    }
+
     async fn terminate(&self, terminal_id: &str) -> Result<KillOutcome, DaemonError> {
         self.send_ws(json!({"type": "terminal_kill", "terminal_id": terminal_id}))?;
+        let refused = self
+            .state()
+            .kill_refusals
+            .iter()
+            .any(|refused| refused == terminal_id);
+        if refused {
+            return Ok(KillOutcome::Refused {
+                terminal_id: terminal_id.to_string(),
+            });
+        }
         Ok(KillOutcome::Killed {
             terminal_id: terminal_id.to_string(),
         })

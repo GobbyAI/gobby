@@ -69,8 +69,9 @@ Logs go to `~/.gobby/logs/gclient.log`.
   under the card. Cards with worktrees carry a `▸`/`▾` fold toggle at the right
   edge. The footer has ` new` (register a project) and `menu` (the global menu).
 - *Agents* lists the focused project's terminals that run a Gobby session, each
-  with a state label: `blocked` (an attention prompt is waiting), `working`,
-  `done` (new output since you last looked), or `idle`. The header shows the sort
+  with a state label: `blocked` (an attention prompt is waiting), `orphaned`
+  (the terminal's host is gone; see *Orphaned terminals*), `working`, `done`
+  (new output since you last looked), or `idle`. The header shows the sort
   order (`grouped` or `priority`) and, when more than one machine is registered,
   the machine filter (`local`, `all`, or a machine id).
 
@@ -399,15 +400,16 @@ to keep a gesture for the client instead.
 | Tab | new tab, rename tab, close tab |
 | Project card | rename, close, new worktree, open worktree…, collapse / expand |
 | Worktree row | rename, close, delete worktree checkout… |
-| Agent row | focus, open in new tab, respond (when blocked), mark seen, take / release control, close terminal |
-| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, detach |
+| Agent row | focus, open in new tab, respond (when blocked), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
+| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane
 while its modifier is held. `close` on a project card kills every terminal in the
 project's tabs (after a confirm-close dialog) but leaves the project registered.
 `delete worktree checkout…` kills the worktree's terminals and removes the
-checkout through the daemon.
+checkout through the daemon. `destroy orphaned terminals…` opens the dialog
+described under *Orphaned terminals*.
 
 ## Workspace persistence
 
@@ -448,4 +450,29 @@ outcome the daemon never confirmed leaves the pane `◌ read-only` until you tak
 control again. If the host itself was drained or replaced, the affected terminals
 are gone and their panes disappear on the next roster refresh.
 
-_Last verified: 2026-09-09_
+### Orphaned terminals
+
+Two kinds of terminal row outlive their usefulness, and the client can destroy
+both from one place:
+
+- A native terminal whose host epoch is gone (the daemon marks the row
+  `orphaned`). Its agent row shows `◌ orphaned` in the sidebar, and its context
+  menu offers `destroy orphaned terminal` in place of `close terminal`.
+- A tmux session on the default or gobby socket with no attached client, for
+  example a Ghostty tab you closed. Gobby-owned agent sessions are always
+  detached and are never listed.
+
+`destroy orphaned terminals…` on the global menu (right-click empty chrome, or
+the sidebar's `menu` button) fetches the current candidates from the daemon and
+opens a checklist with every row checked. Each row shows the session name or
+title, the backend, the Gobby session that still owns it (or `no session`), and
+the time it was last seen. `j` / `k` or the arrows move, `space` toggles a row,
+`a` checks or clears all, `enter` destroys the checked rows, and `esc` cancels.
+The status line then reads `destroyed N of M orphaned terminals`, naming any row
+the daemon refused; with nothing to clean up it reads `no orphaned terminals`.
+
+With this action available you can set `destroy-unattached off` in
+`~/.tmux.conf`, so closing a tab detaches its session instead of killing it, and
+clear the leftovers from here when you are done with them.
+
+_Last verified: 2026-09-10_

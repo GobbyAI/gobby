@@ -28,6 +28,7 @@ use super::control::{
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::{apply_rename, persist_prefs, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
+use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
 use super::projects::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     mark_agent_seen, open_agent_in_new_tab, open_new_project_dialog, open_new_worktree_dialog,
@@ -180,6 +181,7 @@ pub(super) async fn apply_live_modal_outcome(
         ModalOutcome::RemoveWorktree(worktree_id) => {
             remove_worktree(workspace, chrome, &worktree_id).await?;
         }
+        ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, chrome, rows).await?,
         ModalOutcome::Menu { kind, action } => {
             return apply_live_menu_action(workspace, chrome, kind, action).await;
         }
@@ -241,6 +243,11 @@ async fn apply_live_menu_action(
             open_agent_in_new_tab(workspace, chrome, &entry_id).await?;
         }
         MenuAction::MarkSeen(entry_id) => mark_agent_seen(workspace, &entry_id).await?,
+        MenuAction::DestroyOrphans => open_destroy_orphans_dialog(workspace, chrome).await,
+        MenuAction::DestroyTerminal(terminal_id) => {
+            let target = agent_orphan(workspace, &terminal_id);
+            destroy_orphans(workspace, chrome, vec![target]).await?;
+        }
         _ => {
             apply_local_menu_action(workspace, chrome, &action);
         }

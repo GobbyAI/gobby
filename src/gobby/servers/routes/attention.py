@@ -601,6 +601,7 @@ def _run_terminal_block(server: HTTPServer, run: Any) -> dict[str, object] | Non
     return {
         "terminal_id": terminal_id,
         "backend": row.backend,
+        "state": row.state,
         "attach": None if attach is None else asdict(attach),
     }
 
@@ -623,6 +624,7 @@ def _session_terminal_block(server: HTTPServer, session: Any) -> dict[str, objec
     return {
         "terminal_id": row.id,
         "backend": row.backend,
+        "state": row.state,
         "attach": None if attach is None else asdict(attach),
     }
 

@@ -2818,8 +2818,9 @@ class TestListPanes:
         run_calls: list[tuple[str, ...]] = []
         rows = [
             "/private/tmp/tmux-501/default\t6051\t1787385464\t75\t@76\t(gobby-S#11155): Task"
-            "\t%76\t99781\tpane title\t0\t2.1.247\t/Users/josh/Projects/gobby",
-            "/private/tmp/tmux-501/default\t6051\t1787385464\t0\t@0\t\t%0\t\t\t1\t\t",
+            "\t%76\t99781\tpane title\t0\t2.1.247\t/Users/josh/Projects/gobby\t1",
+            "/private/tmp/tmux-501/default\t6051\t1787385464\t0\t@0\t\t%0\t\t\t1\t\t\t0",
+            "/private/tmp/tmux-501/default\t6051\t1787385464\t9\t@9\t\t%9\t\t\t0\t\t",
             "garbage line",
             "",
         ]
@@ -2833,6 +2834,7 @@ class TestListPanes:
 
         assert run_calls[0][:3] == ("list-panes", "-a", "-F")
         assert "#{pid}" in run_calls[0][3] and "#{start_time}" in run_calls[0][3]
+        assert "#{session_attached}" in run_calls[0][3]
         assert panes is not None
         assert [pane.pane_id for pane in panes] == ["%76", "%0"]
         first, second = panes
@@ -2851,6 +2853,7 @@ class TestListPanes:
         assert second.pane_dead is True
         assert (second.window_name, second.pane_pid, second.pane_title) == (None, None, None)
         assert (second.pane_command, second.pane_path) == (None, None)
+        assert (first.session_attached, second.session_attached) == (1, 0)
 
     @pytest.mark.asyncio
     async def test_no_server_is_an_empty_list_and_other_failures_are_none(self) -> None:

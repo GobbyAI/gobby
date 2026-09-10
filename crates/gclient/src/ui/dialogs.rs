@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
+pub mod orphans;
 pub mod project;
 
 const CONFIRM_CLOSE_POPUP_WIDTH: u16 = 64;
@@ -104,6 +105,19 @@ pub struct WorktreeChoice {
     pub path: String,
 }
 
+/// One candidate row of the destroy-orphaned-terminals dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphanRow {
+    pub terminal_id: String,
+    pub backend: String,
+    /// The tmux session name, the row title, or the short terminal id.
+    pub name: String,
+    /// The Gobby session still owning the row's pane, when one does.
+    pub owner: Option<String>,
+    /// `HH:MM` of the row's last update, when the daemon sent one.
+    pub last_seen: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
     ConfirmClose {
@@ -130,6 +144,12 @@ pub enum Dialog {
     OpenWorktree {
         project_id: String,
         choices: Vec<WorktreeChoice>,
+        selected: usize,
+    },
+    /// Pick which orphaned terminals to destroy; `checked` parallels `rows`.
+    DestroyOrphans {
+        rows: Vec<OrphanRow>,
+        checked: Vec<bool>,
         selected: usize,
     },
     /// Delete a worktree checkout after its `tabs` and `panes` are closed.
@@ -199,6 +219,11 @@ pub fn render_dialog(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect
         Some(Dialog::OpenWorktree {
             choices, selected, ..
         }) => project::render_open_worktree(frame, area, chrome, choices, *selected),
+        Some(Dialog::DestroyOrphans {
+            rows,
+            checked,
+            selected,
+        }) => orphans::render_destroy_orphans(frame, area, chrome, rows, checked, *selected),
         Some(Dialog::RemoveWorktree {
             branch,
             path,

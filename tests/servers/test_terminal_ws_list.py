@@ -193,3 +193,56 @@ async def test_list_without_a_terminal_manager_is_empty(server: WebSocketServer)
     server.terminal_manager = None
     page = await listed(server, {"request_id": uuid.uuid4().hex})
     assert (page["items"], page["next_cursor"]) == ([], None)
+
+
+@pytest.mark.asyncio
+async def test_list_states_filter_admits_orphaned_rows(
+    server: WebSocketServer, manager: TerminalManager, sample_project: dict[str, Any]
+) -> None:
+    live = seed_pane(manager, sample_project["id"], "%1", "live")
+    orphan = seed_pane(manager, sample_project["id"], "%2", "orphan")
+    assert manager.mark_orphaned(orphan.id) is not None
+
+    with patch(
+        "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", AsyncMock(return_value={})
+    ):
+        default = await listed(server, {"request_id": "default"})
+        widened = await listed(server, {"request_id": "wide", "states": ["live", "orphaned"]})
+
+    assert [item["terminal_id"] for item in default["items"]] == [live.id]
+    assert {item["terminal_id"]: item["state"] for item in widened["items"]} == {
+        live.id: "live",
+        orphan.id: "orphaned",
+    }
+    assert all(item["updated_at"] for item in widened["items"])
+
+
+@pytest.mark.asyncio
+async def test_list_carries_attached_client_count(
+    server: WebSocketServer, manager: TerminalManager, sample_project: dict[str, Any]
+) -> None:
+    detached = seed_pane(manager, sample_project["id"], "%1", "detached")
+    attached = seed_pane(manager, sample_project["id"], "%2", "attached")
+    sweep = AsyncMock(
+        return_value={
+            detached.locator_key: pane_for(detached, session_attached=0),
+            attached.locator_key: pane_for(attached, session_attached=2),
+        }
+    )
+
+    with patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep):
+        page = await listed(server, {"request_id": "init"})
+
+    by_id = {item["terminal_id"]: item for item in page["items"]}
+    assert (by_id[detached.id]["attached_clients"], by_id[attached.id]["attached_clients"]) == (
+        0,
+        2,
+    )
+    assert by_id[detached.id]["ownership"] == "external"
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_unknown_states(server: WebSocketServer) -> None:
+    for states in (["live", "zombie"], [], "live", [7]):
+        page = await listed(server, {"request_id": "bad", "states": states})
+        assert page == {"type": "terminal_error", "code": "invalid_states", "request_id": "bad"}

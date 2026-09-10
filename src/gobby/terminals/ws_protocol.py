@@ -256,6 +256,7 @@ def inventory_item(row: Any) -> dict[str, Any]:
         "session_id": row.session_id,
         "agent_run_id": row.agent_run_id,
         "dims": dims,
+        "updated_at": row.updated_at.isoformat(),
     }
 
 

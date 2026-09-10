@@ -83,6 +83,8 @@ pub struct AgentEntry {
     pub session_ref: Option<String>,
     pub worktree_id: Option<String>,
     pub lifecycle_status: Option<String>,
+    /// The terminal row's daemon state; `orphaned` rows have lost their host.
+    pub terminal_state: Option<String>,
     pub state: RowState,
     pub attention: Option<Attention>,
     pub last_activity_at: Option<String>,
@@ -190,6 +192,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),
+                terminal_state: terminal.state.clone(),
                 state: agent_state(entry, pane),
                 attention: entry.attention.clone(),
                 last_activity_at: entry.last_activity_at.clone(),
@@ -250,7 +253,8 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
 /// herdr `status_priority`: blocked over unseen over working over idle.
 pub fn urgency(state: RowState) -> u8 {
     match state {
-        RowState::Attention => 4,
+        RowState::Attention => 5,
+        RowState::Orphaned => 4,
         RowState::Unseen => 3,
         RowState::Working => 2,
         RowState::Idle => 1,
@@ -267,11 +271,21 @@ fn most_urgent(states: impl Iterator<Item = RowState>) -> RowState {
 
 /// herdr's `AgentState` for one roster entry, given the pane that shows it.
 pub fn agent_state(entry: &RosterEntry, pane: Option<&Pane>) -> RowState {
+    let terminal_state = entry
+        .terminal
+        .as_ref()
+        .and_then(|terminal| terminal.state.as_deref());
     resolve_state(
         entry.attention.is_some(),
+        is_orphaned(terminal_state),
         entry.lifecycle_status.as_deref(),
         pane,
     )
+}
+
+/// `orphaned` is the daemon's state for a row whose host is gone.
+pub fn is_orphaned(terminal_state: Option<&str>) -> bool {
+    terminal_state == Some("orphaned")
 }
 
 /// `agent_state` for a built agent row and the pane the chrome found for it,
@@ -279,14 +293,23 @@ pub fn agent_state(entry: &RosterEntry, pane: Option<&Pane>) -> RowState {
 pub fn agent_row_state(agent: &AgentEntry, pane: &Pane) -> RowState {
     resolve_state(
         agent.attention.is_some(),
+        is_orphaned(agent.terminal_state.as_deref()),
         agent.lifecycle_status.as_deref(),
         Some(pane),
     )
 }
 
-fn resolve_state(blocked: bool, lifecycle_status: Option<&str>, pane: Option<&Pane>) -> RowState {
+fn resolve_state(
+    blocked: bool,
+    orphaned: bool,
+    lifecycle_status: Option<&str>,
+    pane: Option<&Pane>,
+) -> RowState {
     if blocked {
         return RowState::Attention;
+    }
+    if orphaned {
+        return RowState::Orphaned;
     }
     let Some(pane) = pane else {
         return RowState::Idle;
