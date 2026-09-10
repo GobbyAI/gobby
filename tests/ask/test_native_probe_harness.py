@@ -1337,7 +1337,7 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
     assert cleanup["raw_export"]["sha256"] == "a" * 64
     assert cleanup["schema"]["status"] == "dropped"
     assert cleanup["runtime_root"]["status"] == "removed"
-    assert process_sets["after_cleanup"] == {"workers": [], "agents": []}
+    assert process_sets["after_cleanup"] == {"workers": [], "agents": [], "hosts": []}
 
 
 def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
@@ -1391,7 +1391,12 @@ def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
     ) -> dict[str, object]:
         assert deadline_monotonic > time.monotonic()
         terminated.append(agent)
-        return {"agent_run_id": agent["id"], "status": "terminated"}
+        return {
+            "agent_run_id": agent["id"],
+            "status": "terminated",
+            "group_after": [],
+            "group_before": [],
+        }
 
     monkeypatch.setattr(harness, "_native_ask_execution_ids", lambda *_args: ["run-1"])
     monkeypatch.setattr(

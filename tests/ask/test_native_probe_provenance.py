@@ -156,17 +156,128 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
                 "size_bytes": len(payload),
             }
         )
+    for snapshot in raw["process_sets"].values():
+        for row in snapshot["agents"]:
+            row["pgid"] = row["pid"]
+            row["terminal_process"] = {"pgid": row["pid"]}
+            row["process_group"] = [
+                {
+                    "pid": row["pid"],
+                    "ppid": 1,
+                    "pgid": row["pid"],
+                    "start_identity": row["start_identity"],
+                }
+            ]
+    for phase in ("fresh", "resumed", "recovery"):
+        pid = {"fresh": 700, "resumed": 800, "recovery": 900}[phase]
+        raw["process_sets"][f"{phase}_host_launch"] = {
+            "agents": [],
+            "workers": [],
+            "hosts": [
+                {
+                    "phase": "recover" if phase == "recovery" else phase,
+                    "host_pid": pid,
+                    "pgid": pid,
+                    "worker_pid": 1234,
+                    "host_epoch": f"epoch-{pid}",
+                    "start_identity": f"host-start-{pid}",
+                    "socket_dir": "/probe/host",
+                    "control_socket": "/probe/host/control.sock",
+                    "frames_socket": "/probe/host/frames.sock",
+                    "pidfile": "/probe/host/host.pid",
+                    "live": True,
+                    "control_socket_exists": True,
+                    "frames_socket_exists": True,
+                    "spawned_this_construction": True,
+                    "adopted": False,
+                    "process_group": [
+                        {"pid": pid, "pgid": pid, "ppid": 1, "start_identity": f"host-start-{pid}"}
+                    ],
+                }
+            ],
+        }
+    raw["process_sets"]["worker_launch"] = {
+        "agents": [],
+        "workers": [{"pid": 1234, "start_identity": "worker-start", "live": True}],
+    }
     raw["process_sets"]["after_cleanup"] = {
         "agents": [
-            {**row, "live": False}
+            {**row, "live": False, "process_group": []}
             for snapshot in raw["process_sets"].values()
             for row in snapshot["agents"]
         ],
         "workers": [{"pid": 1234, "start_identity": "worker-start", "live": False}],
+        "hosts": [
+            {
+                **row,
+                "live": False,
+                "process_group": [],
+                "control_socket_exists": False,
+                "frames_socket_exists": False,
+            }
+            for snapshot in raw["process_sets"].values()
+            for row in snapshot.get("hosts", [])
+        ],
     }
     raw_path = tmp_path / "raw-probe.json"
     _write_capture(raw_path, raw)
     return raw_path
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "missing_host_launch",
+        "missing_final_host",
+        "host_live",
+        "host_socket",
+        "host_descendant",
+        "host_epoch",
+        "host_start",
+        "host_group",
+        "host_worker",
+        "host_socket_path",
+        "agent_launch_group",
+        "agent_final_group",
+        "agent_descendant",
+    ],
+)
+def test_rejects_missing_host_or_descendant_cleanup(tmp_path: Path, tamper: str) -> None:
+    observations = _observations(_provider(tmp_path / "claude"), tmp_path)
+    path = _raw_probe_fixture(tmp_path, observations)
+    raw = json.loads(path.read_bytes())
+    sets = raw["process_sets"]
+    host = sets["fresh_host_launch"]["hosts"][0]
+    final_host = sets["after_cleanup"]["hosts"][0]
+    if tamper == "missing_host_launch":
+        del sets["fresh_host_launch"]
+    elif tamper == "missing_final_host":
+        sets["after_cleanup"]["hosts"].pop(0)
+    elif tamper == "host_live":
+        final_host["live"] = True
+    elif tamper == "host_socket":
+        final_host["frames_socket_exists"] = True
+    elif tamper == "host_descendant":
+        final_host["process_group"] = host["process_group"]
+    elif tamper == "host_epoch":
+        final_host["host_epoch"] = "other"
+    elif tamper == "host_start":
+        final_host["start_identity"] = "other"
+    elif tamper == "host_group":
+        host["process_group"] = []
+    elif tamper == "host_worker":
+        host["worker_pid"] = 9876
+    elif tamper == "host_socket_path":
+        host["control_socket"] = "/foreign/control.sock"
+    elif tamper == "agent_launch_group":
+        del sets["live_fresh"]["agents"][0]["process_group"]
+    elif tamper == "agent_final_group":
+        del sets["after_cleanup"]["agents"][0]["process_group"]
+    elif tamper == "agent_descendant":
+        sets["after_cleanup"]["agents"][0]["process_group"] = [{"pid": 9876}]
+    _write_capture(path, raw)
+    with pytest.raises(ValueError):
+        bind_ask_runtime_observations(path, observations)
 
 
 def test_binds_reviewed_observations_to_captured_files_and_processes(tmp_path: Path) -> None:

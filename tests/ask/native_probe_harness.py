@@ -2515,6 +2515,83 @@ def _finalize_contained_probe(
                 )
     cleanup["workers"] = worker_results
 
+    host_results: list[dict[str, object]] = []
+    final_hosts: list[dict[str, Any]] = []
+    host_receipts: dict[str, dict[str, Any]] = {}
+    ordered_hosts: list[tuple[str, dict[str, Any]]] = []
+    try:
+        host_receipts, host_errors = _load_terminal_host_receipts(runtime_root / "control")
+        errors.extend(host_errors)
+        if any(
+            not isinstance(captured := receipt.get("captured_at_unix"), (int, float))
+            or isinstance(captured, bool)
+            or not 0 < captured < float("inf")
+            for receipt in host_receipts.values()
+        ):
+            raise RuntimeError("native Ask host receipt capture time is invalid")
+        ordered_hosts = sorted(
+            host_receipts.items(), key=lambda item: item[1]["captured_at_unix"], reverse=True
+        )
+    except Exception as error:
+        errors.append(
+            {
+                "kind": "terminal-host-receipts",
+                "phase": "cleanup",
+                "error_type": type(error).__name__,
+                "message": str(error),
+            }
+        )
+    if workers and not host_receipts:
+        errors.append(
+            {
+                "kind": "terminal-host-cleanup",
+                "phase": "cleanup",
+                "error_type": "RuntimeError",
+                "message": "host launch receipts missing",
+            }
+        )
+    seen_hosts: set[tuple[object, ...]] = set()
+    # A recovery may adopt the prior host, or reuse its socket paths for a new host.
+    # Retire the newest owner first and only terminate an adopted host once.
+    for phase, receipt in ordered_hosts:
+        process_sets.setdefault(f"{phase}_host_launch", receipt)
+        try:
+            host = _terminal_host_record(receipt)
+            identity = tuple(
+                host.get(key)
+                for key in (
+                    "host_pid",
+                    "start_identity",
+                    "host_epoch",
+                    "socket_dir",
+                    "control_socket",
+                    "frames_socket",
+                    "pidfile",
+                )
+            )
+            if identity in seen_hosts:
+                continue
+            seen_hosts.add(identity)
+            result = _terminate_owned_host_process(
+                receipt, deadline_monotonic=cleanup_deadline, runtime_root=runtime_root
+            )
+            observation = _json_mapping(result.get("observation"), name="host cleanup")
+            _assert_terminal_host_absent(observation)
+            if result.get("group_after") != []:
+                raise RuntimeError("native Ask host group cleanup is incomplete")
+            host_results.append(result)
+            final_hosts.append(_terminal_host_record(observation))
+        except Exception as error:
+            errors.append(
+                {
+                    "kind": "terminal-host-cleanup",
+                    "phase": phase,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+    cleanup["terminal_hosts"] = host_results
+
     discovered_run_ids = list(ask_run_ids)
     if schema_created:
         try:
@@ -2549,7 +2626,30 @@ def _finalize_contained_probe(
             raw_agent_processes = before_cleanup.get("agents")
             if not isinstance(raw_agent_processes, list):
                 raise RuntimeError("native Ask cleanup process snapshot is invalid")
-            agent_processes = raw_agent_processes
+            launched = {row.get("id"): row for row in agent_processes if isinstance(row, Mapping)}
+            merged_agents: dict[object, Mapping[str, object]] = dict(launched)
+            for row in raw_agent_processes:
+                if not isinstance(row, Mapping):
+                    raise RuntimeError("native Ask cleanup agent row is invalid")
+                launch = launched.get(row.get("id"))
+                if launch is not None:
+                    if any(
+                        row.get(key) != launch.get(key)
+                        for key in (
+                            "pid",
+                            "start_identity",
+                            "terminal_id",
+                            "child_session_id",
+                        )
+                    ):
+                        raise RuntimeError("native Ask cleanup differs from launch authority")
+                    row = {
+                        **row,
+                        "process_group": launch.get("process_group"),
+                        "pgid": launch.get("pgid"),
+                    }
+                merged_agents[row.get("id")] = row
+            agent_processes = list(merged_agents.values())
         except Exception as error:
             errors.append(
                 {
@@ -2564,9 +2664,10 @@ def _finalize_contained_probe(
             if not isinstance(agent, Mapping):
                 continue
             try:
-                agent_cleanup_results.append(
-                    _terminate_owned_agent_process(agent, deadline_monotonic=cleanup_deadline)
-                )
+                result = _terminate_owned_agent_process(agent, deadline_monotonic=cleanup_deadline)
+                if result.get("group_after") != []:
+                    raise RuntimeError("native Ask agent group cleanup is incomplete")
+                agent_cleanup_results.append(result)
             except Exception as error:
                 errors.append(
                     {
@@ -2577,6 +2678,15 @@ def _finalize_contained_probe(
                     }
                 )
         cleanup["agent_processes"] = agent_cleanup_results
+        group_results = {row.get("agent_run_id"): row for row in agent_cleanup_results}
+        process_sets["before_group_cleanup"] = {
+            "workers": [],
+            "agents": [
+                {**agent, "process_group": group_results[agent.get("id")].get("group_before")}
+                for agent in agent_processes
+                if isinstance(agent, Mapping) and agent.get("id") in group_results
+            ],
+        }
         try:
             after_cleanup = _process_snapshot(
                 scoped_database_url,
@@ -2587,8 +2697,13 @@ def _finalize_contained_probe(
             process_sets["after_cleanup"] = after_cleanup
             final_workers = after_cleanup.get("workers")
             final_agents = after_cleanup.get("agents")
+            after_cleanup["hosts"] = final_hosts
             if not isinstance(final_workers, list) or not isinstance(final_agents, list):
                 raise RuntimeError("native Ask final process snapshot is invalid")
+            for agent in final_agents:
+                if isinstance(agent, dict) and agent.get("id") in group_results:
+                    agent["process_group"] = group_results[agent["id"]].get("group_after")
+                    agent["pgid"] = agent.get("pid")
             final_processes = [*final_workers, *final_agents]
             if any(
                 not isinstance(process, Mapping) or process.get("live") is not False

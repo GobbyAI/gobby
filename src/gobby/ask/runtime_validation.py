@@ -14,6 +14,7 @@ from typing import Any
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_policy import SRT_SETTINGS_RELATIVE_PATH, registered_run_tmp
 from gobby.agents.srt_runtime import SRT_POLICY_SCHEMA_VERSION as _SRT_POLICY_SCHEMA_VERSION
+from gobby.ask.runtime_probe_cleanup import validate_probe_group_cleanup
 from gobby.install.version_probe import probe_native_bin_version
 
 ASK_NATIVE_PROBE_EXPECTATIONS: Mapping[str, str] = {
@@ -631,6 +632,7 @@ def bind_ask_runtime_observations(
             "Ask runtime raw probe phases must be distinct native Ask runs in one project"
         )
     process_sets = _probe_mapping(raw.get("process_sets"), "process sets")
+    validate_probe_group_cleanup(process_sets)
     cleanup = _probe_mapping(process_sets.get("after_cleanup"), "final cleanup")
     for kind in ("agents", "workers"):
         final_rows = _probe_rows(cleanup.get(kind), kind)
