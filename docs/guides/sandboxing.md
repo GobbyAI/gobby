@@ -35,7 +35,7 @@ still win. A grant does not override a disabled sandbox configuration.
 
 Spawn results contain `external_write_grant`: requested and canonical roots,
 reason, asserting session, parent run and timestamp. Existing run inspection
-exposes the same object in `resume_metadata_json`. Resume preserves this grant
+exposes the same `external_write_grant` object. Resume preserves this grant
 and rejects removed roots, changed symlink targets or newly protected paths
 before allocating a successor. Ordinary nested writes, including `.vite-temp`,
 are allowed within the effective grant; an ungranted sibling or symlink escape

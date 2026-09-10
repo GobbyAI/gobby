@@ -490,6 +490,9 @@ def _codex_runtime_config_overrides(
     # Both must land in the per-run scratchpad the policy actually allows.
     if sandbox_temp_dir:
         overrides.append(f"shell_environment_policy.set.TMPDIR={json.dumps(sandbox_temp_dir)}")
+        overrides.append(
+            f"shell_environment_policy.set.TMPPREFIX={json.dumps(sandbox_temp_dir + '/zsh')}"
+        )
         overrides.append(f"mcp_servers.gobby.env.TMPDIR={json.dumps(sandbox_temp_dir)}")
     if managed_identity_env:
         from gobby.paths import get_gobby_home

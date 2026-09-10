@@ -69,6 +69,31 @@ def _registry(run: SimpleNamespace) -> Any:
     return create_agents_registry(runner)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capture_id", [None, _CAPTURE_ID])
+async def test_result_entrypoints_expose_external_write_grant(capture_id: str | None) -> None:
+    grant = {
+        "requested_roots": ["/external/workspace"],
+        "canonical_roots": ["/external/workspace"],
+        "reason": "Authorized workspace",
+        "asserting_session_id": "parent-session",
+        "parent_run_id": None,
+        "asserted_at": "2026-09-10T20:28:26+00:00",
+    }
+    run = _run(
+        status="success",
+        result=_slot("terminal output") if capture_id else "Completed",
+        capture_id=capture_id,
+        resume_metadata_json={"external_write_grant": grant, "unrelated": "private"},
+    )
+    registry = _registry(run)
+    for tool in ("get_agent_result", "wait_for_agent"):
+        result = await registry.call(tool, {"run_id": run.id})
+        assert result["external_write_grant"] == grant
+        assert "resume_metadata_json" not in result
+        assert "unrelated" not in result
+
+
 def test_genuine_result_and_marker_like_text_pass_through() -> None:
     result = f"Completed with literal {_START_MARKER} in the report."
 

@@ -596,6 +596,7 @@ async def test_resume_never_replays_stored_secret_overrides(
     assert 'http://127.0.0.1:1"' not in repr(overrides)
     assert 'mcp_servers.gobby.env.TMPDIR="/fresh-tmp"' in overrides
     assert 'shell_environment_policy.set.TMPDIR="/fresh-tmp"' in overrides
+    assert 'shell_environment_policy.set.TMPPREFIX="/fresh-tmp/zsh"' in overrides
     assert runner._test_runtime.last_request.env["TMPDIR"] == "/fresh-tmp"
     assert prepare_sandbox.await_args is not None
     assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True

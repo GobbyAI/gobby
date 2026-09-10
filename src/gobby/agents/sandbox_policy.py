@@ -130,6 +130,8 @@ class SandboxRunPaths:
             name: str(self.cache / name.replace("_", "-").lower()) for name in _RUN_CACHE_ENV_VARS
         }
         values["CLAUDE_CODE_TMPDIR" if provider == "claude" else "TMPDIR"] = str(self.tmp)
+        # zsh uses TMPPREFIX for heredocs independently of TMPDIR.
+        values["TMPPREFIX"] = str(self.tmp / "zsh")
         values["GOBBY_LOG_DIR"] = str(self.logs)
         return values
 

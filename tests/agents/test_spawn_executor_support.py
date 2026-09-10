@@ -9,6 +9,7 @@ def test_codex_shell_tmpdir_points_at_sandbox_scratchpad() -> None:
     overrides = _codex_mcp_config_overrides("/repo", scratchpad)
 
     assert f'shell_environment_policy.set.TMPDIR="{scratchpad}"' in overrides
+    assert f'shell_environment_policy.set.TMPPREFIX="{scratchpad}/zsh"' in overrides
 
 
 def test_codex_shell_tmpdir_is_omitted_without_sandbox() -> None:

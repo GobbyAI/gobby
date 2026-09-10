@@ -32,6 +32,7 @@ class AgentRunProtocol(Protocol):
     terminal_reason: AgentRunTerminalReason | None
     prompt: str
     capture_id: str | None
+    resume_metadata_json: dict[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +143,10 @@ def _agent_result_payload(
         payload["dirty_paths"] = dirty_paths
     if include_prompt:
         payload["prompt"] = run.prompt
+
+    metadata = run.resume_metadata_json
+    if isinstance(metadata, dict) and isinstance(metadata.get("external_write_grant"), dict):
+        payload["external_write_grant"] = metadata["external_write_grant"]
 
     capture = _agent_capture_parts(run)
     if capture is None:
