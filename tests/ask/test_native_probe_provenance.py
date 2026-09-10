@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -25,6 +26,11 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
     """Model exported rows/files; all responses here are synthetic unit fixtures."""
     raw: dict[str, Any] = {
         "schema_version": 1,
+        "runtime_identity": {
+            "source_head": "a" * 40,
+            "gcode": {"path": "/probe/bin/gcode", "sha256": "b" * 64, "version": "1.7.0"},
+            "gterm": {"path": "/probe/bin/gterm", "sha256": "c" * 64, "version": None},
+        },
         "ask_runs": [],
         "agent_runs": [],
         "process_sets": {},
@@ -46,8 +52,10 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
         }
         session = {"id": record["session_id"], "machine_id": "machine", "project_id": "project"}
         ids = [run_id]
+        lifecycle = {"current_agent_run_id": run_id, "superseded_agent_run_ids": []}
         if phase == "resumed":
             predecessor = record["resumed_from_agent_run_id"]
+            lifecycle["superseded_agent_run_ids"] = [predecessor]
             agent["resume_metadata_json"] = {
                 "project_id": "project",
                 "resumed_from_run_id": predecessor,
@@ -64,10 +72,34 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
                 }
             )
             ids.append(predecessor)
+            raw["process_sets"]["interrupted"] = {
+                "agents": [
+                    {
+                        **raw["agent_runs"][-1]["agent"],
+                        "live": True,
+                        "start_identity": "predecessor-start",
+                    }
+                ],
+                "workers": [],
+            }
         raw["agent_runs"].append({"agent": agent, "session": session})
         raw["ask_runs"].append(
             {
-                "execution": {"id": f"{phase}-ask", "status": "completed", "project_id": "project"},
+                "execution": {
+                    "id": f"{phase}-ask",
+                    "status": "completed",
+                    "project_id": "project",
+                    "pipeline_name": "native-ask",
+                    "inputs_json": {
+                        "ask": {
+                            "runtime": {
+                                "authorities": {
+                                    "investigate": {"lifecycle": lifecycle},
+                                }
+                            }
+                        }
+                    },
+                },
                 "agent_run_ids": ids,
             }
         )
@@ -122,8 +154,12 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
             }
         )
     raw["process_sets"]["after_cleanup"] = {
-        "agents": [{**row["agent"], "live": False} for row in raw["agent_runs"]],
-        "workers": [{"pid": 1234, "live": False}],
+        "agents": [
+            {**row, "live": False}
+            for snapshot in raw["process_sets"].values()
+            for row in snapshot["agents"]
+        ],
+        "workers": [{"pid": 1234, "start_identity": "worker-start", "live": False}],
     }
     raw_path = tmp_path / "raw-probe.json"
     _write_capture(raw_path, raw)
@@ -134,9 +170,10 @@ def test_binds_reviewed_observations_to_captured_files_and_processes(tmp_path: P
     observations = _observations(_provider(tmp_path / "claude"), tmp_path)
     path = _raw_probe_fixture(tmp_path, observations)
 
-    digest, bound = bind_ask_runtime_observations(path, observations)
+    digest, bound, runtime_identity = bind_ask_runtime_observations(path, observations)
 
     assert digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert runtime_identity == json.loads(path.read_bytes())["runtime_identity"]
     assert len(bound) == len(observations)
     for original, verified in zip(observations, bound, strict=True):
         evidence = original["receipt"]["evidence"]
@@ -232,3 +269,78 @@ def test_seal_rejects_observations_without_captured_raw_probe(
     with pytest.raises(ValueError, match="raw probe"):
         harness._seal(arguments)
     assert not arguments.output.exists()
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "shared_phase_agent",
+        "cross_project",
+        "wrong_pipeline",
+        "foreign_predecessor",
+        "predecessor_project",
+        "predecessor_machine",
+        "pid_drift",
+        "terminal_drift",
+        "cleanup_start",
+        "omitted_worker",
+        "omitted_unobserved_agent",
+        "missing_runtime",
+        "invalid_binary_hash",
+        "relative_binary_path",
+        "unrelated_lifecycle",
+        "missing_predecessor_live",
+        "predecessor_pid",
+    ],
+)
+def test_capture_requires_phase_runtime_and_complete_process_identity(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    observations = _observations(_provider(tmp_path / "claude"), tmp_path)
+    path = _raw_probe_fixture(tmp_path, observations)
+    raw = json.loads(path.read_bytes())
+    snapshots = raw["process_sets"]
+    if tamper == "shared_phase_agent":
+        raw["ask_runs"][1]["agent_run_ids"].append(raw["ask_runs"][0]["agent_run_ids"][0])
+    elif tamper == "cross_project":
+        raw["ask_runs"][1]["execution"]["project_id"] = "other-project"
+        for row in raw["agent_runs"][1:]:
+            row["session"]["project_id"] = "other-project"
+            row["agent"]["resume_metadata_json"]["project_id"] = "other-project"
+    elif tamper == "wrong_pipeline":
+        raw["ask_runs"][0]["execution"]["pipeline_name"] = "unrelated"
+    elif tamper == "foreign_predecessor":
+        raw["ask_runs"][1]["agent_run_ids"].remove(raw["agent_runs"][1]["agent"]["id"])
+    elif tamper in {"predecessor_project", "predecessor_machine"}:
+        key = "project_id" if tamper == "predecessor_project" else "machine_id"
+        raw["agent_runs"][1]["session"][key] = "other"
+    elif tamper in {"pid_drift", "terminal_drift"}:
+        row = copy.deepcopy(snapshots["live_fresh"]["agents"][0])
+        row["pid" if tamper == "pid_drift" else "terminal_id"] = 99999
+        snapshots["drift"] = {"agents": [row], "workers": []}
+    elif tamper == "cleanup_start":
+        snapshots["after_cleanup"]["agents"][0]["start_identity"] = "other-incarnation"
+    elif tamper == "omitted_worker":
+        snapshots["live_fresh"]["workers"] = [
+            {"pid": 9999, "start_identity": "omitted-worker", "live": True}
+        ]
+    elif tamper == "omitted_unobserved_agent":
+        row = {**snapshots["live_fresh"]["agents"][0], "id": "unobserved-child", "pid": 9999}
+        snapshots["live_fresh"]["agents"].append(row)
+    elif tamper == "missing_runtime":
+        del raw["runtime_identity"]
+    elif tamper == "invalid_binary_hash":
+        raw["runtime_identity"]["gterm"]["sha256"] = "invalid"
+    elif tamper == "relative_binary_path":
+        raw["runtime_identity"]["gcode"]["path"] = "relative/gcode"
+    elif tamper == "unrelated_lifecycle":
+        raw["ask_runs"][1]["execution"]["inputs_json"]["ask"]["runtime"]["authorities"] = {}
+    elif tamper == "missing_predecessor_live":
+        snapshots["interrupted"]["agents"][0]["live"] = False
+    elif tamper == "predecessor_pid":
+        raw["agent_runs"][1]["agent"]["pid"] = 42
+    _write_capture(path, raw)
+
+    with pytest.raises(ValueError):
+        bind_ask_runtime_observations(path, observations)

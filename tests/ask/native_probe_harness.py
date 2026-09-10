@@ -1446,7 +1446,7 @@ def _seal(arguments: argparse.Namespace) -> int:
         isinstance(observation, Mapping) for observation in raw_observations
     ):
         raise ValueError("operator-reviewed native Ask observations must be a JSON array")
-    raw_probe_sha256, raw_observations = bind_ask_runtime_observations(
+    raw_probe_sha256, raw_observations, runtime_identity = bind_ask_runtime_observations(
         arguments.observations.parent / "raw-probe.json", raw_observations
     )
     control_digest = ask_runtime_control_digest(arguments.provider, arguments.auth_mode)
@@ -1456,6 +1456,7 @@ def _seal(arguments: argparse.Namespace) -> int:
         auth_mode=arguments.auth_mode,
         control_digest=control_digest,
         observations=raw_observations,
+        runtime_identity=runtime_identity,
     )
     artifact_sha256 = write_ask_runtime_probe_artifact(arguments.output, artifact)
     manifest_root = arguments.manifest.parent.resolve()
