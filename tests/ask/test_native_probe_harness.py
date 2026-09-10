@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import socket
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +28,9 @@ from gobby.ask.runtime_validation import (
     load_ask_runtime_validation,
     load_ask_runtime_validation_artifacts,
 )
+from gobby.config.app import DaemonConfig
+from gobby.storage.config_repository import ConfigRepository
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from tests.ask import native_probe_harness as harness
 
 pytestmark = pytest.mark.unit
@@ -401,6 +406,131 @@ def test_contained_config_pins_gterm_host_to_owned_runtime(tmp_path: Path) -> No
     assert "terminals:\n  stop_host_on_shutdown: true" in config
     assert "terminal_host:\n  enabled: true" in config
     assert f'  socket_dir: "{(gobby_home.parent / "gterm-host").resolve()}"' in config
+
+
+@pytest.mark.integration
+def test_contained_state_persists_owned_terminal_host_config(
+    tmp_path: Path,
+    postgres_db: PostgresHubDatabase,
+) -> None:
+    runtime_root = (tmp_path / "runtime").resolve()
+    project_root = tmp_path / "project"
+    runtime_root.mkdir()
+    project_root.mkdir()
+
+    harness._seed_contained_state(
+        postgres_db.conninfo,
+        project_root=project_root,
+        project_id=str(uuid.uuid4()),
+        project_name="ask-probe-config",
+        machine_id=str(uuid.uuid4()),
+        tmux_socket=runtime_root / "gterm.sock",
+    )
+
+    repository = ConfigRepository(postgres_db)
+    snapshot = repository.read(resolve_secrets=False)
+    expected_socket_dir = str(runtime_root / "gterm-host")
+    assert {
+        key: snapshot.overrides.get(key)
+        for key in (
+            "terminal_host.socket_dir",
+            "terminals.stop_host_on_shutdown",
+        )
+    } == {
+        "terminal_host.socket_dir": expected_socket_dir,
+        "terminals.stop_host_on_shutdown": True,
+    }
+    assert snapshot.values["terminal_host.enabled"] is True
+    effective = repository.runtime_candidate(
+        dict(snapshot.overrides),
+        snapshot.secret_bindings,
+    )
+    assert effective.terminal_host.socket_dir == expected_socket_dir
+    assert effective.terminal_host.enabled is True
+    assert effective.terminals.stop_host_on_shutdown is True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_contained_worker_rejects_default_host_config_before_runner_start(
+    tmp_path: Path,
+    postgres_db: PostgresHubDatabase,
+    postgres_schema: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.runner import GobbyRunner
+
+    control_dir = tmp_path / "runtime" / "control"
+    control_dir.mkdir(parents=True)
+    bootstrap_marker = control_dir / "bootstrap-marker.json"
+    bootstrap_marker.write_text("{}", encoding="utf-8")
+    defaults = DaemonConfig()
+    runs: list[str] = []
+    rollbacks: list[object] = []
+
+    async def run(**_kwargs: object) -> None:
+        runs.append("run")
+
+    runner = SimpleNamespace(
+        database=postgres_db,
+        config_runtime=SimpleNamespace(snapshot=SimpleNamespace(active=defaults)),
+        startup_config=defaults,
+        terminal_host_manager=SimpleNamespace(
+            socket_dir=Path(defaults.terminal_host.socket_dir).expanduser(),
+            config=defaults.terminal_host,
+            terminal_config=defaults.terminals,
+        ),
+        bootstrap_config=SimpleNamespace(daemon_port=19001, websocket_port=19002),
+        http_server=SimpleNamespace(services=SimpleNamespace(_project_infra_cache={})),
+        run=run,
+    )
+
+    async def create(
+        _cls: type[GobbyRunner],
+        _config_path: Path | None = None,
+        _verbose: bool = False,
+    ) -> Any:
+        return runner
+
+    async def bootstrap_policy_identity(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace()
+
+    async def wait_for_startup(*_args: object, **_kwargs: object) -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError("runner startup invoked")
+
+    async def rollback(candidate: object) -> None:
+        rollbacks.append(candidate)
+
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        harness._scoped_database_url(_TEST_DATABASE_URL, postgres_schema),
+    )
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.shutil.which",
+        lambda _name: "/usr/bin/true",
+    )
+    monkeypatch.setattr(GobbyRunner, "create", classmethod(create))
+    monkeypatch.setattr(harness, "_bootstrap_policy_identity", bootstrap_policy_identity)
+    monkeypatch.setattr(harness, "_wait_for_runner_startup", wait_for_startup)
+    monkeypatch.setattr(
+        "gobby.runner_rollback.rollback_runner_resources_async",
+        rollback,
+    )
+
+    arguments = argparse.Namespace(
+        config_path=tmp_path / "config.yaml",
+        project_root=tmp_path,
+        bootstrap_marker=bootstrap_marker,
+        control_dir=control_dir,
+        phase="fresh",
+        timeout_seconds=5.0,
+    )
+    with pytest.raises(RuntimeError, match="contained runner configuration"):
+        await harness._contained_worker_async(arguments)
+
+    assert runs == []
+    assert rollbacks == [runner]
 
 
 def test_owned_runtime_root_requires_its_exact_marker_for_removal(tmp_path: Path) -> None:
