@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.agents.task_recovery import TaskRecoveryHandler
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -24,6 +25,8 @@ class _Run:
     error: str | None = "failed"
     pid: int | None = None
     terminal_id: str | None = None
+    terminal_reason: str | None = None
+    resume_metadata_json: dict[str, str] | None = None
 
 
 class _RunManager:
@@ -55,7 +58,55 @@ async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sample_project) -> None:
+@pytest.mark.parametrize("consumed", [False, True])
+async def test_daemon_stop_original_preserves_resumed_task_claim(
+    temp_db: HubDatabase, sample_project: dict[str, Any], consumed: bool
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    session = SessionManager(temp_db).register(
+        external_id="resume-task-owner",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = task_manager.create_task(
+        sample_project["id"], "Resume task", validation_criteria="Ownership survives resume."
+    )
+    task_manager.claim_task(task.id, session.id)
+    successor_id = "dddddddd-dddd-4ddd-8ddd-dddddddd2002"
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id, holder="dispatcher", kind="spawn", ttl_seconds=30, run_id=successor_id
+    )
+    metadata = (
+        {
+            "daemon_stop_resume_consumed_at": "2026-09-10T23:38:18+00:00",
+            "daemon_stop_resume_consumed_by_run_id": successor_id,
+        }
+        if consumed
+        else {}
+    )
+    original = _Run(
+        id="dddddddd-dddd-4ddd-8ddd-dddddddd2001",
+        status="cancelled",
+        task_id=task.id,
+        child_session_id=session.id,
+        claimed_session_id=session.id,
+        terminal_reason="daemon_stop",
+        resume_metadata_json=metadata,
+    )
+    handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier(), run_db=_run_db)
+
+    for _ in range(2):
+        assert not await handler.recover_task_from_terminal_agent(original, outcome="cancelled")
+        assert task_manager.get_task(task.id).claimed_by_session_id == session.id
+        assert mutexes.get_mutex(task.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_failed_non_in_progress_recovery_releases_run_mutex(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
         external_id="task-recovery-owner",
@@ -100,8 +151,8 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
 
 @pytest.mark.asyncio
 async def test_resolve_claimed_task_requires_child_session_ownership(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
