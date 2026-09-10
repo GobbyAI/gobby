@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import subprocess  # nosec B404 - argv-only Git process boundary
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 from gobby.utils.git import git_subprocess_env
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,13 +117,50 @@ class _ProcessControl:
 
     process: _GitProcess | None = None
     kill_requested: bool = False
-    phase: Literal["spawning", "running", "consuming", "finished"] = "spawning"
+    phase: Literal["queued", "preparing", "spawning", "running", "consuming", "finished"] = "queued"
     lock: threading.Lock = field(default_factory=threading.Lock)
+    started_at: float = field(default_factory=time.monotonic)
+    spawn_started_at: float | None = None
+    spawn_finished_at: float | None = None
+    kill_started_at: float | None = None
+    pid: int | None = None
+
+    def begin_preparing(self) -> None:
+        with self.lock:
+            self.phase = "preparing"
+
+    def begin_spawn(self) -> None:
+        with self.lock:
+            self.phase = "spawning"
+            self.spawn_started_at = time.monotonic()
+
+    def diagnostic(self) -> str:
+        """Snapshot the phase before timeout cleanup changes process ownership."""
+        with self.lock:
+            now = time.monotonic()
+            spawn_seconds = (
+                (self.spawn_finished_at or now) - self.spawn_started_at
+                if self.spawn_started_at is not None
+                else 0.0
+            )
+            running_seconds = (
+                max(0.0, (self.kill_started_at or now) - self.spawn_finished_at)
+                if self.spawn_finished_at
+                else 0.0
+            )
+            cleanup_seconds = now - self.kill_started_at if self.kill_started_at else 0.0
+            return (
+                f"phase={self.phase} pid={self.pid} elapsed_seconds={now - self.started_at:.3f} "
+                f"spawn_seconds={spawn_seconds:.3f} running_seconds={running_seconds:.3f} "
+                f"cleanup_seconds={cleanup_seconds:.3f}"
+            )
 
     def attach(self, process: _GitProcess) -> None:
         with self.lock:
             self.process = process
+            self.pid = process.pid
             self.phase = "running"
+            self.spawn_finished_at = time.monotonic()
             kill_requested = self.kill_requested
         if kill_requested:
             _kill_process_group(process)
@@ -140,6 +181,8 @@ class _ProcessControl:
         """Request shutdown and report whether caller-visible consumption is active."""
         with self.lock:
             self.kill_requested = True
+            if self.kill_started_at is None:
+                self.kill_started_at = time.monotonic()
             consuming = self.phase == "consuming"
             process = self.process if self.phase == "running" else None
         if process is not None:
@@ -150,6 +193,9 @@ class _ProcessControl:
         with self.lock:
             self.phase = "finished"
             self.process = None
+            killed = self.kill_requested
+        if killed:
+            logger.debug("Git worker cleanup settled: %s", self.diagnostic())
 
 
 class DaemonGitService:
@@ -337,6 +383,7 @@ class DaemonGitService:
         try:
             return await asyncio.wait_for(asyncio.shield(completion), timeout)
         except TimeoutError:
+            diagnostic = control.diagnostic()
             consumer_active = control.kill()
             cancelled = False
             if consumer_active:
@@ -346,7 +393,7 @@ class DaemonGitService:
                 raise asyncio.CancelledError() from None
             # The dedicated worker owns eventual kill/reap, including a process
             # that has not returned from Popen yet. Never await a wedged spawn.
-            return GitTimeout("timeout", argv, timeout)
+            return GitTimeout("timeout", argv, timeout, stderr=f"Git timed out: {diagnostic}")
         except asyncio.CancelledError:
             consumer_active = control.kill()
             if consumer_active:
@@ -367,17 +414,20 @@ def _run_git_worker(
 ) -> None:
     """Own one process from spawn through communication and leader reap."""
     process: subprocess.Popen[bytes] | None = None
+    control.begin_preparing()
     try:
         input_bytes = (
             input_text.encode("utf-8", errors="surrogateescape") if input_text is not None else None
         )
+        process_env = env if env is not None else git_subprocess_env()
+        control.begin_spawn()
         process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
             argv,
             cwd=cwd,
             stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=env if env is not None else git_subprocess_env(),
+            env=process_env,
             start_new_session=True,
         )
         control.attach(process)
@@ -415,15 +465,18 @@ def _stream_git_worker(
     """Spool raw process output and consume it without an in-memory copy."""
     process: subprocess.Popen[bytes] | None = None
     consumer_error: Exception | None = None
+    control.begin_preparing()
     try:
         with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            process_env = env if env is not None else git_subprocess_env()
+            control.begin_spawn()
             process = subprocess.Popen(  # nosec B603 B607 - fixed executable, argv-only args
                 argv,
                 cwd=cwd,
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_file,
                 stderr=stderr_file,
-                env=env if env is not None else git_subprocess_env(),
+                env=process_env,
                 start_new_session=True,
             )
             control.attach(process)
