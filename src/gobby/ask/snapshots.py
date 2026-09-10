@@ -619,7 +619,8 @@ class AskSnapshotManager:
             timeout=_remaining_seconds(deadline_at),
         )
         _remaining_seconds(deadline_at)
-        await ensure_project_json_for_isolation(repository_root, source_root)
+        async with asyncio.timeout(_remaining_seconds(deadline_at)):
+            await ensure_project_json_for_isolation(repository_root, source_root)
         _remaining_seconds(deadline_at)
 
     async def _publish_lifecycle(

@@ -285,6 +285,61 @@ def test_native_snapshot_lifecycle_generations_and_fault_cleanup(
     assert not third.source_root.exists()
 
 
+@pytest.mark.asyncio
+async def test_snapshot_metadata_preparation_obeys_remaining_deadline(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "caller"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "source.py").write_text("VALUE = 'pinned'\n", encoding="utf-8")
+    commit_oid = _commit(repo, "pinned")
+    storage, run_id = _run_storage(temp_db, str(sample_project["id"]), repo, commit_oid)
+    record = storage.get(run_id)
+    assert record is not None
+
+    async def unexpected_index(_path: Path, _deadline: datetime) -> SnapshotIndexRuntime:
+        raise AssertionError("materialization must not start index preparation")
+
+    manager = AskSnapshotManager(
+        worktree_storage=LocalWorktreeManager(temp_db),
+        run_storage=storage,
+        snapshot_executable=_branch_gcode(),
+        index_preparer=unexpected_index,
+        index_releaser=lambda _runtime: None,
+    )
+    metadata_started = asyncio.Event()
+    metadata_cancelled = asyncio.Event()
+
+    async def stalled_metadata(_repository_root: Path, _source_root: Path) -> None:
+        metadata_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            metadata_cancelled.set()
+
+    def materialized_source(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(snapshot_module, "_native_snapshot", materialized_source)
+    monkeypatch.setattr(snapshot_module, "ensure_project_json_for_isolation", stalled_metadata)
+    watchdog = asyncio.timeout(2)
+    with pytest.raises(TimeoutError):
+        async with watchdog:
+            await manager._materialize(
+                record=record,
+                repository_root=repo,
+                source_root=tmp_path / "snapshot",
+                deadline_at=datetime.now(UTC) + timedelta(seconds=0.1),
+            )
+    assert metadata_started.is_set()
+    assert metadata_cancelled.is_set()
+    assert not watchdog.expired(), "the Ask deadline must cancel metadata before the test watchdog"
+
+
 def test_snapshot_creation_and_index_faults_leave_no_worktree(
     temp_db: HubDatabase,
     sample_project: dict[str, object],
