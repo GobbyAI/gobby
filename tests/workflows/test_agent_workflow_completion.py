@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Iterator
@@ -13,6 +14,7 @@ import pytest
 import yaml
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.agents.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -431,6 +433,7 @@ class TestAgentWorkflowCompletion:
         runner.run_storage.get_by_session.return_value = MagicMock(
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
+
         runner.agent_lifecycle_monitor = MagicMock()
         runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
@@ -676,8 +679,21 @@ class TestAgentWorkflowCompletion:
         runner.run_storage.get_by_session.return_value = MagicMock(
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
+
+        async def complete_with_owned_cleanup(run_id: str, **_kwargs: object) -> bool:
+            await asyncio.to_thread(
+                cleanup_agent_runtime_state,
+                db,
+                run_id=run_id,
+                child_session_id=AGENT_SESSION_ID,
+                terminal_reason=None,
+            )
+            return True
+
         runner.agent_lifecycle_monitor = MagicMock()
-        runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(return_value=True)
+        runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(
+            side_effect=complete_with_owned_cleanup
+        )
         runner.complete_run.return_value = True
         runner.run_storage.db = db
         runner.get_run.return_value = MagicMock(status="success", error=None)
@@ -903,6 +919,9 @@ class TestAgentWorkflowCompletion:
             session_id=child.id,
             variables={},
         )
+        from gobby.agents.terminal_delivery import drain_shielded_terminal_deliveries
+
+        await drain_shielded_terminal_deliveries()
 
         completed = run_manager.get(run.id)
         assert completed is not None
