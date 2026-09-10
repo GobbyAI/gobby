@@ -51,6 +51,10 @@ class FakeStore:
         self.dependency_calls.append(task_ref)
         return self.dependencies.get(task_ref, [])
 
+    def find_task_ref_by_label(self, label: str) -> str | None:
+        matches = [ref for ref, labels in self.labels.items() if label in labels]
+        return matches[0] if len(matches) == 1 else None
+
 
 def _deferral(
     *,
@@ -107,6 +111,24 @@ def test_validate_task_missing() -> None:
     assert result.status == "task_missing"
     assert store.label_calls == []
     assert store.dependency_calls == []
+
+
+def test_placeholder_task_ref_resolves_through_provenance_label() -> None:
+    """Expansion creates the task before the plan placeholder is overwritten."""
+    result = _validate(_deferral(task_ref="#TBD-created-at-expansion"), _passing_store())
+
+    assert result.status == "valid"
+    assert result.task_ref == DEFERRED_TASK_REF
+
+
+def test_dangling_numeric_task_ref_is_not_resolved_by_label() -> None:
+    store = _passing_store()
+
+    result = _validate(_deferral(task_ref="#99"), store)
+
+    assert result.status == "task_missing"
+    assert result.task_ref == "#99"
+    assert store.label_calls == []
 
 
 def test_validate_task_closed() -> None:

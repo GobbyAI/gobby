@@ -12,6 +12,7 @@ from gobby.storage.tasks import Task
 from gobby.storage.tasks._creation import _create_task_in_transaction
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.tasks.expansion._common import _manifest_stage_names
+from gobby.tasks.expansion._deferrals import create_placeholder_deferral_tasks
 
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
@@ -249,6 +250,16 @@ def apply_run(
             for child_id in phase_child_ids.get(phase_list[0]["id"], []):
                 self._add_dependency(task.id, child_id)
 
+        deferral_task_map = create_placeholder_deferral_tasks(
+            self,
+            conn,
+            spec=spec,
+            parent=task,
+            session_id=session_id,
+            provenance_label=provenance_label,
+            plan_ref_block=plan_ref_block,
+        )
+
         created_ids = list(
             dict.fromkeys(
                 [
@@ -258,6 +269,7 @@ def apply_run(
                         if phase_parent_map[phase["id"]] != task.id
                     ),
                     *created_task_map.values(),
+                    *deferral_task_map.values(),
                 ]
             )
         )
@@ -270,6 +282,7 @@ def apply_run(
             created_task_ids=created_ids,
             checkpoints={
                 "phase_parent_map": phase_parent_map,
+                "deferral_task_map": deferral_task_map,
                 "apply_validation": self.validate_applied_run(
                     run_id, compiled_spec=spec, task_id_map=created_task_map
                 ),

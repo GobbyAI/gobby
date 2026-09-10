@@ -10,10 +10,13 @@ description: |
     3. Inspect the stored run result
     4. Fail immediately when the run failed
     5. Run deterministic validation on the compiled/applied output
-    6. Optionally run plan coverage for interactive expansion
+    6. Run plan coverage (expansion-qa's mechanical gate) for every
+       Plan-Coverage Contract run, or whenever run_coverage is set
 
   The expansion run itself owns compile/apply state. The task tree is the only
-  state written back onto tasks.
+  state written back onto tasks. Contract-plan runs also create one task per
+  placeholder `kind: deferred` section; the run checkpoint `deferral_task_map`
+  names them so the coordinator can write the refs over the plan placeholders.
 
 inputs:
   task_id:
@@ -30,13 +33,14 @@ inputs:
   run_coverage:
     type: boolean
     default: false
-    description: "Run and persist plan coverage after expansion validation"
+    description: "Force plan coverage after validation; contract-plan runs always get it"
 
 outputs:
   run_id: "${{ steps.start_run.output.run_id }}"
   status: "${{ steps.wait_run.output.status }}"
   created_task_ids: "${{ steps.get_run.output.run.created_task_ids }}"
   validation: "${{ steps.validate_run.output }}"
+  coverage: "${{ steps.coverage_check.output }}"
 
 steps:
   - id: start_run
@@ -88,7 +92,7 @@ steps:
         message: "Expansion validation failed: ${{ steps.validate_run.output }}"
 
   - id: coverage_check
-    condition: "${{ inputs.run_coverage }}"
+    condition: "${{ inputs.run_coverage or (steps.wait_run.output.status == 'completed' and steps.get_run.output.run.compiled_spec.contract_plan) }}"
     mcp:
       server: gobby-tasks-ops
       tool: run_expansion_qa_coverage

@@ -521,12 +521,14 @@ def test_deferrals_preserved(
     assert spec["deferrals"] == [
         {
             "section_id": "D1",
+            "title": "Deferred",
             "task_ref": "#777",
             "reason": "tracked downstream",
             "owner": "backend-developer",
             "original_acceptance_items": [
                 {
                     "item_id": "D1.1",
+                    "prose": "D1.1",
                     "artifact_kind": "behavior",
                     "artifact_ref": "D1.1",
                 }

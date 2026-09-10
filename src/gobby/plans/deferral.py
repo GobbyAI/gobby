@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from gobby.plans._artifact_refs import artifact_referenced
-from gobby.plans._task_refs import normalize_task_ref
+from gobby.plans._task_refs import is_placeholder_task_ref, normalize_task_ref
 from gobby.plans.parser import Deferral
 
 type DeferralStatus = Literal[
@@ -42,12 +42,16 @@ class DeferralValidationResult:
     plan_id: str
     status: DeferralStatus
     detail: str
+    # The task the gate evaluated: the deferral's own ``task_ref``, or the task
+    # found through its provenance label when the plan still carries a placeholder.
+    task_ref: str
 
 
 class TaskStoreProtocol(Protocol):
     def get_task(self, task_ref: str) -> dict[str, Any] | None: ...
     def get_task_labels(self, task_ref: str) -> list[str]: ...
     def get_task_dependencies(self, task_ref: str) -> list[str]: ...
+    def find_task_ref_by_label(self, label: str) -> str | None: ...
 
 
 def validate_deferral(
@@ -60,9 +64,17 @@ def validate_deferral(
 ) -> DeferralValidationResult:
     task_ref = normalize_task_ref(deferral.task_ref)
     recovery_epic_ref = normalize_task_ref(recovery_epic_ref)
+    provenance_label = f"deferred-from:{plan_id}:{section_id}"
     task = task_store.get_task(task_ref)
+    if task is None and is_placeholder_task_ref(task_ref):
+        # Expansion creates the deferral task before the plan's placeholder is
+        # written over, so the provenance label is the identity until then.
+        resolved_ref = task_store.find_task_ref_by_label(provenance_label)
+        if resolved_ref is not None:
+            task_ref = normalize_task_ref(resolved_ref)
+            task = task_store.get_task(task_ref)
     if task is None:
-        return _result(deferral, section_id, plan_id, "task_missing", "task is missing")
+        return _result(deferral, section_id, plan_id, task_ref, "task_missing", "task is missing")
 
     state = _task_state(task)
     if state not in _ACTIVE_TASK_STATES and not _delivered_its_obligation(task):
@@ -70,17 +82,18 @@ def validate_deferral(
             deferral,
             section_id,
             plan_id,
+            task_ref,
             "task_closed",
             f"task has non-active state {state!r} with close reason {_task_closed_reason(task)!r}",
         )
 
     labels = task_store.get_task_labels(task_ref)
-    provenance_label = f"deferred-from:{plan_id}:{section_id}"
     if provenance_label not in labels:
         return _result(
             deferral,
             section_id,
             plan_id,
+            task_ref,
             "missing_provenance_label",
             f"task labels do not include {provenance_label!r}",
         )
@@ -92,6 +105,7 @@ def validate_deferral(
                 deferral,
                 section_id,
                 plan_id,
+                task_ref,
                 "validation_criteria_does_not_duplicate",
                 f"task validation criteria do not duplicate artifact {item.artifact_ref!r}",
             )
@@ -101,6 +115,7 @@ def validate_deferral(
             deferral,
             section_id,
             plan_id,
+            task_ref,
             "missing_reason_or_owner",
             "deferral reason and owner are required",
         )
@@ -112,12 +127,13 @@ def validate_deferral(
         recovery_epic_ref=recovery_epic_ref,
         task_store=task_store,
     ):
-        return _result(deferral, section_id, plan_id, "valid", "deferral is valid")
+        return _result(deferral, section_id, plan_id, task_ref, "valid", "deferral is valid")
 
     return _result(
         deferral,
         section_id,
         plan_id,
+        task_ref,
         "missing_dependency_or_cited_parent",
         "task is neither a recovery epic dependency nor a valid cited-parent deferral",
     )
@@ -127,6 +143,7 @@ def _result(
     deferral: Deferral,
     section_id: str,
     plan_id: str,
+    task_ref: str,
     status: DeferralStatus,
     detail: str,
 ) -> DeferralValidationResult:
@@ -136,6 +153,7 @@ def _result(
         plan_id=plan_id,
         status=status,
         detail=detail,
+        task_ref=task_ref,
     )
 
 
