@@ -6,8 +6,16 @@ use serde_json::Value;
 use syn::{Expr, ExprLit, Item, Lit};
 
 fn pinned_contract() -> Value {
-    serde_json::from_str(include_str!("../../../tests/contracts/gcode.contract.json"))
-        .expect("pinned contract")
+    let native: Value = serde_json::from_str(include_str!("../contract/gcode.contract.json"))
+        .expect("native pinned contract");
+    let vendored: Value =
+        serde_json::from_str(include_str!("../../../tests/contracts/gcode.contract.json"))
+            .expect("vendored pinned contract");
+    assert_eq!(
+        native, vendored,
+        "native and vendored contract pins must agree"
+    );
+    native
 }
 
 fn shared_graph_schema_doc() -> &'static str {

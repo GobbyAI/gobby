@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -104,10 +103,13 @@ impl AskClient {
             })
             .collect();
         let output_path = destination.join(format!("ask-{safe_run_id}.tar"));
-        let mut output =
-            File::create(&output_path).map_err(|error| io_error("create export", error))?;
+        let mut output = tempfile::NamedTempFile::new_in(destination)
+            .map_err(|error| io_error("create export", error))?;
         io::copy(&mut response.into_reader(), &mut output)
             .map_err(|error| io_error("write export", error))?;
+        output
+            .persist(&output_path)
+            .map_err(|error| io_error("publish export", error.error))?;
         Ok(output_path)
     }
 

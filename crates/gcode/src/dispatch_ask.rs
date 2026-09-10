@@ -36,6 +36,7 @@ pub(crate) fn run(
                 return print_and_classify(&started, format);
             }
             let run_id = run_id(&started)?;
+            eprintln!("Ask run {run_id}");
             let completed = wait_for_run(&client, run_id, Some(timeout_seconds))?;
             print_and_classify(&completed, format)
         }
@@ -48,6 +49,7 @@ pub(crate) fn run(
             if is_terminal(&resumed) {
                 return print_and_classify(&resumed, format);
             }
+            eprintln!("Ask run {run_id}");
             let completed = wait_for_run(&client, run_id, remaining_seconds(&resumed))?;
             print_and_classify(&completed, format)
         }

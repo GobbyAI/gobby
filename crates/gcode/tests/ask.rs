@@ -26,6 +26,7 @@ fn test_ask_cli_lifecycle_contract() -> anyhow::Result<()> {
     assert_eq!(response["run_id"], "ask-run-1");
     assert_eq!(response["status"], "completed");
     assert_eq!(response["answer_outcome"], "unknown");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Ask run ask-run-1"));
 
     let requests = requests.join().expect("join scripted Ask daemon")?;
     assert_eq!(requests.len(), 2);
@@ -127,6 +128,7 @@ fn test_ask_cli_lifecycle_contract() -> anyhow::Result<()> {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("ask_wait_timeout"), "stderr: {stderr}");
+    assert!(stderr.contains("Ask run ask-run-1"), "stderr: {stderr}");
     assert!(
         !stderr.contains("ask_wait_disconnected"),
         "stderr: {stderr}"
@@ -145,6 +147,46 @@ fn test_ask_cli_lifecycle_contract() -> anyhow::Result<()> {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
 
+    Ok(())
+}
+
+#[test]
+fn test_ask_export_preserves_existing_bundle_on_disconnect() -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    let fixture = AskCliFixture::new()?;
+    let destination = fixture.project.path().join("exports");
+    fs::create_dir(&destination)?;
+    let bundle = destination.join("ask-ask-run-1.tar");
+    fs::write(&bundle, b"previous complete bundle")?;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let daemon_url = format!("http://{}", listener.local_addr()?);
+    let server = std::thread::spawn(move || -> std::io::Result<()> {
+        let (mut stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let mut request = [0_u8; 4096];
+        let received = stream.read(&mut request)?;
+        assert!(received > 0, "export client must send a request");
+        stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial",
+        )
+    });
+    let output = fixture.command(
+        &daemon_url,
+        &[
+            "ask",
+            "--export",
+            "ask-run-1",
+            "--output",
+            &destination.to_string_lossy(),
+        ],
+    )?;
+    server.join().expect("join truncated export server")?;
+    assert!(!output.status.success());
+    assert_eq!(fs::read(&bundle)?, b"previous complete bundle");
+    assert_eq!(fs::read_dir(&destination)?.count(), 1);
     Ok(())
 }
 

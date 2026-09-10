@@ -104,6 +104,50 @@ def test_shared_run_contract_and_event_driven_wait(tmp_path: Path) -> None:
     assert request.reviewer_profile == "ask-reviewer"
 
 
+def test_export_propagates_archive_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import tarfile
+
+    from gobby.servers.routes.ask import _tar_stream
+
+    (tmp_path / "answer.md").write_text("verified answer")
+
+    def fail_add(*args: object, **kwargs: object) -> None:
+        raise OSError("publication read failed")
+
+    monkeypatch.setattr(tarfile.TarFile, "add", fail_add)
+    with pytest.raises(OSError, match="publication read failed"):
+        list(_tar_stream(tmp_path))
+
+
+def test_export_stream_roundtrip(tmp_path: Path) -> None:
+    import io
+    import tarfile
+
+    from gobby.servers.routes.ask import _tar_stream
+
+    content = b"verified answer\n"
+    (tmp_path / "answer.md").write_bytes(content)
+    with tarfile.open(fileobj=io.BytesIO(b"".join(_tar_stream(tmp_path)))) as archive:
+        assert archive.getnames() == ["answer.md"]
+        member = archive.extractfile("answer.md")
+        assert member is not None
+        assert member.read() == content
+
+
+@pytest.mark.timeout(5)
+def test_export_disconnect_releases_writer(tmp_path: Path) -> None:
+    import threading
+
+    from gobby.servers.routes.ask import _tar_stream
+
+    existing = set(threading.enumerate())
+    (tmp_path / "answer.md").write_bytes(b"x" * (1024 * 1024))
+    stream = _tar_stream(tmp_path)
+    assert next(stream)
+    stream.close()
+    assert not [thread for thread in threading.enumerate() if thread not in existing]
+
+
 def test_ask_router_is_composed_with_http_app(monkeypatch: pytest.MonkeyPatch) -> None:
     import gobby.servers.routes as routes
     import gobby.servers.routes.ask as ask_routes

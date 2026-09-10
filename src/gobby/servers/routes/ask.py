@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tarfile
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,8 +45,9 @@ def _caller_session_id(server: HTTPServer, request: Request) -> str:
     return session_id
 
 
-def _tar_stream(root: Path) -> Iterator[bytes]:
+def _tar_stream(root: Path) -> Generator[bytes]:
     read_fd, write_fd = os.pipe()
+    failures: list[Exception] = []
 
     def produce() -> None:
         try:
@@ -60,11 +61,19 @@ def _tar_stream(root: Path) -> Iterator[bytes]:
                     tar.add(path, arcname=path.relative_to(root), recursive=False)
         except BrokenPipeError:
             pass
+        except Exception as error:
+            failures.append(error)
 
-    threading.Thread(target=produce, name="ask-export", daemon=True).start()
-    with os.fdopen(read_fd, "rb") as source:
-        while chunk := source.read(64 * 1024):
-            yield chunk
+    worker = threading.Thread(target=produce, name="ask-export", daemon=True)
+    worker.start()
+    try:
+        with os.fdopen(read_fd, "rb") as source:
+            while chunk := source.read(64 * 1024):
+                yield chunk
+    finally:
+        worker.join()
+    if failures:
+        raise failures[0]
 
 
 def create_ask_router(
