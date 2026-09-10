@@ -507,10 +507,14 @@ def test_seal_writes_schema_v2_manifest_accepted_by_production_loader(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.ask.test_native_probe_provenance import _raw_probe_fixture
+
     provider = _provider(tmp_path / "claude")
     observations_path = tmp_path / "observations.json"
+    observations = _observations(provider, tmp_path)
+    raw_path = _raw_probe_fixture(tmp_path, observations)
     observations_path.write_text(
-        json.dumps(_observations(provider, tmp_path)),
+        json.dumps(observations),
         encoding="utf-8",
     )
     _policy, paths = _policy_fixture(tmp_path)
@@ -544,4 +548,5 @@ def test_seal_writes_schema_v2_manifest_accepted_by_production_loader(
         assert validation.verified_artifact is True
     admission = json.loads((manifest_path.parent / "admission.json").read_bytes())
     assert admission["provider"] == "claude"
+    assert admission["raw_probe_sha256"] == hashlib.sha256(raw_path.read_bytes()).hexdigest()
     assert admission["profiles"] == ["ask-investigator", "ask-reviewer"]

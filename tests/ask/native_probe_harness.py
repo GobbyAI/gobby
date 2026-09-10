@@ -1437,6 +1437,8 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
 
 
 def _seal(arguments: argparse.Namespace) -> int:
+    from gobby.ask.runtime_validation import bind_ask_runtime_observations
+
     raw_observations = json.loads(arguments.observations.read_bytes())
     if isinstance(raw_observations, Mapping):
         raw_observations = raw_observations.get("observations")
@@ -1444,6 +1446,9 @@ def _seal(arguments: argparse.Namespace) -> int:
         isinstance(observation, Mapping) for observation in raw_observations
     ):
         raise ValueError("operator-reviewed native Ask observations must be a JSON array")
+    raw_probe_sha256, raw_observations = bind_ask_runtime_observations(
+        arguments.observations.parent / "raw-probe.json", raw_observations
+    )
     control_digest = ask_runtime_control_digest(arguments.provider, arguments.auth_mode)
     artifact = build_ask_runtime_probe_artifact(
         provider=arguments.provider,
@@ -1497,6 +1502,7 @@ def _seal(arguments: argparse.Namespace) -> int:
         {
             "schema_version": schema_version,
             "provider": arguments.provider,
+            "raw_probe_sha256": raw_probe_sha256,
             "profiles": profiles,
             "artifact_path": str(output_path),
             "artifact_sha256": artifact_sha256,

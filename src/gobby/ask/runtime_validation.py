@@ -569,6 +569,189 @@ def _provider_identity(executable: Path) -> tuple[str, str, str]:
     return resolved, executable_sha256, version
 
 
+def bind_ask_runtime_observations(
+    raw_probe_path: Path, observations: Sequence[Mapping[str, Any]]
+) -> tuple[str, list[dict[str, Any]]]:
+    """Bind reviewed outcomes to captured identities and exact response bytes.
+
+    The operator interprets the response. This check proves which captured bytes
+    support that interpretation; it does not infer a denial from arbitrary text.
+    """
+    try:
+        payload = raw_probe_path.read_bytes()
+        expected_hash = raw_probe_path.with_suffix(".sha256").read_text().strip()
+        raw = json.loads(payload)
+    except (OSError, ValueError) as error:
+        raise ValueError("Ask runtime raw probe is missing or invalid") from error
+    raw_hash = hashlib.sha256(payload).hexdigest()
+    if raw_hash != expected_hash or not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        raise ValueError("Ask runtime raw probe hash or schema mismatch")
+    root = raw_probe_path.parent.resolve(strict=True)
+    snapshots = _probe_rows(raw.get("ask_runs"), "Ask runs")
+    if len(snapshots) != 2:
+        raise ValueError("Ask runtime raw probe requires distinct fresh and resumed runs")
+    executions = [_probe_mapping(snapshot.get("execution"), "execution") for snapshot in snapshots]
+    if any(row.get("status") != "completed" for row in executions):
+        raise ValueError("Ask runtime raw probe executions must be completed")
+    if not executions[0].get("id") or executions[0].get("id") == executions[1].get("id"):
+        raise ValueError("Ask runtime raw probe execution identities are invalid")
+    process_sets = _probe_mapping(raw.get("process_sets"), "process sets")
+    cleanup = _probe_mapping(process_sets.get("after_cleanup"), "final cleanup")
+    for kind in ("agents", "workers"):
+        if any(row.get("live") is not False for row in _probe_rows(cleanup.get(kind), kind)):
+            raise ValueError("Ask runtime raw probe still has live owned processes")
+    process_rows = [
+        row
+        for snapshot in process_sets.values()
+        for row in _probe_rows(_probe_mapping(snapshot, "process snapshot").get("agents"), "agents")
+    ]
+    agents: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for row in _probe_rows(raw.get("agent_runs"), "agent runs"):
+        agent = _probe_mapping(row.get("agent"), "agent")
+        session = _probe_mapping(row.get("session"), "session")
+        run_id = _required_string(agent.get("id"), name="captured agent run")
+        if run_id in agents or agent.get("child_session_id") != session.get("id"):
+            raise ValueError("Ask runtime raw probe agent/session binding is invalid")
+        agents[run_id] = (agent, session)
+    receipts: dict[str, tuple[dict[str, Any], bytes]] = {}
+    for receipt in _probe_rows(raw.get("receipts"), "receipts"):
+        path = Path(_required_string(receipt.get("output_path"), name="captured receipt path"))
+        path = path if path.is_absolute() else root / path
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root) or path.is_symlink():
+                raise ValueError("Ask runtime raw probe receipt escapes its evidence directory")
+            content = resolved.read_bytes()
+        except OSError as error:
+            raise ValueError("Ask runtime raw probe receipt is unavailable") from error
+        if (
+            hashlib.sha256(content).hexdigest() != receipt.get("sha256")
+            or len(content) != receipt.get("size_bytes")
+            or str(resolved) in receipts
+        ):
+            raise ValueError("Ask runtime raw probe receipt hash, size, or identity mismatch")
+        receipts[str(resolved)] = (receipt, content)
+    required_kinds = {"srt-policy", "provider-transcript-and-mcp-responses"}
+    if any(
+        row.get("kind") in required_kinds
+        for row in _probe_rows(raw.get("excluded_receipts"), "excluded receipts")
+    ):
+        raise ValueError("Ask runtime raw probe is missing required receipts")
+    bound: list[dict[str, Any]] = []
+    for observation in observations:
+        receipt = _probe_mapping(observation.get("receipt"), "reviewed receipt")
+        record = _probe_mapping(receipt.get("record"), "reviewed record")
+        if _fingerprint(record) != receipt.get("sha256"):
+            raise ValueError("Ask runtime reviewed record hash mismatch")
+        run_id = _required_string(record.get("agent_run_id"), name="reviewed agent run")
+        if run_id not in agents:
+            raise ValueError("Ask runtime reviewed agent was not captured")
+        agent, session = agents[run_id]
+        phase = observation.get("phase")
+        if phase not in ("fresh", "resumed"):
+            raise ValueError("Ask runtime reviewed phase is invalid")
+        snapshot = snapshots[0 if phase == "fresh" else 1]
+        execution = executions[0 if phase == "fresh" else 1]
+        metadata = _probe_mapping(agent.get("resume_metadata_json"), "resume metadata")
+        if run_id not in snapshot.get("agent_run_ids", []):
+            raise ValueError("Ask runtime reviewed agent belongs to a different phase")
+        if (
+            record.get("session_id") != session.get("id")
+            or record.get("terminal_id") != agent.get("terminal_id")
+            or record.get("process_id") != agent.get("pid")
+            or agent.get("provider") != "claude"
+            or agent.get("machine_id") != session.get("machine_id")
+            or not session.get("machine_id")
+            or not session.get("project_id")
+            or metadata.get("project_id") != session.get("project_id")
+            or execution.get("project_id") != session.get("project_id")
+        ):
+            raise ValueError("Ask runtime reviewed process/session identity mismatch")
+        if phase == "resumed":
+            predecessor = record.get("resumed_from_agent_run_id")
+            if predecessor != metadata.get("resumed_from_run_id") or predecessor not in agents:
+                raise ValueError("Ask runtime reviewed successor lacks its captured predecessor")
+        live = [
+            row
+            for row in process_rows
+            if row.get("id") == run_id
+            and row.get("pid") == agent.get("pid")
+            and row.get("terminal_id") == agent.get("terminal_id")
+            and row.get("live") is True
+        ]
+        if not live or any(not row.get("start_identity") for row in live):
+            raise ValueError("Ask runtime reviewed process lacks captured live/start identity")
+        if not any(
+            row.get("id") == run_id and row.get("pid") == agent.get("pid")
+            for row in _probe_rows(cleanup.get("agents"), "final agents")
+        ):
+            raise ValueError("Ask runtime reviewed process lacks final cleanup evidence")
+        starts = {str(row["start_identity"]) for row in live}
+        if len(starts) != 1:
+            raise ValueError("Ask runtime captured process identity changed")
+        owned = [item for item in receipts.values() if item[0].get("agent_run_id") == run_id]
+        if not required_kinds.issubset({item[0].get("kind") for item in owned}):
+            raise ValueError("Ask runtime reviewed agent lacks required captured receipts")
+        policies = [
+            json.loads(content) for meta, content in owned if meta.get("kind") == "srt-policy"
+        ]
+        if not policies or any(policy != record.get("policy") for policy in policies):
+            raise ValueError("Ask runtime reviewed policy differs from captured policy bytes")
+        evidence = _probe_mapping(receipt.get("evidence"), "response evidence")
+        path = Path(_required_string(evidence.get("path"), name="response evidence path"))
+        selected = receipts.get(str((path if path.is_absolute() else root / path).resolve()))
+        if selected is None:
+            raise ValueError("Ask runtime response evidence was not captured")
+        metadata, content = selected
+        if (
+            metadata.get("agent_run_id") != run_id
+            or metadata.get("sha256") != evidence.get("sha256")
+            or metadata.get("kind")
+            not in {"provider-transcript-and-mcp-responses", "srt-violations"}
+        ):
+            raise ValueError("Ask runtime response evidence ownership mismatch")
+        if (
+            receipt.get("source") == "mcp_response"
+            and metadata.get("kind") != "provider-transcript-and-mcp-responses"
+        ):
+            raise ValueError("Ask runtime MCP response evidence is not a captured transcript")
+        start, end = evidence.get("start_byte"), evidence.get("end_byte")
+        if type(start) is not int or type(end) is not int or not 0 <= start < end <= len(content):
+            raise ValueError("Ask runtime response evidence byte range is invalid")
+        try:
+            response = content[start:end].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("Ask runtime response evidence is not UTF-8") from error
+        captured = {
+            "raw_probe_sha256": raw_hash,
+            "receipt_sha256": metadata["sha256"],
+            "start_byte": start,
+            "end_byte": end,
+            "response": response,
+            "process_start_identity": starts.pop(),
+        }
+        record = {**record, "raw_evidence": captured}
+        bound.append(
+            {
+                **observation,
+                "receipt": {**receipt, "record": record, "sha256": _fingerprint(record)},
+            }
+        )
+    return raw_hash, bound
+
+
+def _probe_mapping(value: object, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"Ask runtime raw probe {name} is invalid")
+    return value
+
+
+def _probe_rows(value: object, name: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError(f"Ask runtime raw probe {name} is invalid")
+    return [_probe_mapping(row, name) for row in value]
+
+
 def _provider_binary_identity(executable: Path) -> tuple[str, str]:
     try:
         resolved = executable.resolve(strict=True)
