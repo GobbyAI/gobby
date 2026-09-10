@@ -5,10 +5,13 @@ import hashlib
 import json
 import shutil
 import signal
+import socket
+import sys
 import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
@@ -277,6 +280,40 @@ def test_probe_database_scope_and_worker_environment_are_owned(
     assert "GOBBY_SESSION_ID" not in environment
 
 
+def test_contained_config_pins_gterm_host_to_owned_runtime(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "runtime" / "gobby"
+
+    config_path = harness._write_contained_config(
+        gobby_home,
+        database_url=_SCOPED_TEST_DATABASE_URL,
+        daemon_port=19001,
+        websocket_port=19002,
+    )
+
+    config = config_path.read_text(encoding="utf-8")
+    assert "terminals:\n  stop_host_on_shutdown: true" in config
+    assert "terminal_host:\n  enabled: true" in config
+    assert f'  socket_dir: "{(gobby_home.parent / "gterm-host").resolve()}"' in config
+
+
+def test_owned_runtime_root_requires_its_exact_marker_for_removal(tmp_path: Path) -> None:
+    runtime_root = harness._create_owned_runtime_root(parent=tmp_path)
+    marker = json.loads((runtime_root / ".native-ask-probe-root.json").read_bytes())
+    sibling = tmp_path / "gobby-ap-not-owned"
+    sibling.mkdir(mode=0o700)
+
+    assert marker["root"] == str(runtime_root)
+    assert marker["purpose"] == "native-ask-runtime-probe-root"
+    if sys.platform == "darwin":
+        assert harness._owned_runtime_parent() == Path("/tmp").resolve(strict=True)
+    with pytest.raises(RuntimeError, match="unowned Ask probe runtime root"):
+        harness._remove_owned_runtime_root(sibling)
+    harness._remove_owned_runtime_root(runtime_root)
+
+    assert not runtime_root.exists()
+    assert sibling.is_dir()
+
+
 def test_runtime_identity_requires_branch_local_gcode_and_records_gterm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -326,6 +363,251 @@ def test_runtime_identity_requires_branch_local_gcode_and_records_gterm(
     )
     with pytest.raises(RuntimeError, match="branch-local gcode"):
         harness._capture_runtime_identity(project_root)
+
+
+def test_terminal_host_launch_snapshot_binds_owned_socket_and_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.mkdtemp(prefix="ga-")).resolve()
+    socket_dir = runtime_root
+    control_path = socket_dir / "gterm-control.sock"
+    frames_path = socket_dir / "gterm-frames.sock"
+    pidfile = socket_dir / "gterm.pid"
+    pidfile.write_text("4321", encoding="utf-8")
+    control_socket = socket.socket(socket.AF_UNIX)
+    frames_socket = socket.socket(socket.AF_UNIX)
+    control_socket.bind(str(control_path))
+    frames_socket.bind(str(frames_path))
+    manager = SimpleNamespace(
+        socket_dir=socket_dir,
+        host_pid=4321,
+        host_epoch="host-epoch",
+        native_available=True,
+        running=True,
+        spawned_this_construction=True,
+        adopted=False,
+    )
+    runner = SimpleNamespace(terminal_host_manager=manager)
+    monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: "host-start")
+    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        harness,
+        "_process_group_snapshot",
+        lambda _pgid: [
+            {
+                "pid": 4321,
+                "ppid": 1,
+                "pgid": 4321,
+                "start_identity": "host-start",
+            }
+        ],
+        raising=False,
+    )
+
+    try:
+        snapshot = harness._terminal_host_launch_snapshot(
+            runner,
+            phase="fresh",
+            runtime_root=runtime_root,
+        )
+    finally:
+        control_socket.close()
+        frames_socket.close()
+        shutil.rmtree(runtime_root)
+
+    assert snapshot["workers"] == []
+    assert snapshot["agents"] == []
+    hosts = cast(list[dict[str, Any]], snapshot["hosts"])
+    assert len(hosts) == 1
+    host = hosts[0]
+    assert host["socket_dir"] == str(socket_dir.resolve())
+    assert host["control_socket"] == str(control_path.resolve())
+    assert host["frames_socket"] == str(frames_path.resolve())
+    assert host["pidfile"] == str(pidfile.resolve())
+    assert host["host_pid"] == 4321
+    assert host["start_identity"] == "host-start"
+    assert host["pgid"] == 4321
+    assert host["spawned_this_construction"] is True
+    assert host["adopted"] is False
+    assert host["process_group"] == [
+        {
+            "pid": 4321,
+            "ppid": 1,
+            "pgid": 4321,
+            "start_identity": "host-start",
+        }
+    ]
+
+
+def test_terminal_host_recovery_accepts_adoption_or_proven_dead_predecessor() -> None:
+    predecessor = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "resumed",
+                "socket_dir": "/owned/gterm-host",
+                "host_pid": 4321,
+                "start_identity": "host-start",
+                "host_epoch": "host-epoch",
+                "spawned_this_construction": True,
+                "adopted": False,
+            }
+        ],
+    }
+    surviving = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "resumed",
+                "socket_dir": "/owned/gterm-host",
+                "host_pid": 4321,
+                "start_identity": "host-start",
+                "host_epoch": "host-epoch",
+                "live": True,
+                "control_socket_exists": True,
+                "frames_socket_exists": True,
+                "process_group": [{"pid": 4321}],
+            }
+        ],
+    }
+    adopted = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "recover",
+                "socket_dir": "/owned/gterm-host",
+                "host_pid": 4321,
+                "start_identity": "host-start",
+                "host_epoch": "host-epoch",
+                "spawned_this_construction": False,
+                "adopted": True,
+            }
+        ],
+    }
+
+    assert harness._assert_terminal_host_recovery(predecessor, surviving, adopted) == "adopted"
+
+    absent = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "resumed",
+                "socket_dir": "/owned/gterm-host",
+                "host_pid": 4321,
+                "start_identity": "host-start",
+                "host_epoch": "host-epoch",
+                "live": False,
+                "control_socket_exists": False,
+                "frames_socket_exists": False,
+                "process_group": [],
+            }
+        ],
+    }
+    restarted = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "recover",
+                "socket_dir": "/owned/gterm-host",
+                "host_pid": 5000,
+                "start_identity": "new-host-start",
+                "host_epoch": "new-host-epoch",
+                "spawned_this_construction": True,
+                "adopted": False,
+            }
+        ],
+    }
+
+    assert harness._assert_terminal_host_recovery(predecessor, absent, restarted) == "restarted"
+    unknown = json.loads(json.dumps(absent))
+    cast(list[dict[str, Any]], unknown["hosts"])[0]["live"] = None
+    with pytest.raises(RuntimeError, match="predecessor absence is unproven"):
+        harness._assert_terminal_host_recovery(predecessor, unknown, restarted)
+
+
+def test_terminal_host_cleanup_kills_descendants_and_removes_owned_sockets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.gettempdir()).resolve()
+    socket_dir = Path(tempfile.mkdtemp(prefix="h-", dir=runtime_root)).resolve()
+    control_path = socket_dir / "gterm-control.sock"
+    frames_path = socket_dir / "gterm-frames.sock"
+    control_socket = socket.socket(socket.AF_UNIX)
+    frames_socket = socket.socket(socket.AF_UNIX)
+    control_socket.bind(str(control_path))
+    frames_socket.bind(str(frames_path))
+    launch_group = [
+        {"pid": 4321, "ppid": 1, "pgid": 4321, "start_identity": "host-start"},
+        {"pid": 4322, "ppid": 4321, "pgid": 4321, "start_identity": "child-start"},
+    ]
+    snapshot = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "resumed",
+                "socket_dir": str(socket_dir),
+                "control_socket": str(control_path),
+                "frames_socket": str(frames_path),
+                "host_pid": 4321,
+                "start_identity": "host-start",
+                "pgid": 4321,
+                "host_epoch": "host-epoch",
+                "spawned_this_construction": True,
+                "adopted": False,
+                "process_group": launch_group,
+            }
+        ],
+    }
+    group_snapshots = iter(
+        [
+            launch_group,
+            [
+                {
+                    "pid": 4322,
+                    "ppid": 1,
+                    "pgid": 4321,
+                    "start_identity": "child-start",
+                }
+            ],
+            [],
+            [],
+        ]
+    )
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(harness, "_process_group_snapshot", lambda _pgid: next(group_snapshots))
+    monkeypatch.setattr(
+        harness,
+        "_process_start_identity",
+        lambda pid: {4321: "host-start", 4322: "child-start"}[pid],
+    )
+    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda _pid: 4321)
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.os.killpg",
+        lambda pgid, process_signal: signals.append((pgid, process_signal)),
+    )
+
+    try:
+        result = harness._terminate_owned_host_process(
+            snapshot,
+            deadline_monotonic=time.monotonic(),
+            runtime_root=runtime_root,
+        )
+    finally:
+        control_socket.close()
+        frames_socket.close()
+        shutil.rmtree(socket_dir)
+
+    assert result["status"] == "terminated"
+    assert cast(list[dict[str, object]], result["group_before"])[1]["pid"] == 4322
+    assert result["group_after"] == []
+    assert result["removed_sockets"] == [str(control_path), str(frames_path)]
+    assert signals == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
 
 
 def test_wait_for_first_agent_requires_a_running_native_process(
@@ -680,6 +962,12 @@ def test_launch_receipt_captures_policy_before_runtime_reap(
     }
     monkeypatch.setattr(harness, "_agent_receipt_row", lambda *_args: row)
     monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: "os-start")
+    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        harness,
+        "_process_group_snapshot",
+        lambda _pgid: [{"pid": 4321, "ppid": 1, "pgid": 4321, "start_identity": "os-start"}],
+    )
 
     harness._capture_agent_launch_receipt(
         _SCOPED_TEST_DATABASE_URL,
@@ -696,6 +984,8 @@ def test_launch_receipt_captures_policy_before_runtime_reap(
     assert manifest["agent_run_id"] == "agent-run"
     assert manifest["ask_run_id"] == "ask-run"
     assert manifest["start_identity"] == "os-start"
+    assert manifest["pgid"] == 4321
+    assert manifest["process_group"][0]["pid"] == 4321
     assert manifest["violation"]["retained_path"].endswith(
         "/gobby/logs/sandbox-violations/agent-run.jsonl"
     )
@@ -749,6 +1039,19 @@ def test_process_snapshot_uses_os_start_identity_independent_of_terminal_status(
     monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: "os-start")
     start_identities: dict[str, str] = {}
 
+    unknown = harness._process_snapshot(
+        _SCOPED_TEST_DATABASE_URL,
+        {},
+        ["ask-run"],
+        start_identities=start_identities,
+    )
+    unknown_agents = cast(list[dict[str, Any]], unknown["agents"])
+    assert unknown_agents[0]["live"] is None
+    assert unknown_agents[0]["start_identity"] is None
+    assert unknown_agents[0]["observed_start_identity"] == "os-start"
+    assert start_identities == {}
+
+    start_identities["agent:agent-run:4321"] = "os-start"
     live = harness._process_snapshot(
         _SCOPED_TEST_DATABASE_URL,
         {},
@@ -776,10 +1079,41 @@ def test_process_snapshot_uses_os_start_identity_independent_of_terminal_status(
 def test_agent_cleanup_signals_only_the_matching_owned_process_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    identities = iter(["os-start", "os-start", None])
+    group_snapshots = iter(
+        [
+            [
+                {"pid": 4321, "ppid": 1, "pgid": 4321, "start_identity": "os-start"},
+                {
+                    "pid": 4322,
+                    "ppid": 4321,
+                    "pgid": 4321,
+                    "start_identity": "child-start",
+                },
+            ],
+            [
+                {
+                    "pid": 4322,
+                    "ppid": 1,
+                    "pgid": 4321,
+                    "start_identity": "child-start",
+                }
+            ],
+            [],
+        ]
+    )
     signals: list[tuple[int, int]] = []
-    monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: next(identities))
-    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        harness,
+        "_process_start_identity",
+        lambda pid: {4321: "os-start", 4322: "child-start"}[pid],
+    )
+    monkeypatch.setattr(
+        harness,
+        "_process_group_snapshot",
+        lambda _pgid: next(group_snapshots),
+        raising=False,
+    )
+    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda _pid: 4321)
     monkeypatch.setattr(
         "tests.ask.native_probe_harness.os.killpg",
         lambda pid, process_signal: signals.append((pid, process_signal)),
@@ -793,10 +1127,64 @@ def test_agent_cleanup_signals_only_the_matching_owned_process_group(
             "start_identity": "os-start",
             "terminal_process": {"pgid": 4321, "start_time": 99},
         },
-        deadline_monotonic=time.monotonic() + 1.0,
+        deadline_monotonic=time.monotonic(),
     )
 
-    assert result == {"agent_run_id": "agent-run", "pid": 4321, "status": "terminated"}
+    assert result["agent_run_id"] == "agent-run"
+    assert result["pid"] == 4321
+    assert result["status"] == "terminated"
+    assert cast(list[dict[str, object]], result["group_before"])[1]["pid"] == 4322
+    assert result["group_after"] == []
+    assert signals == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
+
+
+def test_agent_cleanup_uses_launch_group_when_leader_already_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_group = [
+        {"pid": 4321, "ppid": 1, "pgid": 4321, "start_identity": "os-start"},
+        {"pid": 4322, "ppid": 4321, "pgid": 4321, "start_identity": "child-start"},
+    ]
+    group_snapshots = iter(
+        [
+            [
+                {
+                    "pid": 4322,
+                    "ppid": 1,
+                    "pgid": 4321,
+                    "start_identity": "child-start",
+                }
+            ],
+            [],
+        ]
+    )
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(harness, "_process_group_snapshot", lambda _pgid: next(group_snapshots))
+    monkeypatch.setattr(
+        harness,
+        "_process_start_identity",
+        lambda pid: "child-start" if pid == 4322 else None,
+    )
+    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda _pid: 4321)
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.os.killpg",
+        lambda pgid, process_signal: signals.append((pgid, process_signal)),
+    )
+
+    result = harness._terminate_owned_agent_process(
+        {
+            "id": "agent-run",
+            "pid": 4321,
+            "live": False,
+            "start_identity": "os-start",
+            "terminal_process": {"pgid": 4321, "start_time": 99},
+            "process_group": launch_group,
+        },
+        deadline_monotonic=time.monotonic(),
+    )
+
+    assert result["status"] == "terminated"
+    assert result["group_after"] == []
     assert signals == [(4321, signal.SIGTERM)]
 
 
@@ -863,7 +1251,7 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    runtime_root = harness._create_owned_runtime_root(parent=Path(tempfile.gettempdir()))
     output_dir = tmp_path / "evidence"
     output_dir.mkdir()
     calls: list[tuple[object, ...]] = []
@@ -928,7 +1316,7 @@ def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    runtime_root = harness._create_owned_runtime_root(parent=Path(tempfile.gettempdir()))
     output_dir = tmp_path / "evidence"
     output_dir.mkdir()
     launch_manifest: dict[str, Any] = {
@@ -1014,7 +1402,7 @@ def test_failure_finalizer_cleans_owned_storage_when_raw_export_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    runtime_root = harness._create_owned_runtime_root(parent=Path(tempfile.gettempdir()))
     output_dir = tmp_path / "evidence"
     output_dir.mkdir()
     calls: list[object] = []
@@ -1076,12 +1464,12 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
     project_root.mkdir()
     output_dir = tmp_path / "evidence"
     runtime_roots: list[Path] = []
-    original_mkdtemp = tempfile.mkdtemp
+    original_create_runtime_root = harness._create_owned_runtime_root
 
-    def owned_mkdtemp(*, prefix: str) -> str:
-        runtime_root = Path(original_mkdtemp(prefix=prefix)).resolve()
+    def create_owned_runtime_root() -> Path:
+        runtime_root = original_create_runtime_root(parent=Path(tempfile.gettempdir()))
         runtime_roots.append(runtime_root)
-        return str(runtime_root)
+        return runtime_root
 
     def fail_schema_startup(_database_url: str, *, schema: str) -> None:
         raise RuntimeError(f"schema startup failed: {schema}")
@@ -1108,7 +1496,7 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
         "_capture_runtime_identity",
         lambda _root: {"source_head": "f" * 40},
     )
-    monkeypatch.setattr("tests.ask.native_probe_harness.tempfile.mkdtemp", owned_mkdtemp)
+    monkeypatch.setattr(harness, "_create_owned_runtime_root", create_owned_runtime_root)
     monkeypatch.setattr(schema_contract, "apply_schema", fail_schema_startup)
     monkeypatch.setattr(harness, "_export_raw", export_raw)
 

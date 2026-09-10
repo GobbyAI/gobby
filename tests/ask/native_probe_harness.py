@@ -62,7 +62,10 @@ terminal, or sandbox response. For unrestricted_read, attempt native Read on
 result with evidence_read. Finish only after every boundary has captured evidence.
 """
 _BOOTSTRAP_MARKER = {"schema_version": 1, "purpose": "native-ask-runtime-probe-bootstrap"}
+_RUNTIME_ROOT_MARKER = ".native-ask-probe-root.json"
+_RUNTIME_ROOT_PREFIX = "gobby-ap-"
 _PROTECTED_DATABASE_SCHEMES = frozenset({"postgres", "postgresql"})
+_UNIX_SOCKET_PATH_MAX_BYTES = 103
 _PROTECTED_DATABASE_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _PROTECTED_DATABASE_PORT = 60892
 _PROTECTED_DATABASE_USERNAME = "gobby_test"
@@ -280,6 +283,47 @@ def _find_free_port() -> int:
         return int(reserved.getsockname()[1])
 
 
+def _owned_runtime_parent() -> Path:
+    parent = Path("/tmp") if sys.platform == "darwin" else Path(tempfile.gettempdir())
+    return parent.resolve(strict=True)
+
+
+def _create_owned_runtime_root(*, parent: Path | None = None) -> Path:
+    validate_socket_paths = parent is None
+    runtime_parent = (parent or _owned_runtime_parent()).resolve(strict=True)
+    runtime_root = Path(
+        tempfile.mkdtemp(prefix=_RUNTIME_ROOT_PREFIX, dir=str(runtime_parent))
+    ).resolve(strict=True)
+    try:
+        if runtime_root.parent != runtime_parent or not runtime_root.name.startswith(
+            _RUNTIME_ROOT_PREFIX
+        ):
+            raise RuntimeError("native Ask probe runtime root ownership is invalid")
+        marker = {
+            "schema_version": 1,
+            "purpose": "native-ask-runtime-probe-root",
+            "root": str(runtime_root),
+            "nonce": str(uuid.uuid4()),
+        }
+        marker_path = runtime_root / _RUNTIME_ROOT_MARKER
+        marker_path.write_text(
+            json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        marker_path.chmod(0o600)
+        if validate_socket_paths:
+            from gobby.terminals.host_protocol import control_socket_path, frames_socket_path
+
+            socket_dir = runtime_root / "gterm-host"
+            for path in (control_socket_path(socket_dir), frames_socket_path(socket_dir)):
+                if len(os.fsencode(str(path))) > _UNIX_SOCKET_PATH_MAX_BYTES:
+                    raise RuntimeError("native Ask probe runtime root cannot contain gterm sockets")
+    except Exception:
+        shutil.rmtree(runtime_root)
+        raise
+    return runtime_root
+
+
 def _read_project_identity(project_root: Path) -> tuple[str, str]:
     root = project_root.resolve(strict=True)
     marker = json.loads((root / ".gobby" / "project.json").read_bytes())
@@ -301,6 +345,7 @@ def _write_contained_config(
 ) -> Path:
     files_home = gobby_home / "files"
     logs = gobby_home / "logs"
+    terminal_host_dir = (gobby_home.parent / "gterm-host").resolve()
     files_home.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
     config_path = gobby_home / "config.yaml"
@@ -319,6 +364,11 @@ def _write_contained_config(
                 "    enabled: false",
                 "code_index:",
                 "  enabled: false",
+                "terminals:",
+                "  stop_host_on_shutdown: true",
+                "terminal_host:",
+                "  enabled: true",
+                f'  socket_dir: "{terminal_host_dir}"',
                 "memory:",
                 "  dream:",
                 "    enabled: false",
@@ -642,6 +692,14 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
             runner_task,
             deadline_monotonic=deadline_monotonic,
         )
+        _atomic_json(
+            arguments.control_dir / "host-receipts" / f"{arguments.phase}.json",
+            _terminal_host_launch_snapshot(
+                runner,
+                phase=arguments.phase,
+                runtime_root=arguments.control_dir.parent,
+            ),
+        )
         if runner.session_manager is None or runner.machine_id is None:
             raise RuntimeError("contained Gobby runner did not initialize session storage")
         caller_session_id = await services.run_db(
@@ -812,17 +870,497 @@ def _process_start_identity(pid: object) -> str | None:
     return identity if result.returncode == 0 and identity else None
 
 
+def _process_group_snapshot(pgid: object) -> list[dict[str, object]]:
+    if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0:
+        raise RuntimeError("native Ask process group ID is invalid")
+    executable = shutil.which("ps")
+    if executable is None:
+        raise RuntimeError("ps is unavailable for native Ask process group checks")
+    result = subprocess.run(
+        [executable, "-axo", "pid=,ppid=,pgid=,lstart="],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2.0,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("native Ask process group snapshot failed")
+    processes: list[dict[str, object]] = []
+    for raw_line in result.stdout.splitlines():
+        fields = raw_line.strip().split(maxsplit=3)
+        if not fields:
+            continue
+        if len(fields) != 4:
+            raise RuntimeError("native Ask process group snapshot is malformed")
+        try:
+            pid = int(fields[0])
+            ppid = int(fields[1])
+            row_pgid = int(fields[2])
+        except ValueError as error:
+            raise RuntimeError("native Ask process group identity is malformed") from error
+        if row_pgid != pgid:
+            continue
+        start_identity = fields[3].strip()
+        if pid <= 0 or ppid < 0 or not start_identity:
+            raise RuntimeError("native Ask process group member is invalid")
+        processes.append(
+            {
+                "pid": pid,
+                "ppid": ppid,
+                "pgid": row_pgid,
+                "start_identity": start_identity,
+            }
+        )
+    return processes
+
+
+def _process_group_identities(
+    processes: list[dict[str, object]],
+    *,
+    pgid: int,
+) -> dict[int, str]:
+    identities: dict[int, str] = {}
+    for process in processes:
+        pid = process.get("pid")
+        start_identity = process.get("start_identity")
+        if (
+            isinstance(pid, bool)
+            or not isinstance(pid, int)
+            or pid <= 0
+            or process.get("pgid") != pgid
+            or not isinstance(start_identity, str)
+            or not start_identity
+            or pid in identities
+        ):
+            raise RuntimeError("native Ask process group evidence is invalid")
+        identities[pid] = start_identity
+    return identities
+
+
+def _observe_owned_process_group(
+    pgid: int,
+    owned_identities: dict[int, str],
+) -> list[dict[str, object]]:
+    current = _process_group_snapshot(pgid)
+    current_identities = _process_group_identities(current, pgid=pgid)
+    anchors = {
+        pid
+        for pid, start_identity in current_identities.items()
+        if owned_identities.get(pid) == start_identity
+    }
+    if any(
+        pid in owned_identities and owned_identities[pid] != start_identity
+        for pid, start_identity in current_identities.items()
+    ):
+        raise RuntimeError("native Ask owned process group member identity changed")
+    unknown = set(current_identities).difference(owned_identities)
+    if unknown and not anchors:
+        raise RuntimeError("native Ask process group ownership is no longer anchored")
+    for pid in unknown:
+        owned_identities[pid] = current_identities[pid]
+    return current
+
+
+def _signal_owned_process_group(
+    pgid: int,
+    processes: list[dict[str, object]],
+    owned_identities: Mapping[int, str],
+    process_signal: signal.Signals,
+) -> None:
+    for process in processes:
+        pid = process.get("pid")
+        start_identity = process.get("start_identity")
+        if (
+            isinstance(pid, int)
+            and not isinstance(pid, bool)
+            and isinstance(start_identity, str)
+            and owned_identities.get(pid) == start_identity
+            and _process_start_identity(pid) == start_identity
+        ):
+            try:
+                if os.getpgid(pid) != pgid:
+                    continue
+            except ProcessLookupError:
+                continue
+            os.killpg(pgid, process_signal)
+            return
+    raise RuntimeError("native Ask process group has no current owned signal authority")
+
+
+def _wait_for_owned_process_group(
+    pgid: int,
+    owned_identities: dict[int, str],
+    *,
+    deadline_monotonic: float,
+) -> list[dict[str, object]]:
+    while True:
+        current = _observe_owned_process_group(pgid, owned_identities)
+        if not current or time.monotonic() >= deadline_monotonic:
+            return current
+        time.sleep(0.05)
+
+
 def _remember_start_identity(
     identities: dict[str, str],
     *,
     key: str,
     current: str | None,
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool | None]:
     expected = identities.get(key)
-    if expected is None and current is not None:
-        identities[key] = current
-        expected = current
+    if expected is None:
+        return None, None
     return expected, current is not None and current == expected
+
+
+def _capture_start_identity(
+    identities: dict[str, str],
+    *,
+    key: str,
+    current: str | None,
+) -> str:
+    if current is None:
+        raise RuntimeError(f"native Ask launch has no start identity: {key}")
+    expected = identities.get(key)
+    if expected is not None and expected != current:
+        raise RuntimeError(f"native Ask launch start identity changed: {key}")
+    identities[key] = current
+    return current
+
+
+def _terminal_host_record(snapshot: Mapping[str, object]) -> dict[str, Any]:
+    hosts = snapshot.get("hosts")
+    if not isinstance(hosts, list) or len(hosts) != 1 or not isinstance(hosts[0], Mapping):
+        raise RuntimeError("native Ask terminal host snapshot is invalid")
+    return dict(hosts[0])
+
+
+def _terminal_host_launch_snapshot(
+    runner: Any,
+    *,
+    phase: str,
+    runtime_root: Path,
+) -> dict[str, object]:
+    from gobby.terminals.host_protocol import (
+        control_socket_path,
+        frames_socket_path,
+        pidfile_path,
+        read_pidfile,
+    )
+
+    manager = getattr(runner, "terminal_host_manager", None)
+    if manager is None or not manager.native_available or not manager.running:
+        raise RuntimeError("contained native Ask gterm host is unavailable")
+    root = runtime_root.resolve(strict=True)
+    raw_socket_dir = Path(manager.socket_dir)
+    socket_dir_stat = raw_socket_dir.lstat()
+    socket_dir = raw_socket_dir.resolve(strict=True)
+    if (
+        stat.S_ISLNK(socket_dir_stat.st_mode)
+        or not stat.S_ISDIR(socket_dir_stat.st_mode)
+        or socket_dir_stat.st_uid != os.getuid()
+        or not socket_dir.is_relative_to(root)
+    ):
+        raise RuntimeError("contained native Ask gterm socket directory is not owned")
+    control_socket = control_socket_path(socket_dir)
+    frames_socket = frames_socket_path(socket_dir)
+    for path in (control_socket, frames_socket):
+        if len(os.fsencode(str(path))) > _UNIX_SOCKET_PATH_MAX_BYTES:
+            raise RuntimeError("contained native Ask gterm socket path is too long")
+        socket_stat = path.lstat()
+        if (
+            stat.S_ISLNK(socket_stat.st_mode)
+            or not stat.S_ISSOCK(socket_stat.st_mode)
+            or socket_stat.st_uid != os.getuid()
+        ):
+            raise RuntimeError("contained native Ask gterm endpoint is not an owned socket")
+    host_pid = getattr(manager, "host_pid", None)
+    if isinstance(host_pid, bool) or not isinstance(host_pid, int) or host_pid <= 0:
+        raise RuntimeError("contained native Ask gterm host PID is invalid")
+    start_identity = _process_start_identity(host_pid)
+    if start_identity is None:
+        raise RuntimeError("contained native Ask gterm host start identity is unavailable")
+    try:
+        pgid = os.getpgid(host_pid)
+    except ProcessLookupError as error:
+        raise RuntimeError("contained native Ask gterm host exited during capture") from error
+    if pgid != host_pid:
+        raise RuntimeError("contained native Ask gterm host does not own its process group")
+    process_group = _process_group_snapshot(pgid)
+    group_identities = _process_group_identities(process_group, pgid=pgid)
+    if group_identities.get(host_pid) != start_identity:
+        raise RuntimeError("contained native Ask gterm host group identity is inconsistent")
+    pidfile = pidfile_path(socket_dir)
+    pidfile_stat = pidfile.lstat()
+    if (
+        stat.S_ISLNK(pidfile_stat.st_mode)
+        or not stat.S_ISREG(pidfile_stat.st_mode)
+        or pidfile_stat.st_uid != os.getuid()
+        or read_pidfile(socket_dir) != host_pid
+    ):
+        raise RuntimeError("contained native Ask gterm pidfile identity is inconsistent")
+    host_epoch = getattr(manager, "host_epoch", None)
+    spawned = getattr(manager, "spawned_this_construction", None)
+    adopted = getattr(manager, "adopted", None)
+    if (
+        not isinstance(host_epoch, str)
+        or not host_epoch
+        or not isinstance(spawned, bool)
+        or not isinstance(adopted, bool)
+        or spawned == adopted
+    ):
+        raise RuntimeError("contained native Ask gterm launch mode is inconsistent")
+    return {
+        "captured_at_unix": time.time(),
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": phase,
+                "worker_pid": os.getpid(),
+                "socket_dir": str(socket_dir),
+                "control_socket": str(control_socket.resolve(strict=True)),
+                "frames_socket": str(frames_socket.resolve(strict=True)),
+                "pidfile": str(pidfile.resolve(strict=True)),
+                "host_pid": host_pid,
+                "start_identity": start_identity,
+                "pgid": pgid,
+                "host_epoch": host_epoch,
+                "spawned_this_construction": spawned,
+                "adopted": adopted,
+                "process_group": process_group,
+                "live": True,
+                "control_socket_exists": True,
+                "frames_socket_exists": True,
+            }
+        ],
+    }
+
+
+def _owned_host_socket_exists(path_value: object, *, socket_dir: Path) -> bool:
+    if not isinstance(path_value, str) or not path_value:
+        raise RuntimeError("native Ask terminal host socket path is missing")
+    path = Path(path_value)
+    if path.parent != socket_dir:
+        raise RuntimeError("native Ask terminal host socket escaped its owned directory")
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
+        return False
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or not stat.S_ISSOCK(path_stat.st_mode)
+        or path_stat.st_uid != os.getuid()
+    ):
+        raise RuntimeError("native Ask terminal host endpoint is no longer an owned socket")
+    return True
+
+
+def _terminal_host_observation(snapshot: Mapping[str, object]) -> dict[str, object]:
+    launch = _terminal_host_record(snapshot)
+    host_pid = launch.get("host_pid")
+    pgid = launch.get("pgid")
+    socket_dir_value = launch.get("socket_dir")
+    launch_group = launch.get("process_group")
+    if (
+        isinstance(host_pid, bool)
+        or not isinstance(host_pid, int)
+        or host_pid <= 0
+        or pgid != host_pid
+        or not isinstance(socket_dir_value, str)
+        or not socket_dir_value
+        or not isinstance(launch_group, list)
+        or not all(isinstance(process, dict) for process in launch_group)
+    ):
+        raise RuntimeError("native Ask terminal host launch identity is incomplete")
+    owned_identities = _process_group_identities(
+        cast(list[dict[str, object]], launch_group),
+        pgid=host_pid,
+    )
+    if owned_identities.get(host_pid) != launch.get("start_identity"):
+        raise RuntimeError("native Ask terminal host leader identity is incomplete")
+    current_group = _observe_owned_process_group(host_pid, owned_identities)
+    socket_dir = Path(socket_dir_value)
+    control_exists = _owned_host_socket_exists(
+        launch.get("control_socket"),
+        socket_dir=socket_dir,
+    )
+    frames_exists = _owned_host_socket_exists(
+        launch.get("frames_socket"),
+        socket_dir=socket_dir,
+    )
+    return {
+        "captured_at_unix": time.time(),
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                **launch,
+                "live": bool(current_group),
+                "observed_start_identity": _process_start_identity(host_pid),
+                "process_group": current_group,
+                "control_socket_exists": control_exists,
+                "frames_socket_exists": frames_exists,
+            }
+        ],
+    }
+
+
+def _assert_terminal_host_absent(snapshot: Mapping[str, object]) -> None:
+    host = _terminal_host_record(snapshot)
+    if (
+        host.get("live") is not False
+        or host.get("process_group") != []
+        or host.get("control_socket_exists") is not False
+        or host.get("frames_socket_exists") is not False
+    ):
+        raise RuntimeError("native Ask terminal host absence is unproven")
+
+
+def _assert_terminal_host_recovery(
+    predecessor_snapshot: Mapping[str, object],
+    predecessor_observation: Mapping[str, object],
+    recovery_snapshot: Mapping[str, object],
+) -> str:
+    predecessor = _terminal_host_record(predecessor_snapshot)
+    observed = _terminal_host_record(predecessor_observation)
+    recovered = _terminal_host_record(recovery_snapshot)
+    if predecessor.get("socket_dir") != observed.get("socket_dir") or predecessor.get(
+        "socket_dir"
+    ) != recovered.get("socket_dir"):
+        raise RuntimeError("native Ask recovery crossed terminal host socket ownership")
+    predecessor_identity = (
+        predecessor.get("host_pid"),
+        predecessor.get("start_identity"),
+        predecessor.get("host_epoch"),
+    )
+    recovered_identity = (
+        recovered.get("host_pid"),
+        recovered.get("start_identity"),
+        recovered.get("host_epoch"),
+    )
+    if recovered_identity == predecessor_identity:
+        if (
+            observed.get("live") is not True
+            or observed.get("control_socket_exists") is not True
+            or observed.get("frames_socket_exists") is not True
+            or recovered.get("adopted") is not True
+            or recovered.get("spawned_this_construction") is not False
+        ):
+            raise RuntimeError("native Ask recovery did not prove terminal host adoption")
+        return "adopted"
+    if observed.get("live") is not False:
+        raise RuntimeError("native Ask predecessor absence is unproven")
+    if (
+        observed.get("process_group") != []
+        or observed.get("control_socket_exists") is not False
+        or observed.get("frames_socket_exists") is not False
+        or recovered.get("spawned_this_construction") is not True
+        or recovered.get("adopted") is not False
+    ):
+        raise RuntimeError("native Ask terminal host restart evidence is incomplete")
+    return "restarted"
+
+
+def _load_terminal_host_receipts(
+    control_dir: Path,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
+    receipts: dict[str, dict[str, Any]] = {}
+    errors: list[dict[str, str]] = []
+    receipt_root = control_dir / "host-receipts"
+    if not receipt_root.exists():
+        return receipts, errors
+    for path in sorted(receipt_root.glob("*.json")):
+        phase = path.stem
+        try:
+            path_stat = path.lstat()
+            if (
+                stat.S_ISLNK(path_stat.st_mode)
+                or not stat.S_ISREG(path_stat.st_mode)
+                or path_stat.st_uid != os.getuid()
+                or path_stat.st_nlink != 1
+            ):
+                raise RuntimeError("terminal host receipt is not an owned regular file")
+            receipt = _json_mapping(json.loads(path.read_bytes()), name="terminal host receipt")
+            if _terminal_host_record(receipt).get("phase") != phase:
+                raise RuntimeError("terminal host receipt phase is inconsistent")
+            receipts[phase] = receipt
+        except Exception as error:
+            errors.append(
+                {
+                    "kind": "terminal-host-launch-receipt",
+                    "phase": phase,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+    return receipts, errors
+
+
+def _terminate_owned_host_process(
+    snapshot: Mapping[str, object],
+    *,
+    deadline_monotonic: float,
+    runtime_root: Path,
+) -> dict[str, object]:
+    launch = _terminal_host_record(snapshot)
+    host_pid = launch.get("host_pid")
+    pgid = launch.get("pgid")
+    socket_dir_value = launch.get("socket_dir")
+    launch_group = launch.get("process_group")
+    if (
+        isinstance(host_pid, bool)
+        or not isinstance(host_pid, int)
+        or pgid != host_pid
+        or not isinstance(socket_dir_value, str)
+        or not isinstance(launch_group, list)
+        or not all(isinstance(process, dict) for process in launch_group)
+    ):
+        raise RuntimeError("native Ask terminal host cleanup identity is incomplete")
+    root = runtime_root.resolve(strict=True)
+    socket_dir = Path(socket_dir_value)
+    if socket_dir.resolve(strict=True).parent != root:
+        raise RuntimeError("native Ask terminal host cleanup escaped its runtime root")
+    owned_identities = _process_group_identities(
+        cast(list[dict[str, object]], launch_group),
+        pgid=host_pid,
+    )
+    if owned_identities.get(host_pid) != launch.get("start_identity"):
+        raise RuntimeError("native Ask terminal host cleanup lacks launch authority")
+    group_before = _observe_owned_process_group(host_pid, owned_identities)
+    remaining = group_before
+    if remaining:
+        _signal_owned_process_group(host_pid, remaining, owned_identities, signal.SIGTERM)
+        remaining = _wait_for_owned_process_group(
+            host_pid,
+            owned_identities,
+            deadline_monotonic=min(deadline_monotonic, time.monotonic() + 5.0),
+        )
+    if remaining:
+        _signal_owned_process_group(host_pid, remaining, owned_identities, signal.SIGKILL)
+        remaining = _wait_for_owned_process_group(
+            host_pid,
+            owned_identities,
+            deadline_monotonic=min(deadline_monotonic, time.monotonic() + 5.0),
+        )
+    if remaining:
+        raise RuntimeError("native Ask terminal host process group did not terminate")
+    removed_sockets: list[str] = []
+    for field in ("control_socket", "frames_socket"):
+        path_value = launch.get(field)
+        if _owned_host_socket_exists(path_value, socket_dir=socket_dir):
+            path = Path(cast(str, path_value))
+            path.unlink()
+            removed_sockets.append(str(path))
+    observation = _terminal_host_observation(snapshot)
+    _assert_terminal_host_absent(observation)
+    return {
+        "status": "terminated" if group_before else "already-absent",
+        "host_pid": host_pid,
+        "group_before": group_before,
+        "group_after": remaining,
+        "removed_sockets": removed_sockets,
+        "observation": observation,
+    }
 
 
 def _agent_is_live(database_url: str, agent_run_id: str) -> bool:
@@ -1033,6 +1571,7 @@ def _capture_agent_launch_receipt(
     metadata = _json_mapping(agent.get("resume_metadata_json"), name="launch metadata")
     initial = _json_mapping(metadata.get("initial_variables"), name="launch variables")
     sandbox = _json_mapping(metadata.get("sandbox"), name="launch sandbox")
+    terminal_process = _json_mapping(terminal.get("process"), name="launch terminal process")
     if (
         agent.get("id") != agent_run_id
         or agent.get("workflow_name") != "native-ask"
@@ -1047,9 +1586,20 @@ def _capture_agent_launch_receipt(
     ):
         raise RuntimeError("native Ask launch identity is inconsistent")
     pid = agent.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise RuntimeError("native Ask launch PID is invalid")
     start_identity = _process_start_identity(pid)
     if start_identity is None:
         raise RuntimeError("native Ask launch process has no stable OS start identity")
+    try:
+        pgid = os.getpgid(pid)
+    except ProcessLookupError as error:
+        raise RuntimeError("native Ask launch process exited during capture") from error
+    if pgid != pid or terminal_process.get("pgid") != pgid:
+        raise RuntimeError("native Ask launch process group is inconsistent")
+    process_group = _process_group_snapshot(pgid)
+    if _process_group_identities(process_group, pgid=pgid).get(pid) != start_identity:
+        raise RuntimeError("native Ask launch process group leader is inconsistent")
     runtime_root = control_dir.parent.resolve(strict=True)
     artifact_root = control_dir / "launch-artifacts" / agent_run_id
     policy = _copy_receipt(
@@ -1080,7 +1630,9 @@ def _capture_agent_launch_receipt(
         "terminal_id": agent.get("terminal_id"),
         "status": agent.get("status"),
         "start_identity": start_identity,
-        "terminal_process": terminal.get("process"),
+        "pgid": pgid,
+        "process_group": process_group,
+        "terminal_process": terminal_process,
         "policy": {
             "source_path": policy["source_path"],
             "captured_path": policy["output_path"],
@@ -1138,7 +1690,11 @@ def _merge_launch_start_identities(
             and isinstance(start_identity, str)
             and start_identity
         ):
-            identities[f"agent:{agent_run_id}:{pid}"] = start_identity
+            _capture_start_identity(
+                identities,
+                key=f"agent:{agent_run_id}:{pid}",
+                current=start_identity,
+            )
 
 
 def _launch_process_snapshot(
@@ -1161,6 +1717,8 @@ def _launch_process_snapshot(
                 "terminal_id": manifest.get("terminal_id"),
                 "child_session_id": manifest.get("child_session_id"),
                 "terminal_process": manifest.get("terminal_process"),
+                "pgid": manifest.get("pgid"),
+                "process_group": manifest.get("process_group"),
                 "live": True,
                 "start_identity": manifest.get("start_identity"),
                 "observed_start_identity": manifest.get("start_identity"),
@@ -1602,13 +2160,11 @@ def _worker_launch_snapshot(
 ) -> dict[str, object]:
     pid = worker.process.pid
     current_identity = _process_start_identity(pid)
-    start_identity, live = _remember_start_identity(
+    start_identity = _capture_start_identity(
         start_identities,
         key=f"worker:{phase}:{pid}",
         current=current_identity,
     )
-    if not live or start_identity is None:
-        raise RuntimeError(f"native Ask {phase} worker has no stable OS start identity")
     return {
         "captured_at_unix": time.time(),
         "workers": [
@@ -1727,14 +2283,37 @@ def _remaining_seconds(deadline_monotonic: float) -> float:
 
 
 def _remove_owned_runtime_root(runtime_root: Path) -> None:
-    expected_parent = Path(tempfile.gettempdir()).resolve()
+    try:
+        root_stat = runtime_root.lstat()
+        resolved_root = runtime_root.resolve(strict=True)
+        marker_path = resolved_root / _RUNTIME_ROOT_MARKER
+        marker_stat = marker_path.lstat()
+        marker = _json_mapping(json.loads(marker_path.read_bytes()), name="runtime root marker")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError) as error:
+        raise RuntimeError("refusing to remove an unowned Ask probe runtime root") from error
+    nonce = marker.get("nonce")
     if (
-        runtime_root.parent != expected_parent
-        or not runtime_root.name.startswith("gobby-ap-")
-        or not runtime_root.is_dir()
+        runtime_root != resolved_root
+        or not resolved_root.name.startswith(_RUNTIME_ROOT_PREFIX)
+        or stat.S_ISLNK(root_stat.st_mode)
+        or not stat.S_ISDIR(root_stat.st_mode)
+        or root_stat.st_uid != os.getuid()
+        or root_stat.st_mode & 0o077
+        or stat.S_ISLNK(marker_stat.st_mode)
+        or not stat.S_ISREG(marker_stat.st_mode)
+        or marker_stat.st_uid != os.getuid()
+        or marker_stat.st_nlink != 1
+        or marker.get("schema_version") != 1
+        or marker.get("purpose") != "native-ask-runtime-probe-root"
+        or marker.get("root") != str(resolved_root)
+        or not isinstance(nonce, str)
     ):
         raise RuntimeError("refusing to remove an unowned Ask probe runtime root")
-    shutil.rmtree(runtime_root)
+    try:
+        uuid.UUID(nonce)
+    except ValueError as error:
+        raise RuntimeError("refusing to remove an unowned Ask probe runtime root") from error
+    shutil.rmtree(resolved_root)
 
 
 def _terminate_owned_agent_process(
@@ -1746,8 +2325,9 @@ def _terminate_owned_agent_process(
     pid = agent.get("pid")
     expected_identity = agent.get("start_identity")
     terminal_process = agent.get("terminal_process")
-    if not agent.get("live"):
-        return {"agent_run_id": agent_run_id, "pid": pid, "status": "not-live"}
+    liveness = agent.get("live")
+    if not isinstance(liveness, bool):
+        raise RuntimeError(f"owned native Ask process liveness is unknown: {agent_run_id}")
     if (
         isinstance(pid, bool)
         or not isinstance(pid, int)
@@ -1757,24 +2337,64 @@ def _terminate_owned_agent_process(
         or terminal_process.get("pgid") != pid
     ):
         raise RuntimeError(f"owned native Ask process identity is incomplete: {agent_run_id}")
-    current_identity = _process_start_identity(pid)
-    if current_identity != expected_identity:
-        raise RuntimeError(f"owned native Ask process identity changed: {agent_run_id}")
+    raw_launch_group = agent.get("process_group")
+    launch_group = (
+        cast(list[dict[str, object]], raw_launch_group)
+        if isinstance(raw_launch_group, list)
+        and all(isinstance(process, dict) for process in raw_launch_group)
+        else None
+    )
+    owned_identities = (
+        _process_group_identities(launch_group, pgid=pid) if launch_group is not None else {}
+    )
+    if launch_group is not None and owned_identities.get(pid) != expected_identity:
+        raise RuntimeError(f"owned native Ask launch group is inconsistent: {agent_run_id}")
+    leader_is_current = _process_start_identity(pid) == expected_identity
     try:
-        if os.getpgid(pid) != pid:
-            raise RuntimeError(f"owned native Ask process group is inconsistent: {agent_run_id}")
+        leader_is_current = leader_is_current and os.getpgid(pid) == pid
     except ProcessLookupError:
-        return {"agent_run_id": agent_run_id, "pid": pid, "status": "exited"}
-    for process_signal in (signal.SIGTERM, signal.SIGKILL):
-        if _process_start_identity(pid) != expected_identity:
-            return {"agent_run_id": agent_run_id, "pid": pid, "status": "terminated"}
-        os.killpg(pid, process_signal)
-        wait_deadline = min(deadline_monotonic, time.monotonic() + 5.0)
-        while time.monotonic() < wait_deadline:
-            if _process_start_identity(pid) != expected_identity:
-                return {"agent_run_id": agent_run_id, "pid": pid, "status": "terminated"}
-            time.sleep(0.05)
-    raise RuntimeError(f"owned native Ask process did not terminate: {agent_run_id}")
+        leader_is_current = False
+    if not leader_is_current and launch_group is None:
+        raise RuntimeError(
+            f"owned native Ask process leader exited without launch group evidence: {agent_run_id}"
+        )
+    if launch_group is None:
+        group_before = _process_group_snapshot(pid)
+        owned_identities = _process_group_identities(group_before, pgid=pid)
+        if owned_identities.get(pid) != expected_identity:
+            raise RuntimeError(f"owned native Ask process leader is absent: {agent_run_id}")
+    else:
+        group_before = _observe_owned_process_group(pid, owned_identities)
+    if not group_before:
+        return {
+            "agent_run_id": agent_run_id,
+            "pid": pid,
+            "status": "not-live",
+            "group_before": [],
+            "group_after": [],
+        }
+    _signal_owned_process_group(pid, group_before, owned_identities, signal.SIGTERM)
+    remaining = _wait_for_owned_process_group(
+        pid,
+        owned_identities,
+        deadline_monotonic=min(deadline_monotonic, time.monotonic() + 5.0),
+    )
+    if remaining:
+        _signal_owned_process_group(pid, remaining, owned_identities, signal.SIGKILL)
+        remaining = _wait_for_owned_process_group(
+            pid,
+            owned_identities,
+            deadline_monotonic=min(deadline_monotonic, time.monotonic() + 5.0),
+        )
+    if remaining:
+        raise RuntimeError(f"owned native Ask process group did not terminate: {agent_run_id}")
+    return {
+        "agent_run_id": agent_run_id,
+        "pid": pid,
+        "status": "terminated",
+        "group_before": group_before,
+        "group_after": remaining,
+    }
 
 
 def _finalize_contained_probe(
@@ -2030,7 +2650,7 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
         raise ValueError("native Ask probe evidence must be written outside the source checkout")
     output_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     deadline_monotonic = time.monotonic() + arguments.timeout_seconds
-    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    runtime_root = _create_owned_runtime_root()
     schema_name = f"gobby_test_askprobe_{uuid.uuid4().hex}"
     scoped_database_url = _scoped_database_url(base_database_url, schema_name)
     gobby_home = runtime_root / "gobby"
@@ -2124,6 +2744,12 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             fresh_worker,
             start_identities,
         )
+        fresh_host_launch = _wait_for_json(
+            control_dir / "host-receipts" / "fresh.json",
+            fresh_worker,
+            deadline_monotonic=deadline_monotonic,
+        )
+        process_sets["fresh_host_launch"] = fresh_host_launch
         fresh_started = _wait_for_json(
             control_dir / "fresh-started.json",
             fresh_worker,
@@ -2144,6 +2770,9 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             raise RuntimeError("fresh native Ask worker exited unsuccessfully")
         if fresh_result.get("status") != "completed":
             raise RuntimeError("fresh native Ask probe did not complete")
+        fresh_host_cleanup = _terminal_host_observation(fresh_host_launch)
+        _assert_terminal_host_absent(fresh_host_cleanup)
+        process_sets["after_fresh_host_cleanup"] = fresh_host_cleanup
         fresh_snapshot = _pipeline_snapshot(scoped_database_url, fresh_run_id)
         _assert_execution_identity(fresh_snapshot, fresh_run_id)
         if _native_ask_execution_ids(scoped_database_url, project_id) != ask_run_ids:
@@ -2176,6 +2805,12 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             resumed_worker,
             start_identities,
         )
+        resumed_host_launch = _wait_for_json(
+            control_dir / "host-receipts" / "resumed.json",
+            resumed_worker,
+            deadline_monotonic=deadline_monotonic,
+        )
+        process_sets["resumed_host_launch"] = resumed_host_launch
         resumed_started = _wait_for_json(
             control_dir / "resumed-started.json",
             resumed_worker,
@@ -2211,6 +2846,8 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
         )
         if interrupted_exit not in {0, _WORKER_EXIT_ON_SHUTDOWN, -signal.SIGTERM}:
             raise RuntimeError(f"interrupted native Ask worker exited as {interrupted_exit}")
+        interrupted_host = _terminal_host_observation(resumed_host_launch)
+        process_sets["interrupted_host"] = interrupted_host
         interrupted_snapshot = _pipeline_snapshot(scoped_database_url, resumed_run_id)
         process_sets["interrupted"] = _process_snapshot(
             scoped_database_url,
@@ -2238,6 +2875,18 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             recovery_worker,
             start_identities,
         )
+        recovery_host_launch = _wait_for_json(
+            control_dir / "host-receipts" / "recover.json",
+            recovery_worker,
+            deadline_monotonic=deadline_monotonic,
+        )
+        recovery_mode = _assert_terminal_host_recovery(
+            resumed_host_launch,
+            interrupted_host,
+            recovery_host_launch,
+        )
+        recovery_host_launch["recovery_mode"] = recovery_mode
+        process_sets["recovery_host_launch"] = recovery_host_launch
         recovered_result = _wait_for_json(
             control_dir / "recover-result.json",
             recovery_worker,
@@ -2247,6 +2896,9 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             raise RuntimeError("recovery native Ask worker exited unsuccessfully")
         if recovered_result.get("run_id") != resumed_run_id:
             raise RuntimeError("recovery worker completed a different Ask run")
+        final_host_cleanup = _terminal_host_observation(recovery_host_launch)
+        _assert_terminal_host_absent(final_host_cleanup)
+        process_sets["after_recovery_host_cleanup"] = final_host_cleanup
         after_recovery = _pipeline_snapshot(scoped_database_url, resumed_run_id)
         _assert_recovery_invariants(
             before_recovery,
