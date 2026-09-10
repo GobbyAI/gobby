@@ -206,6 +206,8 @@ async def test_bootstrap_failure_rolls_back_created_runner(
     )
     monkeypatch.setenv("DATABASE_URL", _SCOPED_TEST_DATABASE_URL)
     monkeypatch.setattr("gobby.runner.GobbyRunner.create", AsyncMock(return_value=runner))
+    # Configuration admission has its own database-backed regression; reach bootstrap here.
+    monkeypatch.setattr(harness, "_assert_contained_runner_config", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(shutil, "which", lambda _name: "/probe/claude")
     monkeypatch.setattr(
         harness, "_bootstrap_policy_identity", AsyncMock(side_effect=RuntimeError("SRT missing"))
