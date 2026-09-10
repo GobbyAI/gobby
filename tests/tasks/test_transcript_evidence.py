@@ -6,6 +6,8 @@ import asyncio
 import gzip
 import json
 import logging
+import multiprocessing
+import os
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -63,6 +65,28 @@ def test_validation_output_is_bounded_with_failure_edges_preserved() -> None:
     assert output.startswith("AssertionError: first")
     assert output.endswith("ImportError: last")
     assert len(output) <= 16_000
+
+
+def _raise_missing_transcript() -> None:
+    raise TranscriptEvidenceUnavailable(
+        "No transcript was found", source="codex", attempted_paths=("/missing/session.jsonl",)
+    )
+
+
+def test_missing_transcript_exception_preserves_process_pool() -> None:
+    with ProcessPoolExecutor(
+        max_workers=1, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
+        worker_pid = pool.submit(os.getpid).result(timeout=15)
+        with pytest.raises(
+            TranscriptEvidenceUnavailable, match="No transcript was found"
+        ) as raised:
+            pool.submit(_raise_missing_transcript).result(timeout=15)
+        assert raised.value.source == "codex"
+        assert raised.value.attempted_paths == ("/missing/session.jsonl",)
+        assert raised.value.retry_after == 5
+        assert pool.submit(os.getpid).result(timeout=15) == worker_pid
+        assert worker_pid != os.getpid()
 
 
 async def test_process_pool_oserror_falls_back_and_warns_once(

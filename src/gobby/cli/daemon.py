@@ -33,6 +33,7 @@ from gobby.config.logging import (
     resolved_logs_dir,
 )
 from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
@@ -42,6 +43,7 @@ from gobby.utils.dependency_requirements import (
 from gobby.utils.dev import worktree_daemon_refusal
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
+from ._daemon_handoffs import protect_pending_handoffs
 from ._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
 from ._daemon_services import (
     ServiceStartResult,
@@ -596,63 +598,72 @@ def _do_stop(
         fetch=fetch_protected_runs,
     ):
         return False
-    shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
-    # If OS service is installed and running, delegate to it
-    docker_stopped = False
-    docker_stop_succeeded = True
-    svc = get_service_status()
-    if svc.get("installed") and svc.get("running"):
-        previous_pid = _get_running_daemon_pid(svc)
-        click.echo("Stopping via OS service manager...")
-        result = service_stop(
-            shutdown_intent=shutdown_intent,
-            shutdown_source=shutdown_source,
-            drain_terminals=drain_terminals,
-        )
-        if result.get("success"):
-            if previous_pid is not None:
-                _step(f"Waiting for service-managed daemon (PID: {previous_pid}) to exit...")
-            else:
-                _step("Waiting for service-managed daemon to stop...")
-            elapsed = _wait_for_service_stop(
-                previous_pid,
-                http_port=config.daemon_port,
-                timeout=SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
-            )
-            if elapsed is None:
-                _step(
-                    "Service stop returned, but daemon is still running "
-                    f"after {SERVICE_MANAGED_STOP_TIMEOUT_SECONDS:.0f}s",
-                    error=True,
+    try:
+        with protect_pending_handoffs(get_cli_runtime(ctx), wait=wait, report=_step):
+            shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
+            # If OS service is installed and running, delegate to it
+            docker_stopped = False
+            docker_stop_succeeded = True
+            svc = get_service_status()
+            if svc.get("installed") and svc.get("running"):
+                previous_pid = _get_running_daemon_pid(svc)
+                click.echo("Stopping via OS service manager...")
+                result = service_stop(
+                    shutdown_intent=shutdown_intent,
+                    shutdown_source=shutdown_source,
+                    drain_terminals=drain_terminals,
                 )
-                return False
-            _step(f"Daemon stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
-        else:
-            click.echo(f"Service stop failed: {result.get('error')}", err=True)
-            click.echo("Falling back to direct stop...")
+                if result.get("success"):
+                    if previous_pid is not None:
+                        _step(
+                            f"Waiting for service-managed daemon (PID: {previous_pid}) to exit..."
+                        )
+                    else:
+                        _step("Waiting for service-managed daemon to stop...")
+                    elapsed = _wait_for_service_stop(
+                        previous_pid,
+                        http_port=config.daemon_port,
+                        timeout=SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
+                    )
+                    if elapsed is None:
+                        _step(
+                            "Service stop returned, but daemon is still running "
+                            f"after {SERVICE_MANAGED_STOP_TIMEOUT_SECONDS:.0f}s",
+                            error=True,
+                        )
+                        return False
+                    _step(
+                        f"Daemon stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)"
+                    )
+                else:
+                    click.echo(f"Service stop failed: {result.get('error')}", err=True)
+                    click.echo("Falling back to direct stop...")
 
-        # Stop Docker containers if requested
-        if docker_flag and config.datastore_mode != "remote":
-            click.echo("Stopping Docker containers...")
-            docker_stop_succeeded = _services_stop(get_gobby_home())
-            docker_stopped = True
+                # Stop Docker containers if requested
+                if docker_flag and config.datastore_mode != "remote":
+                    click.echo("Stopping Docker containers...")
+                    docker_stop_succeeded = _services_stop(get_gobby_home())
+                    docker_stopped = True
 
-        if result.get("success"):
-            return docker_stop_succeeded
+                if result.get("success"):
+                    return docker_stop_succeeded
 
-    success = stop_daemon_util(
-        quiet=False,
-        shutdown_intent=shutdown_intent,
-        shutdown_source=shutdown_source,
-        drain_terminals=drain_terminals,
-    )
+            success = stop_daemon_util(
+                quiet=False,
+                shutdown_intent=shutdown_intent,
+                shutdown_source=shutdown_source,
+                drain_terminals=drain_terminals,
+            )
 
-    # Stop Docker containers if requested (only if not already stopped above)
-    if docker_flag and not docker_stopped and config.datastore_mode != "remote":
-        click.echo("Stopping Docker containers...")
-        docker_stop_succeeded = _services_stop(get_gobby_home())
+            # Stop Docker containers if requested (only if not already stopped above)
+            if docker_flag and not docker_stopped and config.datastore_mode != "remote":
+                click.echo("Stopping Docker containers...")
+                docker_stop_succeeded = _services_stop(get_gobby_home())
 
-    return bool(success and docker_stop_succeeded)
+            return bool(success and docker_stop_succeeded)
+    except HandoffShutdownBlocked as exc:
+        _step(f"Refusing to stop: {exc}", error=True)
+        return False
 
 
 @click.command()
@@ -672,7 +683,7 @@ def _do_stop(
     "--wait",
     "wait",
     is_flag=True,
-    help="Defer the stop until active restart-protected cron runs finish",
+    help="Wait for protected cron runs and unresolved session handoffs before stopping",
 )
 @click.option(
     "--terminals",
@@ -737,7 +748,7 @@ def _schema_restart_refusal(ctx: click.Context) -> str | None:
     "--wait",
     "wait",
     is_flag=True,
-    help="Defer the restart until active restart-protected cron runs finish",
+    help="Wait for protected cron runs and unresolved session handoffs before restarting",
 )
 @click.option(
     "--terminals",

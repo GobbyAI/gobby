@@ -10,6 +10,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from io import StringIO
 from typing import Any
 
 import psycopg
@@ -278,7 +279,8 @@ class TranscriptProcessingMixin:
         # records; this token-event path only consumes ParsedMessage fields
         # (model, usage, message_id). Qwen's .json transcripts use the same
         # line-oriented envelope contract as the other supported CLIs.
-        parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+        # JSON strings may contain Unicode line separators; only physical LF ends a record.
+        parsed_records = parser.parse_lines(list(StringIO(raw)), start_index=0)
         normalized = normalize_transcript_records(parsed_records, session.source)
         messages = [r for r in normalized if isinstance(r, ParsedMessage)]
         session_source = session.source if isinstance(session.source, str) else None

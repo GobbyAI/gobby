@@ -87,9 +87,13 @@ def _mock_daemon_command_runtime(
 ) -> None:
     from gobby.cli._daemon_services import ServiceStartResult
 
+    database = MagicMock()
+    handoff_conn = database.transaction.return_value.__enter__.return_value
+    handoff_conn.execute.return_value.fetchone.return_value = {"acquired": True, "head": None}
+    handoff_conn.execute.return_value.fetchall.return_value = []
     monkeypatch.setattr(
         "gobby.cli.runtime.CliRuntime.require_database",
-        lambda _runtime, **_kwargs: MagicMock(),
+        lambda _runtime, **_kwargs: database,
     )
     monkeypatch.setattr(
         "gobby.cli.runtime.CliRuntime.require_config",

@@ -45,6 +45,7 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
         patch("gobby.cli.daemon.get_service_status", return_value={}),
         patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon.protect_pending_handoffs"),
         patch("gobby.cli.daemon.stop_daemon_util", return_value=True),
         patch("gobby.cli.daemon._services_stop") as services_stop,
     ):
@@ -61,6 +62,7 @@ def test_restart_skips_services_in_remote_mode(tmp_path: Path) -> None:
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
         patch("gobby.cli.daemon.get_service_status", return_value={}),
         patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon.protect_pending_handoffs"),
         patch("gobby.cli.daemon.stop_daemon_util", return_value=True) as stop_daemon,
         patch("gobby.cli.daemon._services_stop") as services_stop,
         patch("shutil.which", side_effect=AssertionError("Docker must not be inspected")),
