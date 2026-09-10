@@ -5621,16 +5621,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/merge/test_merge_direct_git.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 102,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 17,
-      "path": "tests/merge/test_merge_direct_git.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/merge/test_merge_mcp_tools.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 192,
