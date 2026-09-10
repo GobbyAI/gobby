@@ -31,9 +31,10 @@ Every final candidate was validated before delivery at quality `showcase`.
 The renderer reported zero crossings, ambiguous corridors, composition errors,
 and composition warnings for each delivery. Complete path and digest inventories
 are `results/archify/inventory.txt` and `results/archify/inventory.sha256`.
-`inventory.txt` is a lexically ordered, relative-path manifest of the evidence
-artifacts and excludes both inventory files. `inventory.sha256` contains the
-SHA-256 of `inventory.txt` only, so verification is nonrecursive:
+`inventory.txt` is a lexically ordered, relative-path manifest of the 24 evidence
+artifacts and excludes both inventory files. `inventory.sha256` repeats those 24
+checks with absolute paths and appends the SHA-256 of `inventory.txt`, so verification
+is nonrecursive:
 `(cd results/archify && shasum -a 256 -c inventory.sha256 && shasum -a 256 -c inventory.txt)`.
 
 ### C1 native attempt measurements
