@@ -131,6 +131,8 @@ async def test_explicit_and_external_selection_under_tmux_default(
             prepared.locator_key = f"native:epoch:ht-{request.terminal_id}"
             prepared.process = None
             prepared.host_terminal_id = f"ht-{request.terminal_id}"
+            prepared.rows = request.rows
+            prepared.cols = request.cols
             prepared.acknowledge_persist = MagicMock()
             prepared.acknowledge_observer = MagicMock()
             return prepared
@@ -210,6 +212,8 @@ async def test_explicit_and_external_selection_under_tmux_default(
             },
             locator_key="tmux:/tmp/tmux/default:1:2:%1",
             process=None,
+            rows=24,
+            cols=80,
             acknowledge_persist=MagicMock(),
         )
     )

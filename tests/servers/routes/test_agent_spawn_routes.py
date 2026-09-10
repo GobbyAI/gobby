@@ -352,8 +352,10 @@ class TestSpawnAgent:
         assert current_stage_state(updated) == "needs_review"
         assert updated.claimed_by_session_id == existing_owner.id
 
+    @pytest.mark.parametrize("batch", [False, True])
     def test_terminal_spawn_passes_daemon_config_for_sandbox_defaults(
         self,
+        batch: bool,
         caplog: pytest.LogCaptureFixture,
         client: TestClient,
         server: HTTPServer,
@@ -405,7 +407,15 @@ class TestSpawnAgent:
                 ),
             ) as mock_spawn,
         ):
-            response = client.post("/api/agents/spawn", json={"task_id": task.id})
+            payload = {
+                "task_id": task.id,
+                "extra_write_paths": ["/external/workspace"],
+                "write_paths_reason": "Task authorization",
+            }
+            response = client.post(
+                "/api/agents/spawn/batch" if batch else "/api/agents/spawn",
+                json={"spawns": [payload]} if batch else payload,
+            )
 
         assert response.status_code == 200
         await_args = mock_spawn.await_args
@@ -414,6 +424,9 @@ class TestSpawnAgent:
         assert kwargs["daemon_config"] == config
         assert "sandbox" not in kwargs
         assert "Counter agent_spawns_total not registered" not in caplog.text
+
+        assert kwargs["extra_write_paths"] == ["/external/workspace"]
+        assert kwargs["write_paths_reason"] == "Task authorization"
 
     def test_terminal_spawn_without_checkout_returns_400(
         self,

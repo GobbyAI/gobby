@@ -1289,6 +1289,46 @@ async def test_ask_resume_rejects_model_drift_before_endpoint_resolution(
 
 
 @pytest.mark.asyncio
+async def test_ask_spawn_rejects_external_grants_before_allocation(tmp_path: Path) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _implementation
+
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    source_root.mkdir()
+    scratch_root.mkdir()
+    profile = compile_ask_runtime_profile(
+        provider="claude",
+        source_root=source_root,
+        scratch_root=scratch_root,
+        agent_profile_digest="e" * 64,
+        model="claude-test",
+        reasoning_effort="high",
+        endpoint_api_base=None,
+        validation=_runtime_validation(),
+    )
+    runner = MagicMock()
+    runner.run_storage.get_by_session.return_value = None
+    sessions = MagicMock()
+    sessions.get.return_value = SimpleNamespace(
+        id="operator", agent_run_id=None, parent_session_id=None
+    )
+    result = await _implementation.spawn_agent_impl(
+        "Investigate through run-scoped MCP tools",
+        runner,
+        terminal_backend="native",
+        caller_session_id="operator",
+        parent_session_id="operator",
+        session_manager=sessions,
+        managed_runtime_profile=profile,
+        prelaunch_authority=lambda _run_id: None,
+        extra_write_paths=[str(source_root)],
+        write_paths_reason="Operator grant must not widen Ask",
+    )
+
+    assert result == {"success": False, "error": "ask_external_write_grant_forbidden"}
+    runner.can_spawn.assert_not_called()
+
+
 async def test_ask_authority_is_bound_before_native_process_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1392,9 +1432,11 @@ async def test_ask_authority_is_bound_before_native_process_launch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("external_grant", [False, True])
 async def test_ask_resume_rederives_profile_and_rebinds_before_process(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    external_grant: bool,
 ) -> None:
     source_root = tmp_path / "source"
     scratch_root = tmp_path / "scratch"
@@ -1521,10 +1563,27 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
             "parent_session_id": original.parent_session_id,
             "auto_approve": True,
             "sandbox_config": {"enabled": False},
+            "external_write_grant": (
+                {
+                    "requested_roots": [str(source_root)],
+                    "canonical_roots": [str(source_root.resolve())],
+                    "reason": "Operator grant must not widen Ask",
+                }
+                if external_grant
+                else None
+            ),
         },
         runner=runner,
         session_manager=MagicMock(),
     )
+
+    if external_grant:
+        assert result.success is False
+        assert result.error == "ask_resume_external_write_grant_forbidden"
+        assert order == []
+        assert launched == []
+        prepare_sandbox.assert_not_awaited()
+        return
 
     assert result.success is True
     assert order == ["prepare", "authority", "process"]

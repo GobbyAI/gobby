@@ -7,16 +7,40 @@ the agent_body.provider fallback.
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
+
+
+async def test_invalid_external_grant_rejects_before_allocation() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+    runner = _make_runner()
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+    ) as isolation:
+        result = await spawn_agent_impl(
+            prompt="work",
+            runner=runner,
+            parent_session_id="parent",
+            extra_write_paths=["/"],
+            write_paths_reason="authorized",
+        )
+    assert result["success"] is False
+    assert "roots cannot be granted" in result["error"]
+    isolation.assert_not_called()
+    runner.can_spawn.assert_not_called()
 
 
 @pytest.fixture(autouse=True)
@@ -72,6 +96,7 @@ class TestProviderResolution:
             ),
             terminal_backend="tmux",
         )
+        await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is False
         assert "does not support the 'spawn' surface" in result["error"]
@@ -123,6 +148,7 @@ class TestProviderResolution:
                 provider=None,  # explicitly None — should fall back to agent_body.provider
                 parent_session_id="parent-session-xyz",
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         # Verify execute_spawn was called with codex as the provider
@@ -176,6 +202,7 @@ class TestProviderResolution:
                 provider="claude",  # explicit override
                 parent_session_id="parent-session-xyz",
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
@@ -226,6 +253,7 @@ class TestProviderResolution:
                 parent_session_id="parent-session-xyz",
                 session_manager=session_manager,
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
@@ -276,17 +304,25 @@ class TestProviderResolution:
                 parent_session_id="parent-session-xyz",
                 session_manager=session_manager,
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
         assert spawn_request.provider == "claude"
 
     @pytest.mark.asyncio
-    async def test_sandbox_defaults_come_from_daemon_config(self) -> None:
+    async def test_sandbox_defaults_come_from_daemon_config(self, tmp_path: Path) -> None:
         """Spawned agents should inherit daemon-owned sandbox defaults."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
+        runner.run_storage.get_by_session.return_value = None
+        sessions = MagicMock()
+        sessions.get.return_value = SimpleNamespace(
+            id="caller",
+            agent_run_id=None,
+            parent_session_id=None,
+        )
 
         with (
             patch(
@@ -321,6 +357,10 @@ class TestProviderResolution:
                 runner=runner,
                 provider="codex",
                 parent_session_id="parent-session-xyz",
+                caller_session_id="caller",
+                session_manager=sessions,
+                extra_write_paths=[str(tmp_path)],
+                write_paths_reason="Authorized external task workspace",
                 daemon_config=DaemonConfig(
                     agent_sandbox={
                         "enabled": True,
@@ -330,6 +370,7 @@ class TestProviderResolution:
                     },
                 ),
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
@@ -338,7 +379,14 @@ class TestProviderResolution:
         assert spawn_request.sandbox_config.backend == "srt"
         assert spawn_request.sandbox_config.mode == "restrictive"
         assert spawn_request.sandbox_config.allow_network is False
-        assert spawn_request.sandbox_config.extra_write_paths == ["/tmp/agent-write"]
+        assert spawn_request.sandbox_config.extra_write_paths == [
+            "/tmp/agent-write",
+            str(tmp_path.resolve()),
+        ]
+        grant = result["external_write_grant"]
+        assert grant["canonical_roots"] == [str(tmp_path.resolve())]
+        assert grant["asserting_session_id"] == "caller"
+        assert spawn_request.resume_metadata_json["external_write_grant"] == grant
 
     @pytest.mark.asyncio
     async def test_agent_sandbox_can_be_disabled_via_daemon_config(self) -> None:
@@ -382,6 +430,7 @@ class TestProviderResolution:
                 parent_session_id="parent-session-xyz",
                 daemon_config=DaemonConfig(agent_sandbox={"enabled": False}),
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
@@ -452,6 +501,7 @@ class TestSpawnAutoClaimOwner:
                 task_id="#42",
                 task_manager=task_manager,
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         task_manager.claim_task.assert_called_once_with(
@@ -511,6 +561,7 @@ class TestSpawnAutoClaimOwner:
                 task_id="#99",
                 task_manager=task_manager,
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         task_manager.claim_task.assert_called_once_with(
@@ -572,6 +623,7 @@ class TestSpawnAutoClaimOwner:
                 task_id="#200",
                 task_manager=task_manager,
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         task_manager.claim_task.assert_called_once_with(
@@ -631,6 +683,7 @@ class TestSpawnAutoClaimOwner:
                 task_id="#201",
                 task_manager=task_manager,
             )
+            await asyncio.gather(*_spawn_background_tasks.values())
 
         assert result["success"] is True
         task_manager.claim_task.assert_not_called()

@@ -25,6 +25,7 @@ fn entry(entry_id: &str, terminal_id: Option<&str>) -> RosterEntry {
         terminal: terminal_id.map(|terminal_id| TerminalRef {
             terminal_id: terminal_id.to_string(),
             backend: "native".to_string(),
+            state: None,
         }),
         ..Default::default()
     }

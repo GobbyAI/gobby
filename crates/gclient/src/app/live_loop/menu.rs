@@ -55,6 +55,10 @@ pub enum MenuAction {
     /// Open the respond dialog for this attention entry.
     Respond(String),
     MarkSeen(String),
+    /// Open the destroy-orphaned-terminals dialog.
+    DestroyOrphans,
+    /// Destroy this orphaned terminal row without the dialog.
+    DestroyTerminal(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,14 +324,29 @@ fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuItem> {
         || item("take control", MenuAction::Act(Action::TakeControl)),
         |pane| control_item(ws.pane(pane)),
     );
-    items.extend([
-        enabled_if(control, pane.is_some()),
-        enabled_if(
+    // An orphaned row has no host to close; the daemon can only destroy it.
+    let close = match orphaned_terminal(ws, entry_id) {
+        Some(terminal_id) => item(
+            "destroy orphaned terminal",
+            MenuAction::DestroyTerminal(terminal_id),
+        ),
+        None => enabled_if(
             item("close terminal", MenuAction::Act(Action::CloseTerminal)),
             pane.is_some(),
         ),
-    ]);
+    };
+    items.extend([enabled_if(control, pane.is_some()), close]);
     items
+}
+
+/// The entry's terminal id when the daemon reports the row `orphaned`.
+fn orphaned_terminal<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> {
+    ws.sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.entry_id == entry_id)
+        .filter(|agent| agent.terminal_state.as_deref() == Some("orphaned"))
+        .map(|agent| agent.terminal_id.clone())
 }
 
 /// The attention id the roster carries for `entry_id`, while it blocks.
@@ -351,6 +370,9 @@ fn global_items() -> Vec<MenuItem> {
         item("keybinding help", MenuAction::Act(Action::Help)),
         item("reload config", MenuAction::Act(Action::ReloadConfig)),
         item("toggle sidebar", MenuAction::Act(Action::ToggleSidebar)),
+        // Always enabled: the candidates are fetched on activation, and an
+        // empty result reports itself in the status line.
+        item("destroy orphaned terminals…", MenuAction::DestroyOrphans),
         item("detach", MenuAction::Act(Action::Detach)),
     ]
 }
@@ -484,6 +506,7 @@ mod tests {
                 "keybinding help",
                 "reload config",
                 "toggle sidebar",
+                "destroy orphaned terminals…",
                 "detach",
             ]
         );
@@ -491,24 +514,101 @@ mod tests {
         assert_eq!(menu.items[5].action, MenuAction::Act(Action::ReloadConfig));
         assert!(menu.items.iter().all(|item| item.enabled));
 
-        // Rows sit one cell inside the popup at the anchor: `keybinding help`
-        // makes it 19 wide, eight items make it 10 tall.
+        // Rows sit one cell inside the popup at the anchor: `destroy orphaned
+        // terminals…` makes it 31 wide, nine items make it 11 tall.
         assert_eq!(
             menu_rect(menu.anchor, &menu.items),
-            Rect::new(40, 12, 19, 10)
+            Rect::new(40, 12, 31, 11)
         );
-        assert_eq!(menu.item_rects.len(), 8);
-        assert_eq!(menu.item_rects[0], Rect::new(41, 13, 17, 1));
+        assert_eq!(menu.item_rects.len(), 9);
+        assert_eq!(menu.item_rects[0], Rect::new(41, 13, 29, 1));
         assert_eq!(menu_hit(&menu, 41, 13), Some(0));
         assert_eq!(menu_hit(&menu, 57, 15), Some(2));
         assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-        assert_eq!(menu_hit(&menu, 45, 21), None, "below the last row");
+        assert_eq!(menu_hit(&menu, 45, 22), None, "below the last row");
         let short = [item("zoom", MenuAction::Act(Action::Zoom))];
         assert_eq!(
             menu_rect((0, 0), &short).width,
             MENU_MIN_WIDTH,
             "short menus keep the floor width"
         );
+    }
+
+    #[test]
+    fn global_menu_offers_destroy_orphaned_terminals() {
+        let ws = Workspace::scripted();
+        let chrome = Chrome::dark();
+        let menu = build_menu(&ws, &chrome, ContextMenuKind::Global, (0, 0));
+        let item = menu
+            .items
+            .iter()
+            .find(|item| item.action == MenuAction::DestroyOrphans)
+            .expect("destroy orphans item");
+        assert_eq!(item.label, "destroy orphaned terminals…");
+        assert!(item.enabled, "enabled without knowing the candidates");
+    }
+
+    #[test]
+    fn row_menu_labels_orphaned_rows() {
+        use serde_json::json;
+
+        let mut ws = Workspace::scripted();
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "attention-1",
+            "seq": 1,
+            "entries": [
+                {
+                    "entry_id": "run:term-orphan",
+                    "terminal": {
+                        "terminal_id": "term-orphan",
+                        "backend": "native",
+                        "state": "orphaned",
+                    },
+                },
+                {
+                    "entry_id": "run:term-live",
+                    "terminal": {
+                        "terminal_id": "term-live",
+                        "backend": "native",
+                        "state": "live",
+                    },
+                },
+            ],
+        }));
+        ws.reconcile_subscribe_first().expect("scripted roster");
+        let chrome = Chrome::dark();
+
+        let menu = build_menu(
+            &ws,
+            &chrome,
+            ContextMenuKind::Agent("run:term-orphan".to_string()),
+            (3, 20),
+        );
+        assert_eq!(
+            labels(&menu),
+            [
+                "focus",
+                "open in new tab",
+                "mark seen",
+                "take control",
+                "destroy orphaned terminal",
+            ]
+        );
+        let enabled: Vec<bool> = menu.items.iter().map(|item| item.enabled).collect();
+        assert_eq!(enabled, [true, true, false, false, true]);
+        assert_eq!(
+            menu.items[4].action,
+            MenuAction::DestroyTerminal("term-orphan".to_string())
+        );
+
+        let menu = build_menu(
+            &ws,
+            &chrome,
+            ContextMenuKind::Agent("run:term-live".to_string()),
+            (3, 22),
+        );
+        assert_eq!(labels(&menu)[4], "close terminal");
+        assert!(!menu.items[4].enabled, "no pane to close");
     }
 
     /// 5.3.1: the sidebar rows' menus. A git project with worktree children

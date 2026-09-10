@@ -298,7 +298,8 @@ fn apply_scripted_modal_outcome(
         | ModalOutcome::Confirm(_)
         | ModalOutcome::InitProject(_)
         | ModalOutcome::CreateWorktree { .. }
-        | ModalOutcome::RemoveWorktree(_) => {}
+        | ModalOutcome::RemoveWorktree(_)
+        | ModalOutcome::DestroyOrphans(_) => {}
         ModalOutcome::Focus(pane) => {
             chrome.focus_pane(pane);
             workspace

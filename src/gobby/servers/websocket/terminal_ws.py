@@ -37,6 +37,21 @@ from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
+_LIST_STATES = frozenset({"pending", "live", "exited", "orphaned"})
+_DEFAULT_LIST_STATES = ("pending", "live")
+
+
+def _list_states(raw: object) -> tuple[str, ...] | None:
+    """The ``terminal_list`` states filter; ``None`` when the request's is malformed."""
+    if raw is None:
+        return _DEFAULT_LIST_STATES
+    if not isinstance(raw, list) or not raw:
+        return None
+    if any(not isinstance(state, str) or state not in _LIST_STATES for state in raw):
+        return None
+    return tuple(dict.fromkeys(raw))
+
+
 WRITE_FAULT_NAME = "terminal_write_fault"
 
 # Clients reconnect the moment HTTP serves, before the gterm host is adopted or
@@ -274,12 +289,19 @@ class TerminalWsMixin:
         if not isinstance(limit, int) or isinstance(limit, bool):
             limit = TERMINAL_LIST_DEFAULT_PAGE_SIZE
         limit = max(1, min(limit, TERMINAL_LIST_MAX_PAGE_SIZE))
+        states = _list_states(data.get("states"))
+        if states is None:
+            await self._send_json(
+                websocket,
+                {"type": "terminal_error", "code": "invalid_states", "request_id": request_id},
+            )
+            return
         machine_id = require_machine_id()
         panes = await self._sweep_tmux_panes(manager, machine_id)
         items, has_more = manager.list_page(
             None if project_id is None else [project_id, GLOBAL_PROJECT_ID],
             machine_id=machine_id,
-            states=("pending", "live"),
+            states=states,
             cursor_created_at=cursor_created_at,
             cursor_id=cursor_id,
             limit=limit,
@@ -298,6 +320,7 @@ class TerminalWsMixin:
                         "pane_title": pane.pane_title,
                         "pane_command": pane.pane_command,
                         "pane_path": pane.pane_path,
+                        "attached_clients": pane.session_attached,
                     }
                 )
             serialized.append(item)

@@ -424,6 +424,14 @@ impl Daemon for TraceDaemon {
         Daemon::list_terminals(&self.inner, project, cursor).await
     }
 
+    async fn inventory_page(
+        &self,
+        states: &[&str],
+        cursor: Option<&str>,
+    ) -> Result<Page<TerminalRow>, DaemonError> {
+        Daemon::inventory_page(&self.inner, states, cursor).await
+    }
+
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {
         Daemon::roster(&self.inner).await
     }

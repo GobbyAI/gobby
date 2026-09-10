@@ -284,7 +284,11 @@ def test_interactive_entry_end_to_end(
     from gobby.storage.terminals import AttachLocator
 
     row = SimpleNamespace(
-        session_name="agent-run-2", backend="tmux", host_epoch=None, id="term-run-2"
+        session_name="agent-run-2",
+        backend="tmux",
+        state="orphaned",
+        host_epoch=None,
+        id="term-run-2",
     )
     server.services.terminal_manager = SimpleNamespace(
         get=lambda _tid: row,
@@ -331,6 +335,7 @@ def test_interactive_entry_end_to_end(
     }
     assert run_entry["tmux"]["pane_pid"] == 4343
     assert run_entry["terminal"]["terminal_id"] == "term-run-2"
+    assert run_entry["terminal"]["state"] == "orphaned"
     assert seen.status_code == 200 and responded.status_code == 200
     assert injected[-1].option == 1
 

@@ -1,4 +1,4 @@
-"""Core spawn-agent implementation used by MCP and direct callers."""
+"""Coordinate managed spawn admission, allocation and launch scheduling."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.completion_subscribers import subscribe_agent_completion
+from gobby.agents.external_write_grants import GRANT_KEY, apply_write_grant, authorize_write_grant
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationHandler,
@@ -24,7 +25,7 @@ from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
-from gobby.agents.spawn_models import ManagedRuntimeProfile, SpawnRequest, resolve_terminal_backend
+from gobby.agents.spawn_models import ManagedRuntimeProfile, resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
@@ -63,6 +64,7 @@ from ._provider_resolution import (
     resolve_spawn_provider,
     spawning_session_provider,
 )
+from ._request import build_spawn_request
 from ._runtime import (
     _normalize_optional_model,
     _normalize_string_list,
@@ -98,28 +100,23 @@ async def spawn_agent_impl(
     task_id: str | None = None,
     task_manager: LocalTaskManager | None = None,
     allow_closed_task: bool = False,
-    # Isolation
     isolation: Literal["none", "worktree", "clone"] | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
     clone_id: str | None = None,  # Reuse existing clone instead of creating new isolation
     worktree_id: str | None = None,  # Reuse existing worktree instead of creating new isolation
     cleanup_isolation_on_failure: bool = False,
-    # Storage/managers for isolation
     worktree_storage: Any | None = None,
     git_manager: Any | None = None,
     git_manager_resolver: Callable[[str], Any | None] | None = None,
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
-    # Execution
     workflow: str | None = None,
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
     reasoning_required: bool | None = None,
-    # Limits
     timeout: float | None = None,
-    # Context
     parent_session_id: str | None = None,
     caller_session_id: str | None = None,
     project_path: str | None = None,
@@ -135,8 +132,22 @@ async def spawn_agent_impl(
     terminal_backend: Literal["tmux", "native"] | None = None,
     managed_runtime_profile: ManagedRuntimeProfile | None = None,
     prelaunch_authority: Callable[[str], None] | None = None,
+    extra_write_paths: list[str] | None = None,
+    write_paths_reason: str | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    try:
+        write_grant = await asyncio.to_thread(
+            authorize_write_grant,
+            extra_write_paths,
+            write_paths_reason,
+            caller_session_id=caller_session_id,
+            parent_session_id=parent_session_id,
+            session_manager=session_manager,
+            run_storage=runner.run_storage,
+        )
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
     if agent_body is not None:
         try:
             agent_body.prompt_for("agent")
@@ -150,7 +161,10 @@ async def spawn_agent_impl(
     managed_error = managed_runtime_pair_error(managed_runtime_profile, prelaunch_authority)
     if managed_error:
         return {"success": False, "error": managed_error}
-    # Structural plan failures block planning roles; authoring roles may repair symbol failures.
+    if managed_runtime_profile is not None and write_grant:
+        return {"success": False, "error": "ask_external_write_grant_forbidden"}
+    # Structural failures block planning roles. Authoring roles may continue
+    # past symbol-only failures with repair diagnostics appended to the prompt.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
     gate_result = await asyncio.to_thread(
@@ -166,8 +180,6 @@ async def spawn_agent_impl(
         prompt_append = gate_result.get("prompt_append")
         if isinstance(prompt_append, str):
             prompt = f"{prompt}\n\n{prompt_append}"
-
-    # 1. Merge config: agent_body defaults < params
     _raw_isolation: str | None = isolation
     if _raw_isolation is None and agent_body:
         _raw_isolation = agent_body.isolation
@@ -245,8 +257,6 @@ async def spawn_agent_impl(
             "error": reasoning.message or "Requested reasoning is not supported",
             "reasoning": reasoning.to_dict(),
         }
-
-    # Resolve api_base/api_token from agent definition (with ${ENV_VAR} expansion)
     effective_api_base: str | None = None
     effective_api_token: str | None = None
     if agent_body:
@@ -299,8 +309,6 @@ async def spawn_agent_impl(
         effective_timeout = None  # 0 means no timeout
 
     effective_workflow = workflow
-
-    # 2. Resolve project-scoped isolation services before deriving Git defaults.
     ctx = await asyncio.to_thread(get_project_context, Path(project_path) if project_path else None)
     if ctx is None and target_project_id is None:
         return {"success": False, "error": "Could not resolve project context"}
@@ -355,7 +363,6 @@ async def spawn_agent_impl(
     # "inherit" means "resolve from context", treat as unset
     if effective_base_branch == "inherit":
         effective_base_branch = None
-    # Auto-detect current branch if no base_branch specified
     if effective_base_branch is None and target_git_manager:
         try:
             effective_base_branch = await target_git_manager.get_current_branch()
@@ -363,24 +370,19 @@ async def spawn_agent_impl(
             logger.debug("Failed to auto-detect current branch: %s", e, exc_info=True)
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
-
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
     effective_sandbox_config: SandboxConfig = (
         managed_runtime_profile.sandbox_config
         if managed_runtime_profile is not None
-        else agent_sandbox_config(daemon_config)
+        else apply_write_grant(agent_sandbox_config(daemon_config), write_grant)
     )
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
-
-    # 3. Validate parent_session_id and spawn depth
     if not parent_session_id:
         return {"success": False, "error": "parent_session_id is required"}
 
     can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
-
-    # 4. Resolve task_id if provided (supports N, #N, UUID)
     resolved_task_id: str | None = None
     task_title: str | None = None
     task_seq_num: int | None = None
@@ -427,8 +429,6 @@ async def spawn_agent_impl(
     initial_task_ref = initial_variables.get("assigned_task_id") if initial_variables else None
     if resolved_task_id is not None or isinstance(initial_task_ref, str):
         prompt = f"{prompt}\n\n{task_coordination_instruction()}"
-
-    # 5. Build spawn config and handle worktree_id/clone_id reuse.
     spawn_config = SpawnConfig(
         prompt=prompt,
         task_id=resolved_task_id,
@@ -442,15 +442,11 @@ async def spawn_agent_impl(
         provider=effective_provider,
         parent_session_id=parent_session_id,
     )
-
-    # Explicit reuse skips isolation creation when the existing resource can be prepared.
     isolation_ctx = None
     if worktree_id and worktree_storage:
         existing_worktree = worktree_storage.get(worktree_id)
         if not existing_worktree:
             return {"success": False, "error": f"Worktree {worktree_id} not found"}
-
-        # Verify worktree directory still exists on disk
         if not Path(existing_worktree.worktree_path).is_dir():
             worktree_storage.delete(worktree_id)
             return {
@@ -501,8 +497,6 @@ async def spawn_agent_impl(
         existing_clone = clone_storage.get(clone_id)
         if not existing_clone:
             return {"success": False, "error": f"Clone {clone_id} not found"}
-
-        # Verify clone directory still exists on disk
         if not Path(existing_clone.clone_path).is_dir():
             clone_storage.delete(clone_id)
             return {
@@ -534,7 +528,6 @@ async def spawn_agent_impl(
             target_clone_manager, clone_storage, target_git_manager
         )
     else:
-        # Normal isolation flow
         handler = get_isolation_handler(
             effective_isolation,
             git_manager=target_git_manager,
@@ -586,8 +579,6 @@ async def spawn_agent_impl(
         initial_variables=initial_variables,
         task_category=task_category,
     )
-
-    # 8. Build enhanced prompt with isolation context
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
 
     run_id = str(uuid.uuid4())
@@ -611,6 +602,9 @@ async def spawn_agent_impl(
         effective_workflow=effective_workflow,
         agent_display_name=agent_display_name,
     )
+
+    if write_grant:
+        resume_metadata[GRANT_KEY] = write_grant
 
     task_spawn_lease = TaskSpawnLease(
         db=db,
@@ -799,62 +793,28 @@ async def spawn_agent_impl(
                     **spawn_identity,
                     "reasoning": reasoning.to_dict(),
                 }
-        spawn_request = SpawnRequest(
+        spawn_request = build_spawn_request(
             prompt=enhanced_prompt,
-            cwd=isolation_ctx.cwd,
-            provider=effective_provider,
             managed_runtime_profile=managed_runtime_profile,
-            session_id=prepared_spawn.session_id,
+            spawn_config=spawn_config,
+            isolation_ctx=isolation_ctx,
+            prepared_spawn=prepared_spawn,
+            runner=runner,
             run_id=run_id,
-            agent_run_id=run_id,
-            parent_session_id=parent_session_id,
-            project_id=project_id,
-            project_path=resolved_project_path,
             workflow=effective_workflow,
             initial_variables=effective_initial_variables,
-            worktree_id=isolation_ctx.worktree_id,
-            clone_id=isolation_ctx.clone_id,
-            branch_name=isolation_ctx.branch_name,
-            task_id=resolved_task_id,
             claimed_session_id=claimed_session_id,
             agent_name=agent_display_name,
-            session_manager=child_session_manager,
-            run_manager=runner.run_storage,
             machine_id=machine_id,
-            model=effective_model,
-            is_local=is_local_run,
-            codex_oss_provider=endpoint_resolution.codex_oss_provider,
-            codex_config_overrides=endpoint_resolution.codex_config_overrides,
-            api_base=effective_api_base,
-            api_token=effective_api_token,
-            requested_reasoning_effort=reasoning.requested_effort,
-            effective_reasoning_effort=reasoning.effective_effort,
-            reasoning_required=reasoning.reasoning_required,
-            reasoning_status=reasoning.status,
-            reasoning_message=reasoning.message,
-            auto_approve=(
-                managed_runtime_profile.auto_approve
-                if managed_runtime_profile is not None
-                else True
-            ),
-            provider_args=(
-                managed_runtime_profile.provider_args if managed_runtime_profile is not None else ()
-            ),
+            endpoint=endpoint_resolution,
+            reasoning=reasoning,
             sandbox_config=effective_sandbox_config,
-            extra_env={
-                **(endpoint_resolution.child_env or {}),
-            }
-            or None,
-            timeout_seconds=effective_timeout,
+            timeout=effective_timeout,
             daemon_config=daemon_config,
-            resume_metadata_json=resume_metadata,
-            code_index_preflight_mode=code_index_mode,
+            resume_metadata=resume_metadata,
+            code_index_mode=code_index_mode,
             code_index_api_token=await asyncio.to_thread(read_local_api_token),
-            prepared_spawn=prepared_spawn,
             phase_timings_ms=phase_timings_ms,
-            terminal_manager=getattr(runner, "terminal_manager", None),
-            terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
-            write_coordinator=getattr(runner, "write_coordinator", None),
             terminal_backend=resolved_terminal_backend,
         )
 
@@ -950,6 +910,7 @@ async def spawn_agent_impl(
         return {
             "success": True,
             "status": "starting",
+            GRANT_KEY: write_grant,
             **spawn_identity,
             "child_session_id": prepared_spawn.session_id,
             "isolation": effective_isolation,

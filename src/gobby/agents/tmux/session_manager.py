@@ -132,6 +132,7 @@ class TmuxPaneInfo:
     pane_dead: bool
     pane_command: str | None
     pane_path: str | None
+    session_attached: int = 0
 
 
 _PANE_LIST_FORMAT = "\t".join(
@@ -148,6 +149,7 @@ _PANE_LIST_FORMAT = "\t".join(
         "#{pane_dead}",
         "#{pane_current_command}",
         "#{pane_current_path}",
+        "#{session_attached}",
     )
 )
 
@@ -439,7 +441,7 @@ class TmuxSessionManager:
     def _parse_pane_line(line: str) -> TmuxPaneInfo | None:
         """Parse one ``_PANE_LIST_FORMAT`` row; rows with a tab in a name are dropped."""
         parts = line.split("\t")
-        if len(parts) != 12:
+        if len(parts) != 13:
             return None
         (
             socket_path,
@@ -454,6 +456,7 @@ class TmuxSessionManager:
             pane_dead,
             pane_command,
             pane_path,
+            session_attached,
         ) = parts
         if not (
             socket_path
@@ -477,6 +480,7 @@ class TmuxSessionManager:
             pane_dead=pane_dead == "1",
             pane_command=pane_command or None,
             pane_path=pane_path or None,
+            session_attached=int(session_attached) if session_attached.isdigit() else 0,
         )
 
     async def has_session(self, name: str) -> bool:

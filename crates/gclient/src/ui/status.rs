@@ -38,6 +38,10 @@ pub struct Toast {
 pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
         RowState::Attention => ("●", p.red),
+        // The warning token: apart from the destructive magenta and the idle
+        // green in hue and lightness, and the dotted ring already means
+        // "detached" in the control indicators.
+        RowState::Orphaned => ("◌", p.peach),
         RowState::Working => ("●", p.yellow),
         RowState::Unseen => ("●", p.teal),
         RowState::Idle => ("○", p.green),
@@ -49,6 +53,7 @@ pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
 pub fn state_label(state: RowState) -> &'static str {
     match state {
         RowState::Attention => "blocked",
+        RowState::Orphaned => "orphaned",
         RowState::Working => "working",
         RowState::Unseen => "done",
         RowState::Idle | RowState::Unknown => "idle",

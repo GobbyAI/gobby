@@ -16,6 +16,7 @@ from gobby.agents.codex_oss import (
     codex_local_transport_strategy,
     codex_oss_provider_for_local_endpoint,
 )
+from gobby.agents.external_write_grants import GRANT_KEY, revalidate_write_grant
 from gobby.agents.local_model import LocalModelError, ensure_local_model
 from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
@@ -137,11 +138,17 @@ async def resume_agent_run(
             ),
         )
     managed_runtime_profile = ask_principal.runtime_profile if ask_principal is not None else None
+    if managed_runtime_profile is not None and resume_metadata.get(GRANT_KEY) is not None:
+        return ResumeAgentResult(False, error="ask_resume_external_write_grant_forbidden")
     provider = (
         managed_runtime_profile.provider
         if managed_runtime_profile is not None
         else _metadata_str(resume_metadata, "provider") or original_run.provider
     )
+    try:
+        await asyncio.to_thread(revalidate_write_grant, resume_metadata)
+    except ValueError as exc:
+        return ResumeAgentResult(False, error=f"resume_external_write_grant_invalid:{exc}")
     if provider not in SUPPORTED_RESUME_PROVIDERS:
         return ResumeAgentResult(False, error=f"resume_unsupported_provider:{provider}")
     if provider == "agy":

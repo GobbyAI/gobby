@@ -460,6 +460,14 @@ impl Daemon for ReconnectDaemon {
         self.inner.list_terminals(project, cursor).await
     }
 
+    async fn inventory_page(
+        &self,
+        states: &[&str],
+        cursor: Option<&str>,
+    ) -> Result<Page<TerminalRow>, DaemonError> {
+        self.inner.inventory_page(states, cursor).await
+    }
+
     async fn roster(&self) -> Result<Vec<RosterEntry>, DaemonError> {
         Daemon::roster(&self.inner).await
     }
