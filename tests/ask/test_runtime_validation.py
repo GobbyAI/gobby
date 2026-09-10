@@ -83,6 +83,14 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
                 "scratch_root": scratch_root,
                 "srt_runtime_version": "0.0.66",
                 "srt_policy_schema_version": 1,
+                "raw_evidence": {
+                    "raw_probe_sha256": "d" * 64,
+                    "receipt_sha256": "e" * 64,
+                    "process_start_identity": f"{phase}-start",
+                    "response": "synthetic test response",
+                    "start_byte": 0,
+                    "end_byte": len(b"synthetic test response"),
+                },
             }
             if phase == "resumed":
                 record["resumed_from_agent_run_id"] = "fresh-agent-run"
@@ -106,10 +114,19 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
     return observations
 
 
+def _runtime_identity() -> dict[str, Any]:
+    return {
+        "source_head": "a" * 40,
+        "gcode": {"path": "/probe/bin/gcode", "sha256": "b" * 64, "version": "1.7.0"},
+        "gterm": {"path": "/probe/bin/gterm", "sha256": "c" * 64, "version": None},
+    }
+
+
 def test_probe_artifact_binds_live_provider_version_and_control_digest(tmp_path: Path) -> None:
     executable = _provider(tmp_path / "claude", "2.1.265")
     control_digest = ask_runtime_control_digest("claude", "claude.ai")
     artifact = build_ask_runtime_probe_artifact(
+        runtime_identity=_runtime_identity(),
         provider="claude",
         provider_executable=executable,
         auth_mode="claude.ai",
@@ -145,6 +162,7 @@ def test_probe_artifact_binds_live_provider_version_and_control_digest(tmp_path:
 def test_runtime_loader_rejects_replaced_provider_before_executing_it(tmp_path: Path) -> None:
     executable = _provider(tmp_path / "claude", "2.1.265")
     artifact = build_ask_runtime_probe_artifact(
+        runtime_identity=_runtime_identity(),
         provider="claude",
         provider_executable=executable,
         auth_mode="claude.ai",
@@ -174,6 +192,7 @@ def test_probe_artifact_requires_every_fresh_and_resumed_boundary(tmp_path: Path
     observations.pop()
     with pytest.raises(ValueError, match="matrix"):
         build_ask_runtime_probe_artifact(
+            runtime_identity=_runtime_identity(),
             provider="claude",
             provider_executable=executable,
             auth_mode="claude.ai",
@@ -189,6 +208,7 @@ def test_probe_artifact_rejects_self_attested_receipt_strings(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="structured raw receipt"):
         build_ask_runtime_probe_artifact(
+            runtime_identity=_runtime_identity(),
             provider="claude",
             provider_executable=executable,
             auth_mode="claude.ai",
@@ -216,6 +236,7 @@ def test_probe_artifact_rejects_policy_widening_between_fresh_and_resume(
 
     with pytest.raises(ValueError, match="policy"):
         build_ask_runtime_probe_artifact(
+            runtime_identity=_runtime_identity(),
             provider="claude",
             provider_executable=executable,
             auth_mode="claude.ai",
@@ -263,6 +284,7 @@ def test_probe_artifact_normalizes_only_registered_macos_run_temp_roots(
                 receipt["sha256"] = hashlib.sha256(encoded).hexdigest()
 
         artifact = build_ask_runtime_probe_artifact(
+            runtime_identity=_runtime_identity(),
             provider="claude",
             provider_executable=executable,
             auth_mode="claude.ai",
@@ -354,6 +376,7 @@ def test_probe_phase_cannot_mix_runtime_policy_identities(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="one process identity"):
         build_ask_runtime_probe_artifact(
+            runtime_identity=_runtime_identity(),
             provider="claude",
             provider_executable=executable,
             auth_mode="claude.ai",
@@ -375,6 +398,7 @@ def test_fresh_and_resumed_probes_may_use_separate_managed_runs(tmp_path: Path) 
         receipt["sha256"] = hashlib.sha256(encoded).hexdigest()
 
     artifact = build_ask_runtime_probe_artifact(
+        runtime_identity=_runtime_identity(),
         provider="claude",
         provider_executable=executable,
         auth_mode="claude.ai",
@@ -384,3 +408,91 @@ def test_fresh_and_resumed_probes_may_use_separate_managed_runs(tmp_path: Path) 
 
     assert artifact["fresh_probe_passed"] is True
     assert artifact["resume_probe_passed"] is True
+
+
+@pytest.mark.parametrize("entrypoint", ["build", "load"])
+def test_runtime_artifact_requires_raw_provenance_at_every_entrypoint(
+    tmp_path: Path,
+    entrypoint: str,
+) -> None:
+    executable = _provider(tmp_path / "claude", "2.1.265")
+    observations = _observations(executable)
+    arguments: dict[str, Any] = {
+        "provider": "claude",
+        "provider_executable": executable,
+        "auth_mode": "claude.ai",
+        "control_digest": ask_runtime_control_digest("claude", "claude.ai"),
+        "observations": observations,
+        "runtime_identity": _runtime_identity(),
+    }
+    if entrypoint == "load":
+        artifact = build_ask_runtime_probe_artifact(**arguments)
+        for observation in artifact["observations"]:
+            receipt = observation["receipt"]
+            receipt["record"].pop("raw_evidence", None)
+            receipt["sha256"] = hashlib.sha256(
+                json.dumps(receipt["record"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        path = tmp_path / "unbound.json"
+        digest = write_ask_runtime_probe_artifact(path, artifact)
+        with pytest.raises(ValueError, match="raw"):
+            load_ask_runtime_validation(
+                AskRuntimeValidationArtifact(path=path, sha256=digest),
+                provider_executable=executable,
+            )
+    else:
+        for observation in observations:
+            receipt = observation["receipt"]
+            receipt["record"].pop("raw_evidence", None)
+            receipt["sha256"] = hashlib.sha256(
+                json.dumps(receipt["record"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        with pytest.raises(ValueError, match="raw"):
+            build_ask_runtime_probe_artifact(**arguments)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "mixed_raw_hash",
+        "wrong_span",
+        "missing_runtime",
+        "invalid_runtime_hash",
+        "artifact_raw_hash",
+        "process_start_drift",
+    ],
+)
+def test_loader_rejects_inconsistent_sealed_provenance(tmp_path: Path, tamper: str) -> None:
+    executable = _provider(tmp_path / "claude", "2.1.265")
+    artifact = build_ask_runtime_probe_artifact(
+        provider="claude",
+        provider_executable=executable,
+        auth_mode="claude.ai",
+        control_digest=ask_runtime_control_digest("claude", "claude.ai"),
+        observations=_observations(executable),
+        runtime_identity=_runtime_identity(),
+    )
+    receipt = artifact["observations"][0]["receipt"]
+    if tamper == "mixed_raw_hash":
+        receipt["record"]["raw_evidence"]["raw_probe_sha256"] = "f" * 64
+    elif tamper == "wrong_span":
+        receipt["record"]["raw_evidence"]["end_byte"] += 1
+    elif tamper == "missing_runtime":
+        del artifact["runtime_identity"]
+    elif tamper == "invalid_runtime_hash":
+        artifact["runtime_identity"]["gterm"]["sha256"] = "invalid"
+    elif tamper == "artifact_raw_hash":
+        artifact["raw_probe_sha256"] = "f" * 64
+    elif tamper == "process_start_drift":
+        receipt["record"]["raw_evidence"]["process_start_identity"] = "other-incarnation"
+    receipt["sha256"] = hashlib.sha256(
+        json.dumps(receipt["record"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    path = tmp_path / "changed.json"
+    digest = write_ask_runtime_probe_artifact(path, artifact)
+
+    with pytest.raises(ValueError):
+        load_ask_runtime_validation(
+            AskRuntimeValidationArtifact(path=path, sha256=digest),
+            provider_executable=executable,
+        )
