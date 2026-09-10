@@ -381,6 +381,27 @@ async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
 
 
 @pytest.mark.integration
+async def test_artifact_cleanup_ignores_expired_caller_deadline(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"], "Unmerged task", validation_criteria="Keep unmerged artifacts."
+    )
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with database_operation_deadline(timeout_seconds=0.04) as caller_deadline:
+        now += 0.06
+        artifacts = await cleanup_merged_task_artifacts_after_agent_exit(temp_db, task.id)
+        assert artifacts == []
+        assert operation_deadline.current_database_operation_deadline() is caller_deadline
+        with pytest.raises(operation_deadline.DatabaseOperationDeadlineExceeded):
+            caller_deadline.remaining_seconds()
+
+
+@pytest.mark.integration
 async def test_exhausted_inherited_deadline_still_releases_the_dispatch_mutex(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

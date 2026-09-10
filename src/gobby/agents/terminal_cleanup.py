@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -50,14 +51,18 @@ async def cleanup_merged_task_artifacts_after_agent_exit(
             )
         return await cleanup_successful_merge_artifacts(db, task_id)
 
-    merge_stage = task_manager.stage_states.get(task_id, "merge")
-    if merge_stage is not None and merge_stage.state == "done":
-        return await cleanup()
+    # Artifact teardown follows critical cleanup and owns a fresh bounded window.
+    with detached_database_operation_deadline(
+        timeout_seconds=CRITICAL_TERMINAL_CLEANUP_TIMEOUT_SECONDS
+    ):
+        merge_stage = await asyncio.to_thread(task_manager.stage_states.get, task_id, "merge")
+        if merge_stage is not None and merge_stage.state == "done":
+            return await cleanup()
 
-    task = task_manager.get_task(task_id)
-    if task is None or task.closed_at is None or task.closed_reason != "already_implemented":
-        return []
-    return await cleanup()
+        task = await asyncio.to_thread(task_manager.get_task, task_id)
+        if task is None or task.closed_at is None or task.closed_reason != "already_implemented":
+            return []
+        return await cleanup()
 
 
 class TerminalResourceCleaner:
