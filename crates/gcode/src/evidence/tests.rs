@@ -1298,6 +1298,60 @@ fn snapshot_excludes_known_credentials_in_ordinary_source_paths() -> anyhow::Res
 }
 
 #[test]
+fn snapshot_distinguishes_credential_expressions_from_literals() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    let cases = [
+        ("client.py", "client = Client(token=SERVICE_TOKEN)\n", false),
+        (
+            "settings.py",
+            "token = environment_value('SERVICE_TOKEN')\n",
+            false,
+        ),
+        ("reference.py", "token = service_token_value\n", false),
+        (
+            "client.ts",
+            "const token = config.authenticationToken;\n",
+            false,
+        ),
+        ("literal.py", "token = '0123456789abcdef'\n", true),
+        ("numeric.py", "password = 1234567890123456\n", true),
+        ("mapping.json", "{\"token\": \"0123456789abcdef\"}\n", true),
+        ("settings.yaml", "token: 0123456789abcdef\n", true),
+        ("settings.ini", "token=0123456789abcdef\n", true),
+        ("configure.sh", "token=0123456789abcdef\n", true),
+    ];
+    for (path, content, _) in cases {
+        std::fs::write(repo.join(path), content)?;
+    }
+    git(repo, &["add", "."])?;
+    let commit_oid = commit(repo, "credential expression and literal fixtures")?;
+    let snapshot = Snapshot::prepare(repo, "project-credential-expressions", &commit_oid)?;
+    for (path, content, sensitive) in cases {
+        let entry = snapshot.entry(path)?;
+        if sensitive {
+            assert_eq!(
+                serde_json::to_value(entry.exclusion)?,
+                serde_json::json!("sensitive_content"),
+                "literal must be excluded: {path}"
+            );
+            assert_eq!(
+                snapshot.read_blob(path).unwrap_err().code(),
+                "excluded_path"
+            );
+        } else {
+            assert!(
+                entry.exclusion.is_none(),
+                "expression must be citeable: {path}"
+            );
+            assert_eq!(snapshot.read_blob(path)?, content.as_bytes());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn hybrid_search_reports_union_truncation() -> anyhow::Result<()> {
     let (_temporary, snapshot) = source_repo()?;
     let mut facts = FakeFacts::from_snapshot(&snapshot);
