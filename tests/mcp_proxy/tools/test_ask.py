@@ -318,3 +318,95 @@ async def test_ask_registry_refuses_an_unavailable_project_without_foreign_fallb
     assert resolved_projects == [unavailable_project_id]
     assert startup_service.calls == []
     assert foreign_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_ordinary_same_project_caller_cannot_execute_internal_stage_through_proxy(
+    temp_db: Any,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    import yaml
+
+    from gobby.ask.contracts import AskRequest, ProfileSnapshot
+    from gobby.ask.pipeline import parse_ask_pipeline
+    from gobby.ask.service import AskService
+    from gobby.ask.storage import AskRunStorage
+    from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+    from gobby.mcp_proxy.tools.ask import create_ask_registry
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+
+    project_id = str(sample_project["id"])
+    pipeline_path = (
+        Path(__file__).parents[3] / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+    )
+    pipeline = parse_ask_pipeline(yaml.safe_load(pipeline_path.read_text()))
+
+    def resolve_profile(identifier: str, _timeout: float) -> ProfileSnapshot:
+        return ProfileSnapshot(
+            identifier=identifier,
+            definition_id=f"definition-{identifier}",
+            definition_updated_at="2026-09-08T12:00:00+00:00",
+            effective={"name": identifier, "provider": "codex", "model": "gpt-test"},
+        )
+
+    storage = AskRunStorage(
+        LocalPipelineExecutionManager(temp_db, project_id=project_id),
+        profile_resolver=resolve_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=pipeline.model_dump(mode="json"),
+    )
+    target = storage.start(
+        AskRequest(
+            question="Which pipeline owns this stage?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        tmp_path,
+    )
+    service = AskService(
+        storage=storage,
+        stages=MagicMock(),
+        snapshot_manager=MagicMock(),
+        agents=MagicMock(),
+        permissions=MagicMock(),
+        pipeline_executor=MagicMock(),
+        state_root=tmp_path / "state",
+    )
+    seed = AsyncMock(return_value={"run_id": target.run_id})
+    monkeypatch.setattr(service.stage_runtime, "seed", seed)
+
+    registries = InternalRegistryManager()
+    registries.add_registry(
+        create_ask_registry(
+            lambda requested_project_id: service if requested_project_id == project_id else None,
+            project_root_resolver=lambda _project_id: tmp_path,
+        )
+    )
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = project_id
+    mcp_manager.session_manager = None
+    proxy = ToolProxyService(
+        mcp_manager,
+        internal_manager=registries,
+        validate_arguments=False,
+    )
+
+    with _project_context(project_id), session_context_for_test(SESSION_ID):
+        result = await proxy.call_tool(
+            "gobby-ask",
+            "seed",
+            {"run_id": target.run_id, "project_id": project_id},
+            session_id=SESSION_ID,
+            enforce_workflow=False,
+        )
+
+    assert result.get("success") is False, result
+    assert result["error_code"] == "TOOL_BLOCKED"
+    assert "owning Ask pipeline" in result["error"]
+    seed.assert_not_awaited()
