@@ -295,6 +295,7 @@ async def list_all_mcp_tools(
         from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
         from gobby.storage.projects import GLOBAL_PROJECT_ID
 
+        allowed = await _current_ask_tools(request, server, {})
         scope = request_mcp_scope(request, server, {})
         tools_by_server: dict[str, list[dict[str, Any]]] = {}
 
@@ -308,7 +309,7 @@ async def list_all_mcp_tools(
                 resolved_project_id = None
 
         # If specific server requested
-        if server_filter:
+        if server_filter and (allowed is None or any(name == server_filter for name, _ in allowed)):
             # Check internal first
             if server._internal_manager and server._internal_manager.is_internal(server_filter):
                 registry = server._internal_manager.get_registry(server_filter)
@@ -325,7 +326,7 @@ async def list_all_mcp_tools(
                             resolved.id,
                             timeout=_mcp_call_timeout(server),
                         )
-        else:
+        elif not server_filter:
             # Get tools from all servers
             # Internal servers
             if server._internal_manager:
@@ -345,7 +346,6 @@ async def list_all_mcp_tools(
                                 _cached_tool_briefs(config)
                             )
 
-        allowed = await _current_ask_tools(request, server, {})
         tools_by_server = _filter_tool_map(tools_by_server, allowed)
 
         # Enrich with metrics if requested

@@ -67,10 +67,11 @@ def _ask_policy_service(server: "HTTPServer") -> object:
     return server.tool_proxy or server
 
 
-async def _filter_ask_tools(
-    server: "HTTPServer", server_name: str, tools: list[dict[str, Any]]
+def _filter_ask_tools(
+    server_name: str,
+    tools: list[dict[str, Any]],
+    allowed: frozenset[tuple[str, str]] | None,
 ) -> list[dict[str, Any]]:
-    allowed = await asyncio.to_thread(current_ask_allowed_tools, _ask_policy_service(server))
     if allowed is None:
         return tools
     return [tool for tool in tools if (server_name, str(tool.get("name"))) in allowed]
@@ -320,12 +321,20 @@ async def list_mcp_tools(
     ctx_token = await request_context._set_context_for_request(server, {}, request)
 
     try:
+        allowed = await asyncio.to_thread(current_ask_allowed_tools, _ask_policy_service(server))
+        if allowed is not None and not any(name == server_name for name, _ in allowed):
+            return {
+                "success": True,
+                "tools": [],
+                "tool_count": 0,
+                "response_time_ms": (time.perf_counter() - start_time) * 1000,
+            }
         # Check internal registries first (gobby-tasks, gobby-memory, etc.)
         if internal_manager and internal_manager.is_internal(server_name):
             registry = internal_manager.get_registry(server_name)
             if registry:
                 tools = registry.list_tools()
-                tools = await _filter_ask_tools(server, server_name, tools)
+                tools = _filter_ask_tools(server_name, tools, allowed)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 observe_histogram("list_mcp_tools", response_time_ms / 1000)
                 if server.tool_proxy and is_mcp_wrapper_request(request):
@@ -395,7 +404,7 @@ async def list_mcp_tools(
                     "inputSchema": tool.input_schema,
                 }
                 tools.append(tool_dict)
-            tools = await _filter_ask_tools(server, server_name, tools)
+            tools = _filter_ask_tools(server_name, tools, allowed)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
