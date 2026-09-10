@@ -80,6 +80,7 @@ def _make_registry_context(
     ctx.git_manager = MagicMock()
     ctx.git_manager.repo_path = "/tmp/repo"
     ctx.git_manager.sync_from_main = AsyncMock()
+    ctx.git_manager.list_worktrees = AsyncMock(return_value=[])
 
     async def run_git_command(
         args: list[str],
@@ -134,7 +135,7 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout=status_stdout)
         if args == ["diff", "--name-only", "--cached"]:
             return _make_git_result(0, stdout=staged_stdout)
-        if args == ["diff", "--name-only", "HEAD", f"refs/heads/{source}"]:
+        if args == ["diff", "--name-only", f"HEAD...refs/heads/{source}"]:
             return _make_git_result(0, stdout=incoming_stdout)
         if args[:2] == ["diff", "--quiet"] and args[-2:] == [
             "--",
@@ -903,7 +904,7 @@ async def test_merge_worktree_uses_existing_target_worktree_when_branch_is_check
     target_worktree = MagicMock()
     target_worktree.branch = "main"
     target_worktree.path = "/tmp/target-wt"
-    ctx.git_manager.list_worktrees.return_value = [target_worktree]
+    ctx.git_manager.list_worktrees = AsyncMock(return_value=[target_worktree])
     ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
         merge_result=_make_git_result(0, stdout="Already up to date.\n")
     )
@@ -921,6 +922,7 @@ async def test_merge_worktree_uses_existing_target_worktree_when_branch_is_check
     assert result["merged"] is True
     assert result["merge_sha"] == "abc123def456"
     assert result["target_worktree_path"] == "/tmp/target-wt"
+    ctx.git_manager.list_worktrees.assert_awaited_once_with()
 
     merge_calls = [
         call
