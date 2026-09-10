@@ -47,12 +47,6 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
     release = asyncio.Event()
     settled = asyncio.Event()
 
-    async def slow_cleanup(*_args: Any, **_kwargs: Any) -> bool:
-        started.set()
-        await release.wait()
-        settled.set()
-        return True
-
     sessions = SessionManager(temp_db)
     child = sessions.register(
         external_id="durable-workflow-child",
@@ -60,14 +54,32 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
         source="codex",
         project_id=sample_project["id"],
     )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Durable workflow cleanup",
+        validation_criteria="Owned cleanup releases runtime state after its durable boundary.",
+    )
     runs = LocalAgentRunManager(temp_db)
     run = runs.create(
         parent_session_id=child.id,
         child_session_id=child.id,
         provider="codex",
         prompt="complete workflow",
+        task_id=task.id,
     )
     runs.start(run.id)
+    mutex = TaskDispatchMutexManager(temp_db)
+    mutex.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="spawn_agent",
+        run_id=run.id,
+        ttl_seconds=300,
+    )
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        make_step_instance(child.id, agent_name="durable-cleanup", current_step="terminate")
+    )
     cleanup = AgentCleanupHandler(
         agent_run_manager=runs,
         db=temp_db,
@@ -82,6 +94,14 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
         loop_tracker=MagicMock(),
         master_fds={},
     )
+    owned_cleanup = cleanup.post_terminal_cleanup
+
+    async def slow_cleanup(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        await release.wait()
+        await owned_cleanup(*args, **kwargs)
+        settled.set()
+
     runner = MagicMock()
     runner.run_storage = runs
     runner.get_run_id_by_session.return_value = run.id
@@ -133,6 +153,9 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
             done, _ = await asyncio.wait({completion}, timeout=0.1)
             assert completion in done, "Workflow evaluation waited for terminal cleanup"
             assert not settled.is_set()
+            clear_runtime.assert_not_called()
+            assert mutex.get_mutex(task.id) is not None
+            assert instance_manager.get_for_session(child.id) is not None
             stored = runs.get(run.id)
             assert stored is not None
             assert stored.status == "success"
@@ -143,7 +166,9 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
             await terminal_delivery.drain_shielded_terminal_deliveries()
             terminal_delivery.reopen_terminal_delivery_admission()
     assert settled.is_set()
-    clear_runtime.assert_called_once()
+    clear_runtime.assert_not_called()
+    assert mutex.get_mutex(task.id) is None
+    assert instance_manager.get_for_session(child.id) is None
 
 
 # Session/instance id columns are native uuid in PostgreSQL; synthetic ids

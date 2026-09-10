@@ -198,6 +198,62 @@ async def test_durable_boundary_caller_cancellation_preserves_owned_operation() 
 
 
 @pytest.mark.asyncio
+async def test_durable_boundary_caller_cancellation_before_cross_loop_admission() -> None:
+    owner_loop = asyncio.get_running_loop()
+    foreign_loop = asyncio.new_event_loop()
+    foreign_loop_ready = threading.Event()
+    caller_cancelled = threading.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_settled = asyncio.Event()
+
+    async def operation(acknowledge: Callable[[str], None]) -> None:
+        cleanup_started.set()
+        acknowledge("persisted")
+        await release_cleanup.wait()
+        cleanup_settled.set()
+
+    async def cancel_foreign_caller() -> None:
+        caller = asyncio.create_task(
+            terminal_delivery.run_terminal_delivery_until_durable(
+                "cancelled-before-admission", operation
+            )
+        )
+        await asyncio.sleep(0)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        caller_cancelled.set()
+
+    def run_foreign_loop() -> None:
+        asyncio.set_event_loop(foreign_loop)
+        foreign_loop_ready.set()
+        foreign_loop.run_forever()
+
+    thread = threading.Thread(target=run_foreign_loop)
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread,
+        owner_loop=owner_loop,
+    )
+    try:
+        thread.start()
+        assert foreign_loop_ready.wait(timeout=2)
+        foreign_result = asyncio.run_coroutine_threadsafe(cancel_foreign_caller(), foreign_loop)
+        assert caller_cancelled.wait(timeout=2)
+        foreign_result.result(timeout=2)
+        await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+        release_cleanup.set()
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+        assert cleanup_settled.is_set()
+    finally:
+        release_cleanup.set()
+        terminal_delivery.reset_terminal_delivery_offload()
+        foreign_loop.call_soon_threadsafe(foreign_loop.stop)
+        thread.join(timeout=2)
+        foreign_loop.close()
+
+
+@pytest.mark.asyncio
 async def test_submitted_delivery_reports_background_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -656,6 +712,49 @@ async def test_concurrent_terminal_delivery_coalesces_acknowledged_wake(
         )
     ]
     assert "went terminal with no in-memory completion subscribers" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_concurrent_terminal_delivery_honors_waiter_cancellation() -> None:
+    db = DurableDb(["session-a"])
+    wake_started = asyncio.Event()
+    release_wake = asyncio.Event()
+    wake_calls = 0
+
+    async def wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, object],
+    ) -> dict[str, bool]:
+        nonlocal wake_calls
+        wake_calls += 1
+        wake_started.set()
+        await release_wake.wait()
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake)
+    registry.register("run-1", ["session-a"])
+    handler = _handler(db, completion_registry=registry)
+    first = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.wait_for(wake_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.sleep(0)
+
+    first.cancel()
+    second.cancel()
+    release_wake.set()
+    outcomes = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert all(isinstance(outcome, asyncio.CancelledError) for outcome in outcomes)
+    assert wake_calls == 1
 
 
 @pytest.mark.asyncio

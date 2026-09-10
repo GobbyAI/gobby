@@ -272,6 +272,10 @@ async def run_terminal_delivery_until_durable[T](
 
     try:
         operation_result = await submit_terminal_delivery(run_id, owned_operation)
+    except asyncio.CancelledError:
+        # Admission is cancellation-shielded. A foreign caller can leave before the
+        # daemon loop admits the operation, which must retain its durable boundary.
+        raise
     except BaseException as error:
         if not durable.done():
             durable.set_exception(error)
@@ -441,6 +445,9 @@ async def deliver_and_cleanup_terminal_run(
         try:
             attempt = await asyncio.shield(in_flight)
         except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
             if in_flight.cancelled():
                 continue
             raise

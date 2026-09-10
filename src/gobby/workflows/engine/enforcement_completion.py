@@ -238,13 +238,9 @@ class EnforcementCompletionMixin:
                 run_id,
                 terminalized,
             )
-            await offload(
-                cleanup_agent_runtime_state,
-                self.db,
-                run_id=run_id,
-                child_session_id=cleanup_session_id,
-                terminal_reason=terminal_reason,
-            )
+            # The admitted lifecycle operation releases worktrees and clones before
+            # clearing the dispatch mutex and workflow instance. Keep that ordering
+            # after returning at its durable completion boundary.
             return
         if callable(complete_workflow_run):
             logger.warning(
