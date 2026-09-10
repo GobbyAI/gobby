@@ -537,10 +537,12 @@ def test_terminal_host_cleanup_kills_descendants_and_removes_owned_sockets(
     socket_dir = Path(tempfile.mkdtemp(prefix="h-", dir=runtime_root)).resolve()
     control_path = socket_dir / "gterm-control.sock"
     frames_path = socket_dir / "gterm-frames.sock"
+    pidfile = socket_dir / "gterm.pid"
     control_socket = socket.socket(socket.AF_UNIX)
     frames_socket = socket.socket(socket.AF_UNIX)
     control_socket.bind(str(control_path))
     frames_socket.bind(str(frames_path))
+    pidfile.write_text("4321", encoding="utf-8")
     launch_group = [
         {"pid": 4321, "ppid": 1, "pgid": 4321, "start_identity": "host-start"},
         {"pid": 4322, "ppid": 4321, "pgid": 4321, "start_identity": "child-start"},
@@ -554,6 +556,7 @@ def test_terminal_host_cleanup_kills_descendants_and_removes_owned_sockets(
                 "socket_dir": str(socket_dir),
                 "control_socket": str(control_path),
                 "frames_socket": str(frames_path),
+                "pidfile": str(pidfile),
                 "host_pid": 4321,
                 "start_identity": "host-start",
                 "pgid": 4321,
@@ -580,16 +583,23 @@ def test_terminal_host_cleanup_kills_descendants_and_removes_owned_sockets(
         ]
     )
     signals: list[tuple[int, int]] = []
+    identities = {4321: "host-start", 4322: "child-start"}
     monkeypatch.setattr(harness, "_process_group_snapshot", lambda _pgid: next(group_snapshots))
     monkeypatch.setattr(
         harness,
         "_process_start_identity",
-        lambda pid: {4321: "host-start", 4322: "child-start"}[pid],
+        lambda pid: identities.get(pid),
     )
     monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda _pid: 4321)
+
+    def kill_group(pgid: int, process_signal: int) -> None:
+        signals.append((pgid, process_signal))
+        if process_signal == signal.SIGKILL:
+            identities.clear()
+
     monkeypatch.setattr(
         "tests.ask.native_probe_harness.os.killpg",
-        lambda pgid, process_signal: signals.append((pgid, process_signal)),
+        kill_group,
     )
 
     try:
@@ -608,6 +618,76 @@ def test_terminal_host_cleanup_kills_descendants_and_removes_owned_sockets(
     assert result["group_after"] == []
     assert result["removed_sockets"] == [str(control_path), str(frames_path)]
     assert signals == [(4321, signal.SIGTERM), (4321, signal.SIGKILL)]
+
+
+def test_terminal_host_cleanup_rejects_stale_receipt_for_live_successor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.gettempdir()).resolve()
+    socket_dir = Path(tempfile.mkdtemp(prefix="h-", dir=runtime_root)).resolve()
+    control_path = socket_dir / "gterm-control.sock"
+    frames_path = socket_dir / "gterm-frames.sock"
+    pidfile = socket_dir / "gterm.pid"
+    control_socket = socket.socket(socket.AF_UNIX)
+    frames_socket = socket.socket(socket.AF_UNIX)
+    control_socket.bind(str(control_path))
+    frames_socket.bind(str(frames_path))
+    pidfile.write_text("5000", encoding="utf-8")
+    snapshot = {
+        "workers": [],
+        "agents": [],
+        "hosts": [
+            {
+                "phase": "resumed",
+                "socket_dir": str(socket_dir),
+                "control_socket": str(control_path),
+                "frames_socket": str(frames_path),
+                "pidfile": str(pidfile),
+                "host_pid": 4321,
+                "start_identity": "old-host-start",
+                "pgid": 4321,
+                "host_epoch": "old-host-epoch",
+                "spawned_this_construction": True,
+                "adopted": False,
+                "process_group": [
+                    {
+                        "pid": 4321,
+                        "ppid": 1,
+                        "pgid": 4321,
+                        "start_identity": "old-host-start",
+                    }
+                ],
+            }
+        ],
+    }
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(harness, "_process_group_snapshot", lambda _pgid: [])
+    monkeypatch.setattr(
+        harness,
+        "_process_start_identity",
+        lambda pid: "successor-start" if pid == 5000 else None,
+    )
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.os.killpg",
+        lambda pgid, process_signal: signals.append((pgid, process_signal)),
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="stale terminal host receipt"):
+            harness._terminate_owned_host_process(
+                snapshot,
+                deadline_monotonic=time.monotonic(),
+                runtime_root=runtime_root,
+            )
+
+        assert control_path.exists()
+        assert frames_path.exists()
+        assert pidfile.read_text(encoding="utf-8") == "5000"
+        assert signals == []
+    finally:
+        control_socket.close()
+        frames_socket.close()
+        shutil.rmtree(socket_dir)
 
 
 def test_wait_for_first_agent_requires_a_running_native_process(
