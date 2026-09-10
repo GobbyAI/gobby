@@ -538,6 +538,9 @@ class PipelineExecutor(
                     "current_branch": current_branch or "main",
                     "_depth": _depth,
                     "_pipeline_stack": _pipeline_stack,
+                    "_pipeline_execution_manager": self.execution_manager,
+                    "_pipeline_execution_id": execution.id,
+                    "_pipeline_name": pipeline.name,
                 }
 
                 # Fetch existing steps when resuming. Failed executions reset all
@@ -655,7 +658,11 @@ class PipelineExecutor(
                     )
 
                     # Execute the step
-                    step_output = await self._execute_step(step, context, project_id)
+                    step_output = await self._execute_step(
+                        step,
+                        {**context, "_pipeline_step_execution_id": step_execution.id},
+                        project_id,
+                    )
 
                     cancelled = await self._run_db(self._get_cancelled_execution, execution.id)
                     if cancelled:

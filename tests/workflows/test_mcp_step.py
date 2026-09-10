@@ -222,6 +222,7 @@ class TestExecuteMCPStep:
             "suggest_next_task",
             {"parent_task_id": "#123"},
             session_id=None,
+            enforce_workflow=False,
         )
         # success key is stripped by handler (commit 509f7ad5)
         assert "success" not in result
@@ -253,6 +254,7 @@ class TestExecuteMCPStep:
             "list_pipeline_executions",
             {},
             session_id="pipeline-session-123",
+            enforce_workflow=False,
         )
         assert mock_tool_proxy.call_tool.call_count == 1
         assert mock_tool_proxy.call_tool.call_args is not None
@@ -272,7 +274,7 @@ class TestExecuteMCPStep:
         assert mock_tool_proxy.get_tool_schema.call_count == 0
         assert not mock_tool_proxy.get_tool_schema.called
         mock_tool_proxy.call_tool.assert_called_once_with(
-            "gobby-agents", "wait_for_agent", {}, session_id=None
+            "gobby-agents", "wait_for_agent", {}, session_id=None, enforce_workflow=False
         )
         assert mock_tool_proxy.call_tool.call_count == 1
         assert mock_tool_proxy.call_tool.call_args is not None

@@ -21,6 +21,8 @@ from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.endpoints import request_context
+from gobby.servers.routes.mcp.endpoints.ask_policy import filter_records as _filter_records
+from gobby.servers.routes.mcp.endpoints.ask_policy import filter_tool_map as _filter_tool_map
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
 
 if TYPE_CHECKING:
@@ -85,39 +87,6 @@ async def _current_ask_tools(
         return await asyncio.to_thread(current_ask_allowed_tools, service)
     finally:
         request_context._reset_context(tokens)
-
-
-def _filter_tool_map(
-    tools_by_server: Mapping[str, list[dict[str, Any]]],
-    allowed: frozenset[tuple[str, str]] | None,
-) -> dict[str, list[dict[str, Any]]]:
-    if allowed is None:
-        return dict(tools_by_server)
-    filtered: dict[str, list[dict[str, Any]]] = {}
-    for server_name, tools in tools_by_server.items():
-        visible = [tool for tool in tools if (server_name, str(tool.get("name"))) in allowed]
-        if visible:
-            filtered[server_name] = visible
-    return filtered
-
-
-def _filter_records(
-    records: object,
-    allowed: frozenset[tuple[str, str]] | None,
-    *,
-    server_key: str,
-    tool_key: str,
-) -> list[dict[str, Any]]:
-    if not isinstance(records, ABCSequence) or isinstance(records, str | bytes):
-        return []
-    mapped = [dict(record) for record in records if isinstance(record, Mapping)]
-    if allowed is None:
-        return mapped
-    return [
-        record
-        for record in mapped
-        if (str(record.get(server_key)), str(record.get(tool_key))) in allowed
-    ]
 
 
 def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:

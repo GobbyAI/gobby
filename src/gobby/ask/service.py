@@ -31,6 +31,7 @@ from gobby.ask.pipeline import AskPipelineExecutor, parse_ask_pipeline
 from gobby.ask.publication import PublicationError, replay_publication
 from gobby.ask.recovery import AskRecoveryController
 from gobby.ask.snapshots import SnapshotDriftError
+from gobby.ask.stage_authority import require_ask_stage_authority
 from gobby.ask.stage_runtime import AskStageRuntime
 from gobby.ask.stages import (
     AskErrorCode,
@@ -416,12 +417,14 @@ class AskService:
         project_id: str,
         project_root: Path,
     ) -> dict[str, Any]:
+        self._authorize_stage("prepare", run_id=run_id, project_id=project_id)
         return await self.stage_runtime.prepare(
             self._record(run_id, project_id),
             project_root=project_root,
         )
 
     async def seed(self, *, run_id: str, project_id: str) -> dict[str, Any]:
+        self._authorize_stage("seed", run_id=run_id, project_id=project_id)
         return await self.stage_runtime.seed(self._record(run_id, project_id))
 
     async def spawn(
@@ -433,6 +436,13 @@ class AskService:
         attempt: int,
         caller_session_id: str,
     ) -> dict[str, Any]:
+        self._authorize_stage(
+            "spawn",
+            run_id=run_id,
+            project_id=project_id,
+            stage=stage,
+            attempt=attempt,
+        )
         return await self.stage_runtime.spawn(
             self._record(run_id, project_id),
             stage=stage,
@@ -448,6 +458,13 @@ class AskService:
         stage: AskAgentStage,
         attempt: int,
     ) -> dict[str, Any]:
+        self._authorize_stage(
+            "validate",
+            run_id=run_id,
+            project_id=project_id,
+            stage=stage,
+            attempt=attempt,
+        )
         return await self.stage_runtime.validate(
             self._record(run_id, project_id),
             stage=stage,
@@ -455,10 +472,30 @@ class AskService:
         )
 
     async def admit_repair(self, *, run_id: str, project_id: str) -> dict[str, Any]:
+        self._authorize_stage("admit_repair", run_id=run_id, project_id=project_id)
         return await self.stage_runtime.admit_repair(self._record(run_id, project_id))
 
     async def publish(self, *, run_id: str, project_id: str) -> dict[str, Any]:
+        self._authorize_stage("publish", run_id=run_id, project_id=project_id)
         return await self.stage_runtime.publish(self._record(run_id, project_id))
+
+    def _authorize_stage(
+        self,
+        operation: str,
+        *,
+        run_id: str,
+        project_id: str,
+        stage: AskAgentStage | None = None,
+        attempt: int | None = None,
+    ) -> None:
+        require_ask_stage_authority(
+            self.storage.manager,
+            operation,
+            run_id=run_id,
+            project_id=project_id,
+            stage=stage,
+            attempt=attempt,
+        )
 
     def publication_root(self, run_id: str, *, project_id: str) -> Path:
         """Return a verified canonical publication directory for a completed run."""

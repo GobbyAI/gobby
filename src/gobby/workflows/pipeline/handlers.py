@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.types import CallToolResult, TextContent
 
+from gobby.ask.stage_authority import pipeline_stage_authority
 from gobby.config.feature_base import FeatureDefaultConfig
 
 if TYPE_CHECKING:
@@ -59,13 +60,35 @@ async def execute_mcp_step(
         tokens.resolved_session_id if session_manager is not None else pipeline_session_id
     )
     try:
-        result = await tool_proxy.call_tool(
-            mcp_config.server,
-            mcp_config.tool,
-            mcp_config.arguments or {},
-            session_id=effective_session_id,
-            enforce_workflow=False,
-        )
+        with pipeline_stage_authority(
+            context,
+            step_id=rendered_step.id,
+            operation=mcp_config.tool,
+            arguments=mcp_config.arguments or {},
+        ):
+            if pipeline_session_id:
+                # Pipeline dispatch follows the same progressive-discovery contract
+                # as an agent call, while stage authority is active for private tools.
+                try:
+                    await tool_proxy.get_tool_schema(
+                        mcp_config.server,
+                        mcp_config.tool,
+                        session_id=effective_session_id,
+                    )
+                except Exception as schema_err:
+                    logger.debug(
+                        "Failed to prefetch schema for pipeline MCP step %s:%s: %s",
+                        mcp_config.server,
+                        mcp_config.tool,
+                        schema_err,
+                    )
+            result = await tool_proxy.call_tool(
+                mcp_config.server,
+                mcp_config.tool,
+                mcp_config.arguments or {},
+                session_id=effective_session_id,
+                enforce_workflow=False,
+            )
     finally:
         reset_seeded_contexts(tokens)
 
