@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write as _;
+use std::io::{BufRead as _, BufReader, Read as _, Seek as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -131,6 +131,7 @@ impl Snapshot {
                 .map_err(|error| EvidenceError::InventoryMismatch {
                     detail: format!("canonicalize materialization root: {error}"),
                 })?;
+        let mut blobs = BlobBatch::new(&self.repo_root)?;
         for entry in self.eligible_entries() {
             let destination = checked_destination(&target_root, &entry.path)?;
             if destination.exists() || destination.is_symlink() {
@@ -167,13 +168,14 @@ impl Snapshot {
                 .map_err(|error| EvidenceError::InventoryMismatch {
                     detail: format!("create materialized file {}: {error}", entry.path),
                 })?;
-            file.write_all(&self.read_blob(&entry.path)?)
+            file.write_all(&self.read_verified_blob(entry, &mut blobs)?)
                 .and_then(|()| file.sync_all())
                 .map_err(|error| EvidenceError::InventoryMismatch {
                     detail: format!("write materialized file {}: {error}", entry.path),
                 })?;
             set_materialized_mode(&destination, entry.kind)?;
         }
+        blobs.finish()?;
         self.verify_materialized(&target_root)
     }
 
@@ -245,6 +247,14 @@ impl Snapshot {
 
     pub fn read_blob(&self, path: &str) -> Result<Vec<u8>> {
         let entry = self.entry(path)?;
+        let mut blobs = BlobBatch::new(&self.repo_root)?;
+        let bytes = self.read_verified_blob(entry, &mut blobs)?;
+        blobs.finish()?;
+        Ok(bytes)
+    }
+
+    fn read_verified_blob(&self, entry: &InventoryEntry, blobs: &mut BlobBatch) -> Result<Vec<u8>> {
+        let path = &entry.path;
         if let Some(reason) = entry.exclusion {
             return Err(EvidenceError::ExcludedPath {
                 path: path.to_string(),
@@ -258,12 +268,7 @@ impl Snapshot {
                 path: path.to_string(),
                 reason: ExclusionReason::UnsupportedObject,
             })?;
-        let bytes = git(&self.repo_root, &["cat-file", "blob", oid], None).map_err(|error| {
-            EvidenceError::MissingGitObject {
-                oid: oid.to_string(),
-                detail: error.to_string(),
-            }
-        })?;
+        let bytes = blobs.read(oid)?;
         let actual_hash = gobby_core::indexing::content_hash(&bytes);
         if entry.content_hash.as_deref() != Some(actual_hash.as_str()) {
             return Err(EvidenceError::InventoryMismatch {
@@ -336,6 +341,7 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
         None,
     )?;
     let mut entries = Vec::new();
+    let mut blobs = BlobBatch::new(repo_root)?;
     for record in bytes
         .split(|byte| *byte == 0)
         .filter(|record| !record.is_empty())
@@ -395,12 +401,7 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
         if exclusion.is_none()
             && let Some(oid) = &blob_oid
         {
-            let content = git(repo_root, &["cat-file", "blob", oid], None).map_err(|error| {
-                EvidenceError::MissingGitObject {
-                    oid: oid.clone(),
-                    detail: error.to_string(),
-                }
-            })?;
+            let content = blobs.read(oid)?;
             exclusion = if content.contains(&0) {
                 Some(ExclusionReason::Binary)
             } else if std::str::from_utf8(&content).is_err() {
@@ -426,6 +427,7 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
             exclusion,
         });
     }
+    blobs.finish()?;
     Ok(entries)
 }
 
@@ -711,7 +713,7 @@ fn git_text(repo_root: &Path, args: &[&str]) -> Result<String> {
         .to_string())
 }
 
-fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+fn git_command(repo_root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
     let path = std::env::var_os("PATH");
     let system_root = std::env::var_os("SYSTEMROOT");
@@ -741,6 +743,11 @@ fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>>
         .arg("-C")
         .arg(repo_root)
         .args(args);
+    command
+}
+
+fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+    let mut command = git_command(repo_root, args);
     if input.is_some() || args.last() == Some(&"--stdin") {
         command.stdin(Stdio::piped());
     }
@@ -770,4 +777,110 @@ fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>>
         });
     }
     Ok(output.stdout)
+}
+
+/// One request/response at a time bounds memory and avoids pipe deadlocks.
+struct BlobBatch {
+    child: std::process::Child,
+    output: BufReader<std::process::ChildStdout>,
+    errors: std::fs::File,
+}
+
+impl BlobBatch {
+    fn new(repo_root: &Path) -> Result<Self> {
+        let errors = tempfile::tempfile().map_err(batch_io_error)?;
+        let mut child = git_command(repo_root, &["cat-file", "--batch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            // A file keeps stderr from blocking the request/response pipes.
+            .stderr(errors.try_clone().map_err(batch_io_error)?)
+            .spawn()
+            .map_err(batch_io_error)?;
+        let Some(output) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(batch_error("missing batch stdout"));
+        };
+        Ok(Self {
+            child,
+            output: BufReader::new(output),
+            errors,
+        })
+    }
+
+    fn read(&mut self, oid: &str) -> Result<Vec<u8>> {
+        validate_oid(oid)?;
+        let input = self
+            .child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| batch_error("batch is closed"))?;
+        writeln!(input, "{oid}").map_err(batch_io_error)?;
+        input.flush().map_err(batch_io_error)?;
+        let mut header = String::new();
+        (&mut self.output)
+            .take(256)
+            .read_line(&mut header)
+            .map_err(batch_io_error)?;
+        let fields = header.split_ascii_whitespace().collect::<Vec<_>>();
+        let invalid = || EvidenceError::MissingGitObject {
+            oid: oid.to_string(),
+            detail: format!("invalid Git blob batch response: {header:?}"),
+        };
+        let [actual_oid, "blob", size] = fields.as_slice() else {
+            return Err(invalid());
+        };
+        let size = size.parse::<usize>().map_err(|_| invalid())?;
+        if *actual_oid != oid || !header.ends_with('\n') || size as u64 > MAX_EVIDENCE_FILE_BYTES {
+            return Err(invalid());
+        }
+        let mut bytes = vec![0; size];
+        self.output.read_exact(&mut bytes).map_err(batch_io_error)?;
+        let mut delimiter = [0];
+        self.output
+            .read_exact(&mut delimiter)
+            .map_err(batch_io_error)?;
+        if delimiter != *b"\n" {
+            return Err(invalid());
+        }
+        Ok(bytes)
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        drop(self.child.stdin.take());
+        let mut extra = [0];
+        if self.output.read(&mut extra).map_err(batch_io_error)? != 0 {
+            return Err(batch_error("unexpected trailing Git blob batch response"));
+        }
+        let status = self.child.wait().map_err(batch_io_error)?;
+        if !status.success() {
+            self.errors.rewind().map_err(batch_io_error)?;
+            let mut detail = String::new();
+            (&mut self.errors)
+                .take(4096)
+                .read_to_string(&mut detail)
+                .map_err(batch_io_error)?;
+            return Err(batch_error(&format!("{status}: {detail}")));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for BlobBatch {
+    fn drop(&mut self) {
+        // Reap the process on parser, integrity, and filesystem failures too.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn batch_io_error(error: std::io::Error) -> EvidenceError {
+    batch_error(&error.to_string())
+}
+
+fn batch_error(message: &str) -> EvidenceError {
+    EvidenceError::Git {
+        operation: "cat-file --batch".to_string(),
+        message: message.to_string(),
+    }
 }

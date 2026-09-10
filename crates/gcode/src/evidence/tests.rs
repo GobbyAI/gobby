@@ -73,6 +73,69 @@ fn initialize_repo(repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn snapshot_blob_reads_use_bounded_git_processes() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (repository, _) = source_repo()?;
+    for index in 0..32 {
+        std::fs::write(
+            repository.path().join(format!("file-{index}.txt")),
+            "shared blob\n",
+        )?;
+    }
+    let large_content = "verified source\n".repeat(10_000);
+    std::fs::write(repository.path().join("large.txt"), &large_content)?;
+    git(repository.path(), &["add", "."])?;
+    let commit_oid = commit(repository.path(), "batch-sized snapshot")?;
+    let expected = Snapshot::prepare(repository.path(), "batch-project", &commit_oid)?;
+
+    let wrapper = tempfile::tempdir()?;
+    let real_git = Command::new("which").arg("git").output()?;
+    anyhow::ensure!(real_git.status.success(), "find git executable");
+    let real_git = String::from_utf8(real_git.stdout)?.trim().to_owned();
+    let log = wrapper.path().join("calls.log");
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let wrapper_path = wrapper.path().join("git");
+    std::fs::write(
+        &wrapper_path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexec {} \"$@\"\n",
+            quote(&log.to_string_lossy()),
+            quote(&real_git),
+        ),
+    )?;
+    std::fs::set_permissions(&wrapper_path, std::fs::Permissions::from_mode(0o700))?;
+    let original_path = std::env::var("PATH")?;
+    let path = format!("{}:{original_path}", wrapper.path().display());
+    let materialized = tempfile::tempdir()?;
+    let actual = temp_env::with_var("PATH", Some(path), || -> anyhow::Result<Snapshot> {
+        let snapshot = Snapshot::prepare(repository.path(), "batch-project", &commit_oid)?;
+        snapshot.materialize(materialized.path())?;
+        Ok(snapshot)
+    })?;
+
+    assert_eq!(actual.binding(), expected.binding());
+    assert_eq!(actual.inventory(), expected.inventory());
+    assert_eq!(
+        std::fs::read_to_string(materialized.path().join("large.txt"))?,
+        large_content
+    );
+    assert!(!materialized.path().join("binary.bin").exists());
+    assert!(!materialized.path().join("source-link").exists());
+    let calls = std::fs::read_to_string(log)?;
+    let blob_processes = calls
+        .lines()
+        .filter(|line| line.contains("cat-file blob ") || line.contains("cat-file --batch"))
+        .count();
+    assert_eq!(
+        blob_processes, 2,
+        "snapshot blob processes must not grow with file count: {calls}"
+    );
+    Ok(())
+}
+
 fn request(binding: &SnapshotBinding, operation: EvidenceOperation) -> EvidenceRequest {
     EvidenceRequest {
         schema_version: EVIDENCE_SCHEMA_VERSION,
@@ -1001,6 +1064,11 @@ fn assert_missing_blob_is_typed() -> anyhow::Result<()> {
     let error = snapshot
         .read_blob("only.txt")
         .expect_err("missing blob must fail");
+    assert_eq!(error.code(), "missing_git_object");
+    let materialized = tempfile::tempdir()?;
+    let error = snapshot
+        .materialize(materialized.path())
+        .expect_err("missing batch object must fail materialization");
     assert_eq!(error.code(), "missing_git_object");
     Ok(())
 }
