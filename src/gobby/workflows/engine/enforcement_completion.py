@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.terminal_delivery import run_terminal_delivery_offload, submit_terminal_delivery
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
@@ -223,51 +224,55 @@ class EnforcementCompletionMixin:
                 workflow_name,
                 task_id,
             )
-        # Lifecycle monitor terminalizers are async by contract. A sync callable
-        # is treated as unavailable so workflow completion uses the runner path.
-        if inspect.iscoroutinefunction(terminalize_successful_run):
-            terminalize_kwargs: dict[str, Any] = {
+
+        async def complete_and_cleanup() -> None:
+            # Lifecycle monitor terminalizers are async by contract. A sync callable
+            # is treated as unavailable so workflow completion uses the runner path.
+            if inspect.iscoroutinefunction(terminalize_successful_run):
+                terminalize_kwargs: dict[str, Any] = {
+                    "notify_result": notify_result,
+                    "message": message,
+                }
+                if terminal_reason is not None:
+                    terminalize_kwargs["terminal_reason"] = terminal_reason
+                terminalized = await terminalize_successful_run(run_id, **terminalize_kwargs)
+                logger.debug(
+                    "Workflow lifecycle terminalization settled acknowledged delivery for %s: %s",
+                    run_id,
+                    terminalized,
+                )
+                await run_terminal_delivery_offload(
+                    cleanup_agent_runtime_state,
+                    self.db,
+                    run_id=run_id,
+                    child_session_id=cleanup_session_id,
+                    terminal_reason=terminal_reason,
+                )
+                return
+            if callable(terminalize_successful_run):
+                logger.warning(
+                    "Ignoring synchronous terminalize_successful_run hook for run %s",
+                    run_id,
+                )
+
+            complete_and_notify_agent_run = _facade_attr("complete_and_notify_agent_run")
+            completion_kwargs: dict[str, Any] = {
+                "completion_registry": self._completion_registry,
                 "notify_result": notify_result,
                 "message": message,
             }
             if terminal_reason is not None:
-                terminalize_kwargs["terminal_reason"] = terminal_reason
-            terminalized = await terminalize_successful_run(run_id, **terminalize_kwargs)
-            logger.debug(
-                "Workflow lifecycle terminalization settled acknowledged delivery for %s: %s",
-                run_id,
-                terminalized,
-            )
-            await offload(
+                completion_kwargs["terminal_reason"] = terminal_reason
+            await complete_and_notify_agent_run(self._runner, run_id, **completion_kwargs)
+            await run_terminal_delivery_offload(
                 cleanup_agent_runtime_state,
                 self.db,
                 run_id=run_id,
                 child_session_id=cleanup_session_id,
                 terminal_reason=terminal_reason,
             )
-            return
-        if callable(terminalize_successful_run):
-            logger.warning(
-                "Ignoring synchronous terminalize_successful_run hook for run %s",
-                run_id,
-            )
 
-        complete_and_notify_agent_run = _facade_attr("complete_and_notify_agent_run")
-        completion_kwargs: dict[str, Any] = {
-            "completion_registry": self._completion_registry,
-            "notify_result": notify_result,
-            "message": message,
-        }
-        if terminal_reason is not None:
-            completion_kwargs["terminal_reason"] = terminal_reason
-        await complete_and_notify_agent_run(self._runner, run_id, **completion_kwargs)
-        await offload(
-            cleanup_agent_runtime_state,
-            self.db,
-            run_id=run_id,
-            child_session_id=cleanup_session_id,
-            terminal_reason=terminal_reason,
-        )
+        await submit_terminal_delivery(run_id, complete_and_cleanup)
 
     async def _process_step_after_tool(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]

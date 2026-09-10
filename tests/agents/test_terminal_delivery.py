@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents import terminal_delivery
+from gobby.storage.hub.operation_deadline import (
+    current_database_operation_deadline,
+    database_operation_deadline,
+)
 from tests.agents.cleanup_test_support import (
     AcknowledgingCompletionRegistry,
     RecordingDb,
@@ -21,6 +26,84 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_submitted_delivery_moves_to_owner_loop_and_is_drained() -> None:
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+    trace = ContextVar("terminal_test_trace", default="missing")
+    observations: list[tuple[bool, bool, str]] = []
+
+    async def operation() -> None:
+        observations.append(
+            (
+                asyncio.get_running_loop() is loop,
+                current_database_operation_deadline() is None,
+                trace.get(),
+            )
+        )
+        started.set()
+        await release.wait()
+        settled.set()
+
+    async def submit() -> None:
+        trace.set("caller")
+        with database_operation_deadline(timeout_seconds=1) as deadline:
+            await terminal_delivery.submit_terminal_delivery("cross-loop", operation)
+            assert current_database_operation_deadline() is deadline
+
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread, owner_loop=loop
+    )
+    try:
+        await asyncio.to_thread(asyncio.run, submit())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert observations == [(True, True, "caller")]
+        assert not settled.is_set()
+        draining = asyncio.create_task(terminal_delivery.drain_shielded_terminal_deliveries())
+        done, _ = await asyncio.wait({draining}, timeout=0.01)
+        assert not done
+        release.set()
+        await asyncio.wait_for(draining, timeout=2)
+        assert settled.is_set()
+    finally:
+        release.set()
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+        terminal_delivery.reset_terminal_delivery_offload()
+
+
+@pytest.mark.asyncio
+async def test_submitted_delivery_rejects_closed_admission() -> None:
+    invoked = False
+
+    async def operation() -> None:
+        nonlocal invoked
+        invoked = True
+
+    terminal_delivery.close_terminal_delivery_admission()
+    try:
+        with pytest.raises(terminal_delivery.TerminalDeliveryAdmissionClosedError):
+            await terminal_delivery.submit_terminal_delivery("closed-submit", operation)
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+        assert not invoked
+    finally:
+        terminal_delivery.reopen_terminal_delivery_admission()
+
+
+@pytest.mark.asyncio
+async def test_submitted_delivery_reports_background_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def operation() -> None:
+        raise RuntimeError("terminal test failure")
+
+    await terminal_delivery.submit_terminal_delivery("failed-submit", operation)
+    await terminal_delivery.drain_shielded_terminal_deliveries()
+    assert "Submitted terminal delivery failed for agent failed-submit" in caplog.text
+    assert "terminal test failure" in caplog.text
 
 
 async def test_shielded_terminal_delivery_settles_before_cancellation_propagates() -> None:

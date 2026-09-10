@@ -7,6 +7,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
+from gobby.storage.hub.operation_deadline import detached_database_operation_context
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -24,6 +25,7 @@ class _TerminalRunStorage(Protocol):
 
 _terminal_delivery_admission_open = True
 _in_flight_terminal_deliveries: dict[asyncio.Task[Any], str] = {}
+_terminal_delivery_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _default_terminal_delivery_offload[T](
@@ -46,18 +48,21 @@ def configure_terminal_delivery_offload(
     *,
     async_offload: Callable[..., Awaitable[Any]],
     sync_submit: Callable[..., Future[Any]] | None = None,
+    owner_loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
     """Route terminal storage work through the owned daemon executor."""
-    global _terminal_delivery_offload, _terminal_delivery_submit
+    global _terminal_delivery_offload, _terminal_delivery_submit, _terminal_delivery_loop
     _terminal_delivery_offload = async_offload
     _terminal_delivery_submit = sync_submit
+    _terminal_delivery_loop = owner_loop
 
 
 def reset_terminal_delivery_offload() -> None:
     """Restore default executor seams for tests and pre-daemon callers."""
-    global _terminal_delivery_offload, _terminal_delivery_submit
+    global _terminal_delivery_offload, _terminal_delivery_submit, _terminal_delivery_loop
     _terminal_delivery_offload = _default_terminal_delivery_offload
     _terminal_delivery_submit = None
+    _terminal_delivery_loop = None
 
 
 async def run_terminal_delivery_offload[T](
@@ -157,6 +162,49 @@ async def shielded_terminal_delivery[T](
             )
         raise cancellation
     return owned.result()
+
+
+async def submit_terminal_delivery(
+    run_id: str, operation: Callable[[], Coroutine[Any, Any, Any]]
+) -> None:
+    """Acknowledge tracked delivery admission without waiting for terminal cleanup.
+
+    Workflow evaluation may run on another loop. Admit on the daemon loop so
+    shutdown owns and drains the operation even after evaluation is cancelled.
+    """
+    loop = _terminal_delivery_loop or asyncio.get_running_loop()
+    admitted: Future[None] = Future()
+    context = detached_database_operation_context()
+
+    def settled(task: asyncio.Task[Any]) -> None:
+        _in_flight_terminal_deliveries.pop(task, None)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("Submitted terminal delivery failed for agent %s", run_id, exc_info=error)
+
+    def admit() -> None:
+        if not _terminal_delivery_admission_open:
+            admitted.set_exception(
+                TerminalDeliveryAdmissionClosedError(
+                    f"Terminal delivery admission is closed for agent {run_id}"
+                )
+            )
+            return
+        try:
+            owned = loop.create_task(
+                operation(), name=f"terminal-delivery:{run_id}", context=context
+            )
+        except Exception as error:
+            admitted.set_exception(error)
+            return
+        _in_flight_terminal_deliveries[owned] = run_id
+        owned.add_done_callback(settled)
+        admitted.set_result(None)
+
+    if loop is asyncio.get_running_loop():
+        admit()
+    else:
+        loop.call_soon_threadsafe(admit)
+    await asyncio.shield(asyncio.wrap_future(admitted))
 
 
 async def drain_shielded_terminal_deliveries() -> None:

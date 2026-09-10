@@ -318,6 +318,9 @@ async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> N
 
     assert isinstance(result, GitTimeout)
     leader, child = map(int, pids.read_text(encoding="utf-8").split())
+    assert "phase=running" in result.stderr
+    assert "spawn_seconds=" in result.stderr
+    assert "running_seconds=" in result.stderr
     await _assert_processes_gone(leader, child)
 
 
@@ -379,6 +382,7 @@ async def test_deadline_includes_slow_spawn(
         assert isinstance(result, GitTimeout)
         assert time.monotonic() - started < 0.5
         assert not created
+        assert "phase=spawning" in result.stderr
     finally:
         release_spawn.set()
         assert await asyncio.to_thread(finished.wait, 2)

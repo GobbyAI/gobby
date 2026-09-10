@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import Context, ContextVar, copy_context
 from dataclasses import dataclass
 
 DEFAULT_DATABASE_OPERATION_TIMEOUT_SECONDS = 5.0
@@ -44,6 +44,13 @@ _CURRENT_DATABASE_OPERATION_DEADLINE: ContextVar[DatabaseOperationDeadline | Non
 def current_database_operation_deadline() -> DatabaseOperationDeadline | None:
     """Return the deadline inherited by the current sync or async context."""
     return _CURRENT_DATABASE_OPERATION_DEADLINE.get()
+
+
+def detached_database_operation_context() -> Context:
+    """Copy caller context for owned background work without its request deadline."""
+    context = copy_context()
+    context.run(_CURRENT_DATABASE_OPERATION_DEADLINE.set, None)
+    return context
 
 
 @contextmanager

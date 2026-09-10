@@ -22,7 +22,7 @@ rules:
     effects:
       - type: block
         reason: |
-          Submit the current-epoch survey through gobby-sessions:feedback first,
+          Call gobby-sessions:feedback to submit the current-epoch survey first,
           with at most 3 observations, or observations=[] when there is nothing to report.
           Submission acknowledges feedback; it does not mark it human-reviewed.
           Then load handoff-discipline and keep the rendered handoff within 10,000
