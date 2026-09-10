@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -36,7 +37,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_mode", ["none", "before_commit", "after_commit_admission"])
+@pytest.mark.parametrize("failure_mode", ["none", "before_commit", "shutdown_before_commit"])
 async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -89,6 +90,8 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
     engine = RuleEngine(db=temp_db, runner=runner)
     complete_run = runs.complete
     first_commit = True
+    commit_started = threading.Event()
+    allow_commit = threading.Event()
 
     def commit(*args: Any, **kwargs: Any) -> Any:
         nonlocal first_commit
@@ -96,10 +99,11 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
         first_commit = False
         if first and failure_mode == "before_commit":
             raise RuntimeError("injected completion persistence failure")
-        completed = complete_run(*args, **kwargs)
-        if first and failure_mode == "after_commit_admission":
-            terminal_delivery.close_terminal_delivery_admission()
-        return completed
+        if first and failure_mode == "shutdown_before_commit":
+            commit_started.set()
+            if not allow_commit.wait(timeout=2):
+                raise TimeoutError("test did not release the completion commit")
+        return complete_run(*args, **kwargs)
 
     with (
         patch.object(runs, "complete", side_effect=commit),
@@ -110,19 +114,21 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
             return_value=({"success": True}, "Complete"),
         ),
     ):
-        if failure_mode != "none":
+        if failure_mode == "before_commit":
             with pytest.raises(RuntimeError):
                 await engine._complete_agent_workflow_run(child.id, "test", {})
             assert not started.is_set()
             clear_runtime.assert_not_called()
             stored_before_retry = runs.get(run.id)
             assert stored_before_retry is not None
-            assert stored_before_retry.status == (
-                "running" if failure_mode == "before_commit" else "success"
-            )
-            terminal_delivery.reopen_terminal_delivery_admission()
+            assert stored_before_retry.status == "running"
         completion = asyncio.create_task(engine._complete_agent_workflow_run(child.id, "test", {}))
         try:
+            if failure_mode == "shutdown_before_commit":
+                commit_reached = await asyncio.to_thread(commit_started.wait, 2)
+                assert commit_reached, "Workflow completion did not reach the commit barrier"
+                terminal_delivery.close_terminal_delivery_admission()
+                allow_commit.set()
             await asyncio.wait_for(started.wait(), timeout=2)
             done, _ = await asyncio.wait({completion}, timeout=0.1)
             assert completion in done, "Workflow evaluation waited for terminal cleanup"
@@ -131,9 +137,11 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
             assert stored is not None
             assert stored.status == "success"
         finally:
+            allow_commit.set()
             release.set()
             await completion
             await terminal_delivery.drain_shielded_terminal_deliveries()
+            terminal_delivery.reopen_terminal_delivery_admission()
     assert settled.is_set()
     clear_runtime.assert_called_once()
 
