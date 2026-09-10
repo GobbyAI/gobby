@@ -683,16 +683,19 @@ class TestEnsureIsolationCodeIndex:
     @pytest.mark.asyncio
     async def test_one_deadline_bounds_every_gcode_preflight_phase(self, tmp_path: Path) -> None:
         observed: list[float] = []
+        clock = 0.0
 
         async def run_gcode(*_args: Any, timeout: float, **_kwargs: Any) -> None:
+            nonlocal clock
             observed.append(timeout)
+            clock += 0.01
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch("gobby.agents.code_index._run_gcode", side_effect=run_gcode),
             patch(
                 "gobby.agents.code_index.time.monotonic",
-                side_effect=[0.0, 0.01, 0.02, 0.03, 0.04, 0.05],
+                side_effect=lambda: clock,
             ),
         ):
             await ensure_isolation_code_index(
