@@ -184,12 +184,12 @@ pub fn is_sensitive_evidence_path(path: &Path) -> bool {
 ///
 /// Evidence excludes the whole blob instead of rewriting it, preserving the invariant
 /// that every citeable source ID and hash names exact Git bytes.
-pub fn contains_known_credential(content: &[u8]) -> bool {
+pub fn contains_known_credential(path: &str, content: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(content) else {
         return false;
     };
     static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
-    PATTERNS
+    let known_signature = PATTERNS
         .get_or_init(|| {
             [
                 r"(?i)[a-z][a-z0-9+.-]*://[^:/\s]+:[^@\s]+@",
@@ -197,14 +197,37 @@ pub fn contains_known_credential(content: &[u8]) -> bool {
                 r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})",
                 r"\bAKIA[0-9A-Z]{16}\b",
                 r"(?i)\bbearer\s+[A-Za-z0-9._-]{16,}",
-                r#"(?i)\b(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*[\"']?[^\s\"']{12,}"#,
             ]
             .into_iter()
             .map(|pattern| Regex::new(pattern).expect("credential patterns are valid"))
             .collect()
         })
         .iter()
-        .any(|pattern| pattern.is_match(text))
+        .any(|pattern| pattern.is_match(text));
+    if known_signature {
+        return true;
+    }
+
+    // Bare identifiers in source code are references, not literal credentials.
+    // Config files and shell assignments can contain unquoted string literals.
+    let bare_literals = super::languages::detect_language_from_content(path, content)
+        .is_none_or(|language| language == "bash" || super::languages::is_data_language(language));
+    static ASSIGNMENT: OnceLock<Regex> = OnceLock::new();
+    ASSIGNMENT
+        .get_or_init(|| {
+            Regex::new(
+                r#"(?i)\b(?:api[_-]?key|secret|token|password|passwd)[\"']?\s*[:=]\s*([\"'`]?[^\s\"'`]{12,})"#,
+            )
+            .expect("credential assignment pattern is valid")
+        })
+        .captures_iter(text)
+        .any(|capture| {
+            capture.get(1).is_some_and(|value| {
+                bare_literals
+                    || value.as_str().starts_with(['\"', '\'', '`'])
+                    || value.as_str().starts_with(|c: char| c.is_ascii_digit())
+            })
+        })
 }
 
 fn is_plaintext_secret_name(stem: &str) -> bool {

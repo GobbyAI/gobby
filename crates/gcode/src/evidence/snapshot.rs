@@ -405,7 +405,7 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
                 Some(ExclusionReason::Binary)
             } else if std::str::from_utf8(&content).is_err() {
                 Some(ExclusionReason::UnsupportedEncoding)
-            } else if crate::index::security::contains_known_credential(&content) {
+            } else if crate::index::security::contains_known_credential(&path, &content) {
                 Some(ExclusionReason::SensitiveContent)
             } else {
                 content_hash = Some(gobby_core::indexing::content_hash(&content));
