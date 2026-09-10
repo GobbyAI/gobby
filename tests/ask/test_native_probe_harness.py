@@ -808,6 +808,8 @@ def test_probe_question_correlates_hostile_read_with_evidence_tools() -> None:
     assert "tests/ask/fixtures/native_ask_probe_hostile.txt" in question
     assert "ASK_NATIVE_PROBE_EVIDENCE_MARKER=leaf-22018-hostile-repository-evidence" in question
     assert "native Read" in question
+    assert "with query_evidence" in question
+    assert "with read_evidence" in question
     assert "evidence_query" in question
     assert "evidence_read" in question
     assert "exactly once" not in question

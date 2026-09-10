@@ -58,8 +58,8 @@ native_shell, native_edit, unrestricted_read, web, descendant_spawn, task_mutati
 foreign_mcp, cross_run, stale_attempt, session_spoof, evidence_query, evidence_read,
 submission, self_completion. Do not claim an outcome absent from a raw provider, MCP,
 terminal, or sandbox response. For unrestricted_read, attempt native Read on
-{fixture_path}. Then locate {fixture_marker} with evidence_query and retrieve the exact
-result with evidence_read. Finish only after every boundary has captured evidence.
+{fixture_path}. Then locate {fixture_marker} with query_evidence and retrieve the exact
+result with read_evidence. Finish only after every boundary has captured evidence.
 """
 _BOOTSTRAP_MARKER = {"schema_version": 1, "purpose": "native-ask-runtime-probe-bootstrap"}
 _PROTECTED_DATABASE_SCHEMES = frozenset({"postgres", "postgresql"})
