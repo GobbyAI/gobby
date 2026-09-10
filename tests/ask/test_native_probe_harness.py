@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import signal
 import socket
@@ -278,6 +279,70 @@ def test_probe_database_scope_and_worker_environment_are_owned(
     assert "ANTHROPIC_API_KEY" not in environment
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in environment
     assert "GOBBY_SESSION_ID" not in environment
+
+
+def test_contained_srt_provisioning_uses_only_the_owned_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir(mode=0o700)
+    gobby_home = runtime_root / "gobby"
+    monkeypatch.setenv("GOBBY_HOME", "/unowned/global-home")
+    expected = gobby_home / "tools" / "srt" / "0.0.66"
+
+    def install_srt() -> SimpleNamespace:
+        assert os.environ["GOBBY_HOME"] == str(gobby_home)
+        package = expected / "node_modules" / "package"
+        package.mkdir(parents=True)
+        (package / "index.js").write_text("export {};\n", encoding="utf-8")
+        links = expected / "node_modules" / ".bin"
+        links.mkdir()
+        (links / "package").symlink_to(Path("../package/index.js"))
+        return SimpleNamespace(path=expected.resolve(), version="0.0.66", installed=True)
+
+    monkeypatch.setattr("gobby.cli.install_setup_srt.install_srt_runtime", install_srt)
+
+    provisioned = harness._provision_contained_srt(
+        gobby_home,
+        runtime_root=runtime_root,
+    )
+
+    assert provisioned == {
+        "path": str(expected.resolve()),
+        "version": "0.0.66",
+        "installed": True,
+    }
+    assert os.environ["GOBBY_HOME"] == "/unowned/global-home"
+    assert expected.is_relative_to(runtime_root)
+
+
+def test_contained_srt_provisioning_rejects_symlink_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir(mode=0o700)
+    gobby_home = runtime_root / "gobby"
+    monkeypatch.delenv("GOBBY_HOME", raising=False)
+    expected = gobby_home / "tools" / "srt" / "0.0.66"
+    outside = tmp_path / "outside.js"
+    outside.write_text("escape\n", encoding="utf-8")
+
+    def install_srt() -> SimpleNamespace:
+        expected.mkdir(parents=True)
+        (expected / "escape.js").symlink_to(outside)
+        return SimpleNamespace(path=expected.resolve(), version="0.0.66", installed=True)
+
+    monkeypatch.setattr("gobby.cli.install_setup_srt.install_srt_runtime", install_srt)
+
+    with pytest.raises(RuntimeError, match="symlink escaped"):
+        harness._provision_contained_srt(
+            gobby_home,
+            runtime_root=runtime_root,
+        )
+
+    assert "GOBBY_HOME" not in os.environ
 
 
 def test_contained_config_pins_gterm_host_to_owned_runtime(tmp_path: Path) -> None:
@@ -1544,6 +1609,7 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
     project_root.mkdir()
     output_dir = tmp_path / "evidence"
     runtime_roots: list[Path] = []
+    provisioned_homes: list[Path] = []
     original_create_runtime_root = harness._create_owned_runtime_root
 
     def create_owned_runtime_root() -> Path:
@@ -1553,6 +1619,11 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
 
     def fail_schema_startup(_database_url: str, *, schema: str) -> None:
         raise RuntimeError(f"schema startup failed: {schema}")
+
+    def provision_srt(gobby_home: Path, *, runtime_root: Path) -> dict[str, object]:
+        assert gobby_home == runtime_root / "gobby"
+        provisioned_homes.append(gobby_home)
+        return {"path": str(gobby_home / "tools/srt/0.0.66"), "version": "0.0.66"}
 
     def export_raw(
         _database_url: str,
@@ -1565,7 +1636,13 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
     ) -> dict[str, object]:
         assert run_ids == []
         assert process_sets["after_cleanup"] == {"unavailable": "schema-not-created"}
-        assert runtime_identity == {"source_head": "f" * 40}
+        assert runtime_identity == {
+            "source_head": "f" * 40,
+            "srt": {
+                "path": str(runtime_root / "gobby/tools/srt/0.0.66"),
+                "version": "0.0.66",
+            },
+        }
         assert runtime_root.exists()
         return {"path": "raw-probe.json", "sha256": "b" * 64}
 
@@ -1577,6 +1654,7 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
         lambda _root: {"source_head": "f" * 40},
     )
     monkeypatch.setattr(harness, "_create_owned_runtime_root", create_owned_runtime_root)
+    monkeypatch.setattr(harness, "_provision_contained_srt", provision_srt, raising=False)
     monkeypatch.setattr(schema_contract, "apply_schema", fail_schema_startup)
     monkeypatch.setattr(harness, "_export_raw", export_raw)
 
@@ -1590,6 +1668,7 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
         )
 
     assert len(runtime_roots) == 1
+    assert provisioned_homes == [runtime_roots[0] / "gobby"]
     assert not runtime_roots[0].exists()
     failure = json.loads((output_dir / "failure.json").read_bytes())
     assert failure["error_type"] == "RuntimeError"
