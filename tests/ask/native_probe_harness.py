@@ -325,6 +325,92 @@ def _create_owned_runtime_root(*, parent: Path | None = None) -> Path:
     return runtime_root
 
 
+def _provision_contained_srt(
+    gobby_home: Path,
+    *,
+    runtime_root: Path,
+) -> dict[str, object]:
+    from gobby.cli.install_setup_srt import install_srt_runtime
+    from gobby.utils.dependency_requirements import SRT_RELEASE
+
+    root_stat = runtime_root.lstat()
+    root = runtime_root.resolve(strict=True)
+    if (
+        runtime_root != root
+        or stat.S_ISLNK(root_stat.st_mode)
+        or not stat.S_ISDIR(root_stat.st_mode)
+        or root_stat.st_uid != os.getuid()
+        or root_stat.st_mode & 0o077
+        or gobby_home.parent != root
+        or gobby_home.name != "gobby"
+    ):
+        raise RuntimeError("contained SRT runtime root is not privately owned")
+    gobby_home.mkdir(mode=0o700)
+    home_stat = gobby_home.lstat()
+    home = gobby_home.resolve(strict=True)
+    if (
+        gobby_home != home
+        or stat.S_ISLNK(home_stat.st_mode)
+        or not stat.S_ISDIR(home_stat.st_mode)
+        or home_stat.st_uid != os.getuid()
+        or home_stat.st_mode & 0o077
+    ):
+        raise RuntimeError("contained SRT home is not privately owned")
+
+    cache_home = home / "cache"
+    cache_home.mkdir(mode=0o700)
+    npm_cache = cache_home / "npm"
+    npm_cache.mkdir(mode=0o700)
+    contained_environment = {
+        "GOBBY_HOME": str(home),
+        "npm_config_cache": str(npm_cache),
+        "NPM_CONFIG_CACHE": str(npm_cache),
+    }
+    previous_environment = {key: os.environ.get(key) for key in contained_environment}
+    os.environ.update(contained_environment)
+    try:
+        installation = install_srt_runtime()
+    finally:
+        for key, value in previous_environment.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    expected = home / "tools" / "srt" / SRT_RELEASE.version
+    try:
+        installed_path = Path(installation.path)
+        installed_stat = installed_path.lstat()
+        installed_root = installed_path.resolve(strict=True)
+    except (OSError, TypeError) as error:
+        raise RuntimeError("contained SRT installation is missing") from error
+    if (
+        installed_path != installed_root
+        or installed_root != expected
+        or installation.version != SRT_RELEASE.version
+        or not isinstance(installation.installed, bool)
+        or stat.S_ISLNK(installed_stat.st_mode)
+        or not stat.S_ISDIR(installed_stat.st_mode)
+        or installed_stat.st_uid != os.getuid()
+    ):
+        raise RuntimeError("contained SRT installation identity is invalid")
+    for path in installed_root.rglob("*"):
+        try:
+            path_stat = path.lstat()
+            resolved = path.resolve(strict=True) if stat.S_ISLNK(path_stat.st_mode) else path
+        except OSError as error:
+            raise RuntimeError("contained SRT installation content is invalid") from error
+        if path_stat.st_uid != os.getuid():
+            raise RuntimeError("contained SRT installation content is not owned")
+        if stat.S_ISLNK(path_stat.st_mode) and not resolved.is_relative_to(installed_root):
+            raise RuntimeError("contained SRT installation symlink escaped its owned root")
+    return {
+        "path": str(installed_root),
+        "version": installation.version,
+        "installed": installation.installed,
+    }
+
+
 def _read_project_identity(project_root: Path) -> tuple[str, str]:
     root = project_root.resolve(strict=True)
     marker = json.loads((root / ".gobby" / "project.json").read_bytes())
@@ -2863,6 +2949,10 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
     cleanup_errors: list[dict[str, str]] = []
     try:
         runtime_identity = _capture_runtime_identity(project_root)
+        runtime_identity["srt"] = _provision_contained_srt(
+            gobby_home,
+            runtime_root=runtime_root,
+        )
         apply_schema(base_database_url, schema=schema_name)
         schema_created = True
         daemon_port = _find_free_port()
