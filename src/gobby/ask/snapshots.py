@@ -619,7 +619,7 @@ class AskSnapshotManager:
             timeout=_remaining_seconds(deadline_at),
         )
         _remaining_seconds(deadline_at)
-        await _owned_thread(ensure_project_json_for_isolation, repository_root, source_root)
+        await ensure_project_json_for_isolation(repository_root, source_root)
         _remaining_seconds(deadline_at)
 
     async def _publish_lifecycle(
