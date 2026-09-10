@@ -1,9 +1,9 @@
 """Fail-closed authorization boundary for managed native Ask agents.
 
-Ask authority is stored in the existing pipeline and step execution rows. The
-pipeline input owns the immutable source/profile/deadline snapshot; a step input
-owns one logical stage/attempt; and the step output fences the one current native
-agent run. Caller-supplied session or run arguments never create authority.
+Ask authority is stored under ``inputs_json.ask.runtime`` on the existing pipeline
+execution. Declared pipeline step status fences the current logical stage; no
+undeclared pseudo-step is created. Caller-supplied session or run arguments never
+create authority.
 """
 
 from __future__ import annotations
@@ -20,6 +20,14 @@ from typing import Any, Protocol, cast
 import psycopg
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.ask.runtime_validation import (
+    ASK_RUNTIME_CONTROLS,
+    AskRuntimeValidation,
+    ask_provider_args,
+    ask_runtime_control_digest,
+    ask_sandbox_config,
+)
+from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.session_context import get_current_agent_run_id
 from gobby.workflows.pipeline_state import StepStatus
@@ -27,19 +35,6 @@ from gobby.workflows.pipeline_state import StepStatus
 ASK_PIPELINE_NAME = "native-ask"
 _AUTHORITY_KIND = "ask-agent-authority"
 _AUTHORITY_VERSION = 1
-_RUNTIME_VALIDATION_VERSION = 1
-_REQUIRED_RUNTIME_CONTROLS = frozenset(
-    {
-        "mcp_allowlist_exact",
-        "native_execution_denied",
-        "native_mutation_denied",
-        "network_denied",
-        "resume_preserves_boundary",
-        "source_outside_writable_root",
-        "subagents_denied",
-    }
-)
-_SUPPORTED_CLAUDE_AUTH_MODES = frozenset({"claude.ai", "api_key", "api_key_helper"})
 
 
 class AskPermissionDenied(PermissionError):
@@ -119,45 +114,6 @@ def _resolved_root(path: Path, *, name: str) -> Path:
 
 
 @dataclass(frozen=True, slots=True)
-class AskRuntimeValidation:
-    """Trusted result of fresh and resumed managed-native boundary probes."""
-
-    provider: str
-    provider_version: str
-    auth_mode: str
-    controls: frozenset[str]
-    fresh_probe_passed: bool
-    resume_probe_passed: bool
-    evidence_sha256: str
-    schema_version: int = _RUNTIME_VALIDATION_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != _RUNTIME_VALIDATION_VERSION:
-            raise ValueError("unsupported Ask runtime validation version")
-        if not self.provider or not self.provider_version or not self.auth_mode:
-            raise ValueError("Ask runtime validation identity is incomplete")
-        if len(self.evidence_sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in self.evidence_sha256
-        ):
-            raise ValueError("Ask runtime validation evidence hash must be lowercase SHA-256")
-
-    @property
-    def validation_digest(self) -> str:
-        return _fingerprint(
-            {
-                "schema_version": self.schema_version,
-                "provider": self.provider,
-                "provider_version": self.provider_version,
-                "auth_mode": self.auth_mode,
-                "controls": sorted(self.controls),
-                "fresh_probe_passed": self.fresh_probe_passed,
-                "resume_probe_passed": self.resume_probe_passed,
-                "evidence_sha256": self.evidence_sha256,
-            }
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class AskRuntimeProfile:
     """Effective native restrictions compiled independently of mutable agent metadata."""
 
@@ -169,6 +125,10 @@ class AskRuntimeProfile:
     source_root: str
     scratch_root: str
     auth_mode: str
+    provider_executable: str
+    provider_executable_sha256: str
+    provider_version: str
+    runtime_control_digest: str
     runtime_validation_digest: str
     profile_hash: str
 
@@ -182,9 +142,37 @@ class AskRuntimeProfile:
             "source_root": self.source_root,
             "scratch_root": self.scratch_root,
             "auth_mode": self.auth_mode,
+            "provider_executable": self.provider_executable,
+            "provider_executable_sha256": self.provider_executable_sha256,
+            "provider_version": self.provider_version,
+            "runtime_control_digest": self.runtime_control_digest,
             "runtime_validation_digest": self.runtime_validation_digest,
             "profile_hash": self.profile_hash,
         }
+
+    def validate_launch(
+        self,
+        *,
+        backend: str,
+        enforced: bool,
+        provider_executable: str | None,
+        policy_hash: str | None,
+    ) -> None:
+        """Bind an actual SRT launch to the provider artifact pinned by this profile."""
+        if backend != "srt" or not enforced or not policy_hash:
+            raise UnsupportedAskRuntime("Ask launch did not enforce its pinned SRT policy")
+        if provider_executable is None or (
+            Path(provider_executable).resolve() != Path(self.provider_executable).resolve()
+        ):
+            raise UnsupportedAskRuntime("Ask provider executable path changed after validation")
+        executable = Path(provider_executable)
+        if hashlib.sha256(executable.read_bytes()).hexdigest() != self.provider_executable_sha256:
+            raise UnsupportedAskRuntime("Ask provider executable changed after validation")
+        if probe_native_bin_version(executable) != self.provider_version:
+            raise UnsupportedAskRuntime("Ask provider version changed after validation")
+        expected_control = ask_runtime_control_digest(self.provider, self.auth_mode)
+        if self.runtime_control_digest != expected_control:
+            raise UnsupportedAskRuntime("Ask runtime controls changed after validation")
 
     @classmethod
     def from_dict(cls, raw: object) -> AskRuntimeProfile:
@@ -204,6 +192,19 @@ class AskRuntimeProfile:
             source_root=_required_string(value.get("source_root"), name="Ask source root"),
             scratch_root=_required_string(value.get("scratch_root"), name="Ask scratch root"),
             auth_mode=_required_string(value.get("auth_mode"), name="Ask runtime auth mode"),
+            provider_executable=_required_string(
+                value.get("provider_executable"), name="Ask provider executable"
+            ),
+            provider_executable_sha256=_required_string(
+                value.get("provider_executable_sha256"),
+                name="Ask provider executable hash",
+            ),
+            provider_version=_required_string(
+                value.get("provider_version"), name="Ask provider version"
+            ),
+            runtime_control_digest=_required_string(
+                value.get("runtime_control_digest"), name="Ask runtime control digest"
+            ),
             runtime_validation_digest=_required_string(
                 value.get("runtime_validation_digest"),
                 name="Ask runtime validation digest",
@@ -236,11 +237,13 @@ def compile_ask_runtime_profile(
         raise UnsupportedAskRuntime("Ask source and scratch roots must be disjoint")
     if validation is None:
         raise UnsupportedAskRuntime("Ask runtime requires trusted fresh and resume validation")
+    if not validation.verified_artifact:
+        raise UnsupportedAskRuntime("Ask runtime validation must come from a pinned artifact")
     if validation.provider != provider:
         raise UnsupportedAskRuntime("Ask runtime validation provider mismatch")
     if not validation.fresh_probe_passed or not validation.resume_probe_passed:
         raise UnsupportedAskRuntime("Ask runtime validation did not pass fresh and resume probes")
-    if validation.controls != _REQUIRED_RUNTIME_CONTROLS:
+    if validation.controls != ASK_RUNTIME_CONTROLS:
         raise UnsupportedAskRuntime("Ask runtime validation controls are incomplete or widened")
     if provider != "claude":
         if provider == "codex":
@@ -250,41 +253,14 @@ def compile_ask_runtime_profile(
         raise UnsupportedAskRuntime(
             f"Provider {provider!r} has no proven MCP-only native Ask profile"
         )
-    if validation.auth_mode not in _SUPPORTED_CLAUDE_AUTH_MODES:
-        raise UnsupportedAskRuntime("Ask runtime validation auth mode is unsupported")
-
-    # Claude's restricted+safe modes ignore repository/user customizations.
-    # --tools "" removes action-capable built-ins including Bash/Edit/Write/Web/Task;
-    # the provider retains EndConversation as a non-mutating termination tool.
-    # The strict MCP file contains only the managed Gobby proxy, whose three
-    # exposed wrapper tools remain subject to the canonical policy below.
-    provider_args: tuple[str, ...] = (
-        "--safe-mode",
-        "--restricted",
-        "--disable-slash-commands",
-        "--no-chrome",
-        "--permission-mode",
-        "dontAsk",
-        "--permission-prompts",
-        "none",
-        "--tools",
-        "",
-        "--allowedTools",
-        "mcp__gobby__call_tool,mcp__gobby__get_tool_schema,mcp__gobby__list_tools",
-        "--strict-mcp-config",
-    )
-    if validation.auth_mode in {"api_key", "api_key_helper"}:
-        provider_args = ("--bare", *provider_args)
-    sandbox = SandboxConfig(
-        enabled=True,
-        backend="srt",
-        mode="restrictive",
-        allow_network=False,
-        extra_deny_read_paths=[str(source)],
-        extra_deny_write_paths=[str(source), str(scratch)],
-        allow_git_network=False,
-        allow_package_registries=False,
-    )
+    try:
+        provider_args = ask_provider_args(provider, validation.auth_mode)
+        sandbox = ask_sandbox_config(str(source), str(scratch))
+        expected_control_digest = ask_runtime_control_digest(provider, validation.auth_mode)
+    except ValueError as error:
+        raise UnsupportedAskRuntime(str(error)) from error
+    if validation.control_digest != expected_control_digest:
+        raise UnsupportedAskRuntime("Ask runtime validation control digest mismatch")
     unhashed = {
         "provider": provider,
         "provider_args": list(provider_args),
@@ -294,6 +270,10 @@ def compile_ask_runtime_profile(
         "source_root": str(source),
         "scratch_root": str(scratch),
         "auth_mode": validation.auth_mode,
+        "provider_executable": validation.provider_executable,
+        "provider_executable_sha256": validation.provider_executable_sha256,
+        "provider_version": validation.provider_version,
+        "runtime_control_digest": validation.control_digest,
         "runtime_validation_digest": validation.validation_digest,
     }
     return AskRuntimeProfile(
@@ -305,6 +285,10 @@ def compile_ask_runtime_profile(
         source_root=str(source),
         scratch_root=str(scratch),
         auth_mode=validation.auth_mode,
+        provider_executable=validation.provider_executable,
+        provider_executable_sha256=validation.provider_executable_sha256,
+        provider_version=validation.provider_version,
+        runtime_control_digest=validation.control_digest,
         runtime_validation_digest=validation.validation_digest,
         profile_hash=_runtime_profile_hash(unhashed),
     )
@@ -411,6 +395,7 @@ class AskPermissionStore:
         scratch = _resolved_root(scratch_root, name="Ask scratch root")
         if str(scratch) != runtime_profile.scratch_root:
             raise AskPermissionDenied("Ask scratch root does not match runtime profile")
+        step_id = _authority_step_id(stage, attempt)
         with self.db.transaction() as connection:
             pipeline_row = connection.execute(
                 """
@@ -425,7 +410,8 @@ class AskPermissionStore:
                 raise AskPermissionDenied("Ask run not found")
             if pipeline_row["status"] not in {"pending", "running", "interrupted"}:
                 raise AskPermissionDenied("Ask run is not active")
-            ask_inputs = _ask_inputs(pipeline_row["inputs_json"])
+            document = _json_object(pipeline_row["inputs_json"], name="Ask pipeline inputs")
+            ask_inputs = _json_object(document.get("ask"), name="Ask pipeline input")
             profile_snapshot = _profile_snapshot(ask_inputs, stage)
             profile_hash = _required_string(
                 profile_snapshot.get("content_hash"), name="Ask profile snapshot hash"
@@ -458,6 +444,7 @@ class AskPermissionStore:
                 "project_id": str(pipeline_row["project_id"]),
                 "stage": stage.value,
                 "attempt": attempt,
+                "step_id": step_id,
                 "deadline_at": _deadline(binding.get("deadline_at")).isoformat(),
                 "binding_hash": _fingerprint(binding),
                 "profile_snapshot_hash": profile_hash,
@@ -466,54 +453,46 @@ class AskPermissionStore:
                 "scratch_root": str(scratch),
             }
             lifecycle = {
-                "ask_authority": {
-                    "active": True,
-                    "current_agent_run_id": agent_run_id,
-                    "generation": 1,
-                    "superseded_agent_run_ids": [],
-                    "revocation_reason": None,
-                }
+                "active": True,
+                "current_agent_run_id": agent_run_id,
+                "generation": 1,
+                "superseded_agent_run_ids": [],
+                "revocation_reason": None,
             }
-            step_id = _authority_step_id(stage, attempt)
-            inserted = connection.execute(
+            step_row = connection.execute(
                 """
-                INSERT INTO step_executions (
-                    execution_id, step_id, status, started_at, input_json, output_json
-                )
-                VALUES (%s, %s, %s, NOW(), %s, %s)
-                ON CONFLICT (execution_id, step_id) DO NOTHING
-                RETURNING *
+                SELECT id, step_id, status FROM step_executions
+                WHERE execution_id = %s AND step_id = %s
+                FOR UPDATE
                 """,
-                (
-                    ask_run_id,
-                    step_id,
-                    StepStatus.RUNNING.value,
-                    _canonical_json(immutable),
-                    _canonical_json(lifecycle),
-                ),
+                (ask_run_id, step_id),
             ).fetchone()
-            row = inserted
-            if row is None:
-                row = connection.execute(
-                    """
-                    SELECT * FROM step_executions
-                    WHERE execution_id = %s AND step_id = %s
-                    FOR UPDATE
-                    """,
-                    (ask_run_id, step_id),
-                ).fetchone()
-                if row is None:
-                    raise AskPermissionDenied("Ask authority disappeared during activation")
-                if _json_object(row["input_json"], name="Ask authority") != immutable:
+            if step_row is None or step_row["status"] != StepStatus.RUNNING.value:
+                raise AskPermissionDenied("Ask declared stage is not accepting a principal")
+            runtime = _json_object(ask_inputs.get("runtime", {}), name="Ask runtime metadata")
+            authorities = _json_object(runtime.get("authorities", {}), name="Ask authorities")
+            authority = {"immutable": immutable, "lifecycle": lifecycle}
+            existing = authorities.get(step_id)
+            if existing is not None:
+                existing_immutable, existing_lifecycle = _authority_entry(existing)
+                if existing_immutable != immutable:
                     raise AskPermissionDenied("Ask stage attempt binding is immutable")
-                state = _authority_state(row["output_json"])
                 if (
-                    row["status"] != StepStatus.RUNNING.value
-                    or state.get("active") is not True
-                    or state.get("current_agent_run_id") != agent_run_id
+                    existing_lifecycle.get("active") is not True
+                    or existing_lifecycle.get("current_agent_run_id") != agent_run_id
                 ):
                     raise AskPermissionDenied("Ask stage attempt already has another principal")
-            return _principal_from_rows(pipeline_row, row)
+                authority = _json_object(existing, name="Ask authority entry")
+            else:
+                authorities[step_id] = authority
+                runtime["authorities"] = authorities
+                ask_inputs["runtime"] = runtime
+                document["ask"] = ask_inputs
+                connection.execute(
+                    "UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW() WHERE id = %s",
+                    (_canonical_json(document), ask_run_id),
+                )
+            return _principal_from_authority(pipeline_row, step_row, authority)
 
     def find(self, agent_run_id: str) -> AskPrincipal | None:
         row = self.db.fetchone(
@@ -522,18 +501,23 @@ class AskPermissionStore:
                 pe.id AS pipeline_execution_id,
                 pe.project_id,
                 pe.status AS pipeline_status,
-                pe.inputs_json AS pipeline_inputs_json,
-                se.*
-            FROM step_executions se
-            JOIN pipeline_executions pe ON pe.id = se.execution_id
+                pe.inputs_json AS pipeline_inputs_json
+            FROM pipeline_executions pe
             WHERE pe.pipeline_name = %s
-              AND (
-                se.output_json::jsonb #>> '{ask_authority,current_agent_run_id}' = %s
+              AND EXISTS (
+                SELECT 1
+                FROM jsonb_each(
+                    COALESCE(
+                        pe.inputs_json::jsonb #> '{ask,runtime,authorities}',
+                        '{}'::jsonb
+                    )
+                ) AS authority(step_id, body)
+                WHERE authority.body #>> '{lifecycle,current_agent_run_id}' = %s
                 OR EXISTS (
                     SELECT 1
                     FROM jsonb_array_elements_text(
                         COALESCE(
-                            se.output_json::jsonb #> '{ask_authority,superseded_agent_run_ids}',
+                            authority.body #> '{lifecycle,superseded_agent_run_ids}',
                             '[]'::jsonb
                         )
                     ) AS superseded(value)
@@ -546,10 +530,23 @@ class AskPermissionStore:
         )
         if row is None:
             return None
-        state = _authority_state(row["output_json"])
-        if state.get("current_agent_run_id") != agent_run_id:
+        ask_inputs = _ask_inputs(row["pipeline_inputs_json"])
+        found = _find_authority_entry(ask_inputs, agent_run_id)
+        if found is None:
+            raise AskPermissionDenied("Ask authority disappeared during resolution")
+        step_id, authority, superseded = found
+        if superseded:
             raise AskPermissionDenied("Ask agent run was superseded")
-        return _principal_from_rows(row, row)
+        step_row = self.db.fetchone(
+            """
+            SELECT step_id, status FROM step_executions
+            WHERE execution_id = %s AND step_id = %s
+            """,
+            (row["pipeline_execution_id"], step_id),
+        )
+        if step_row is None:
+            raise AskPermissionDenied("Ask declared authority stage is missing")
+        return _principal_from_authority(row, step_row, authority)
 
     def authorize(
         self,
@@ -615,20 +612,42 @@ class AskPermissionStore:
                     pe.id AS pipeline_execution_id,
                     pe.project_id,
                     pe.status AS pipeline_status,
-                    pe.inputs_json AS pipeline_inputs_json,
-                    se.*
-                FROM step_executions se
-                JOIN pipeline_executions pe ON pe.id = se.execution_id
+                    pe.inputs_json AS pipeline_inputs_json
+                FROM pipeline_executions pe
                 WHERE pe.pipeline_name = %s
-                  AND se.output_json::jsonb #>>
-                      '{ask_authority,current_agent_run_id}' = %s
-                FOR UPDATE OF se
+                  AND EXISTS (
+                    SELECT 1
+                    FROM jsonb_each(
+                        COALESCE(
+                            pe.inputs_json::jsonb #> '{ask,runtime,authorities}',
+                            '{}'::jsonb
+                        )
+                    ) AS authority(step_id, body)
+                    WHERE authority.body #>> '{lifecycle,current_agent_run_id}' = %s
+                  )
+                FOR UPDATE OF pe
                 """,
                 (ASK_PIPELINE_NAME, original_agent_run_id),
             ).fetchone()
             if row is None:
                 raise AskPermissionDenied("original Ask principal is not current")
-            principal = _principal_from_rows(row, row)
+            document = _json_object(row["pipeline_inputs_json"], name="Ask pipeline inputs")
+            ask_inputs = _json_object(document.get("ask"), name="Ask pipeline input")
+            found = _find_authority_entry(ask_inputs, original_agent_run_id)
+            if found is None or found[2]:
+                raise AskPermissionDenied("original Ask principal is not current")
+            step_id, authority, _superseded = found
+            step_row = connection.execute(
+                """
+                SELECT step_id, status FROM step_executions
+                WHERE execution_id = %s AND step_id = %s
+                FOR UPDATE
+                """,
+                (row["pipeline_execution_id"], step_id),
+            ).fetchone()
+            if step_row is None:
+                raise AskPermissionDenied("Ask declared authority stage is missing")
+            principal = _principal_from_authority(row, step_row, authority)
             _assert_live(principal, allow_interrupted=True)
             successor = connection.execute(
                 """
@@ -645,76 +664,82 @@ class AskPermissionStore:
                 or not successor["child_session_id"]
             ):
                 raise AskPermissionDenied("successor agent run is not eligible for Ask authority")
-            output = _json_object(row["output_json"], name="Ask authority lifecycle")
-            state = _authority_state(output)
+            immutable, state = _authority_entry(authority)
             superseded = state.get("superseded_agent_run_ids")
             if not isinstance(superseded, list):
                 raise AskPermissionDenied("invalid persisted Ask successor history")
             state["superseded_agent_run_ids"] = [*superseded, original_agent_run_id]
             state["current_agent_run_id"] = successor_agent_run_id
             state["generation"] = principal.generation + 1
-            output["ask_authority"] = state
-            updated = connection.execute(
-                """
-                UPDATE step_executions
-                SET output_json = %s
-                WHERE id = %s
-                  AND output_json::jsonb #>>
-                      '{ask_authority,current_agent_run_id}' = %s
-                RETURNING *
-                """,
-                (_canonical_json(output), row["id"], original_agent_run_id),
-            ).fetchone()
-            if updated is None:
-                raise AskPermissionDenied("Ask successor authority CAS failed")
-            combined = dict(row)
-            combined.update(dict(updated))
-            return _principal_from_rows(combined, combined)
+            authorities = _authority_entries(ask_inputs)
+            authorities[step_id] = {"immutable": immutable, "lifecycle": state}
+            runtime = _json_object(ask_inputs.get("runtime", {}), name="Ask runtime metadata")
+            runtime["authorities"] = authorities
+            ask_inputs["runtime"] = runtime
+            document["ask"] = ask_inputs
+            connection.execute(
+                "UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW() WHERE id = %s",
+                (_canonical_json(document), row["pipeline_execution_id"]),
+            )
+            updated_row = dict(row)
+            updated_row["pipeline_inputs_json"] = _canonical_json(document)
+            return _principal_from_authority(
+                updated_row,
+                step_row,
+                authorities[step_id],
+            )
 
     def revoke_for_run(self, ask_run_id: str, *, reason: str) -> int:
         if not reason:
             raise ValueError("Ask revocation reason is required")
         revoked = 0
         with self.db.transaction() as connection:
-            rows = connection.execute(
+            row = connection.execute(
                 """
-                SELECT id, output_json
-                FROM step_executions
-                WHERE execution_id = %s
-                  AND input_json::jsonb ->> 'kind' = %s
-                  AND status = %s
+                SELECT id, inputs_json FROM pipeline_executions
+                WHERE id = %s AND pipeline_name = %s
                 FOR UPDATE
                 """,
-                (ask_run_id, _AUTHORITY_KIND, StepStatus.RUNNING.value),
-            ).fetchall()
-            for row in rows:
-                output = _json_object(row["output_json"], name="Ask authority lifecycle")
-                state = _authority_state(output)
-                if state.get("active") is not True:
+                (ask_run_id, ASK_PIPELINE_NAME),
+            ).fetchone()
+            if row is None:
+                return 0
+            document = _json_object(row["inputs_json"], name="Ask pipeline inputs")
+            ask_inputs = _json_object(document.get("ask"), name="Ask pipeline input")
+            authorities = _authority_entries(ask_inputs)
+            for step_id, raw in list(authorities.items()):
+                immutable, lifecycle = _authority_entry(raw)
+                if lifecycle.get("active") is not True:
                     continue
-                state["active"] = False
-                state["revocation_reason"] = reason
-                output["ask_authority"] = state
-                connection.execute(
-                    """
-                    UPDATE step_executions
-                    SET status = %s, completed_at = NOW(), output_json = %s, error = %s
-                    WHERE id = %s AND status = %s
-                    """,
-                    (
-                        StepStatus.CANCELLED.value,
-                        _canonical_json(output),
-                        reason,
-                        row["id"],
-                        StepStatus.RUNNING.value,
-                    ),
-                )
+                lifecycle["active"] = False
+                lifecycle["revocation_reason"] = reason
+                authorities[step_id] = {
+                    "immutable": immutable,
+                    "lifecycle": lifecycle,
+                }
                 revoked += 1
+            if revoked:
+                runtime = _json_object(ask_inputs.get("runtime", {}), name="Ask runtime metadata")
+                runtime["authorities"] = authorities
+                ask_inputs["runtime"] = runtime
+                document["ask"] = ask_inputs
+                connection.execute(
+                    "UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW() WHERE id = %s",
+                    (_canonical_json(document), ask_run_id),
+                )
         return revoked
 
 
 def _authority_step_id(stage: AskAgentStage, attempt: int) -> str:
-    return f"ask-agent:{stage.value}:{attempt}"
+    try:
+        return {
+            (AskAgentStage.INVESTIGATOR, 0): "investigate",
+            (AskAgentStage.REVIEWER, 0): "review_initial",
+            (AskAgentStage.REPAIR, 1): "repair",
+            (AskAgentStage.REVIEWER, 1): "review_repair",
+        }[(stage, attempt)]
+    except KeyError as error:
+        raise AskPermissionDenied("Ask stage attempt is not declared by the pipeline") from error
 
 
 def _ask_inputs(raw: object) -> dict[str, Any]:
@@ -722,20 +747,42 @@ def _ask_inputs(raw: object) -> dict[str, Any]:
     return _json_object(document.get("ask"), name="Ask pipeline input")
 
 
+def _authority_entries(ask_inputs: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = _json_object(ask_inputs.get("runtime", {}), name="Ask runtime metadata")
+    return _json_object(runtime.get("authorities", {}), name="Ask authorities")
+
+
+def _authority_entry(raw: object) -> tuple[dict[str, Any], dict[str, Any]]:
+    entry = _json_object(raw, name="Ask authority entry")
+    immutable = _json_object(entry.get("immutable"), name="Ask authority")
+    lifecycle = _json_object(entry.get("lifecycle"), name="Ask authority lifecycle")
+    return immutable, lifecycle
+
+
+def _find_authority_entry(
+    ask_inputs: Mapping[str, Any], agent_run_id: str
+) -> tuple[str, dict[str, Any], bool] | None:
+    for step_id, raw in _authority_entries(ask_inputs).items():
+        _immutable, lifecycle = _authority_entry(raw)
+        if lifecycle.get("current_agent_run_id") == agent_run_id:
+            return step_id, _json_object(raw, name="Ask authority entry"), False
+        superseded = lifecycle.get("superseded_agent_run_ids")
+        if isinstance(superseded, list) and agent_run_id in superseded:
+            return step_id, _json_object(raw, name="Ask authority entry"), True
+    return None
+
+
 def _profile_snapshot(ask_inputs: Mapping[str, Any], stage: AskAgentStage) -> dict[str, Any]:
     key = "reviewer" if stage is AskAgentStage.REVIEWER else "investigator"
     return _json_object(ask_inputs.get(key), name=f"Ask {key} profile snapshot")
 
 
-def _authority_state(raw: object) -> dict[str, Any]:
-    output = _json_object(raw, name="Ask authority lifecycle")
-    return _json_object(output.get("ask_authority"), name="Ask authority state")
-
-
-def _principal_from_rows(
-    pipeline_row: Mapping[str, Any], step_row: Mapping[str, Any]
+def _principal_from_authority(
+    pipeline_row: Mapping[str, Any],
+    step_row: Mapping[str, Any],
+    authority: object,
 ) -> AskPrincipal:
-    immutable = _json_object(step_row["input_json"], name="Ask authority")
+    immutable, state = _authority_entry(authority)
     if immutable.get("kind") != _AUTHORITY_KIND or immutable.get("version") != _AUTHORITY_VERSION:
         raise AskPermissionDenied("invalid persisted Ask authority version")
     ask_inputs = _ask_inputs(
@@ -757,6 +804,12 @@ def _principal_from_rows(
     if _deadline(immutable.get("deadline_at")) != deadline_at:
         raise AskPermissionDenied("Ask deadline does not match immutable binding")
     stage = AskAgentStage(_required_string(immutable.get("stage"), name="Ask stage"))
+    attempt = immutable.get("attempt")
+    if not isinstance(attempt, int) or attempt < 0:
+        raise AskPermissionDenied("invalid persisted Ask attempt")
+    expected_step_id = _authority_step_id(stage, attempt)
+    if immutable.get("step_id") != expected_step_id or step_row.get("step_id") != expected_step_id:
+        raise AskPermissionDenied("Ask authority does not match its declared stage")
     snapshot = _profile_snapshot(ask_inputs, stage)
     snapshot_hash = _required_string(snapshot.get("content_hash"), name="Ask profile snapshot hash")
     if immutable.get("profile_snapshot_hash") != snapshot_hash:
@@ -764,13 +817,9 @@ def _principal_from_rows(
     runtime_profile = AskRuntimeProfile.from_dict(immutable.get("runtime_profile"))
     if immutable.get("runtime_profile_hash") != runtime_profile.profile_hash:
         raise AskPermissionDenied("Ask runtime profile binding mismatch")
-    state = _authority_state(step_row["output_json"])
     generation = state.get("generation")
-    attempt = immutable.get("attempt")
     if not isinstance(generation, int) or generation < 1:
         raise AskPermissionDenied("invalid persisted Ask authority generation")
-    if not isinstance(attempt, int) or attempt < 0:
-        raise AskPermissionDenied("invalid persisted Ask attempt")
     return AskPrincipal(
         ask_run_id=pipeline_run_id,
         project_id=project_id,

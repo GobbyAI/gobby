@@ -87,6 +87,9 @@ class _NoopPermissions:
 
 
 class _NoopAgents:
+    def preflight(self, _profiles: object) -> None:
+        return None
+
     def status(self, agent_run_id: str) -> str | None:
         del agent_run_id
         return None
@@ -679,18 +682,26 @@ def test_identical_stage_submission_replay_is_idempotent(
         agent_run_id="agent-original",
         boundary_id="investigator:0:launched",
     )
-    arguments = {
-        "stage": AskAgentStage.INVESTIGATOR,
-        "attempt": 0,
-        "agent_run_id": "agent-original",
-        "artifact": {"kind": "answer-draft", "sha256": "a" * 64},
-        "submission_hash": "b" * 64,
-        "evidence_manifest_hash": "c" * 64,
-        "boundary_id": "investigator:0:answer:" + "b" * 64,
-    }
-
-    first = stages.record_submission(record.run_id, **arguments)
-    replay = stages.record_submission(record.run_id, **arguments)
+    first = stages.record_submission(
+        record.run_id,
+        stage=AskAgentStage.INVESTIGATOR,
+        attempt=0,
+        agent_run_id="agent-original",
+        artifact={"kind": "answer-draft", "sha256": "a" * 64},
+        submission_hash="b" * 64,
+        evidence_manifest_hash="c" * 64,
+        boundary_id="investigator:0:answer:" + "b" * 64,
+    )
+    replay = stages.record_submission(
+        record.run_id,
+        stage=AskAgentStage.INVESTIGATOR,
+        attempt=0,
+        agent_run_id="agent-original",
+        artifact={"kind": "answer-draft", "sha256": "a" * 64},
+        submission_hash="b" * 64,
+        evidence_manifest_hash="c" * 64,
+        boundary_id="investigator:0:answer:" + "b" * 64,
+    )
 
     assert replay == first
     state = stages.get(record.run_id)

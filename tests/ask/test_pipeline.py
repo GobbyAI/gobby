@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -17,9 +18,14 @@ from gobby.ask.agents import AskAgentSpec
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.claims import AnswerDraft, ReviewClaimVerdict, ReviewerResult, canonical_hash
 from gobby.ask.contracts import AskRequest, AskRunRecord, ProfileSnapshot
-from gobby.ask.evidence_runtime import PreparedAskSnapshot
-from gobby.ask.permissions import AskAgentStage, AskRuntimeProfile
+from gobby.ask.evidence_runtime import AskSnapshotManager, PreparedAskSnapshot
+from gobby.ask.permissions import (
+    AskAgentStage,
+    AskPermissionRuntime,
+    AskRuntimeProfile,
+)
 from gobby.ask.pipeline import ASK_PIPELINE_STEPS, parse_ask_pipeline
+from gobby.ask.publication import publish_answer
 from gobby.ask.storage import AskRunStorage
 from gobby.ask.validation import EvidenceManifest
 from gobby.storage.hub.protocol import HubDatabase
@@ -202,6 +208,12 @@ class _NativeAgents:
         self.statuses: dict[str, str] = {}
         self.launches: list[str] = []
         self.answer_evidence_hashes: list[str] = []
+        self.preflights: list[dict[AskAgentStage, ProfileSnapshot]] = []
+
+    def preflight(self, profiles: Mapping[AskAgentStage, ProfileSnapshot]) -> None:
+        assert set(profiles) == {AskAgentStage.INVESTIGATOR, AskAgentStage.REVIEWER}
+        self.preflights.append(dict(profiles))
+        self.events.append("preflight")
 
     async def launch(
         self,
@@ -412,9 +424,9 @@ async def test_native_investigation_review_and_single_repair(
     service = AskService(
         storage=storage,
         stages=AskStageStore(manager),
-        snapshot_manager=snapshots,
+        snapshot_manager=cast("AskSnapshotManager", snapshots),
         agents=agents,
-        permissions=permissions,
+        permissions=cast("AskPermissionRuntime", permissions),
         pipeline_executor=executor,
         state_root=tmp_path / "state",
         evidence_factory=evidence_factory,
@@ -466,6 +478,7 @@ async def test_native_investigation_review_and_single_repair(
     result = await service.wait(started.run_id, project_id=project_id, timeout=10)
 
     assert result.status == "completed", result.model_dump_json(indent=2)
+    assert len(agents.preflights) == 3
     assert result.current_stage == "publish"
     assert result.answer_outcome == "complete"
     assert result.typed_error is None
@@ -585,9 +598,9 @@ async def test_publication_termination_cannot_expose_completed_answer(
     service = AskService(
         storage=storage,
         stages=AskStageStore(manager),
-        snapshot_manager=snapshots,
+        snapshot_manager=cast("AskSnapshotManager", snapshots),
         agents=agents,
-        permissions=permissions,
+        permissions=cast("AskPermissionRuntime", permissions),
         pipeline_executor=executor,
         state_root=tmp_path / "state",
         evidence_factory=evidence_factory,
@@ -599,8 +612,8 @@ async def test_publication_termination_cannot_expose_completed_answer(
     release_write = threading.Event()
     producer_finished = threading.Event()
     original_write = publication_module._write_file
-    original_rename = publication_module.os.rename
-    original_publish = stage_runtime_module.publish_answer
+    original_rename = os.rename
+    original_publish = publish_answer
 
     def stalled_write(path: Path, payload: bytes) -> None:
         if stall_point == "write" and not write_started.is_set():
@@ -621,8 +634,8 @@ async def test_publication_termination_cannot_expose_completed_answer(
             producer_finished.set()
 
     monkeypatch.setattr(publication_module, "_write_file", stalled_write)
-    monkeypatch.setattr(publication_module.os, "rename", stalled_rename)
-    monkeypatch.setattr(stage_runtime_module, "publish_answer", tracked_publish)
+    monkeypatch.setattr("gobby.ask.publication.os.rename", stalled_rename)
+    monkeypatch.setattr("gobby.ask.stage_runtime.publish_answer", tracked_publish)
     if termination == "deadline":
         monkeypatch.setattr(service_module, "_REVIEW_RESERVE_SECONDS", 0)
 

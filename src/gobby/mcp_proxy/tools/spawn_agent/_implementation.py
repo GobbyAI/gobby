@@ -831,6 +831,7 @@ async def spawn_agent_impl(
             prompt=enhanced_prompt,
             cwd=isolation_ctx.cwd,
             provider=effective_provider,
+            managed_runtime_profile=managed_runtime_profile,
             session_id=prepared_spawn.session_id,
             run_id=run_id,
             agent_run_id=run_id,

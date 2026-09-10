@@ -54,6 +54,15 @@ class ManagedRuntimeProfile(Protocol):
     @property
     def scratch_root(self) -> str: ...
 
+    def validate_launch(
+        self,
+        *,
+        backend: str,
+        enforced: bool,
+        provider_executable: str | None,
+        policy_hash: str | None,
+    ) -> None: ...
+
 
 @dataclass
 class SpawnRequest:
@@ -67,6 +76,7 @@ class SpawnRequest:
     parent_session_id: str
     project_id: str
     _: KW_ONLY
+    managed_runtime_profile: ManagedRuntimeProfile | None = None
     project_path: str | None = None
     agent_run_id: str | None = None
     workflow: str | None = None

@@ -26,7 +26,7 @@ from gobby.ask.evidence_runtime import (
     EvidenceManifestFactory,
     evidence_references,
 )
-from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime
+from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime, UnsupportedAskRuntime
 from gobby.ask.pipeline import AskPipelineExecutor, parse_ask_pipeline
 from gobby.ask.publication import PublicationError, replay_publication
 from gobby.ask.recovery import AskRecoveryController
@@ -377,6 +377,13 @@ class AskService:
         release_resources = True
         try:
             async with asyncio.timeout(self._remaining(record.binding.deadline_at)):
+                await asyncio.to_thread(
+                    self.agents.preflight,
+                    {
+                        AskAgentStage.INVESTIGATOR: record.investigator,
+                        AskAgentStage.REVIEWER: record.reviewer,
+                    },
+                )
                 await self.pipeline_executor.execute(
                     pipeline,
                     inputs,
@@ -394,7 +401,7 @@ class AskService:
             await self._fail(record, AskErrorCode.DEADLINE_EXCEEDED, str(error))
         except SnapshotDriftError as error:
             await self._fail(record, AskErrorCode.SNAPSHOT_MISMATCH, str(error))
-        except (PublicationError, ValueError) as error:
+        except (PublicationError, UnsupportedAskRuntime, ValueError) as error:
             await self._fail(record, AskErrorCode.VALIDATION_FAILED, str(error))
         except Exception as error:
             await self._fail(record, AskErrorCode.AGENT_FAILED, str(error))

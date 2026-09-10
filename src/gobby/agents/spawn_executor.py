@@ -298,6 +298,14 @@ def _persist_spawn_workspace(request: SpawnRequest, session_id: str) -> None:
 
 async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> SpawnResult:
     """Sole pending-row owner: wrap, create/retry, prepare_spawn, promote_to_live."""
+    if request.managed_runtime_profile is not None:
+        await asyncio.to_thread(
+            request.managed_runtime_profile.validate_launch,
+            backend=plan.launch.backend,
+            enforced=plan.launch.enforced,
+            provider_executable=plan.launch.provider_executable,
+            policy_hash=plan.launch.policy_hash,
+        )
     await asyncio.to_thread(_persist_spawn_workspace, request, plan.child_session_id)
     command = wrap_provider_command(plan.launch, plan.command)
     try:

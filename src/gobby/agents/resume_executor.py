@@ -44,7 +44,12 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_env,
 )
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
-from gobby.ask.permissions import ASK_PIPELINE_NAME, AskPermissionDenied, AskPermissionStore
+from gobby.ask.permissions import (
+    ASK_PIPELINE_NAME,
+    AskPermissionDenied,
+    AskPermissionStore,
+    UnsupportedAskRuntime,
+)
 from gobby.providers.version_gate import ensure_agy_support
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
@@ -371,6 +376,27 @@ async def resume_agent_run(
                 child_session_id=spawn_context.session_id,
             )
             return ResumeAgentResult(False, run_id=run_id, error=error)
+    if managed_runtime_profile is not None:
+        try:
+            await asyncio.to_thread(
+                managed_runtime_profile.validate_launch,
+                backend=launch.backend,
+                enforced=launch.enforced,
+                provider_executable=launch.provider_executable,
+                policy_hash=launch.policy_hash,
+            )
+        except (OSError, ValueError, UnsupportedAskRuntime) as exc:
+            await _rollback_prepared_resume(
+                runner,
+                original_run_id=original_run.id,
+                successor_run_id=run_id,
+                child_session_id=spawn_context.session_id,
+            )
+            return ResumeAgentResult(
+                False,
+                run_id=run_id,
+                error=f"ask_resume_runtime_validation_failed:{type(exc).__name__}:{exc}",
+            )
     env.update(launch.provider_env)
     update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
     if callable(update_sandbox_enabled):
@@ -529,6 +555,7 @@ async def resume_agent_run(
         run_id=run_id,
         parent_session_id=parent_session_id,
         project_id=project_id,
+        managed_runtime_profile=managed_runtime_profile,
         agent_run_id=run_id,
         session_manager=runner.child_session_manager,
         run_manager=runner.run_storage,

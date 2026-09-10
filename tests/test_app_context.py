@@ -1,6 +1,7 @@
 """Tests for ServiceContainer lazy pipeline executor creation."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,15 +12,37 @@ from gobby.storage.hub.protocol import HubDatabase
 pytestmark = pytest.mark.unit
 
 
-def _make_container(**overrides):
+def _make_container(**overrides: Any) -> ServiceContainer:
     """Create a minimal ServiceContainer with sensible defaults."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "database": MagicMock(),
         "session_manager": MagicMock(),
         "task_manager": MagicMock(),
     }
     defaults.update(overrides)
     return ServiceContainer(**defaults)
+
+
+def test_get_ask_service_uses_shared_project_cache() -> None:
+    created: list[str] = []
+    services_by_project: dict[str, object] = {}
+
+    def factory(project_id: str) -> object:
+        created.append(project_id)
+        return services_by_project.setdefault(project_id, object())
+
+    container = _make_container(
+        project_id="home-project",
+        ask_service_factory=factory,
+    )
+
+    startup = container.get_ask_service("home-project")
+    assert startup is container.ask_service
+    assert container.get_ask_service("home-project") is startup
+    other = container.get_ask_service("other-project")
+    assert container.get_ask_service("other-project") is other
+    assert other is not startup
+    assert created == ["home-project", "other-project"]
 
 
 class TestGetPipelineExecutor:

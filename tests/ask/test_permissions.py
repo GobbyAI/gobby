@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,8 @@ from gobby.ask.permissions import (
     compile_ask_runtime_profile,
     filter_tools_for_current_ask_principal,
 )
+from gobby.ask.runtime_validation import ask_runtime_control_digest
+from gobby.ask.stages import AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
 from gobby.hooks.hook_manager import HookManager
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -60,6 +64,7 @@ from gobby.utils.session_context import (
     reset_current_agent_run_id,
     set_current_agent_run_id,
 )
+from gobby.workflows.pipeline_state import StepStatus
 from tests.agents.prepared_spawn import prepared_spawn
 
 if TYPE_CHECKING:
@@ -84,10 +89,16 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
 
 
 def _runtime_validation(provider: str = "claude") -> AskRuntimeValidation:
+    executable = Path("/bin/sh").resolve()
     return AskRuntimeValidation(
         provider=provider,
+        provider_executable=str(executable),
+        provider_executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
         provider_version="test-version",
         auth_mode="claude.ai",
+        control_digest=(
+            ask_runtime_control_digest(provider, "claude.ai") if provider == "claude" else "d" * 64
+        ),
         controls=frozenset(
             {
                 "mcp_allowlist_exact",
@@ -102,6 +113,7 @@ def _runtime_validation(provider: str = "claude") -> AskRuntimeValidation:
         fresh_probe_passed=True,
         resume_probe_passed=True,
         evidence_sha256="a" * 64,
+        verified_artifact=True,
     )
 
 
@@ -116,6 +128,35 @@ def test_unvalidated_native_profile_is_refused(tmp_path: Path) -> None:
             provider="claude",
             source_root=source_root,
             scratch_root=scratch_root,
+        )
+
+
+def test_runtime_profile_rejects_unverified_or_stale_provider_binding(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    source_root.mkdir()
+    scratch_root.mkdir()
+    unverified = replace(_runtime_validation(), verified_artifact=False)
+    with pytest.raises(UnsupportedAskRuntime, match="pinned artifact"):
+        compile_ask_runtime_profile(
+            provider="claude",
+            source_root=source_root,
+            scratch_root=scratch_root,
+            validation=unverified,
+        )
+
+    profile = compile_ask_runtime_profile(
+        provider="claude",
+        source_root=source_root,
+        scratch_root=scratch_root,
+        validation=_runtime_validation(),
+    )
+    with pytest.raises(UnsupportedAskRuntime, match="executable path"):
+        profile.validate_launch(
+            backend="srt",
+            enforced=True,
+            provider_executable="/bin/false",
+            policy_hash="b" * 64,
         )
 
 
@@ -260,6 +301,15 @@ async def test_ask_agent_permission_boundary(
         ),
         tmp_path,
     )
+    stages = AskStageStore(storage.manager)
+    stages.initialize(ask_run)
+    stages.checkpoint(
+        ask_run.run_id,
+        stage=AskStage.INVESTIGATOR,
+        boundary_id="investigator:0:reserved",
+    )
+    investigator_step = storage.manager.create_step_execution(ask_run.run_id, "investigate")
+    storage.manager.update_step_execution(investigator_step.id, status=StepStatus.RUNNING)
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id="ask-parent",
@@ -403,15 +453,28 @@ async def test_ask_agent_permission_boundary(
     assert authority.agent_run_id == first_run_id
     assert authority.stage is AskAgentStage.INVESTIGATOR
     assert authority.generation == 1
+    assert [step.step_id for step in storage.manager.get_steps_for_execution(ask_run.run_id)] == [
+        "investigate"
+    ]
 
     authority_row = temp_db.fetchone(
-        "SELECT input_json FROM step_executions WHERE execution_id = %s",
+        "SELECT inputs_json FROM pipeline_executions WHERE id = %s",
         (ask_run.run_id,),
     )
     assert authority_row is not None
-    original_authority = authority_row["input_json"]
-    if isinstance(original_authority, str):
-        original_authority = json.loads(original_authority)
+    authority_document = authority_row["inputs_json"]
+    if isinstance(authority_document, str):
+        authority_document = json.loads(authority_document)
+    assert isinstance(authority_document, dict)
+    ask_document = authority_document.get("ask")
+    assert isinstance(ask_document, dict)
+    runtime_document = ask_document.get("runtime")
+    assert isinstance(runtime_document, dict)
+    authority_entries = runtime_document.get("authorities")
+    assert isinstance(authority_entries, dict)
+    investigator_authority = authority_entries.get("investigate")
+    assert isinstance(investigator_authority, dict)
+    original_authority = investigator_authority.get("immutable")
     assert isinstance(original_authority, dict)
     mismatches = (
         ("ask_run_id", "another-run", "run ID"),
@@ -420,15 +483,17 @@ async def test_ask_agent_permission_boundary(
     )
     for key, value, expected_error in mismatches:
         tampered = {**original_authority, key: value}
+        tampered_document = json.loads(json.dumps(authority_document))
+        tampered_document["ask"]["runtime"]["authorities"]["investigate"]["immutable"] = tampered
         temp_db.execute(
-            "UPDATE step_executions SET input_json = %s WHERE execution_id = %s",
-            (json.dumps(tampered), ask_run.run_id),
+            "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+            (json.dumps(tampered_document), ask_run.run_id),
         )
         with pytest.raises(AskPermissionDenied, match=expected_error):
             permissions.find(first_run_id)
     temp_db.execute(
-        "UPDATE step_executions SET input_json = %s WHERE execution_id = %s",
-        (json.dumps(original_authority), ask_run.run_id),
+        "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+        (json.dumps(authority_document), ask_run.run_id),
     )
 
     permissions.authorize(
@@ -776,9 +841,11 @@ async def test_ask_agent_permission_boundary(
             now=admitted_at + timedelta(minutes=3),
         )
 
+    cleared_document = json.loads(json.dumps(authority_document))
+    cleared_document["ask"]["runtime"]["authorities"] = {}
     temp_db.execute(
-        "UPDATE step_executions SET output_json = '{}' WHERE execution_id = %s",
-        (ask_run.run_id,),
+        "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+        (json.dumps(cleared_document), ask_run.run_id),
     )
     cleared_token = set_current_agent_run_id(successor_run_id)
     try:
@@ -996,6 +1063,7 @@ async def test_ask_authority_is_bound_before_native_process_launch(
     assert request.sandbox_config == profile.sandbox_config
     assert request.auto_approve is False
     assert request.provider_args == profile.provider_args
+    assert request.managed_runtime_profile is profile
 
 
 @pytest.mark.asyncio
@@ -1047,9 +1115,18 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
     )
     order: list[str] = []
     launched: list[tuple[SpawnRequest, Any]] = []
+    launch_validation = MagicMock()
+    runtime_profile = SimpleNamespace(
+        provider=profile.provider,
+        provider_args=profile.provider_args,
+        auto_approve=profile.auto_approve,
+        sandbox_config=profile.sandbox_config,
+        scratch_root=profile.scratch_root,
+        validate_launch=launch_validation,
+    )
     permission_store = MagicMock()
     permission_store.find.return_value = SimpleNamespace(
-        runtime_profile=profile,
+        runtime_profile=runtime_profile,
         project_id="ask-project",
     )
     permission_store.replace_for_resume.side_effect = lambda **_kwargs: order.append("authority")
@@ -1083,6 +1160,8 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
         backend="srt",
         enforced=True,
         provider_args=["--srt-policy"],
+        provider_executable="/bin/sh",
+        policy_hash="b" * 64,
     )
     prepare_sandbox = AsyncMock(return_value=sandbox_launch)
     monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
@@ -1120,10 +1199,17 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
     assert prepare_sandbox.await_args.kwargs["config"] == profile.sandbox_config
     assert prepare_sandbox.await_args.kwargs["provider"] == profile.provider
     assert prepare_sandbox.await_args.kwargs["workspace_path"] == profile.scratch_root
+    launch_validation.assert_called_once_with(
+        backend="srt",
+        enforced=True,
+        provider_executable="/bin/sh",
+        policy_hash="b" * 64,
+    )
     assert len(launched) == 1
     runtime_request, runtime_plan = launched[0]
     assert runtime_request.cwd == profile.scratch_root
     assert runtime_request.provider == profile.provider
+    assert runtime_request.managed_runtime_profile is runtime_profile
     assert (
         tuple(runtime_plan.command[-len(profile.provider_args) - 1 : -1]) == profile.provider_args
     )

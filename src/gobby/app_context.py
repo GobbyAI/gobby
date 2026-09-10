@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.ai import TextGenerationService, ToolChatService
 from gobby.llm import LLMService
@@ -30,6 +30,7 @@ from gobby.worktrees.executor import WorktreeDeleteExecutor, run_worktree_delete
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
+    from gobby.ask.service import AskService
     from gobby.config.runtime import ConfigRuntime
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.config.terminals import TerminalConfig
@@ -92,6 +93,8 @@ class ServiceContainer:
     pipeline_executor: Any | None = None  # PipelineExecutor
     workflow_loader: Any | None = None  # PipelineLoader
     pipeline_execution_manager: Any | None = None  # LocalPipelineExecutionManager
+    ask_service: AskService | None = None
+    ask_service_factory: Callable[[str], AskService | None] | None = None
 
     # Completion Events
     completion_registry: Any | None = None  # CompletionEventRegistry
@@ -322,6 +325,33 @@ class ServiceContainer:
         except Exception as e:
             _logger.warning("Failed to lazily create PipelineExecutor: %s", e)
             return None
+
+    def get_ask_service(self, project_id: str) -> AskService | None:
+        """Return one Ask service per project within this runtime epoch."""
+        if not project_id:
+            return None
+        if project_id == self.project_id and self.ask_service is not None:
+            return self.ask_service
+        cached = self._project_infra_cache.get(project_id, {}).get("ask_service")
+        if cached is not None:
+            return cast("AskService", cached)
+        if self.ask_service_factory is None:
+            return None
+        try:
+            service = self.ask_service_factory(project_id)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to create AskService for project %r",
+                project_id,
+                exc_info=True,
+            )
+            return None
+        if service is None:
+            return None
+        self._project_infra_cache.setdefault(project_id, {})["ask_service"] = service
+        if project_id == self.project_id:
+            self.ask_service = service
+        return service
 
 
 # ---------------------------------------------------------------------------

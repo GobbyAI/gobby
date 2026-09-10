@@ -15,11 +15,16 @@ from gobby.ask.permissions import (
     ASK_PIPELINE_NAME,
     AskAgentStage,
     AskRuntimeProfile,
-    AskRuntimeValidation,
     UnsupportedAskRuntime,
     compile_ask_runtime_profile,
 )
+from gobby.ask.runtime_validation import (
+    AskRuntimeValidation,
+    AskRuntimeValidationArtifact,
+    load_ask_runtime_validation,
+)
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+from gobby.utils.native_bin import resolve_native_bin
 from gobby.workflows.agent_models import AgentDefinitionBody
 
 if TYPE_CHECKING:
@@ -103,6 +108,8 @@ class AskAgentSpec:
 
 
 class AskAgentRuntime(Protocol):
+    def preflight(self, profiles: Mapping[AskAgentStage, ProfileSnapshot]) -> None: ...
+
     async def launch(
         self,
         spec: AskAgentSpec,
@@ -126,7 +133,7 @@ class ManagedAskAgents:
         db: HubDatabase,
         session_manager: object,
         completion_registry: CompletionEventRegistry,
-        runtime_validations: Mapping[str, AskRuntimeValidation],
+        runtime_validation_artifacts: Mapping[str, AskRuntimeValidationArtifact],
         cancel_agent: Callable[[str], Awaitable[None]],
         daemon_config: object | None = None,
     ) -> None:
@@ -134,9 +141,16 @@ class ManagedAskAgents:
         self.db = db
         self.session_manager = session_manager
         self.completion_registry = completion_registry
-        self.runtime_validations = dict(runtime_validations)
+        self.runtime_validation_artifacts = dict(runtime_validation_artifacts)
         self.cancel_agent = cancel_agent
         self.daemon_config = daemon_config
+
+    def preflight(self, profiles: Mapping[AskAgentStage, ProfileSnapshot]) -> None:
+        """Validate every selected provider binary before snapshot or agent work."""
+        if set(profiles) != {AskAgentStage.INVESTIGATOR, AskAgentStage.REVIEWER}:
+            raise UnsupportedAskRuntime("Ask preflight requires investigator and reviewer profiles")
+        for stage, profile in profiles.items():
+            self._load_validation(profile, stage)
 
     async def launch(
         self,
@@ -144,11 +158,8 @@ class ManagedAskAgents:
         bind_authority: Callable[[str, AskRuntimeProfile], None],
     ) -> str:
         spec.scratch_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        effective = dict(spec.profile.effective)
+        effective, provider, validation = self._load_validation(spec.profile, spec.stage)
         body = AgentDefinitionBody.model_validate(effective)
-        self._validate_definition(body, spec.stage)
-        provider = str(effective.get("provider"))
-        validation = self.runtime_validations.get(spec.profile.identifier)
         profile = compile_ask_runtime_profile(
             provider=provider,
             source_root=spec.source_root,
@@ -169,9 +180,7 @@ class ManagedAskAgents:
             provider=provider,
             model=str(effective["model"]) if effective.get("model") else None,
             reasoning_effort=(
-                str(effective["reasoning_effort"])
-                if effective.get("reasoning_effort")
-                else None
+                str(effective["reasoning_effort"]) if effective.get("reasoning_effort") else None
             ),
             timeout=remaining,
             parent_session_id=spec.caller_session_id,
@@ -197,6 +206,32 @@ class ManagedAskAgents:
         if not result.get("success") or not isinstance(run_id, str) or not run_id:
             raise RuntimeError(str(result.get("error") or "Ask managed agent spawn failed"))
         return run_id
+
+    def _load_validation(
+        self,
+        profile: ProfileSnapshot,
+        stage: AskAgentStage,
+    ) -> tuple[dict[str, Any], str, AskRuntimeValidation]:
+        effective = dict(profile.effective)
+        body = AgentDefinitionBody.model_validate(effective)
+        self._validate_definition(body, stage)
+        provider = str(effective.get("provider"))
+        artifact = self.runtime_validation_artifacts.get(profile.identifier)
+        if artifact is None:
+            raise UnsupportedAskRuntime(
+                f"Ask profile {profile.identifier!r} has no pinned runtime validation"
+            )
+        provider_executable = resolve_native_bin(provider)
+        if provider_executable is None:
+            raise UnsupportedAskRuntime(f"Ask provider executable is unavailable: {provider}")
+        try:
+            validation = load_ask_runtime_validation(
+                artifact,
+                provider_executable=Path(provider_executable),
+            )
+        except (OSError, ValueError) as error:
+            raise UnsupportedAskRuntime(str(error)) from error
+        return effective, provider, validation
 
     def status(self, agent_run_id: str) -> str | None:
         run = self.runner.get_run(agent_run_id)
@@ -245,7 +280,10 @@ class ManagedAskAgents:
         step = workflow.steps[0]
         if step.allowed_tools == "all" or set(step.allowed_tools) != _WRAPPER_TOOLS:
             raise UnsupportedAskRuntime("Ask agent wrapper tool allowlist is not exact")
-        if step.allowed_mcp_tools == "all" or set(step.allowed_mcp_tools) != _STAGE_MCP_TOOLS[stage]:
+        if (
+            step.allowed_mcp_tools == "all"
+            or set(step.allowed_mcp_tools) != _STAGE_MCP_TOOLS[stage]
+        ):
             raise UnsupportedAskRuntime("Ask agent MCP allowlist is not exact")
 
     @staticmethod
