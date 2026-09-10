@@ -356,15 +356,25 @@ def _provision_contained_srt(
     ):
         raise RuntimeError("contained SRT home is not privately owned")
 
-    previous_home = os.environ.get("GOBBY_HOME")
-    os.environ["GOBBY_HOME"] = str(home)
+    cache_home = home / "cache"
+    cache_home.mkdir(mode=0o700)
+    npm_cache = cache_home / "npm"
+    npm_cache.mkdir(mode=0o700)
+    contained_environment = {
+        "GOBBY_HOME": str(home),
+        "npm_config_cache": str(npm_cache),
+        "NPM_CONFIG_CACHE": str(npm_cache),
+    }
+    previous_environment = {key: os.environ.get(key) for key in contained_environment}
+    os.environ.update(contained_environment)
     try:
         installation = install_srt_runtime()
     finally:
-        if previous_home is None:
-            os.environ.pop("GOBBY_HOME", None)
-        else:
-            os.environ["GOBBY_HOME"] = previous_home
+        for key, value in previous_environment.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     expected = home / "tools" / "srt" / SRT_RELEASE.version
     try:

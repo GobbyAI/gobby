@@ -289,10 +289,15 @@ def test_contained_srt_provisioning_uses_only_the_owned_home(
     runtime_root.mkdir(mode=0o700)
     gobby_home = runtime_root / "gobby"
     monkeypatch.setenv("GOBBY_HOME", "/unowned/global-home")
+    monkeypatch.delenv("npm_config_cache", raising=False)
+    monkeypatch.delenv("NPM_CONFIG_CACHE", raising=False)
     expected = gobby_home / "tools" / "srt" / "0.0.66"
+    expected_cache = gobby_home / "cache" / "npm"
 
     def install_srt() -> SimpleNamespace:
         assert os.environ["GOBBY_HOME"] == str(gobby_home)
+        assert os.environ["npm_config_cache"] == str(expected_cache)
+        assert os.environ["NPM_CONFIG_CACHE"] == str(expected_cache)
         package = expected / "node_modules" / "package"
         package.mkdir(parents=True)
         (package / "index.js").write_text("export {};\n", encoding="utf-8")
@@ -314,7 +319,44 @@ def test_contained_srt_provisioning_uses_only_the_owned_home(
         "installed": True,
     }
     assert os.environ["GOBBY_HOME"] == "/unowned/global-home"
+    assert "npm_config_cache" not in os.environ
+    assert "NPM_CONFIG_CACHE" not in os.environ
     assert expected.is_relative_to(runtime_root)
+    assert expected_cache.is_relative_to(gobby_home)
+    assert expected_cache.stat().st_mode & 0o077 == 0
+
+
+def test_contained_srt_provisioning_restores_environment_after_installer_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir(mode=0o700)
+    gobby_home = runtime_root / "gobby"
+    expected_cache = gobby_home / "cache" / "npm"
+    previous = {
+        "GOBBY_HOME": "/previous/gobby",
+        "npm_config_cache": "/previous/lower-cache",
+        "NPM_CONFIG_CACHE": "/previous/upper-cache",
+    }
+    for key, value in previous.items():
+        monkeypatch.setenv(key, value)
+
+    def install_srt() -> SimpleNamespace:
+        assert os.environ["GOBBY_HOME"] == str(gobby_home)
+        assert os.environ["npm_config_cache"] == str(expected_cache)
+        assert os.environ["NPM_CONFIG_CACHE"] == str(expected_cache)
+        raise RuntimeError("injected contained SRT install failure")
+
+    monkeypatch.setattr("gobby.cli.install_setup_srt.install_srt_runtime", install_srt)
+
+    with pytest.raises(RuntimeError, match="injected contained SRT install failure"):
+        harness._provision_contained_srt(
+            gobby_home,
+            runtime_root=runtime_root,
+        )
+
+    assert {key: os.environ[key] for key in previous} == previous
 
 
 def test_contained_srt_provisioning_rejects_symlink_escape(
