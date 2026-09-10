@@ -61,15 +61,14 @@ def resolve_mypy_command(root: Path, override: str | None = None) -> tuple[str, 
         return command
 
     package_managers = (
-        ("uv.lock", "uv", ("uv", "run", "mypy")),
+        ("uv.lock", "uv", ("uv", "run", "--no-sync", "mypy")),
         ("poetry.lock", "poetry", ("poetry", "run", "mypy")),
         ("pdm.lock", "pdm", ("pdm", "run", "mypy")),
     )
     for marker, executable, command in package_managers:
         if not (root / marker).exists() or shutil.which(executable) is None:
             continue
-        probe_options = ("--no-sync",) if executable == "uv" else ()
-        probe_command = (*command[:-1], *probe_options, "python", "-c", "import mypy")
+        probe_command = (*command[:-1], "python", "-c", "import mypy")
         try:
             probe = subprocess.run(
                 probe_command,

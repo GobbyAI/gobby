@@ -224,3 +224,36 @@ Validation used the isolated test hub on port 60892, `GOBBY_TEST_PROTECT=1`,
 This small regression establishes the identity correction. A new contained probe,
 provider security/resume acceptance, installed-service checks, and all 14 cohort
 answers remain required; attempt 10 is unchanged.
+
+## Shared environment audit correction
+
+During the foreign coordinator's restart, the shared editable install was found
+pointing at this worktree instead of main. Explicit parent Python commands used
+`uv run --no-sync`, but `test-types audit` independently launched `uv run mypy`
+without that option. Its availability probe already used `--no-sync`; its actual
+checker invocation did not. The inherited `UV_PROJECT_ENVIRONMENT` therefore
+allowed a nested command to reinstall the worktree into the shared environment.
+The user also clarified that another reinstall may have been explicitly requested;
+the source defect is confirmed, but attribution of the earlier install is uncertain.
+
+The resolved uv command now includes `--no-sync` for both invocations. A focused
+regression exercises `run_mypy` through command resolution and checks both child
+processes. It failed on the actual checker invocation before the fix. Protected
+`uv run --no-sync pytest tests/test_types/test_audit.py tests/test_types/test_mypy_parser.py -q --tb=short`
+then passed 23 tests in 0.17 seconds. Focused Ruff lint/format, mypy, test quality
+and test types audits passed.
+
+After the foreign owner restored main's editable install, the fixed real
+`gobby test-types audit tests/test_types/test_audit.py --baseline .gobby/test-types-baseline.json --fail-on-new`
+reported zero errors. This run used the shared environment and outer `--no-sync`,
+without `UV_NO_SYNC`, to verify the corrected nested invocation. Both editable
+file hashes stayed identical before and after:
+
+- `__editable__.gobby-0.5.0.pth`:
+  `643e4428b9bb063e37c9635792cbd5a89cc55e8e4c1901b7a58175d6b9001d28`
+- `gobby-0.5.0.dist-info/direct_url.json`:
+  `1b42b219c1dd1733ee9d6ecea8b883055a1ed098bf44c2a19cf135baec0fcb43`
+
+A fresh main-checkout import resolved to
+`/Users/josh/Projects/gobby/src/gobby/__init__.py`. Subsequent coordinator commands
+also export `UV_NO_SYNC=1` so child tools inherit the intended environment policy.

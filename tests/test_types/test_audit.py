@@ -194,17 +194,25 @@ def test_resolver_keeps_uv_when_lockfile_env_has_mypy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "uv.lock").touch()
+    commands: list[tuple[str, ...]] = []
 
     def fake_which(executable: str) -> str | None:
         return "/tools/uv" if executable == "uv" else None
 
-    def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(command, 0)
+    def fake_run(
+        command: tuple[str, ...] | list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(shutil, "which", fake_which)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    assert resolve_mypy_command(tmp_path) == ("uv", "run", "mypy")
+    assert run_mypy(("tests",), root=tmp_path) == ()
+    assert len(commands) == 2
+    assert commands[0] == ("uv", "run", "--no-sync", "python", "-c", "import mypy")
+    assert commands[1][:4] == ("uv", "run", "--no-sync", "mypy")
+    assert commands[1][-1] == "tests"
 
 
 @pytest.mark.parametrize(
