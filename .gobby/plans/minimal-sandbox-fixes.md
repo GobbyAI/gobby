@@ -20,6 +20,7 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Fix the 20 encountered untyped factory test signatures and the new batch input annotation.
 - [x] Implement and automatically verify #22027; final live rule gate remains open.
 - [x] Coordinator repaired grant inspection and run-local zsh heredoc temporary paths (622ef8c992; 73 focused tests pass).
+- [x] Coordinator extracted sandbox run environment (efe1644; policy 812 lines, new module 49 lines; 84 focused tests pass).
 - [x] File deeper security review #22103.
 - [ ] Commit both fixes and coordinate integration and restart.
 - [ ] Complete real managed runtime, delegation, resume and sandbox probes.
@@ -55,6 +56,7 @@ Targets:
 - `tests/agents/test_resume_executor.py::*` — scope-reason: verify resume grant propagation
 - `tests/mcp_proxy/tools/test_agent_capture_results.py::*` — scope-reason: verify recorded grant inspection
 - `tests/agents/test_spawn_executor_support.py::*` — scope-reason: verify Codex shell temporary environment
+- `tests/agents/test_sandbox_policy.py::*` — scope-reason: consume the extracted run environment definitions
 - `tests/integration/sandbox/test_srt_host_runtime.py::*` — scope-reason: verify real managed SRT heredoc writes
 - `docs/guides/sandboxing.md`
 
