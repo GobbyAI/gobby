@@ -421,7 +421,18 @@ def _refresh_active_run_dispatch_mutex(runner: GobbyRunner, run: Any) -> bool:
         return False
 
     try:
-        return TaskDispatchMutexManager(db).acquire_mutex(
+        mutexes = TaskDispatchMutexManager(db)
+        mutex = mutexes.get_mutex(str(task_id))
+        if mutex is not None:
+            if mutex.run_id is not None and str(mutex.run_id) == str(run_id) and mutex.lease_holder:
+                return mutexes.refresh_mutex_for_run(
+                    str(task_id),
+                    str(run_id),
+                    lease_holder=mutex.lease_holder,
+                    ttl_seconds=600,
+                )
+            return False
+        return mutexes.acquire_mutex(
             str(task_id),
             holder="dispatcher",
             kind="heartbeat",
