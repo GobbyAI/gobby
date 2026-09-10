@@ -1795,17 +1795,23 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = harness._create_owned_runtime_root(parent=Path(tempfile.gettempdir()))
+    runtime_root = harness._create_owned_runtime_root(parent=tmp_path)
     output_dir = tmp_path / "evidence"
     output_dir.mkdir()
     calls: list[tuple[object, ...]] = []
     process_sets: dict[str, object] = {}
+    runtime_identity: dict[str, object] = {"source_head": "f" * 40}
 
-    monkeypatch.setattr(
-        harness,
-        "_native_ask_execution_ids",
-        lambda *_args: ["partial-run"],
-    )
+    private_index = {"status": "failed", "commands": [{"name": "index", "returncode": None}]}
+
+    def discover_runs(*_args: object) -> list[str]:
+        # A deadline-expired worker can flush this receipt during finalization.
+        receipt_path = runtime_root / "control" / "private-parent-index.json"
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(json.dumps(private_index), encoding="utf-8")
+        return ["partial-run"]
+
+    monkeypatch.setattr(harness, "_native_ask_execution_ids", discover_runs)
     monkeypatch.setattr(
         harness,
         "_process_snapshot",
@@ -1821,7 +1827,7 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
         process_sets: Mapping[str, object],
         runtime_identity: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
-        assert runtime_identity is None
+        assert runtime_identity == {"source_head": "f" * 40, "private_parent_index": private_index}
         calls.append(("export", list(run_ids), runtime_root, dict(process_sets)))
         return {"path": "raw-probe.json", "sha256": "a" * 64, "complete": True}
 
@@ -1843,9 +1849,11 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
         ask_run_ids=[],
         process_sets=process_sets,
         failure={"error_type": "RuntimeError", "message": "fresh startup failed"},
+        runtime_identity=runtime_identity,
     )
 
     assert cleanup_errors == []
+    assert runtime_identity["private_parent_index"] == private_index
     assert calls[0][0:2] == ("export", ["partial-run"])
     assert calls[1] == ("drop", _SCHEMA)
     assert not runtime_root.exists()

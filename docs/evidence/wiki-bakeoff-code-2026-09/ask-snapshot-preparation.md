@@ -100,3 +100,26 @@ in 12.30 seconds. The regression exercises private parent indexing, normal overl
 admission, exact committed evidence queries, credential rotation, and recovery.
 This validates the corrected snapshot/index path; provider-agent security proof
 and the complete cohort remain separate acceptance work.
+
+## Full private index preparation
+
+Contained attempt 9 used integration source
+`123c8e86075cf1a0acaf7acf787a5d96f76d6d97` and the corrected binary above. It reached
+the original 600-second controller deadline while building the private parent
+index, before any provider agent started. Cleanup reported no errors, dropped
+the owned schema, removed the runtime, and left no probe process running.
+
+A two-second macOS process sample taken during indexing recorded 679 of 1,381
+main-thread samples under `upsert_calls` / `insert_call` and PostgreSQL execution.
+The implementation issued one database insertion per call relationship. This is
+evidence of a separate indexing bottleneck, not a snapshot batching regression.
+The sample and failed attempt remain in
+`/tmp/gobby-ask-native-probe-12261-ninth`; its raw export SHA-256 is
+`0b94f0f207bc5bcb979088b3e029b442bcc98bb882548c6cee64578e73644485`.
+
+This timeout also exposed a receipt-capture race: the controller checked for the
+private index receipt before stopping the worker, which could write its final
+receipt during shutdown. The existing attempt cannot recover that missing receipt.
+The harness now captures it after process cleanup and before raw export or state
+removal. A focused regression verifies that a late failure receipt reaches both
+the raw export and retained runtime identity before deletion.

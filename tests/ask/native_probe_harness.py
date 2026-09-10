@@ -3182,7 +3182,7 @@ def _finalize_contained_probe(
     process_sets: dict[str, object],
     failure: Mapping[str, str] | None,
     start_identities: dict[str, str] | None = None,
-    runtime_identity: Mapping[str, object] | None = None,
+    runtime_identity: dict[str, object] | None = None,
 ) -> list[dict[str, str]]:
     identities = start_identities if start_identities is not None else {}
     errors: list[dict[str, str]] = []
@@ -3472,6 +3472,23 @@ def _finalize_contained_probe(
             )
     else:
         process_sets["after_cleanup"] = {"unavailable": "schema-not-created"}
+
+    # A worker can flush its final preparation receipt while being stopped.
+    # Capture it after process cleanup, before exporting or removing owned state.
+    private_index_path = runtime_root / "control" / "private-parent-index.json"
+    if private_index_path.is_file():
+        if runtime_identity is None:
+            runtime_identity = {}
+        try:
+            runtime_identity["private_parent_index"] = _json_mapping(
+                json.loads(private_index_path.read_bytes()),
+                name="private parent index evidence",
+            )
+        except Exception as error:
+            runtime_identity["private_parent_index_capture_error"] = {
+                "error_type": type(error).__name__,
+                "message": str(error),
+            }
 
     try:
         raw_export = _export_raw(
@@ -3846,18 +3863,6 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
         failure = {"error_type": type(error).__name__, "message": str(error)}
         _atomic_json(output_dir / "failure.json", failure)
     finally:
-        private_index_path = control_dir / "private-parent-index.json"
-        if private_index_path.is_file():
-            try:
-                runtime_identity["private_parent_index"] = _json_mapping(
-                    json.loads(private_index_path.read_bytes()),
-                    name="private parent index evidence",
-                )
-            except Exception as error:
-                runtime_identity["private_parent_index_capture_error"] = {
-                    "error_type": type(error).__name__,
-                    "message": str(error),
-                }
         cleanup_errors = _finalize_contained_probe(
             base_database_url=base_database_url,
             scoped_database_url=scoped_database_url,
