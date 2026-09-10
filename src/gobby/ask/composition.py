@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
-from gobby.ask.agents import ManagedAskAgents
+from gobby.ask.agents import AskRuntimeValidationLoader, ManagedAskAgents
 from gobby.ask.evidence_runtime import AskSnapshotManager as AskSnapshotManagerProtocol
 from gobby.ask.permissions import AskPermissionStore
-from gobby.ask.runtime_validation import AskRuntimeValidationArtifact
+from gobby.ask.runtime_validation import (
+    AskRuntimeValidationArtifact,
+    load_ask_runtime_validation,
+)
 from gobby.ask.service import AskService
 from gobby.ask.snapshots import AskSnapshotManager
 from gobby.ask.stages import AskStageStore
@@ -23,6 +26,7 @@ def build_ask_service(
     project_id: str,
     *,
     runtime_validation_artifacts: Mapping[str, AskRuntimeValidationArtifact],
+    runtime_validation_loader: AskRuntimeValidationLoader = load_ask_runtime_validation,
 ) -> AskService | None:
     """Build Ask from the container's existing per-project infrastructure."""
     executor = services.get_pipeline_executor(project_id)
@@ -63,6 +67,7 @@ def build_ask_service(
         runtime_validation_artifacts=runtime_validation_artifacts,
         cancel_agent=cancel_agent,
         daemon_config=daemon_config,
+        runtime_validation_loader=runtime_validation_loader,
     )
     return AskService(
         storage=storage,
