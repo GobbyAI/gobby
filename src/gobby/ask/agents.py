@@ -123,6 +123,15 @@ class AskAgentRuntime(Protocol):
     async def cancel(self, agent_run_id: str) -> None: ...
 
 
+class AskRuntimeValidationLoader(Protocol):
+    def __call__(
+        self,
+        artifact: AskRuntimeValidationArtifact,
+        *,
+        provider_executable: Path,
+    ) -> AskRuntimeValidation: ...
+
+
 class ManagedAskAgents:
     """Use the ordinary managed spawn path with an immutable Ask profile."""
 
@@ -136,6 +145,7 @@ class ManagedAskAgents:
         runtime_validation_artifacts: Mapping[str, AskRuntimeValidationArtifact],
         cancel_agent: Callable[[str], Awaitable[None]],
         daemon_config: object | None = None,
+        runtime_validation_loader: AskRuntimeValidationLoader = load_ask_runtime_validation,
     ) -> None:
         self.runner = runner
         self.db = db
@@ -144,6 +154,7 @@ class ManagedAskAgents:
         self.runtime_validation_artifacts = dict(runtime_validation_artifacts)
         self.cancel_agent = cancel_agent
         self.daemon_config = daemon_config
+        self.runtime_validation_loader = runtime_validation_loader
 
     def preflight(self, profiles: Mapping[AskAgentStage, ProfileSnapshot]) -> None:
         """Validate every selected provider binary before snapshot or agent work."""
@@ -160,10 +171,18 @@ class ManagedAskAgents:
         spec.scratch_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         effective, provider, validation = self._load_validation(spec.profile, spec.stage)
         body = AgentDefinitionBody.model_validate(effective)
+        if spec.profile.content_hash is None:
+            raise UnsupportedAskRuntime("Ask agent profile snapshot has no immutable digest")
+        if body.model is None:
+            raise UnsupportedAskRuntime("Ask agent profile has no explicit model")
         profile = compile_ask_runtime_profile(
             provider=provider,
             source_root=spec.source_root,
             scratch_root=spec.scratch_root,
+            agent_profile_digest=spec.profile.content_hash,
+            model=body.model,
+            reasoning_effort=body.reasoning_effort,
+            endpoint_api_base=body.api_base,
             validation=validation,
         )
         prompt = self._prompt(spec)
@@ -225,7 +244,7 @@ class ManagedAskAgents:
         if provider_executable is None:
             raise UnsupportedAskRuntime(f"Ask provider executable is unavailable: {provider}")
         try:
-            validation = load_ask_runtime_validation(
+            validation = self.runtime_validation_loader(
                 artifact,
                 provider_executable=Path(provider_executable),
             )
@@ -272,6 +291,12 @@ class ManagedAskAgents:
     def _validate_definition(body: AgentDefinitionBody, stage: AskAgentStage) -> None:
         if body.provider != "claude":
             raise UnsupportedAskRuntime("Ask agent definition selects an unsupported provider")
+        if body.model is None or body.model == "inherit" or body.model.startswith("endpoint:"):
+            raise UnsupportedAskRuntime("Ask agent definition requires an explicit native model")
+        if body.api_base is not None or body.api_token is not None:
+            raise UnsupportedAskRuntime(
+                "Ask agent definition cannot override its validated endpoint"
+            )
         if not _NATIVE_BLOCKED_TOOLS <= set(body.blocked_tools):
             raise UnsupportedAskRuntime("Ask agent definition does not block every native action")
         workflow = body.step_workflow

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,7 @@ from gobby.ask.runtime_validation import (
     ask_runtime_control_digest,
     build_ask_runtime_probe_artifact,
     load_ask_runtime_validation,
+    normalized_ask_srt_policy_digest,
     write_ask_runtime_probe_artifact,
 )
 
@@ -32,6 +35,33 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
     observations: list[dict[str, Any]] = []
     for phase in ("fresh", "resumed"):
         agent_run_id = f"{phase}-agent-run"
+        source_root = f"/probe/{phase}/source"
+        scratch_root = f"/probe/{phase}/scratch"
+        policy_path = f"/probe/{phase}/runtime/assets/settings.json"
+        policy = {
+            "network": {
+                "allowedDomains": [],
+                "deniedDomains": [],
+                "strictAllowlist": True,
+                "allowUnixSockets": [f"/probe/{phase}/runtime/tmp"],
+                "allowAllUnixSockets": False,
+                "allowLocalBinding": True,
+            },
+            "filesystem": {
+                "denyRead": [source_root],
+                "allowRead": [f"/probe/{phase}/runtime/assets"],
+                "allowWrite": [f"/probe/{phase}/runtime/logs"],
+                "denyWrite": [source_root, scratch_root],
+                "allowGitConfig": False,
+            },
+            "allowPty": True,
+            "enableWeakerNestedSandbox": False,
+            "enableWeakerNetworkIsolation": True,
+            "allowAppleEvents": False,
+        }
+        policy_hash = hashlib.sha256(
+            json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         for case, expected in ASK_NATIVE_PROBE_EXPECTATIONS.items():
             record: dict[str, Any] = {
                 "phase": phase,
@@ -46,7 +76,13 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
                 "provider_version": "2.1.265",
                 "auth_mode": "claude.ai",
                 "control_digest": control_digest,
-                "policy_hash": ("b" if phase == "fresh" else "c") * 64,
+                "policy_hash": policy_hash,
+                "policy": json.loads(json.dumps(policy)),
+                "policy_path": policy_path,
+                "source_root": source_root,
+                "scratch_root": scratch_root,
+                "srt_runtime_version": "0.0.66",
+                "srt_policy_schema_version": 1,
             }
             if phase == "resumed":
                 record["resumed_from_agent_run_id"] = "fresh-agent-run"
@@ -106,6 +142,32 @@ def test_probe_artifact_binds_live_provider_version_and_control_digest(tmp_path:
         load_ask_runtime_validation(reference, provider_executable=executable)
 
 
+def test_runtime_loader_rejects_replaced_provider_before_executing_it(tmp_path: Path) -> None:
+    executable = _provider(tmp_path / "claude", "2.1.265")
+    artifact = build_ask_runtime_probe_artifact(
+        provider="claude",
+        provider_executable=executable,
+        auth_mode="claude.ai",
+        control_digest=ask_runtime_control_digest("claude", "claude.ai"),
+        observations=_observations(executable),
+    )
+    artifact_path = tmp_path / "probe.json"
+    reference = AskRuntimeValidationArtifact(
+        path=artifact_path,
+        sha256=write_ask_runtime_probe_artifact(artifact_path, artifact),
+    )
+    sentinel = tmp_path / "replacement-executed"
+    executable.write_text(
+        f"#!/bin/sh\ntouch '{sentinel}'\necho 'Claude Code 2.1.265'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="provider executable changed"):
+        load_ask_runtime_validation(reference, provider_executable=executable)
+
+    assert not sentinel.exists()
+
+
 def test_probe_artifact_requires_every_fresh_and_resumed_boundary(tmp_path: Path) -> None:
     executable = _provider(tmp_path / "claude", "2.1.265")
     observations = _observations(executable)
@@ -135,6 +197,95 @@ def test_probe_artifact_rejects_self_attested_receipt_strings(tmp_path: Path) ->
         )
 
 
+def test_probe_artifact_rejects_policy_widening_between_fresh_and_resume(
+    tmp_path: Path,
+) -> None:
+    executable = _provider(tmp_path / "claude", "2.1.265")
+    observations = _observations(executable)
+    for observation in observations:
+        if observation["phase"] != "resumed":
+            continue
+        receipt = observation["receipt"]
+        record = receipt["record"]
+        record["policy"]["network"]["allowedDomains"] = ["example.com"]
+        record["policy_hash"] = hashlib.sha256(
+            json.dumps(record["policy"], sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+        receipt["sha256"] = hashlib.sha256(encoded).hexdigest()
+
+    with pytest.raises(ValueError, match="policy"):
+        build_ask_runtime_probe_artifact(
+            provider="claude",
+            provider_executable=executable,
+            auth_mode="claude.ai",
+            control_digest=ask_runtime_control_digest("claude", "claude.ai"),
+            observations=observations,
+        )
+
+
+def test_probe_artifact_normalizes_only_registered_macos_run_temp_roots(
+    tmp_path: Path,
+) -> None:
+    executable = _provider(tmp_path / "claude", "2.1.265")
+    observations = _observations(executable)
+    short_roots = {
+        phase: Path(tempfile.mkdtemp(prefix="gobby-")).resolve() for phase in ("fresh", "resumed")
+    }
+    try:
+        for phase, short_root in short_roots.items():
+            run_root = tmp_path / phase / "runtime"
+            (run_root / "assets").mkdir(parents=True)
+            (run_root / "tmp-path").write_text(str(short_root), encoding="utf-8")
+            for observation in observations:
+                if observation["phase"] != phase:
+                    continue
+                receipt = observation["receipt"]
+                record = receipt["record"]
+                record["policy_path"] = str(run_root / "assets" / "settings.json")
+                record["run_tmp_root"] = str(short_root)
+                record["policy"] = {
+                    **record["policy"],
+                    "network": {
+                        **record["policy"]["network"],
+                        "allowUnixSockets": [str(short_root)],
+                    },
+                    "filesystem": {
+                        **record["policy"]["filesystem"],
+                        "allowRead": [str(run_root / "assets")],
+                        "allowWrite": [str(run_root / "logs"), str(short_root)],
+                    },
+                }
+                record["policy_hash"] = hashlib.sha256(
+                    json.dumps(record["policy"], sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+                receipt["sha256"] = hashlib.sha256(encoded).hexdigest()
+
+        artifact = build_ask_runtime_probe_artifact(
+            provider="claude",
+            provider_executable=executable,
+            auth_mode="claude.ai",
+            control_digest=ask_runtime_control_digest("claude", "claude.ai"),
+            observations=observations,
+        )
+        fresh_record = observations[0]["receipt"]["record"]
+        with pytest.raises(ValueError, match="registration"):
+            normalized_ask_srt_policy_digest(
+                fresh_record["policy"],
+                source_root=fresh_record["source_root"],
+                scratch_root=fresh_record["scratch_root"],
+                policy_path=fresh_record["policy_path"],
+                run_tmp_root=str(short_roots["resumed"]),
+                require_registered_run_tmp=True,
+            )
+    finally:
+        for short_root in short_roots.values():
+            shutil.rmtree(short_root)
+
+    assert artifact["srt_policy_digest"]
+
+
 def test_runtime_manifest_loads_only_pinned_contained_artifacts(tmp_path: Path) -> None:
     from gobby.ask.runtime_validation import load_ask_runtime_validation_artifacts
 
@@ -148,7 +299,7 @@ def test_runtime_manifest_loads_only_pinned_contained_artifacts(tmp_path: Path) 
     manifest.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "profiles": {
                     "ask-investigator": {
                         "path": "../outside-ask-validation.json",
@@ -168,7 +319,7 @@ def test_runtime_manifest_loads_only_pinned_contained_artifacts(tmp_path: Path) 
     manifest.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "profiles": {
                     "ask-investigator": {
                         "path": artifact.name,
@@ -194,7 +345,10 @@ def test_probe_phase_cannot_mix_runtime_policy_identities(tmp_path: Path) -> Non
     observations = _observations(executable)
     receipt = observations[0]["receipt"]
     record = receipt["record"]
-    record["policy_hash"] = "d" * 64
+    record["policy"]["network"]["allowedDomains"] = ["example.com"]
+    record["policy_hash"] = hashlib.sha256(
+        json.dumps(record["policy"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
     receipt["sha256"] = hashlib.sha256(encoded).hexdigest()
 

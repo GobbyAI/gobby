@@ -40,6 +40,8 @@ from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.sandbox_resolvers import SandboxResolver, preflight_provider_native_settings
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 
+SRT_POLICY_SCHEMA_VERSION = 1
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +68,7 @@ class SandboxLaunch:
     provider_env: dict[str, str] = field(default_factory=dict)
     provider_executable: str | None = None
     runtime_version: str | None = None
+    policy_schema_version: int | None = None
     policy_hash: str | None = None
     policy_path: str | None = None
     violation_path: str | None = None
@@ -111,6 +114,7 @@ class SandboxLaunch:
             "backend": self.backend,
             "enforced": self.enforced,
             "runtime_version": self.runtime_version,
+            "policy_schema_version": self.policy_schema_version,
             "policy_hash": self.policy_hash,
             "policy_path": self.policy_path,
             "violation_path": self.violation_path,
@@ -604,6 +608,7 @@ async def prepare_sandbox_launch(
         backend="srt",
         enforced=True,
         runtime_version=SRT_RELEASE.version,
+        policy_schema_version=SRT_POLICY_SCHEMA_VERSION,
         policy_hash=policy_hash,
         policy_path=str(policy_path),
         violation_path=str(violation_path),

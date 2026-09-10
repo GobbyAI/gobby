@@ -304,7 +304,11 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             backend=plan.launch.backend,
             enforced=plan.launch.enforced,
             provider_executable=plan.launch.provider_executable,
+            runtime_version=plan.launch.runtime_version,
+            policy_schema_version=plan.launch.policy_schema_version,
             policy_hash=plan.launch.policy_hash,
+            policy_path=plan.launch.policy_path,
+            environment={**plan.env, **plan.launch.provider_env},
         )
     await asyncio.to_thread(_persist_spawn_workspace, request, plan.child_session_id)
     command = wrap_provider_command(plan.launch, plan.command)

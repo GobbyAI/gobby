@@ -152,6 +152,23 @@ async def resume_agent_run(
         return ResumeAgentResult(False, error="droid CLI not found in PATH")
 
     model_selector = _metadata_str(resume_metadata, "model")
+    if managed_runtime_profile is not None:
+        try:
+            managed_runtime_profile.validate_selection(
+                provider=provider,
+                model=model_selector,
+                reasoning_effort=_metadata_str(
+                    resume_metadata,
+                    "requested_reasoning_effort",
+                ),
+                api_base=_resume_api_base(
+                    provider,
+                    merge_resume_metadata_env(resume_metadata.get("env")),
+                ),
+            )
+        except (ValueError, UnsupportedAskRuntime) as exc:
+            return ResumeAgentResult(False, error=f"ask_resume_runtime_drift:{exc}")
+        model_selector = managed_runtime_profile.model
     resume_model = model_selector
     endpoint_config_overrides: tuple[str, ...] = ()
     endpoint_env: dict[str, str] = {}
@@ -383,7 +400,11 @@ async def resume_agent_run(
                 backend=launch.backend,
                 enforced=launch.enforced,
                 provider_executable=launch.provider_executable,
+                runtime_version=launch.runtime_version,
+                policy_schema_version=launch.policy_schema_version,
                 policy_hash=launch.policy_hash,
+                policy_path=launch.policy_path,
+                environment={**env, **launch.provider_env},
             )
         except (OSError, ValueError, UnsupportedAskRuntime) as exc:
             await _rollback_prepared_resume(

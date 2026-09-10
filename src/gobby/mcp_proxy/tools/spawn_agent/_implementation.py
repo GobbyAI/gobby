@@ -260,6 +260,17 @@ async def spawn_agent_impl(
             else:
                 effective_api_token = token
 
+    if managed_runtime_profile is not None:
+        try:
+            managed_runtime_profile.validate_selection(
+                provider=effective_provider,
+                model=effective_model,
+                reasoning_effort=requested_reasoning_effort,
+                api_base=effective_api_base,
+            )
+        except (RuntimeError, ValueError) as selection_error:
+            return {"success": False, "error": str(selection_error)}
+
     requested_model_selector = effective_model
     from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
         resolve_spawn_generation_endpoint,

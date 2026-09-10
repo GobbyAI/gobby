@@ -19,15 +19,9 @@ from typing import Any, Protocol, cast
 
 import psycopg
 
-from gobby.agents.sandbox import SandboxConfig
-from gobby.ask.runtime_validation import (
-    ASK_RUNTIME_CONTROLS,
-    AskRuntimeValidation,
-    ask_provider_args,
-    ask_runtime_control_digest,
-    ask_sandbox_config,
-)
-from gobby.install.version_probe import probe_native_bin_version
+from gobby.ask.errors import AskPermissionDenied, UnsupportedAskRuntime
+from gobby.ask.runtime_profile import AskRuntimeProfile, compile_ask_runtime_profile
+from gobby.ask.runtime_validation import AskRuntimeValidation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.session_context import get_current_agent_run_id
 from gobby.workflows.pipeline_state import StepStatus
@@ -35,14 +29,6 @@ from gobby.workflows.pipeline_state import StepStatus
 ASK_PIPELINE_NAME = "native-ask"
 _AUTHORITY_KIND = "ask-agent-authority"
 _AUTHORITY_VERSION = 1
-
-
-class AskPermissionDenied(PermissionError):
-    """An authenticated Ask agent exceeded its immutable stage authority."""
-
-
-class UnsupportedAskRuntime(RuntimeError):
-    """A native provider cannot enforce Ask's MCP-only action surface."""
 
 
 class AskAgentStage(StrEnum):
@@ -93,6 +79,12 @@ def _required_string(value: object, *, name: str) -> str:
     return value
 
 
+def _required_int(value: object, *, name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise AskPermissionDenied(f"{name} is missing or invalid")
+    return value
+
+
 def _deadline(value: object) -> datetime:
     raw = _required_string(value, name="Ask deadline")
     try:
@@ -111,187 +103,6 @@ def _resolved_root(path: Path, *, name: str) -> Path:
     if not resolved.is_dir():
         raise UnsupportedAskRuntime(f"{name} must be an existing directory")
     return resolved
-
-
-@dataclass(frozen=True, slots=True)
-class AskRuntimeProfile:
-    """Effective native restrictions compiled independently of mutable agent metadata."""
-
-    provider: str
-    provider_args: tuple[str, ...]
-    builtin_tools: tuple[str, ...]
-    auto_approve: bool
-    sandbox_config: SandboxConfig
-    source_root: str
-    scratch_root: str
-    auth_mode: str
-    provider_executable: str
-    provider_executable_sha256: str
-    provider_version: str
-    runtime_control_digest: str
-    runtime_validation_digest: str
-    profile_hash: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "provider": self.provider,
-            "provider_args": list(self.provider_args),
-            "builtin_tools": list(self.builtin_tools),
-            "auto_approve": self.auto_approve,
-            "sandbox_config": self.sandbox_config.model_dump(mode="json"),
-            "source_root": self.source_root,
-            "scratch_root": self.scratch_root,
-            "auth_mode": self.auth_mode,
-            "provider_executable": self.provider_executable,
-            "provider_executable_sha256": self.provider_executable_sha256,
-            "provider_version": self.provider_version,
-            "runtime_control_digest": self.runtime_control_digest,
-            "runtime_validation_digest": self.runtime_validation_digest,
-            "profile_hash": self.profile_hash,
-        }
-
-    def validate_launch(
-        self,
-        *,
-        backend: str,
-        enforced: bool,
-        provider_executable: str | None,
-        policy_hash: str | None,
-    ) -> None:
-        """Bind an actual SRT launch to the provider artifact pinned by this profile."""
-        if backend != "srt" or not enforced or not policy_hash:
-            raise UnsupportedAskRuntime("Ask launch did not enforce its pinned SRT policy")
-        if provider_executable is None or (
-            Path(provider_executable).resolve() != Path(self.provider_executable).resolve()
-        ):
-            raise UnsupportedAskRuntime("Ask provider executable path changed after validation")
-        executable = Path(provider_executable)
-        if hashlib.sha256(executable.read_bytes()).hexdigest() != self.provider_executable_sha256:
-            raise UnsupportedAskRuntime("Ask provider executable changed after validation")
-        if probe_native_bin_version(executable) != self.provider_version:
-            raise UnsupportedAskRuntime("Ask provider version changed after validation")
-        expected_control = ask_runtime_control_digest(self.provider, self.auth_mode)
-        if self.runtime_control_digest != expected_control:
-            raise UnsupportedAskRuntime("Ask runtime controls changed after validation")
-
-    @classmethod
-    def from_dict(cls, raw: object) -> AskRuntimeProfile:
-        value = _json_object(raw, name="Ask runtime profile")
-        provider_args = value.get("provider_args")
-        builtin_tools = value.get("builtin_tools")
-        if not isinstance(provider_args, Sequence) or isinstance(provider_args, str | bytes):
-            raise AskPermissionDenied("invalid persisted Ask provider arguments")
-        if not isinstance(builtin_tools, Sequence) or isinstance(builtin_tools, str | bytes):
-            raise AskPermissionDenied("invalid persisted Ask builtin tools")
-        profile = cls(
-            provider=_required_string(value.get("provider"), name="Ask provider"),
-            provider_args=tuple(str(item) for item in provider_args),
-            builtin_tools=tuple(str(item) for item in builtin_tools),
-            auto_approve=value.get("auto_approve") is True,
-            sandbox_config=SandboxConfig.model_validate(value.get("sandbox_config")),
-            source_root=_required_string(value.get("source_root"), name="Ask source root"),
-            scratch_root=_required_string(value.get("scratch_root"), name="Ask scratch root"),
-            auth_mode=_required_string(value.get("auth_mode"), name="Ask runtime auth mode"),
-            provider_executable=_required_string(
-                value.get("provider_executable"), name="Ask provider executable"
-            ),
-            provider_executable_sha256=_required_string(
-                value.get("provider_executable_sha256"),
-                name="Ask provider executable hash",
-            ),
-            provider_version=_required_string(
-                value.get("provider_version"), name="Ask provider version"
-            ),
-            runtime_control_digest=_required_string(
-                value.get("runtime_control_digest"), name="Ask runtime control digest"
-            ),
-            runtime_validation_digest=_required_string(
-                value.get("runtime_validation_digest"),
-                name="Ask runtime validation digest",
-            ),
-            profile_hash=_required_string(value.get("profile_hash"), name="Ask profile hash"),
-        )
-        expected_hash = _runtime_profile_hash(profile.to_dict())
-        if profile.profile_hash != expected_hash:
-            raise AskPermissionDenied("Ask runtime profile hash mismatch")
-        return profile
-
-
-def _runtime_profile_hash(value: Mapping[str, Any]) -> str:
-    payload = dict(value)
-    payload.pop("profile_hash", None)
-    return _fingerprint(payload)
-
-
-def compile_ask_runtime_profile(
-    *,
-    provider: str,
-    source_root: Path,
-    scratch_root: Path,
-    validation: AskRuntimeValidation | None = None,
-) -> AskRuntimeProfile:
-    """Compile a provider profile with an exact MCP-only native action surface."""
-    source = _resolved_root(source_root, name="Ask source root")
-    scratch = _resolved_root(scratch_root, name="Ask scratch root")
-    if source == scratch or source in scratch.parents or scratch in source.parents:
-        raise UnsupportedAskRuntime("Ask source and scratch roots must be disjoint")
-    if validation is None:
-        raise UnsupportedAskRuntime("Ask runtime requires trusted fresh and resume validation")
-    if not validation.verified_artifact:
-        raise UnsupportedAskRuntime("Ask runtime validation must come from a pinned artifact")
-    if validation.provider != provider:
-        raise UnsupportedAskRuntime("Ask runtime validation provider mismatch")
-    if not validation.fresh_probe_passed or not validation.resume_probe_passed:
-        raise UnsupportedAskRuntime("Ask runtime validation did not pass fresh and resume probes")
-    if validation.controls != ASK_RUNTIME_CONTROLS:
-        raise UnsupportedAskRuntime("Ask runtime validation controls are incomplete or widened")
-    if provider != "claude":
-        if provider == "codex":
-            raise UnsupportedAskRuntime(
-                "Codex cannot yet prove that native writes are disabled; refusing Ask runtime"
-            )
-        raise UnsupportedAskRuntime(
-            f"Provider {provider!r} has no proven MCP-only native Ask profile"
-        )
-    try:
-        provider_args = ask_provider_args(provider, validation.auth_mode)
-        sandbox = ask_sandbox_config(str(source), str(scratch))
-        expected_control_digest = ask_runtime_control_digest(provider, validation.auth_mode)
-    except ValueError as error:
-        raise UnsupportedAskRuntime(str(error)) from error
-    if validation.control_digest != expected_control_digest:
-        raise UnsupportedAskRuntime("Ask runtime validation control digest mismatch")
-    unhashed = {
-        "provider": provider,
-        "provider_args": list(provider_args),
-        "builtin_tools": ["EndConversation"],
-        "auto_approve": False,
-        "sandbox_config": sandbox.model_dump(mode="json"),
-        "source_root": str(source),
-        "scratch_root": str(scratch),
-        "auth_mode": validation.auth_mode,
-        "provider_executable": validation.provider_executable,
-        "provider_executable_sha256": validation.provider_executable_sha256,
-        "provider_version": validation.provider_version,
-        "runtime_control_digest": validation.control_digest,
-        "runtime_validation_digest": validation.validation_digest,
-    }
-    return AskRuntimeProfile(
-        provider=provider,
-        provider_args=provider_args,
-        builtin_tools=("EndConversation",),
-        auto_approve=False,
-        sandbox_config=sandbox,
-        source_root=str(source),
-        scratch_root=str(scratch),
-        auth_mode=validation.auth_mode,
-        provider_executable=validation.provider_executable,
-        provider_executable_sha256=validation.provider_executable_sha256,
-        provider_version=validation.provider_version,
-        runtime_control_digest=validation.control_digest,
-        runtime_validation_digest=validation.validation_digest,
-        profile_hash=_runtime_profile_hash(unhashed),
-    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -54,13 +55,29 @@ class ManagedRuntimeProfile(Protocol):
     @property
     def scratch_root(self) -> str: ...
 
+    @property
+    def model(self) -> str: ...
+
+    def validate_selection(
+        self,
+        *,
+        provider: str,
+        model: str | None,
+        reasoning_effort: str | None,
+        api_base: str | None,
+    ) -> None: ...
+
     def validate_launch(
         self,
         *,
         backend: str,
         enforced: bool,
         provider_executable: str | None,
+        runtime_version: str | None,
+        policy_schema_version: int | None,
         policy_hash: str | None,
+        policy_path: str | None,
+        environment: Mapping[str, str],
     ) -> None: ...
 
 
