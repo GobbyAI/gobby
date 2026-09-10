@@ -418,8 +418,6 @@ class TestSpawnAgentImplErrorBranches:
                 existing_worktree=worktree,
                 git_manager=git_manager,
                 worktree_storage=worktree_storage,
-                clone_manager=None,
-                clone_storage=None,
                 spawn_config=spawn_config,
                 main_repo_path=str(tmp_path / "repo"),
             )
@@ -625,7 +623,7 @@ test"""
         )
 
     @pytest.mark.asyncio
-    async def test_reused_worktree_rebase_conflict_uses_fresh_retry_worktree(
+    async def test_reused_worktree_rebase_conflict_preserves_original_and_stops_spawn(
         self, tmp_path
     ) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
@@ -638,25 +636,18 @@ test"""
         runner.run_storage.has_active_run_for_task.return_value = False
         old_path = tmp_path / "old-worktree"
         old_path.mkdir()
-        fresh_path = tmp_path / "fresh-worktree"
-        fresh_path.mkdir()
-        worktree = MagicMock(id="wt-old", worktree_path=str(old_path), branch_name="branch")
+        checkpoint = old_path / "checkpoint.txt"
+        checkpoint.write_text("preserved checkpoint", encoding="utf-8")
+        worktree = MagicMock(
+            id="wt-old",
+            worktree_path=str(old_path),
+            branch_name="branch",
+            base_branch="feature-base",
+        )
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
-        fallback_handler = MagicMock()
-        fallback_handler.prepare_environment = AsyncMock(
-            return_value=IsolationContext(
-                cwd=str(fresh_path),
-                branch_name="branch-retry",
-                worktree_id="wt-fresh",
-                isolation_type="worktree",
-                extra={"main_repo_path": str(tmp_path / "repo")},
-            )
-        )
-        fallback_handler.cleanup_environment = AsyncMock()
-        fallback_handler.build_context_prompt.return_value = "fresh prompt"
         conflict = ReusedWorktreeRebaseConflict(
             "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted",
             worktree_path=str(old_path),
@@ -678,27 +669,19 @@ test"""
             ) as sync,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.get_isolation_handler",
-                return_value=fallback_handler,
-            ),
+            ) as isolation_handler,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
-                return_value=None,
-            ),
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn"
+            ) as prepare_spawn,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new_callable=AsyncMock,
             ) as mock_execute,
         ):
-            mock_execute.return_value = MagicMock(
-                success=True,
-                child_session_id="c-1",
-                status="ok",
-                pid=1,
-                terminal_type=None,
-                terminal_id=None,
-                message="ok",
-                process=None,
-            )
-
             result = await spawn_agent_impl(
                 terminal_backend="tmux",
                 prompt="test",
@@ -708,23 +691,31 @@ test"""
                 worktree_id="wt-old",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
+                cleanup_isolation_on_failure=True,
             )
-            await _drain_spawn_background_tasks()
 
-        assert result["success"] is True
-        assert result["status"] == "starting"
+        assert result["success"] is False
+        assert result["error_code"] == "reused_worktree_rebase_conflict"
+        assert result["worktree_id"] == "wt-old"
+        assert result["worktree_path"] == str(old_path)
+        assert result["branch_name"] == "branch"
+        assert result["base_branch"] == "feature-base"
+        assert result["rebase_target"] == "main"
+        assert result["base_commit_sha"] == "base-sha"
+        assert result["preserved"] is True
+        assert "original worktree was preserved" in result["error"]
+        assert "retry spawn_agent with worktree_id='wt-old'" in result["recovery"]
         sync.assert_awaited_once_with(
             git_manager=git_manager,
             worktree_path=str(old_path),
             base_branch="main",
         )
-        fallback_handler.prepare_environment.assert_awaited_once()
-        retry_config = fallback_handler.prepare_environment.await_args.args[0]
-        assert retry_config.branch_name.startswith("branch-retry-")
-        assert fallback_handler.cleanup_environment.await_count == 0
-        spawn_request = mock_execute.call_args.args[0]
-        assert spawn_request.cwd == str(fresh_path)
-        assert spawn_request.worktree_id == "wt-fresh"
+        repair.assert_not_awaited()
+        isolation_handler.assert_not_called()
+        prepare_spawn.assert_not_called()
+        mock_execute.assert_not_awaited()
+        worktree_storage.delete.assert_not_called()
+        assert checkpoint.read_text(encoding="utf-8") == "preserved checkpoint"
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_defers_indexing_to_executor(self, tmp_path) -> None:
