@@ -517,6 +517,9 @@ def _seed_contained_state(
                 values={
                     "test_mode": True,
                     "tmux.socket_path": str(tmux_socket),
+                    "terminal_host.enabled": True,
+                    "terminal_host.socket_dir": str((tmux_socket.parent / "gterm-host").resolve()),
+                    "terminals.stop_host_on_shutdown": True,
                     "memory.dream.enabled": False,
                     "gobby_tasks.expansion.enabled": False,
                     "gobby_tasks.validation.enabled": False,
@@ -534,6 +537,44 @@ def _seed_contained_state(
         )
     finally:
         database.close()
+
+
+def _assert_contained_runner_config(runner: Any, *, runtime_root: Path) -> None:
+    from gobby.storage.config_repository import ConfigRepository
+
+    expected_socket_dir = str(runtime_root.resolve(strict=True) / "gterm-host")
+    stored = ConfigRepository(runner.database).read(resolve_secrets=False)
+    runtime_config = runner.config_runtime.snapshot.active
+    startup_config = runner.startup_config
+    host_manager = runner.terminal_host_manager
+    observed = {
+        "repository": (
+            stored.values.get("terminal_host.enabled"),
+            stored.overrides.get("terminal_host.socket_dir"),
+            stored.overrides.get("terminals.stop_host_on_shutdown"),
+        ),
+        "runtime": (
+            runtime_config.terminal_host.enabled,
+            runtime_config.terminal_host.socket_dir,
+            runtime_config.terminals.stop_host_on_shutdown,
+        ),
+        "startup": (
+            startup_config.terminal_host.enabled,
+            startup_config.terminal_host.socket_dir,
+            startup_config.terminals.stop_host_on_shutdown,
+        ),
+        "host_manager": (
+            host_manager.config.enabled,
+            str(host_manager.socket_dir),
+            host_manager.terminal_config.stop_host_on_shutdown,
+        ),
+    }
+    expected = (True, expected_socket_dir, True)
+    if any(values != expected for values in observed.values()):
+        raise RuntimeError(
+            "contained runner configuration is not isolated: "
+            f"expected {expected!r}, observed {observed!r}"
+        )
 
 
 def _worker_environment(
@@ -721,6 +762,16 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
         raise RuntimeError("Claude executable is unavailable for the native Ask probe")
     deadline_monotonic = time.monotonic() + arguments.timeout_seconds
     runner = await GobbyRunner.create(arguments.config_path)
+    try:
+        _assert_contained_runner_config(
+            runner,
+            runtime_root=arguments.control_dir.parent,
+        )
+    except BaseException:
+        from gobby.runner_rollback import rollback_runner_resources_async
+
+        await rollback_runner_resources_async(runner)
+        raise
     runner_task: asyncio.Task[None] | None = None
     try:
         services = runner.http_server.services
