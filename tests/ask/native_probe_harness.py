@@ -49,6 +49,9 @@ from gobby.ask.runtime_validation import (
     normalized_ask_srt_policy_digest,
     write_ask_runtime_probe_artifact,
 )
+from gobby.daemon_lease import ActiveDaemonLease
+from gobby.runner_pid_file import PidFileClaim
+from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.utils.durable_file import durable_replace_text
 
 _HOSTILE_FIXTURE_PATH = Path("tests/ask/fixtures/native_ask_probe_hostile.txt")
@@ -90,6 +93,16 @@ class BootstrapPolicyIdentity:
     runtime_version: str
     schema_version: int
     policy_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContainedRuntimeAuthority:
+    ownership: PidFileClaim
+    lease: ActiveDaemonLease
+
+    def release(self) -> None:
+        self.lease.release()
+        self.ownership.release()
 
 
 @dataclass(slots=True)
@@ -774,11 +787,99 @@ async def _wait_for_runner_startup(
         await asyncio.sleep(0.05)
 
 
+async def _acquire_contained_runtime_authority(
+    *,
+    database_url: str,
+    gobby_home: Path,
+    machine_id: str,
+) -> ContainedRuntimeAuthority:
+    from gobby.deployment import deployment_token
+    from gobby.runner_pid_file import claim_pid_file
+
+    resolved_home = gobby_home.resolve(strict=True)
+    configured_home = Path(os.environ.get("GOBBY_HOME", "")).resolve(strict=True)
+    if configured_home != resolved_home:
+        raise RuntimeError(
+            "contained runtime authority requires its exact private Gobby home: "
+            f"expected {resolved_home}, observed {configured_home}"
+        )
+    ownership = claim_pid_file(resolved_home / "gobby.pid")
+    if ownership is None:
+        raise RuntimeError("contained runtime could not claim its private daemon PID file")
+    lease = ActiveDaemonLease(
+        database_url,
+        machine_id=machine_id,
+        deployment_token=deployment_token(resolved_home),
+    )
+    try:
+        if not await asyncio.to_thread(lease.try_acquire):
+            raise RuntimeError("contained runtime could not acquire active-daemon authority")
+    except BaseException:
+        lease.release()
+        ownership.release()
+        raise
+    return ContainedRuntimeAuthority(ownership=ownership, lease=lease)
+
+
+def _bind_and_verify_contained_runtime_authority(
+    runner: Any,
+    authority: ContainedRuntimeAuthority,
+) -> DeploymentGrantContext:
+    from gobby.agents.code_index import _active_deployment_grant_context
+    from gobby.runner_init.servers import _bind_runtime_grants
+
+    runner.daemon_lease = authority.lease
+    _bind_runtime_grants(runner.http_server, runner)
+    context = _active_deployment_grant_context()
+    expected = (
+        authority.lease.deployment_token,
+        authority.lease.fencing_epoch,
+        authority.lease.grant_signing_secret,
+    )
+    observed = (context.token, context.fencing_epoch, context.signing_secret)
+    server = runner.http_server
+    if observed != expected or getattr(server, "grant_service", None) is None:
+        raise RuntimeError("contained runtime grant service did not bind its active lease")
+    if getattr(server, "handshake_service", None) is None:
+        raise RuntimeError("contained runtime handshake did not bind its signing authority")
+    return context
+
+
+async def _run_contained_runner(
+    runner: Any,
+    authority: ContainedRuntimeAuthority,
+) -> None:
+    from gobby.daemon_lease_control import monitor_active_lease
+    from gobby.servers.lease_fence import drain_effect_fence
+
+    def invalidate() -> None:
+        drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
+
+    def stop_on_loss(_loss: object) -> None:
+        invalidate()
+        runner.request_shutdown()
+
+    monitor_stop = asyncio.Event()
+    async with asyncio.TaskGroup() as tasks:
+        tasks.create_task(
+            monitor_active_lease(
+                authority.lease,
+                stop=monitor_stop,
+                on_loss=stop_on_loss,
+                on_invalidation=invalidate,
+            ),
+            name="contained-active-daemon-lease-monitor",
+        )
+        try:
+            await runner.run(ownership_resolution=authority.ownership)
+        finally:
+            monitor_stop.set()
+
+
 async def _contained_worker_async(arguments: argparse.Namespace) -> int:
     from gobby.ask.composition import build_ask_service
     from gobby.ask.contracts import AskRequest
     from gobby.runner import GobbyRunner
-    from gobby.runner_pid_file import FailOpenPidOwnership
 
     schema = _protected_database_url(
         os.environ.get("DATABASE_URL", ""),
@@ -790,8 +891,15 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
     if provider is None:
         raise RuntimeError("Claude executable is unavailable for the native Ask probe")
     deadline_monotonic = time.monotonic() + arguments.timeout_seconds
-    runner = await GobbyRunner.create(arguments.config_path)
+    authority = await _acquire_contained_runtime_authority(
+        database_url=os.environ["DATABASE_URL"],
+        gobby_home=Path(os.environ["GOBBY_HOME"]),
+        machine_id=os.environ["GOBBY_MACHINE_ID"],
+    )
+    runner: GobbyRunner | None = None
+    runner_task: asyncio.Task[None] | None = None
     try:
+        runner = await GobbyRunner.create(arguments.config_path)
         _assert_contained_runner_config(
             runner,
             runtime_root=arguments.control_dir.parent,
@@ -802,13 +910,7 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
             project_root=arguments.project_root,
             expected_machine_id=os.environ["GOBBY_MACHINE_ID"],
         )
-    except BaseException:
-        from gobby.runner_rollback import rollback_runner_resources_async
-
-        await rollback_runner_resources_async(runner)
-        raise
-    runner_task: asyncio.Task[None] | None = None
-    try:
+        _bind_and_verify_contained_runtime_authority(runner, authority)
         services = runner.http_server.services
         identity = await _bootstrap_policy_identity(
             project_root=arguments.project_root,
@@ -854,11 +956,8 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
             cached.pop("ask_service", None)
 
         runner_task = asyncio.create_task(
-            runner.run(
-                ownership_resolution=FailOpenPidOwnership(
-                    "contained native Ask probe owns its exact worker PID"
-                )
-            )
+            _run_contained_runner(runner, authority),
+            name=f"contained-native-ask-{arguments.phase}",
         )
         await _wait_for_runner_startup(
             runner,
@@ -955,13 +1054,20 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
         await runner_task
         return 0
     finally:
-        if runner_task is None:
-            from gobby.runner_rollback import rollback_runner_resources_async
+        try:
+            if runner is not None and runner_task is None:
+                from gobby.runner_rollback import rollback_runner_resources_async
 
-            await rollback_runner_resources_async(runner)
-        elif not runner_task.done():
-            runner.request_shutdown(drain_terminals=True)
-            await runner_task
+                await rollback_runner_resources_async(runner)
+            elif runner is not None and runner_task is not None and not runner_task.done():
+                runner.request_shutdown(drain_terminals=True)
+                await runner_task
+        finally:
+            if runner is not None:
+                from gobby.servers.lease_fence import drain_effect_fence
+
+                drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
+            authority.release()
 
 
 def _contained_worker(arguments: argparse.Namespace) -> int:
