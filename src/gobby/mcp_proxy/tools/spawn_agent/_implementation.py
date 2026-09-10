@@ -474,7 +474,7 @@ async def spawn_agent_impl(
                 "base_commit_sha": exc.base_commit_sha,
                 "preserved": True,
                 "recovery": (
-                    "The automatic rebase was aborted. Resolve the branch against "
+                    "Check the preserved worktree's rebase state and resolve the branch against "
                     f"'{exc.base_ref}' in the preserved worktree, then retry spawn_agent "
                     f"with worktree_id='{existing_worktree.id}'."
                 ),
