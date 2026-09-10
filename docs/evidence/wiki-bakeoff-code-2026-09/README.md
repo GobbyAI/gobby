@@ -1,7 +1,7 @@
 # Code-wiki bakeoff evidence index
 
-Date: 2026-09-10  
-Epic: Gobby #21926  
+Date: 2026-09-10
+Epic: Gobby #21926
 Evidence root: `/Users/josh/Projects/wiki-bakeoff-code-2026-09`
 
 This index is the reproducible handoff for the completed native code-wiki bakeoff. It links the
