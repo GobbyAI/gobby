@@ -169,7 +169,7 @@ class MCPServerConfig:
     args: list[str] | None = None
     env: dict[str, str] | None = None
 
-    # OAuth/Auth (for HTTP/WebSocket)
+    # OAuth authorization for HTTP/SSE
     requires_oauth: bool = False
     oauth_provider: str | None = None  # e.g., "google", "github"
 
@@ -190,6 +190,8 @@ class MCPServerConfig:
 
     def validate(self) -> None:
         """Validate configuration based on transport type."""
+        if self.requires_oauth and self.transport not in ("http", "sse"):
+            raise ValueError("OAuth requires an HTTP or SSE transport")
         if not str(self.id).strip():
             raise ValueError("id must be a non-empty string")
         if self.transport not in SUPPORTED_TRANSPORTS:

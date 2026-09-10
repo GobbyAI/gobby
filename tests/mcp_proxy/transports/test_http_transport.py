@@ -60,7 +60,8 @@ class _ClientHarness:
         self.transport_calls.append((url, http_client))
         return recording_transport(self.lifecycle, enter_error=self.transport_enter_error)
 
-    def fake_client(self, transport: Any) -> FakeClient:
+    def fake_client(self, transport: Any, *, mode: str = "auto") -> FakeClient:
+        assert mode == "auto"
         client = FakeClient(transport, lifecycle=self.lifecycle, **self.client_kwargs)
         self.clients.append(client)
         return client

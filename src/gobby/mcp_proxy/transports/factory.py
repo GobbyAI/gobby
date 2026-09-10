@@ -1,5 +1,7 @@
 """Transport connection factory."""
 
+from typing import TYPE_CHECKING
+
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.transport_types import SUPPORTED_TRANSPORTS
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
@@ -7,6 +9,9 @@ from gobby.mcp_proxy.transports.http import HTTPTransportConnection
 from gobby.mcp_proxy.transports.sse import SSETransportConnection
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection
+
+if TYPE_CHECKING:
+    from gobby.storage.secrets import SecretStore
 
 TRANSPORT_CONNECTION_TYPES: dict[str, type[BaseTransportConnection]] = dict(
     zip(
@@ -25,6 +30,7 @@ TRANSPORT_CONNECTION_TYPES: dict[str, type[BaseTransportConnection]] = dict(
 def create_transport_connection(
     config: MCPServerConfig,
     stdio_errlog_path: str | None = None,
+    secret_store: "SecretStore | None" = None,
 ) -> BaseTransportConnection:
     """
     Factory function to create appropriate transport connection.
@@ -51,4 +57,6 @@ def create_transport_connection(
             stdio_errlog_path=stdio_errlog_path,
         )
 
+    if issubclass(transport_class, HTTPTransportConnection):
+        return transport_class(config, secret_store=secret_store)
     return transport_class(config)

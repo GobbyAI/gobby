@@ -22,4 +22,5 @@ class SSETransportConnection(HTTPTransportConnection):
             self.config.url,
             headers=self.config.headers,
             timeout=self.config.connect_timeout,
+            auth=self._oauth_auth(),
         )

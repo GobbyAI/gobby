@@ -204,6 +204,13 @@ class MCPClientManager:
 
     async def _connect_server(self, config: MCPServerConfig) -> ClientSession | None:
         def create_connection(resolved_config: MCPServerConfig) -> BaseTransportConnection:
+            if resolved_config.requires_oauth:
+                from gobby.storage.secrets import SecretStore
+
+                db = getattr(self.mcp_db_manager, "db", None)
+                if db is None:
+                    raise ValueError("MCP OAuth requires a database-backed secret store")
+                return create_transport_connection(resolved_config, secret_store=SecretStore(db))
             return create_transport_connection(
                 resolved_config,
                 stdio_errlog_path=self.stdio_errlog_path,

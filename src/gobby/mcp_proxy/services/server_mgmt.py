@@ -84,6 +84,9 @@ class ServerManagementService:
         values: Mapping[str, str] | None = None,
         scope: str = "project",
         description: str | None = None,
+        requires_oauth: bool = False,
+        oauth_provider: str | None = None,
+        connect_timeout: float = 30.0,
     ) -> dict[str, Any]:
         """Add a new MCP server, optionally expanded from a template."""
         try:
@@ -156,6 +159,10 @@ class ServerManagementService:
                     enabled=enabled,
                     description=description,
                 )
+            server_config.requires_oauth = requires_oauth
+            server_config.oauth_provider = oauth_provider
+            if not template:
+                server_config.connect_timeout = connect_timeout
             try:
                 server_config.validate()
             except ValueError as e:

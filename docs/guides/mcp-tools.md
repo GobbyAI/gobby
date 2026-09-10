@@ -9,6 +9,8 @@ The exact live surface drifts as the daemon evolves. Treat
 truth. This guide names the stable authoring and operations surface, but a
 fresh discovery call always wins on disagreement.
 
+For remote servers that require browser sign-in, see [OAuth MCP servers](mcp-oauth.md).
+
 ## Tool Surfaces
 
 There are two ways to reach a tool from an MCP client:
