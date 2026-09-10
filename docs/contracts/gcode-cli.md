@@ -1,11 +1,20 @@
 # gcode CLI Contract
 
-The machine-readable contract lives at `crates/gcode/contract/gcode.contract.json`.
+The machine-readable contract lives at `tests/contracts/gcode.contract.json`.
 `gcode contract --format json` must emit the same contract version and contents.
 
 ## Version
 
-`contract_version`: 9
+`contract_version`: 10
+
+Version 10 adds the daemon-backed `ask` lifecycle. A new run is bound to one
+project and immutable Git snapshot, defaults to `HEAD`, a 600-second absolute
+deadline, and deterministic retrieval, and uses the installed
+`ask-investigator` and `ask-reviewer` profiles. Status, resume, cancel, and
+export are mutually exclusive alternatives to starting a run. Foreground start
+and resume wait on daemon completion events; a disconnected wait reports the
+durable run ID and never cancels it. Complete, partial, and unknown answer
+outcomes exit zero, while failed and cancelled runs are typed exit-2 failures.
 
 Version 9 adds `evidence --request-json`, a JSON-only, exact-commit read surface
 for deterministic source citations, commit metadata, indexed search, and graph
@@ -32,6 +41,9 @@ are pinned in `gcode.contract.json` and asserted by drift tests.
 - `search-symbol`, `search-text` — paged symbol results for exact-first and BM25
   symbol-metadata lookup
 - `search-content` — paged BM25 results over repository content chunks
+- `ask` — start or inspect a durable, source-bound Ask run through the local
+  authenticated daemon; this surface does not acquire local retrieval stores
+  for status, resume, cancel, or export actions
 
 All four ranked query surfaces use the `project_id, total, offset, limit,
 next_offset, budget_exceeded, results[]` envelope. Each hit carries `id, name,
@@ -65,6 +77,52 @@ score`.
 - `repo-outline` — paged directory summaries with complete file groups
 
 Stored symbol records carry the AI `summary`, never the raw `docstring`.
+
+## Ask
+
+Start a run with:
+
+```text
+gcode ask "<QUESTION>" [--commit REF] [--timeout-seconds SECONDS]
+  [--retrieval deterministic|hybrid] [--background]
+```
+
+The alternatives are `gcode ask --status RUN_ID`, `gcode ask --resume RUN_ID`,
+`gcode ask --cancel RUN_ID`, and
+`gcode ask --export RUN_ID --output DIR`. Exactly one question or lifecycle
+action is required. Start-only flags cannot accompany lifecycle actions, and
+`--export` and `--output` require each other. Global `--project` accepts the
+same project root or project-name selection as other commands.
+
+Without `--background`, start retains the created `run_id`, waits through the
+daemon's event-driven wait endpoint, and prints the returned durable record.
+Resume preserves the original absolute deadline and also waits unless the run
+is already terminal. `--background` returns the initial durable record.
+`--status` is read-only. `--cancel` terminates the active native child while
+retaining durable run and evidence records. A wait transport failure returns
+`ask_wait_disconnected`, the durable ID, and an exact resume command; it never
+sends a cancel request.
+
+Text is the default format for Ask. It prints `run_id` and `status` plus any
+available `stage`, `outcome`, `deadline`, and typed error. Explicit JSON returns
+the daemon record. Stable Ask keys are `run_id`, `status`, `current_stage`,
+`answer_outcome`, `typed_error`, `deadline_at`, `profile_identities`,
+`tool_identities`, `artifact_manifest`, `attempt_count`, `repair_count`,
+`binding`, `evidence`, `result_artifact`, `usage`, and `output`. Nested binding,
+identity, evidence, and artifact objects are governed by
+[`ask.md`](ask.md).
+
+Complete, partial, and unknown outcomes are successful terminal records and
+exit `0`. Pipeline status `failed` produces `ask_failed`; `cancelled` produces
+`ask_cancelled`; both exit `2` after printing the durable record. Other typed
+codes are `invalid_ask_request`, `ask_unauthorized`, `ask_run_not_found`,
+`ask_wait_timeout`, `ask_daemon_error`, `malformed_ask_response`,
+`ask_daemon_unavailable`, `ask_wait_disconnected`, and `ask_export_io`.
+
+Export first obtains a successful HTTP response and only then creates the
+selected destination directory and `ask-<safe-run-id>.tar`. No implicit export
+path exists. The archive is the daemon's existing immutable publication; the
+CLI does not reconstruct an answer or write into the project checkout.
 
 ## Deterministic Evidence
 

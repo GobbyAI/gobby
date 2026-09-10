@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 9,
+  "contract_version": 10,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -225,6 +225,124 @@
         "exclusion",
         "code",
         "message"
+      ]
+    },
+    {
+      "name": "ask",
+      "summary": "Run or inspect a durable source-bound Ask pipeline.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "QUESTION",
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--commit",
+          "takes_value": true,
+          "value_name": "REF",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--timeout-seconds",
+          "takes_value": true,
+          "value_name": "SECONDS",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--retrieval",
+          "takes_value": true,
+          "value_name": "MODE",
+          "allowed_values": [
+            "deterministic",
+            "hybrid"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--background",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--status",
+          "takes_value": true,
+          "value_name": "RUN_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--resume",
+          "takes_value": true,
+          "value_name": "RUN_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--cancel",
+          "takes_value": true,
+          "value_name": "RUN_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--export",
+          "takes_value": true,
+          "value_name": "RUN_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--output",
+          "takes_value": true,
+          "value_name": "DIR",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "run_id",
+        "status",
+        "current_stage",
+        "answer_outcome",
+        "typed_error",
+        "deadline_at",
+        "profile_identities",
+        "tool_identities",
+        "artifact_manifest",
+        "attempt_count",
+        "repair_count",
+        "binding",
+        "evidence",
+        "result_artifact",
+        "usage",
+        "output"
       ]
     },
     {
@@ -2397,7 +2515,18 @@
     "semantic_identity_required",
     "stale_range",
     "unsupported_schema",
-    "unsafe_path"
+    "unsafe_path",
+    "invalid_ask_request",
+    "ask_unauthorized",
+    "ask_run_not_found",
+    "ask_wait_timeout",
+    "ask_daemon_error",
+    "malformed_ask_response",
+    "ask_daemon_unavailable",
+    "ask_wait_disconnected",
+    "ask_export_io",
+    "ask_failed",
+    "ask_cancelled"
   ],
   "exit_codes": [
     {
