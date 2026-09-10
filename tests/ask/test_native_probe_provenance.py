@@ -26,6 +26,9 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
     """Model exported rows/files; all responses here are synthetic unit fixtures."""
     raw: dict[str, Any] = {
         "schema_version": 1,
+        "complete": True,
+        "capture_errors": [],
+        "missing_agent_run_ids": [],
         "runtime_identity": {
             "source_head": "a" * 40,
             "gcode": {"path": "/probe/bin/gcode", "sha256": "b" * 64, "version": "1.7.0"},
@@ -291,6 +294,8 @@ def test_seal_rejects_observations_without_captured_raw_probe(
         "unrelated_lifecycle",
         "missing_predecessor_live",
         "predecessor_pid",
+        "incomplete_export",
+        "capture_error",
     ],
 )
 def test_capture_requires_phase_runtime_and_complete_process_identity(
@@ -340,6 +345,10 @@ def test_capture_requires_phase_runtime_and_complete_process_identity(
         snapshots["interrupted"]["agents"][0]["live"] = False
     elif tamper == "predecessor_pid":
         raw["agent_runs"][1]["agent"]["pid"] = 42
+    elif tamper == "incomplete_export":
+        raw["complete"] = False
+    elif tamper == "capture_error":
+        raw["capture_errors"] = [{"kind": "snapshot-failed"}]
     _write_capture(path, raw)
 
     with pytest.raises(ValueError):

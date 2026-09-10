@@ -605,6 +605,12 @@ def bind_ask_runtime_observations(
     raw_hash = hashlib.sha256(payload).hexdigest()
     if raw_hash != expected_hash or not isinstance(raw, dict) or raw.get("schema_version") != 1:
         raise ValueError("Ask runtime raw probe hash or schema mismatch")
+    if (
+        raw.get("complete") is not True
+        or raw.get("capture_errors") != []
+        or raw.get("missing_agent_run_ids") != []
+    ):
+        raise ValueError("Ask runtime raw probe export is incomplete")
     root = raw_probe_path.parent.resolve(strict=True)
     runtime_identity = _validate_probe_runtime_identity(raw.get("runtime_identity"))
     snapshots = _probe_rows(raw.get("ask_runs"), "Ask runs")

@@ -541,9 +541,20 @@ class _Connection:
         raise AssertionError(query)
 
 
+@pytest.mark.parametrize(
+    "receipt_state",
+    [
+        "complete",
+        "missing_transcript",
+        "missing_policy",
+        "absent_violations",
+        "wrong_machine",
+    ],
+)
 def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    receipt_state: str,
 ) -> None:
     runtime_root = tmp_path / "runtime"
     transcript = tmp_path / "provider-home" / "agent.jsonl"
@@ -588,6 +599,7 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
             "agent": {
                 "id": "agent-run",
                 "workflow_name": "native-ask",
+                "machine_id": "owned-machine",
                 "pid": 123,
                 "terminal_id": "terminal-id",
                 "child_session_id": "session-id",
@@ -606,6 +618,9 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
             },
             "session": {
                 "id": "session-id",
+                "machine_id": "other-machine"
+                if receipt_state == "wrong_machine"
+                else "owned-machine",
                 "source": "claude",
                 "project_id": "project-id",
                 "external_id": "claude-native-id",
@@ -619,6 +634,12 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
         lambda *_args, **_kwargs: connection,
     )
     output_dir = tmp_path / "evidence"
+    if receipt_state == "missing_transcript":
+        transcript.unlink()
+    elif receipt_state == "missing_policy":
+        policy.unlink()
+    elif receipt_state == "absent_violations":
+        violations.unlink()
 
     result = harness._export_raw(
         _SCOPED_TEST_DATABASE_URL,
@@ -633,7 +654,11 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
     encoded = (output_dir / "raw-probe.json").read_bytes()
     assert result["sha256"] == hashlib.sha256(encoded).hexdigest()
     assert (output_dir / "raw-probe.sha256").read_text(encoding="utf-8").strip() == result["sha256"]
-    assert len(exported["receipts"]) == 3
+    expected_count = (
+        3 if receipt_state == "complete" else (0 if receipt_state == "wrong_machine" else 2)
+    )
+    assert len(exported["receipts"]) == expected_count
+    assert result["complete"] is (receipt_state in {"complete", "absent_violations"})
     assert all(Path(receipt["output_path"]).is_file() for receipt in exported["receipts"])
     assert "must-not-export" not in encoded.decode()
     assert exported["runtime_identity"] == {"source_head": "f" * 40}
@@ -840,7 +865,7 @@ def test_raw_export_retains_partial_evidence_when_one_run_snapshot_fails(
         lambda *_args, **_kwargs: connection,
     )
 
-    harness._export_raw(
+    result = harness._export_raw(
         _SCOPED_TEST_DATABASE_URL,
         ["broken-run", "ask-run"],
         tmp_path / "evidence",
@@ -849,6 +874,7 @@ def test_raw_export_retains_partial_evidence_when_one_run_snapshot_fails(
     )
 
     exported = json.loads((tmp_path / "evidence" / "raw-probe.json").read_bytes())
+    assert result["complete"] is False
     assert len(exported["ask_runs"]) == 1
     assert exported["ask_runs"][0]["execution"]["id"] == "ask-run"
     assert exported["capture_errors"] == [
@@ -893,7 +919,7 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
     ) -> dict[str, object]:
         assert runtime_identity is None
         calls.append(("export", list(run_ids), runtime_root, dict(process_sets)))
-        return {"path": "raw-probe.json", "sha256": "a" * 64}
+        return {"path": "raw-probe.json", "sha256": "a" * 64, "complete": True}
 
     def drop_schema(_database_url: str, schema_name: str) -> None:
         calls.append(("drop", schema_name))
@@ -929,8 +955,10 @@ def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
 def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    request.addfinalizer(lambda: shutil.rmtree(runtime_root) if runtime_root.exists() else None)
     output_dir = tmp_path / "evidence"
     output_dir.mkdir()
     launch_manifest: dict[str, Any] = {
@@ -988,7 +1016,7 @@ def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
     monkeypatch.setattr(
         harness,
         "_export_raw",
-        lambda *_args, **_kwargs: {"path": "raw-probe.json", "sha256": "a" * 64},
+        lambda *_args, **_kwargs: {"path": "raw-probe.json", "sha256": "a" * 64, "complete": True},
     )
     monkeypatch.setattr(harness, "_drop_owned_schema", lambda *_args: None)
 
@@ -1012,11 +1040,13 @@ def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
     assert terminated[0]["start_identity"] == "stable-start"
 
 
-def test_failure_finalizer_cleans_owned_storage_when_raw_export_fails(
+def test_failure_finalizer_retains_owned_storage_when_raw_export_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    request.addfinalizer(lambda: shutil.rmtree(runtime_root) if runtime_root.exists() else None)
     output_dir = tmp_path / "evidence"
     output_dir.mkdir()
     calls: list[object] = []
@@ -1052,12 +1082,12 @@ def test_failure_finalizer_cleans_owned_storage_when_raw_export_fails(
         failure={"error_type": "RuntimeError", "message": "probe failed"},
     )
 
-    assert calls == ["export", ("drop", _SCHEMA)]
-    assert not runtime_root.exists()
+    assert calls == ["export"]
+    assert runtime_root.exists()
     cleanup = json.loads((output_dir / "cleanup.json").read_bytes())
     assert cleanup["raw_export"] is None
-    assert cleanup["schema"]["status"] == "dropped"
-    assert cleanup["runtime_root"]["status"] == "removed"
+    assert cleanup["schema"]["status"] == "retained"
+    assert cleanup["runtime_root"] == {"status": "retained", "path": str(runtime_root)}
     assert cleanup_errors == [
         {
             "kind": "raw-export",
@@ -1101,7 +1131,7 @@ def test_contained_drive_preserves_startup_failure_before_owned_teardown(
         assert process_sets["after_cleanup"] == {"unavailable": "schema-not-created"}
         assert runtime_identity == {"source_head": "f" * 40}
         assert runtime_root.exists()
-        return {"path": "raw-probe.json", "sha256": "b" * 64}
+        return {"path": "raw-probe.json", "sha256": "b" * 64, "complete": True}
 
     monkeypatch.setenv("DATABASE_URL", _TEST_DATABASE_URL)
     monkeypatch.setattr(harness, "_read_project_identity", lambda _root: ("project-id", "p"))

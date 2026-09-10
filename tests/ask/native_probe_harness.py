@@ -1196,6 +1196,8 @@ def _agent_evidence_identity_error(
     native_session_id = metadata.get("provider_native_session_id")
     if (
         agent.get("workflow_name") != "native-ask"
+        or not agent.get("machine_id")
+        or agent.get("machine_id") != session.get("machine_id")
         or agent.get("child_session_id") != session.get("id")
         or metadata.get("provider") != "claude"
         or metadata.get("project_id") != project_id
@@ -1344,6 +1346,7 @@ def _export_raw(
     capture_errors.extend(launch_errors)
     receipts: list[dict[str, object]] = []
     excluded_receipts: list[dict[str, str]] = []
+    captured_agent_ids: set[str] = set()
     receipts_root = output_dir / "receipts"
     for index, row in enumerate(agent_rows):
         try:
@@ -1360,6 +1363,8 @@ def _export_raw(
             )
             continue
         agent_run_id = str(agent.get("id", ""))
+        if agent_run_id:
+            captured_agent_ids.add(agent_run_id)
         manifest = launch_receipts.get(agent_run_id)
         identity_error = _agent_evidence_identity_error(
             agent,
@@ -1414,13 +1419,38 @@ def _export_raw(
                         "reason": identity_error or "missing-or-untrusted-receipt-file",
                     }
                 )
+                if (
+                    kind == "srt-violations"
+                    and identity_error is None
+                    and isinstance(source, str)
+                    and (Path(source).exists() or Path(source).is_symlink())
+                ):
+                    capture_errors.append(
+                        {
+                            "kind": "violation-receipt",
+                            "run_id": agent_run_id,
+                            "error_type": "UntrustedReceipt",
+                            "message": "existing violation receipt could not be copied",
+                        }
+                    )
             else:
                 receipt["agent_run_id"] = agent_run_id
                 receipts.append(receipt)
 
+    missing_agent_run_ids = sorted(set(agent_run_ids) - captured_agent_ids)
+    complete = (
+        not capture_errors
+        and not missing_agent_run_ids
+        and not any(
+            receipt["kind"] in {"srt-policy", "provider-transcript-and-mcp-responses"}
+            for receipt in excluded_receipts
+        )
+    )
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     body = {
         "schema_version": 1,
+        "complete": complete,
+        "missing_agent_run_ids": missing_agent_run_ids,
         "ask_runs": _safe_export_value(snapshots),
         "agent_runs": _safe_export_value(agent_rows),
         "process_sets": _safe_export_value(process_sets),
@@ -1438,6 +1468,7 @@ def _export_raw(
     return {
         "path": str(raw_path.resolve()),
         "sha256": sha256,
+        "complete": complete,
         "receipt_count": len(receipts),
         "excluded_receipt_count": len(excluded_receipts),
     }
@@ -1940,10 +1971,12 @@ def _finalize_contained_probe(
                 raise RuntimeError("native Ask final process snapshot is invalid")
             final_processes = [*final_workers, *final_agents]
             if any(
-                isinstance(process, Mapping) and process.get("live") is True
+                not isinstance(process, Mapping) or process.get("live") is not False
                 for process in final_processes
             ):
-                raise RuntimeError("native Ask cleanup left an owned process alive")
+                raise RuntimeError(
+                    "native Ask cleanup could not verify every owned process is dead"
+                )
         except Exception as error:
             process_sets.setdefault(
                 "after_cleanup",
@@ -1966,7 +1999,7 @@ def _finalize_contained_probe(
         process_sets["after_cleanup"] = {"unavailable": "schema-not-created"}
 
     try:
-        cleanup["raw_export"] = _export_raw(
+        raw_export = _export_raw(
             scoped_database_url,
             discovered_run_ids,
             output_dir,
@@ -1974,6 +2007,9 @@ def _finalize_contained_probe(
             process_sets=process_sets,
             runtime_identity=runtime_identity,
         )
+        cleanup["raw_export"] = raw_export
+        if raw_export.get("complete") is not True:
+            raise RuntimeError("native Ask evidence export is incomplete; owned state retained")
     except Exception as error:
         errors.append(
             {
@@ -1983,6 +2019,14 @@ def _finalize_contained_probe(
                 "message": str(error),
             }
         )
+
+    if errors:
+        if schema_created:
+            cleanup["schema"] = {"status": "retained", "name": schema_name}
+        cleanup["runtime_root"] = {"status": "retained", "path": str(runtime_root.resolve())}
+        cleanup["errors"] = errors
+        _atomic_json(output_dir / "cleanup.json", cleanup)
+        return errors
 
     if schema_created:
         try:
