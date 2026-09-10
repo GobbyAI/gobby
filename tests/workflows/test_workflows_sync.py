@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -472,8 +473,8 @@ class TestSyncBundledPipelines:
         assert renderer.should_run_step(validate_run, completed_context) is True
 
     @pytest.mark.integration
-    def test_expand_task_coverage_is_opt_in(self) -> None:
-        """Render the coverage step only when interactive callers opt in."""
+    def test_expand_task_coverage_runs_for_contract_plans(self) -> None:
+        """Contract-plan runs always get the coverage gate; others need run_coverage."""
         from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 
         path = get_bundled_pipelines_path() / "expand-task.yaml"
@@ -487,8 +488,43 @@ class TestSyncBundledPipelines:
         assert coverage.mcp.server == "gobby-tasks-ops"
         assert coverage.mcp.tool == "run_expansion_qa_coverage"
         assert coverage.mcp.arguments == {"run_id": "${{ steps.start_run.output.run_id }}"}
-        assert renderer.should_run_step(coverage, {"inputs": {"run_coverage": False}}) is False
-        assert renderer.should_run_step(coverage, {"inputs": {"run_coverage": True}}) is True
+        assert pipeline.outputs["coverage"] == "${{ steps.coverage_check.output }}"
+
+        def context(*, status: str, contract_plan: bool, run_coverage: bool) -> dict[str, Any]:
+            return {
+                "inputs": {"run_coverage": run_coverage},
+                "steps": {
+                    "wait_run": {"output": {"status": status}},
+                    "get_run": {
+                        "output": {"run": {"compiled_spec": {"contract_plan": contract_plan}}}
+                    },
+                },
+            }
+
+        assert (
+            renderer.should_run_step(
+                coverage, context(status="completed", contract_plan=True, run_coverage=False)
+            )
+            is True
+        )
+        assert (
+            renderer.should_run_step(
+                coverage, context(status="completed", contract_plan=False, run_coverage=False)
+            )
+            is False
+        )
+        assert (
+            renderer.should_run_step(
+                coverage, context(status="failed", contract_plan=True, run_coverage=False)
+            )
+            is False
+        )
+        assert (
+            renderer.should_run_step(
+                coverage, context(status="completed", contract_plan=False, run_coverage=True)
+            )
+            is True
+        )
 
     def test_missing_path_returns_error(self, db: HubDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

@@ -253,6 +253,39 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
     assert report.rows[3].deferral_target == "#200"
 
 
+def test_evaluate_resolves_placeholder_deferral_through_provenance_label() -> None:
+    deferred_item = _item("A2.1", "src/deferred.py")
+    deferral = Deferral(
+        task_ref="#TBD-created-at-expansion",
+        reason="needs follow-up",
+        owner="backend",
+        original_acceptance_items=(deferred_item,),
+        raw_block="",
+    )
+
+    report = evaluate(
+        plan=_plan(_section(deferred_item, section_id="A2", deferral=deferral)),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1", "dependencies": ["#200"]},
+            {
+                "ref": "#200",
+                "path_cache": "1.200",
+                "state": "ready",
+                "labels": ["deferred-from:plan:A2"],
+                "validation_criteria": "Follow-up task owns src/deferred.py.",
+            },
+        ],
+    )
+
+    assert [row.status for row in report.rows] == [CoverageStatus.deferred]
+    assert report.rows[0].deferral_target == "#200"
+
+
 def test_evaluate_surfaces_invalid_covers_labels_without_cross_plan_leakage() -> None:
     report = evaluate(
         plan=_plan(_section(_item("A1.1", "src/covered.py"))),

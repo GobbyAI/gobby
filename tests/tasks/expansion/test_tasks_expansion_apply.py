@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub._ambient import ambient_transaction
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
@@ -188,6 +190,83 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
     leaf = service.task_manager.get_task(leaf_id)
     assert f"expansion-run:{run.id}" in (leaf.labels or [])
     assert service.task_manager.artifacts.get_artifacts(parent.id).expansion_run_id == run.id
+
+
+def test_contract_apply_creates_placeholder_deferral_tasks(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    service = _service(temp_db)
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expansion parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    spec = {
+        "version": 1,
+        "parent_task_id": parent.id,
+        "contract_plan": True,
+        "plan_id": "native-runtime-completion",
+        "phases": [{"id": "phase-p1", "title": "Phase 1", "summary": "P1", "task_ids": ["leaf-1"]}],
+        "tasks": [
+            {
+                "id": "leaf-1",
+                "phase_id": "phase-p1",
+                "title": "Implement leaf 1",
+                "category": "code",
+                "validation": "leaf 1 exists",
+                "labels": ["covers:native-runtime-completion:1.1:1.1.1"],
+            }
+        ],
+        "dependencies": [],
+        "deferrals": [
+            {
+                "section_id": "D1",
+                "title": "Native default flip",
+                "task_ref": "#TBD-created-at-expansion",
+                "reason": "gated on acceptance evidence",
+                "owner": "backend-developer",
+                "original_acceptance_items": [
+                    {
+                        "item_id": "D1.1",
+                        "prose": "D1.1",
+                        "artifact_kind": "behavior",
+                        "artifact_ref": "D1.1",
+                    }
+                ],
+            },
+            {
+                "section_id": "D2",
+                "title": "Already tracked",
+                "task_ref": "#4242",
+                "reason": "tracked elsewhere",
+                "owner": "backend-developer",
+                "original_acceptance_items": [],
+            },
+        ],
+    }
+    run = _save_run(service, parent, sample_project, spec)
+
+    applied = service.apply_run(run.id, session_id=None)
+
+    assert applied.checkpoints is not None
+    deferral_task_map = applied.checkpoints["deferral_task_map"]
+    assert isinstance(deferral_task_map, dict)
+    assert list(deferral_task_map) == ["D1"]
+    deferral_id = deferral_task_map["D1"]
+    assert deferral_id in (applied.created_task_ids or [])
+    deferral_task = service.task_manager.get_task(deferral_id)
+    assert deferral_task is not None
+    assert deferral_task.parent_task_id == parent.id
+    assert deferral_task.title == "Native default flip"
+    assert set(deferral_task.labels or []) == {
+        "deferred-from:native-runtime-completion:D1",
+        f"expansion-run:{run.id}",
+    }
+    assert "D1.1" in (deferral_task.validation_criteria or "")
+    assert "created at expansion apply" in (deferral_task.description or "")
+    blockers = {dep.depends_on for dep in service.dep_manager.get_blockers(parent.id)}
+    assert deferral_id in blockers
 
 
 def test_apply_parent_with_no_stages_is_noop_for_expansion_completion(
@@ -578,7 +657,9 @@ def test_concurrent_apply_creates_one_subtask_tree(temp_db, sample_project) -> N
     assert [child.title for child in children] == ["Concurrent leaf"]
 
 
-def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project) -> None:
+def test_apply_ignores_closed_obsolete_historical_output(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -586,7 +667,7 @@ def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project
         task_type="epic",
         validation_criteria="Test task completion is observable.",
     )
-    spec = {
+    spec: dict[str, Any] = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
         "tasks": [
             {
@@ -612,7 +693,7 @@ def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project
 
     reapplied = service.apply_run(second.id, session_id=None)
 
-    assert "leaf-2" in reapplied.task_id_map
+    assert "leaf-2" in (reapplied.task_id_map or {})
     for task_id in applied.created_task_ids:
         old_task = service.task_manager.get_task(task_id)
         assert old_task.closed_at is not None

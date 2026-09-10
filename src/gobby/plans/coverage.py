@@ -18,11 +18,14 @@ from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans._identifiers import DOTTED_ID_PATTERN
 from gobby.plans._task_record_state import coerce_task_state
 from gobby.plans._task_refs import normalize_task_ref
+from gobby.plans._task_store import TaskRecord as _TaskRecord
+from gobby.plans._task_store import TaskRecordStore as _TaskRecordStore
 from gobby.plans.evidence import EvidenceKind, EvidenceRow
 from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_plan
 from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
+    from gobby.plans.deferral import DeferralValidationResult
     from gobby.storage.hub.protocol import HubDatabase
 
 COVERS_LABEL_REGEX: re.Pattern[str] = re.compile(
@@ -122,45 +125,6 @@ class CoverageReport:
     @property
     def is_complete(self) -> bool:
         return not self.has_missing and not self.has_invalid
-
-
-@dataclass(frozen=True)
-class _TaskRecord:
-    ref: str
-    labels: tuple[str, ...]
-    validation_criteria: str
-    state: str
-    parent_ref: str | None = None
-    path_cache: str | None = None
-    dependencies: tuple[str, ...] = ()
-    # Deferral validation reads this to tell a target that delivered its
-    # obligation from one that was abandoned; both serialize as state "closed".
-    closed_reason: str | None = None
-
-
-class _TaskRecordStore:
-    def __init__(self, records: Sequence[_TaskRecord]) -> None:
-        self._by_ref = {record.ref: record for record in records}
-
-    def get_task(self, task_ref: str) -> dict[str, object] | None:
-        record = self._by_ref.get(normalize_task_ref(task_ref))
-        if record is None:
-            return None
-        return {
-            "state": record.state,
-            "closed_reason": record.closed_reason,
-            "validation_criteria": record.validation_criteria,
-            "labels": list(record.labels),
-            "dependencies": list(record.dependencies),
-        }
-
-    def get_task_labels(self, task_ref: str) -> list[str]:
-        record = self._by_ref.get(normalize_task_ref(task_ref))
-        return list(record.labels) if record is not None else []
-
-    def get_task_dependencies(self, task_ref: str) -> list[str]:
-        record = self._by_ref.get(normalize_task_ref(task_ref))
-        return list(record.dependencies) if record is not None else []
 
 
 def parse_covers_label(label: str) -> CoversRecord:
@@ -427,7 +391,7 @@ def _evaluate_item(
         )
 
     if section.deferral is not None and _deferral_covers_item(section, item):
-        status = _validate_deferral_status(
+        deferral_result = _validate_deferral(
             section=section,
             plan_id=plan_id,
             store=store,
@@ -437,8 +401,12 @@ def _evaluate_item(
             section_id=section.section_id,
             item_id=item.item_id,
             plan_node_hash=_plan_node_hash(section, item),
-            status=CoverageStatus.deferred if status == "valid" else CoverageStatus.invalid,
-            deferral_target=section.deferral.task_ref,
+            status=(
+                CoverageStatus.deferred
+                if deferral_result.status == "valid"
+                else CoverageStatus.invalid
+            ),
+            deferral_target=deferral_result.task_ref,
             evidence=evidence,
         )
 
@@ -647,25 +615,23 @@ def _matching_cover_records(
     return matches
 
 
-def _validate_deferral_status(
+def _validate_deferral(
     *,
     section: PlanSection,
     plan_id: str,
     store: _TaskRecordStore,
     recovery_epic_ref: str,
-) -> str:
+) -> DeferralValidationResult:
     from gobby.plans.deferral import validate_deferral
 
-    if section.deferral is None:
-        return "task_missing"
-    result = validate_deferral(
+    assert section.deferral is not None
+    return validate_deferral(
         section.deferral,
         plan_id,
         section.section_id,
         store,
         recovery_epic_ref=recovery_epic_ref,
     )
-    return result.status
 
 
 def _deferral_covers_item(section: PlanSection, item: AcceptanceItem) -> bool:

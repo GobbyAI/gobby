@@ -35,11 +35,53 @@ still win. A grant does not override a disabled sandbox configuration.
 
 Spawn results contain `external_write_grant`: requested and canonical roots,
 reason, asserting session, parent run and timestamp. Existing run inspection
-exposes the same object in `resume_metadata_json`. Resume preserves this grant
+exposes the same `external_write_grant` object. Resume preserves this grant
 and rejects removed roots, changed symlink targets or newly protected paths
 before allocating a successor. Ordinary nested writes, including `.vite-temp`,
 are allowed within the effective grant; an ungranted sibling or symlink escape
 does not gain write access.
+
+## Direct provider launches
+
+The default-enabled `block-direct-provider-launch` rule checks every
+Gobby-observed shell call, including top-level sessions. It recognizes `codex`,
+`claude`, `droid`, `grok`, `qwen`, and `agy`, including absolute executable
+paths. Interactive launches, prompts, `exec`, `resume`, and unknown forms are
+blocked. Use `gobby-agents:spawn_agent` for managed launches; request external
+workspace writes with `extra_write_paths` and `write_paths_reason` above.
+Daemon-owned provider launches continue through their managed launch path.
+
+The shell allowlist is deliberately literal: a single `--help`, `-h`, or
+`--version` argument; `codex -V`; `-v` for Claude, Droid, Grok, or Qwen;
+bare `help` for Codex, Droid, Grok, or AGY; `grok version`/`grok v`;
+`codex login status`; and `claude auth status` (optionally `--json` or `--text`).
+Recognized subcommand help, such as `codex exec --help`, `codex help login`,
+and `claude auth status --help`, also qualifies. Prompt operands or other
+options alongside help do not qualify. The status forms are verified against the
+supported CLI help. Authentication login/logout and unknown status forms are
+blocked. Command-location queries such as `command -v codex` are ordinary
+shell queries.
+
+Inspection covers command chains and pipelines, environment assignments,
+common execution wrappers, literal shell `-c`/`eval` payloads, command/process
+substitutions, and executable shell heredocs/here-strings. Quoted documentation,
+`echo`/`printf` arguments, comments, and data heredocs are not launches.
+Substitutions in expandable heredocs and literal data piped into a shell are
+execution contexts. Malformed shell input and commands exceeding the bounded
+scanner limits (131,072 characters or 24 recursive levels) fail closed.
+
+The rule has `default` and `worker-safety` selectors for interactive and bundled
+worker coverage. It has no per-command bypass, environment escape, or
+session-variable exemption. Denials use the existing rule-event audit. Bundled
+YAML is a template; the installed DB rule's enabled state is authoritative.
+
+This guard inspects visible literal shell syntax, not arbitrary program
+behavior. It cannot prove what Python/Node programs, script files, dynamic
+command construction, aliases, or renamed executables will launch. Custom
+selectors, disabled rules, policy tampering, and unavailable hook delivery can
+also defeat this workflow guard. It does not replace the managed OS sandbox or
+provide a hostile-process security boundary. Deeper security review is tracked
+in #22103.
 
 ## Backends
 

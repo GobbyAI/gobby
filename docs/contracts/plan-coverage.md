@@ -255,6 +255,16 @@ before then. A dangling `task_ref` in an unfinalized plan is expected and does
 not fail base validation; the open-task, provenance, and dependency-closure
 gates above apply from expansion validation onward.
 
+Expansion apply creates the task for every deferred section whose `task_ref` is
+a placeholder (anything that is not a bare `#N`): one `planning` task under the
+plan's epic, labeled `deferred-from:<plan-id>:<section-id>`, with validation
+criteria that list the original acceptance items and a `blocked-by` edge from
+the epic. The run checkpoint `deferral_task_map` names the created refs. Until
+the coordinator writes those refs over the plan placeholders, the provenance
+label is the identity: coverage resolves a placeholder `task_ref` through it
+and reports the resolved ref as the deferral target. A dangling numeric
+`task_ref` is never resolved by label; it stays `task_missing`.
+
 ## Planning Route and Draft Authority
 
 Interactive planning investigates the repository and maps the delivery graph

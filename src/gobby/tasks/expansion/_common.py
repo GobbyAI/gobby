@@ -330,12 +330,14 @@ def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
         return None
     return {
         "section_id": section.section_id,
+        "title": section.title,
         "task_ref": section.deferral.task_ref,
         "reason": section.deferral.reason,
         "owner": section.deferral.owner,
         "original_acceptance_items": [
             {
                 "item_id": item.item_id,
+                "prose": item.prose,
                 "artifact_kind": item.artifact_kind.value,
                 "artifact_ref": item.artifact_ref,
             }

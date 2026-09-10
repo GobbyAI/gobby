@@ -13,19 +13,18 @@ import sys
 import tempfile
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from gobby.agents.credential_inventory import denied_ambient_keys
 from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
+from gobby.agents.sandbox_run_environment import RUN_CACHE_ENV_VARS, SandboxRunPaths
 from gobby.config.tmux import socket_root
 from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
     from gobby.agents.sandbox import SandboxConfig, SandboxCredentialEnv
-
 
 _PROVIDER_DOMAINS: dict[str, tuple[str, ...]] = {
     "claude": ("api.anthropic.com", "*.anthropic.com"),
@@ -79,27 +78,6 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "agy": denied_ambient_keys("agy"),
 }
 
-_RUN_CACHE_ENV_VARS = (
-    "UV_CACHE_DIR",
-    "CARGO_HOME",
-    "GOCACHE",
-    "GOMODCACHE",
-    "npm_config_cache",
-    "YARN_CACHE_FOLDER",
-    "PNPM_HOME",
-    "PIP_CACHE_DIR",
-    "GRADLE_USER_HOME",
-    "COURSIER_CACHE",
-    "NUGET_PACKAGES",
-    "COMPOSER_CACHE_DIR",
-    "PUB_CACHE",
-    "GEM_HOME",
-    "BUNDLE_PATH",
-    "HEX_HOME",
-    "MIX_HOME",
-    "XDG_CACHE_HOME",
-)
-
 SRT_SETTINGS_RELATIVE_PATH = Path("assets") / "settings.json"
 SRT_VIOLATIONS_RELATIVE_PATH = Path("logs") / "violations.jsonl"
 PRE_COMMIT_STORE_SPARE_NAME = ".pre-commit-store-spare"
@@ -110,28 +88,6 @@ logger = logging.getLogger(__name__)
 _pre_commit_spare_lock = threading.Lock()
 _pre_commit_spare_thread: threading.Thread | None = None
 _pre_commit_spare_root: Path | None = None
-
-
-@dataclass(frozen=True)
-class SandboxRunPaths:
-    root: Path
-    assets: Path
-    tmp: Path
-    hooks: Path
-    logs: Path
-    cache: Path
-
-    @property
-    def writable(self) -> tuple[Path, Path, Path, Path]:
-        return (self.tmp, self.hooks, self.logs, self.cache)
-
-    def environment(self, provider: str) -> dict[str, str]:
-        values = {
-            name: str(self.cache / name.replace("_", "-").lower()) for name in _RUN_CACHE_ENV_VARS
-        }
-        values["CLAUDE_CODE_TMPDIR" if provider == "claude" else "TMPDIR"] = str(self.tmp)
-        values["GOBBY_LOG_DIR"] = str(self.logs)
-        return values
 
 
 # Toolchains installed under $HOME. sensitive_roots() denies five specific
@@ -853,4 +809,4 @@ def previous_run_write_paths(env: Mapping[str, str]) -> set[str]:
     The hook inbox remains shared: ghook's durable transport always resolves
     ``$GOBBY_HOME/hooks/inbox`` and must be able to enqueue and unlink there.
     """
-    return {canonical_path(value) for name in _RUN_CACHE_ENV_VARS if (value := env.get(name))}
+    return {canonical_path(value) for name in RUN_CACHE_ENV_VARS if (value := env.get(name))}

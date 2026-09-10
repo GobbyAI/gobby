@@ -27,6 +27,11 @@ Expansion-side obligations:
   they implement.
 - `expansion-qa` is the mechanical gate that compares the expanded task tree
   against the compiled contract and records any missing or invalid coverage.
+  The pipeline runs it automatically for every contract-plan run
+  (`coverage_check` step; its result is the pipeline's `coverage` output).
+- Apply creates one task per `kind: deferred` section whose `task_ref` is a
+  placeholder; the run checkpoint `deferral_task_map` maps section id to the
+  created task id.
 - Free-form `plan-ref:` labels are not honored.
 
 ## Supported Inputs
@@ -59,7 +64,14 @@ call_tool("gobby-workflows", "get_pipeline_status", {
 })
 ```
 
-4. Report the resulting run status and created tasks.
+4. Report the resulting run status, created tasks, and the `coverage` output.
+   A contract-plan run whose coverage did not pass is not done: fix the
+   missing or invalid rows and rerun `gobby-tasks-ops:run_expansion_qa_coverage`.
+5. For a contract plan with placeholder deferral refs, read
+   `checkpoints.deferral_task_map` from `get_expansion_run`, write each created
+   `#N` over the matching `task_ref` in the plan file, re-run
+   `gobby plans validate <plan>`, call `gobby-tasks-ops:update_plan_hash` for the
+   root task, and commit the plan.
 
 ## Notes
 

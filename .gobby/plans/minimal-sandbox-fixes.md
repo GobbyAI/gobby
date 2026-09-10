@@ -18,11 +18,14 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
 - [x] Repair baseline provider tests that outlive their launch mocks (11 pass).
 - [x] Fix the 20 encountered untyped factory test signatures and the new batch input annotation.
-- [ ] Implement and verify #22027.
+- [x] Implement and automatically verify #22027; final live rule gate remains open.
+- [x] Coordinator repaired grant inspection and run-local zsh heredoc temporary paths (622ef8c992; 73 focused tests pass).
+- [x] Coordinator extracted sandbox run environment (efe1644; policy 812 lines, new module 49 lines; 84 focused tests pass).
+- [x] File deeper security review #22103.
 - [ ] Commit both fixes and coordinate integration and restart.
 - [ ] Complete real managed runtime, delegation, resume and sandbox probes.
 - [ ] Record five continuous clean minutes after all smoke work completes.
-- [ ] File the deeper security review, then close both tasks with linked commits.
+- [ ] Close both tasks with linked commits after the combined live gate passes.
 
 Other sessions own terminal/gclient changes. Ask integration is on a separate
 branch and will reconcile these fixes before its final native proof. Obtain a
@@ -42,11 +45,19 @@ Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: expose MCP and batch grant inputs
 - `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: expose HTTP and batch grant inputs and results
 - `src/gobby/agents/resume_executor.py::*` — scope-reason: revalidate grants before resume allocation
+- `src/gobby/mcp_proxy/tools/agents_payloads.py::*` — scope-reason: expose recorded external grants in run inspection
+- `src/gobby/agents/sandbox_policy.py::*` — scope-reason: constrain zsh heredoc temporary files to the current run
+- `src/gobby/agents/sandbox_run_environment.py::*` — scope-reason: own run paths and subprocess environment redirects
+- `src/gobby/agents/spawn_executor_support.py::*` — scope-reason: propagate run-local TMPPREFIX through Codex shell overrides
 - `tests/agents/test_external_write_grants.py::*` — scope-reason: verify grant authority and path boundaries
 - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py::*` — scope-reason: verify integration and repair asynchronous test lifecycle
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: verify MCP grant propagation
 - `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: verify HTTP grant propagation
 - `tests/agents/test_resume_executor.py::*` — scope-reason: verify resume grant propagation
+- `tests/mcp_proxy/tools/test_agent_capture_results.py::*` — scope-reason: verify recorded grant inspection
+- `tests/agents/test_spawn_executor_support.py::*` — scope-reason: verify Codex shell temporary environment
+- `tests/agents/test_sandbox_policy.py::*` — scope-reason: consume the extracted run environment definitions
+- `tests/integration/sandbox/test_srt_host_runtime.py::*` — scope-reason: verify real managed SRT heredoc writes
 - `docs/guides/sandboxing.md`
 
 Add optional extra_write_paths and write_paths_reason to managed MCP and
@@ -68,6 +79,11 @@ the implementation on the concurrent Ask integration branch,
 to keep changed production files below 1,000 lines. Preserve strict Ask policy
 when its integration lands; grants cannot widen its validated scratch policy.
 
+Split run-path and environment definitions from
+`src/gobby/agents/sandbox_policy.py` into
+`src/gobby/agents/sandbox_run_environment.py`; the coordinator owns this
+extraction (858 lines before the split on commit 622ef8c992).
+
 **Acceptance:**
 - A1.1 - All managed input surfaces propagate explicit audited roots; omission grants nothing additional. file: `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`.
 - A1.2 - Invalid paths, missing reasons, aliases, symlinks, traversal, protected overlap, sibling-prefix confusion, child narrowing/widening and absent inheritance are tested. file: `tests/agents/test_external_write_grants.py`.
@@ -78,10 +94,11 @@ when its integration lands; grants cannot widen its validated scratch policy.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/provider_launch_guard.py`
+- `src/gobby/hooks/provider_launch_guard.py::*` — scope-reason: implement bounded literal execution classification
 - `src/gobby/workflows/safe_evaluator.py::*` — scope-reason: register shell classifier for rules
-- `src/gobby/install/shared/workflows/rules/agents/block-direct-provider-launch.yaml`
-- `tests/hooks/test_provider_launch_guard.py`
+- `src/gobby/install/shared/workflows/rules/worker-safety/block-direct-provider-launch.yaml::*` — scope-reason: install the default and worker safety guard
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: regenerate bundled rule content hashes
+- `tests/hooks/test_provider_launch_guard.py::*` — scope-reason: verify classifier and real engine rule selection
 - `docs/guides/sandboxing.md`
 
 Add a default-enabled before_tool rule for all observed shell calls, including
@@ -97,7 +114,7 @@ programs, dynamic construction, renamed executables and rule tampering.
 
 **Acceptance:**
 - A2.1 - Classification tests cover providers, wrappers, administration, ordinary subprocesses and quoted documentation. file: `tests/hooks/test_provider_launch_guard.py`.
-- A2.2 - Installed default-enabled rule rejects prohibited launches through the live hook path while managed spawning succeeds. file: `src/gobby/install/shared/workflows/rules/agents/block-direct-provider-launch.yaml`.
+- A2.2 - Installed default-enabled rule rejects prohibited launches through the live hook path while managed spawning succeeds. file: `src/gobby/install/shared/workflows/rules/worker-safety/block-direct-provider-launch.yaml`.
 - A2.3 - Guard limits and managed-spawn recovery are documented. behavior: "Direct provider launches" in `docs/guides/sandboxing.md`.
 
 ## V1 Validation and post-restart gate

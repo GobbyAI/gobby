@@ -1192,7 +1192,7 @@ passes.
 
 ```yaml
 deferral:
-  task_ref: "#TBD-created-at-expansion"
+  task_ref: "#22104"
   reason: "The flip is gated on acceptance evidence that can only exist after P7 lands and runs on both operating systems; it must not be dispatched from this plan's manifest."
   owner: "backend-developer"
   original_acceptance_items:

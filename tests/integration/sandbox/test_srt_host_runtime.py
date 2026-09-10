@@ -178,6 +178,24 @@ def _wait_for(path: Path, text: str | None = None, *, timeout: float = 10.0) -> 
     pytest.fail(f"timed out waiting for {path} to contain {text!r}")
 
 
+def test_srt_login_zsh_heredoc_uses_run_temp(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    launch = _prepare_launch(workspace, "host-zsh-heredoc")
+    _, environment = launch.compose_subprocess([], os.environ)
+    result = subprocess.run(
+        _runner_argv(launch, ["/bin/zsh", "-lc", "cat <<'EOF'\nheredoc-ok\nEOF"]),
+        cwd=workspace,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "heredoc-ok\n"
+
+
 def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
