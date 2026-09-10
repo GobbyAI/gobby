@@ -61,7 +61,13 @@ def test_shared_run_contract_and_event_driven_wait(tmp_path: Path) -> None:
     from gobby.servers.routes.ask import create_ask_router
 
     service = _AskService()
-    server = SimpleNamespace(services=SimpleNamespace(ask_service=service))
+    resolved_projects: list[str] = []
+
+    def resolve_service(project_id: str) -> _AskService:
+        resolved_projects.append(project_id)
+        return service
+
+    server = SimpleNamespace(services=SimpleNamespace(get_ask_service=resolve_service))
     app = FastAPI()
     app.include_router(
         create_ask_router(
@@ -102,6 +108,39 @@ def test_shared_run_contract_and_event_driven_wait(tmp_path: Path) -> None:
     assert request.project_id == PROJECT_ID
     assert request.investigator_profile == "ask-investigator"
     assert request.reviewer_profile == "ask-reviewer"
+    assert resolved_projects == [PROJECT_ID, PROJECT_ID]
+
+
+@pytest.mark.parametrize("operation", ["get", "wait", "resume", "cancel", "export"])
+def test_unavailable_project_never_uses_default_service(operation: str, tmp_path: Path) -> None:
+    from gobby.servers.routes.ask import create_ask_router
+
+    resolved_projects: list[str] = []
+
+    def resolve_service(project_id: str) -> None:
+        resolved_projects.append(project_id)
+
+    server = SimpleNamespace(
+        services=SimpleNamespace(ask_service=_AskService(), get_ask_service=resolve_service)
+    )
+    app = FastAPI()
+    app.include_router(
+        create_ask_router(
+            cast("HTTPServer", server), project_root_resolver=lambda _project_id: tmp_path
+        )
+    )
+    with TestClient(app) as client:
+        suffix = "" if operation == "get" else f"/{operation}"
+        response = client.request(
+            "POST" if operation in {"resume", "cancel"} else "GET",
+            f"/api/ask/runs/ask-run-1{suffix}",
+            params={"project_id": PROJECT_ID},
+            headers={"X-Gobby-Session-Id": SESSION_ID},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Ask service is unavailable"}
+    assert resolved_projects == [PROJECT_ID]
 
 
 def test_export_propagates_archive_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

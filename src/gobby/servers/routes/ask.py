@@ -84,8 +84,9 @@ def create_ask_router(
     """Create Ask lifecycle and immutable-export routes."""
     router = APIRouter(prefix="/api/ask/runs", tags=["ask"])
 
-    def service() -> Any:
-        resolved = getattr(server.services, "ask_service", None)
+    def service(project_id: str) -> Any:
+        resolver = getattr(server.services, "get_ask_service", None)
+        resolved = resolver(project_id) if resolver is not None else None
         if resolved is None:
             raise HTTPException(status_code=503, detail="Ask service is unavailable")
         return resolved
@@ -121,7 +122,7 @@ def create_ask_router(
             reviewer_profile=_REVIEWER_PROFILE,
             idempotency_key=body.idempotency_key,
         )
-        result = await service().start(
+        result = await service(body.project_id).start(
             ask_request,
             project_root=await project_root(body.project_id),
             caller_session_id=_caller_session_id(server, request),
@@ -130,7 +131,7 @@ def create_ask_router(
 
     @router.get("/{run_id}")
     async def get_ask_run(run_id: str, project_id: str) -> dict[str, Any]:
-        return _payload(service().get(run_id, project_id=project_id))
+        return _payload(service(project_id).get(run_id, project_id=project_id))
 
     @router.get("/{run_id}/wait")
     async def wait_for_ask_run(
@@ -138,7 +139,7 @@ def create_ask_router(
         project_id: str,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        result = await service().wait(
+        result = await service(project_id).wait(
             run_id,
             project_id=project_id,
             timeout=timeout_seconds,
@@ -147,7 +148,7 @@ def create_ask_router(
 
     @router.post("/{run_id}/resume")
     async def resume_ask_run(run_id: str, project_id: str, request: Request) -> dict[str, Any]:
-        result = await service().resume(
+        result = await service(project_id).resume(
             run_id,
             project_id=project_id,
             caller_session_id=_caller_session_id(server, request),
@@ -156,7 +157,7 @@ def create_ask_router(
 
     @router.post("/{run_id}/cancel")
     async def cancel_ask_run(run_id: str, project_id: str, request: Request) -> dict[str, Any]:
-        result = await service().cancel(
+        result = await service(project_id).cancel(
             run_id,
             project_id=project_id,
             caller_session_id=_caller_session_id(server, request),
@@ -165,7 +166,7 @@ def create_ask_router(
 
     @router.get("/{run_id}/export")
     async def export_ask_run(run_id: str, project_id: str) -> StreamingResponse:
-        root = service().publication_root(run_id, project_id=project_id)
+        root = service(project_id).publication_root(run_id, project_id=project_id)
         return StreamingResponse(
             _tar_stream(root),
             media_type="application/x-tar",
