@@ -148,7 +148,8 @@ class TestResolveProjectContext:
 class TestCopyProjectJsonToWorktree:
     """Tests for _copy_project_json_to_worktree helper."""
 
-    def test_copies_project_json(self, tmp_path) -> None:
+    @pytest.mark.asyncio
+    async def test_copies_project_json(self, tmp_path) -> None:
         """Test that project.json is copied with parent reference."""
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
@@ -160,7 +161,7 @@ class TestCopyProjectJsonToWorktree:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        _copy_project_json_to_worktree(repo_path, worktree_path)
+        await _copy_project_json_to_worktree(repo_path, worktree_path)
 
         worktree_project = worktree_path / ".gobby" / "project.json"
         assert worktree_project.exists()
@@ -173,18 +174,20 @@ class TestCopyProjectJsonToWorktree:
         assert marker["parent_project_path"] == str(repo_path.resolve())
         assert marker["parent_project_id"] == "11111111-1111-4111-8111-111111110001"
 
-    def test_skips_if_no_source(self, tmp_path) -> None:
+    @pytest.mark.asyncio
+    async def test_skips_if_no_source(self, tmp_path) -> None:
         """Test that nothing happens if source doesn't exist."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        _copy_project_json_to_worktree(repo_path, worktree_path)
+        await _copy_project_json_to_worktree(repo_path, worktree_path)
 
         assert not (worktree_path / ".gobby" / "project.json").exists()
 
-    def test_augments_existing_with_parent_path(self, tmp_path) -> None:
+    @pytest.mark.asyncio
+    async def test_augments_existing_with_parent_path(self, tmp_path) -> None:
         """Test that existing project.json is left alone and a sidecar is written."""
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
@@ -198,7 +201,7 @@ class TestCopyProjectJsonToWorktree:
             '{"id": "11111111-1111-4111-8111-111111110001"}'
         )
 
-        _copy_project_json_to_worktree(repo_path, worktree_path)
+        await _copy_project_json_to_worktree(repo_path, worktree_path)
 
         import json
 

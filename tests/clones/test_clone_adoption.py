@@ -50,7 +50,8 @@ def test_resolve_managed_clone_path_canonicalizes_and_contains(
 
 
 @pytest.mark.parametrize(("detached", "expected_branch"), [(False, "main"), (True, None)])
-def test_inspects_actual_branch_commit_and_origin_from_clone(
+@pytest.mark.asyncio
+async def test_inspects_actual_branch_commit_and_origin_from_clone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     detached: bool,
@@ -68,9 +69,9 @@ def test_inspects_actual_branch_commit_and_origin_from_clone(
     monkeypatch.setattr(clone_git, "CLONES_ROOT", clones_root)
     manager = CloneGitManager(source)
 
-    status = manager.get_clone_status(clone_path)
+    status = await manager.get_clone_status(clone_path)
 
     assert status is not None
     assert status.branch == expected_branch
     assert status.commit == _git(clone_path, "rev-parse", "--short", "HEAD")
-    assert manager.get_remote_url(cwd=clone_path) == str(source)
+    assert await manager.get_remote_url(cwd=clone_path) == str(source)

@@ -92,7 +92,8 @@ def _run_srt(
     ("backend", "provider"),
     [("srt", None), ("provider-native", "claude")],
 )
-def test_supported_backend_blocks_sensitive_path_traversal_and_later_launch_persistence(
+@pytest.mark.asyncio
+async def test_supported_backend_blocks_sensitive_path_traversal_and_later_launch_persistence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -121,7 +122,7 @@ def test_supported_backend_blocks_sensitive_path_traversal_and_later_launch_pers
     original_runner = runner.read_bytes()
 
     config = SandboxConfig(enabled=True, backend=backend, allow_network=False)
-    paths = compute_sandbox_paths(
+    paths = await compute_sandbox_paths(
         config,
         str(workspace),
         provider=provider,

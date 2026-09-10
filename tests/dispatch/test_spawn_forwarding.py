@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -15,7 +15,7 @@ from gobby.dispatch._planning_enhancement import _spawn_plan_enhancer
 from gobby.dispatch._rule_actions import _spawn_stage_agent
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.scheduler.executor import CronExecutor
-from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
@@ -34,7 +34,6 @@ SPAWN_IMPL_SCAN_PATHS = (
     ROOT / "tests/e2e/test_build_dispatcher_autonomy.py",
     ROOT / "tests/mcp_proxy/tools/spawn_agent/test_error_handling.py",
     ROOT / "tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py",
-    ROOT / "tests/mcp_proxy/tools/test_spawn_agent_speed.py",
     ROOT / "tests/storage/test_stage_review_findings.py",
     ROOT / "tests/tasks/test_plan_gate.py",
 )
@@ -184,8 +183,16 @@ async def test_terminal_backend_reaches_the_effect(
     executor = CronExecutor(
         storage=storage,
         agent_runner=SimpleNamespace(child_session_manager=None),
-        services=SimpleNamespace(),
+        services=SimpleNamespace(
+            get_git_manager=lambda _project_id: SimpleNamespace(repo_path=ROOT),
+            session_manager=SessionManager(temp_db),
+        ),
         run_db=None,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_create_cron_session",
+        AsyncMock(return_value="cron-session"),
     )
     job = CronJob(
         id="job",
@@ -197,11 +204,18 @@ async def test_terminal_backend_reaches_the_effect(
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
+    run = CronRun(
+        id="run",
+        cron_job_id=job.id,
+        machine_id="21000000-0000-4000-8000-000000000001",
+        triggered_at=task.created_at,
+        created_at=task.created_at,
+    )
     with patch(
         "gobby.agents.readiness.spawn_readiness_blocker",
         return_value=None,
     ):
-        outcome = await executor._execute_agent_spawn(job)
+        outcome = await executor._execute_agent_spawn(job, run)
     assert outcome.status == "dispatched"
     assert scheduled_captured["terminal_backend"] in {"tmux", "native"}
     assert scheduled_captured["terminal_backend"] is not None
