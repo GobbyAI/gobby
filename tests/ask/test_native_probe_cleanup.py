@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import json
+import shutil
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -130,6 +136,68 @@ def test_finalizer_cleans_latest_hosts_and_preserves_launch_group_authority(
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_wait_reports_worker_error_before_nested_receipt_or_process_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error_path = tmp_path / "control" / "fresh-error.json"
+    error_path.parent.mkdir()
+    error_path.write_text(json.dumps({"error_type": "SrtRuntimeError", "message": "SRT missing"}))
+    worker = cast(
+        harness.OwnedWorker,
+        SimpleNamespace(
+            error_path=error_path,
+            process=SimpleNamespace(poll=lambda: None),
+        ),
+    )
+
+    def unexpected_sleep(_seconds: float) -> None:
+        pytest.fail("wait ignored a terminal worker error receipt")
+
+    monkeypatch.setattr(time, "sleep", unexpected_sleep)
+    with pytest.raises(RuntimeError, match="SRT missing"):
+        harness._wait_for_json(
+            error_path.parent / "host-receipts" / "fresh.json",
+            worker,
+            deadline_monotonic=time.monotonic() + 60,
+        )
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_failure_rolls_back_created_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.submit(lambda: None).result()
+    closed: list[str] = []
+    runner = SimpleNamespace(
+        http_server=SimpleNamespace(services=SimpleNamespace()),
+        bootstrap_config=SimpleNamespace(daemon_port=60001, websocket_port=60002),
+        db_executor=SimpleNamespace(shutdown=executor.shutdown, join=lambda: None),
+        database=SimpleNamespace(close=lambda: closed.append("database")),
+    )
+    monkeypatch.setenv("DATABASE_URL", _SCOPED_TEST_DATABASE_URL)
+    monkeypatch.setattr("gobby.runner.GobbyRunner.create", AsyncMock(return_value=runner))
+    monkeypatch.setattr(shutil, "which", lambda _name: "/probe/claude")
+    monkeypatch.setattr(
+        harness, "_bootstrap_policy_identity", AsyncMock(side_effect=RuntimeError("SRT missing"))
+    )
+    arguments = argparse.Namespace(
+        timeout_seconds=60,
+        config_path=tmp_path / "config.yaml",
+        project_root=tmp_path,
+        control_dir=tmp_path / "control",
+        phase="fresh",
+    )
+    try:
+        with pytest.raises(RuntimeError, match="SRT missing"):
+            await harness._contained_worker_async(arguments)
+        assert closed == ["database"]
+        with pytest.raises(RuntimeError, match="cannot schedule new futures after shutdown"):
+            executor.submit(lambda: None)
+    finally:
+        executor.shutdown()
 
 
 @pytest.mark.parametrize(

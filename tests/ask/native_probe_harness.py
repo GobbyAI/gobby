@@ -98,6 +98,7 @@ class OwnedWorker:
     stderr_handle: Any
     stdout_path: Path
     stderr_path: Path
+    error_path: Path
 
     def close_logs(self) -> None:
         self.stdout_handle.close()
@@ -782,7 +783,11 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
         await runner_task
         return 0
     finally:
-        if runner_task is not None and not runner_task.done():
+        if runner_task is None:
+            from gobby.runner_rollback import rollback_runner_resources_async
+
+            await rollback_runner_resources_async(runner)
+        elif not runner_task.done():
             runner.request_shutdown(drain_terminals=True)
             await runner_task
 
@@ -2207,6 +2212,7 @@ def _spawn_worker(
         stderr_handle=stderr_handle,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
+        error_path=control_dir / f"{phase}-error.json",
     )
 
 
@@ -2247,13 +2253,14 @@ def _wait_for_json(
     deadline_monotonic: float,
 ) -> dict[str, Any]:
     while time.monotonic() < deadline_monotonic:
+        if worker.error_path.is_file():
+            detail = worker.error_path.read_text(encoding="utf-8")
+            raise RuntimeError(f"contained worker failed before {path.name}: {detail}")
         if path.is_file():
             return _json_mapping(json.loads(path.read_bytes()), name=f"control file {path.name}")
         returncode = worker.process.poll()
         if returncode is not None:
-            error_path = path.parent / f"{path.name.split('-', 1)[0]}-error.json"
-            detail = error_path.read_text(encoding="utf-8") if error_path.is_file() else ""
-            raise RuntimeError(f"contained worker exited {returncode} before {path.name}: {detail}")
+            raise RuntimeError(f"contained worker exited {returncode} before {path.name}")
         time.sleep(0.05)
     raise TimeoutError(f"timed out waiting for contained worker control file {path.name}")
 
