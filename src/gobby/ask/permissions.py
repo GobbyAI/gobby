@@ -714,6 +714,10 @@ def ask_tool_denial_reason(
     arguments: Mapping[str, Any],
 ) -> str | None:
     """Return a denial reason for the authenticated Ask run, or ``None``."""
+    from gobby.ask.stage_authority import ask_stage_tool_denial_reason, is_ask_stage_tool
+
+    if is_ask_stage_tool(server_name, tool_name):
+        return ask_stage_tool_denial_reason(server_name, tool_name, arguments)
     agent_run_id = get_current_agent_run_id()
     if agent_run_id is None:
         return None

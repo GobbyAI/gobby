@@ -267,6 +267,7 @@ class TestPipelineChildSession:
             "list_pipeline_executions",
             {},
             session_id="child-session-mcp",
+            enforce_workflow=False,
         )
         assert tool_proxy.call_tool.call_count == 1
         assert tool_proxy.call_tool.call_args is not None
@@ -354,6 +355,7 @@ class TestPipelineChildSession:
             "list_pipeline_executions",
             {},
             session_id=child_session.id,
+            enforce_workflow=False,
         )
         stored_child = session_manager.get(child_session.id)
         assert stored_child is not None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,18 +27,16 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import reset_seeded_contexts
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 pytestmark = pytest.mark.unit
-
-# projects.id is a native uuid column; use a valid UUID string.
-PROJECT_ID = "11111111-1111-4111-8111-111111111111"
-
 
 _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
     "name": "plan-adversary-steps",
@@ -56,12 +55,24 @@ _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
 
 @pytest.fixture
 def db(hub_db: HubDatabase) -> HubDatabase:
-    database = hub_db
-    database.execute(
-        "INSERT INTO projects (id, name) VALUES (%s, %s)",
-        (PROJECT_ID, "test-project"),
-    )
-    return database
+    return hub_db
+
+
+@pytest.fixture
+def checkout(
+    db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+) -> IsolatedCheckoutProject:
+    return isolated_checkout_factory(db, "test-project")
+
+
+@pytest.fixture
+def workflow_runtime() -> Iterator[WorkflowEvaluationRuntime]:
+    runtime = WorkflowEvaluationRuntime()
+    try:
+        yield runtime
+    finally:
+        runtime.shutdown()
 
 
 def _insert_session(
@@ -69,7 +80,8 @@ def _insert_session(
     *,
     session_id: str,
     external_id: str,
-    project_id: str = PROJECT_ID,
+    project_id: str,
+    machine_id: str,
 ) -> None:
     db.execute(
         """
@@ -77,7 +89,7 @@ def _insert_session(
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
         ) VALUES (%s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        (session_id, external_id, "21000000-0000-4000-8000-000000000001", "codex", project_id),
+        (session_id, external_id, machine_id, "codex", project_id),
     )
 
 
@@ -93,6 +105,8 @@ class _SessionEndHandler(SessionEndMixin):
         *,
         session_manager: SessionManager,
         workflow_handler: WorkflowHookHandler,
+        project_id: str,
+        machine_id: str,
     ) -> None:
         self.logger = MagicMock()
         self._session_manager = session_manager
@@ -109,8 +123,8 @@ class _SessionEndHandler(SessionEndMixin):
         self._session_task_manager = None
         self._dispatch_session_summaries_fn = None
         self._call_tool = None
-        self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
-        self._resolve_project_id = MagicMock(return_value=PROJECT_ID)
+        self._get_machine_id = MagicMock(return_value=machine_id)
+        self._resolve_project_id = MagicMock(return_value=project_id)
         self._handler_map = {}
         self.handle_count = 0
 
@@ -140,6 +154,8 @@ def _make_session_end_event(session_id: str) -> HookEvent:
 @pytest.mark.asyncio
 async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     db: HubDatabase,
+    checkout: IsolatedCheckoutProject,
+    workflow_runtime: WorkflowEvaluationRuntime,
     tool_name: str,
     expected_fragment: str,
 ) -> None:
@@ -150,11 +166,15 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         db,
         session_id=parent_session_id,
         external_id=f"ext-{parent_session_id}",
+        project_id=checkout.project.id,
+        machine_id=checkout.machine_id,
     )
     _insert_session(
         db,
         session_id=child_session_id,
         external_id=f"ext-{child_session_id}",
+        project_id=checkout.project.id,
+        machine_id=checkout.machine_id,
     )
 
     RuleDefinitionManager(db).create(
@@ -187,7 +207,11 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     )
 
     session_manager = SessionManager(db)
-    workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db), enabled=True)
+    workflow_handler = WorkflowHookHandler(
+        rule_engine=RuleEngine(db=db),
+        enabled=True,
+        evaluation_runtime=workflow_runtime,
+    )
     hook_manager = SimpleNamespace(
         _workflow_handler=workflow_handler,
         _session_manager=session_manager,
@@ -230,6 +254,8 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         handler = _SessionEndHandler(
             session_manager=session_manager,
             workflow_handler=workflow_handler,
+            project_id=checkout.project.id,
+            machine_id=checkout.machine_id,
         )
         with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
             response = handler.handle_session_end(_make_session_end_event(child_session_id))
@@ -252,12 +278,20 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
 @pytest.mark.integration
 async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     db: HubDatabase,
+    checkout: IsolatedCheckoutProject,
+    workflow_runtime: WorkflowEvaluationRuntime,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session_id = str(uuid.uuid4())
     external_id = f"ext-{session_id}"
-    _insert_session(db, session_id=session_id, external_id=external_id)
+    _insert_session(
+        db,
+        session_id=session_id,
+        external_id=external_id,
+        project_id=checkout.project.id,
+        machine_id=checkout.machine_id,
+    )
 
     RuleDefinitionManager(db).create(
         name="plan-adversary-steps",
@@ -265,7 +299,11 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
         priority=100,
         enabled=True,
     )
-    workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db), enabled=True)
+    workflow_handler = WorkflowHookHandler(
+        rule_engine=RuleEngine(db=db),
+        enabled=True,
+        evaluation_runtime=workflow_runtime,
+    )
     instance_manager = AgentStepInstanceManager(db)
     instance_manager.save(
         make_step_instance(
@@ -278,6 +316,8 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     hook_manager = _SessionEndHandler(
         session_manager=session_manager,
         workflow_handler=workflow_handler,
+        project_id=checkout.project.id,
+        machine_id=checkout.machine_id,
     )
 
     server = MagicMock()
@@ -302,7 +342,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
         },
         "source": "codex",
         "headers": {
-            "X-Gobby-Project-Id": PROJECT_ID,
+            "X-Gobby-Project-Id": checkout.project.id,
             "X-Gobby-Session-Id": session_id,
         },
     }

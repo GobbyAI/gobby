@@ -13,12 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
-from gobby.ask.permissions import (
-    AskPermissionDenied,
-    ask_tool_denial_reason,
-    current_ask_allowed_tools,
-)
-from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
+from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_resolution import resolve_server
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
@@ -27,7 +22,12 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_protocol_mismatch_result,
 )
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
-from gobby.servers.routes.mcp.endpoints import request_context
+from gobby.servers.routes.mcp.endpoints import ask_policy, request_context
+from gobby.servers.routes.mcp.endpoints.ask_policy import (
+    fallback_denial as _ask_fallback_denial,
+)
+from gobby.servers.routes.mcp.endpoints.ask_policy import filter_tools as _filter_ask_tools
+from gobby.servers.routes.mcp.endpoints.ask_policy import schema_denial as _ask_schema_denial
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.servers.routes.mcp.endpoints.request_context import (
     is_mcp_wrapper_request,
@@ -61,64 +61,6 @@ def _normalize_schema_ref(server_name: str, tool_name: str) -> tuple[str, str]:
                     raw_server = parsed_server
                 raw_tool = parsed_tool
     return raw_server, raw_tool
-
-
-def _ask_policy_service(server: "HTTPServer") -> object:
-    return server.tool_proxy or server
-
-
-def _filter_ask_tools(
-    server_name: str,
-    tools: list[dict[str, Any]],
-    allowed: frozenset[tuple[str, str]] | None,
-) -> list[dict[str, Any]]:
-    if allowed is None:
-        return tools
-    return [tool for tool in tools if (server_name, str(tool.get("name"))) in allowed]
-
-
-async def _ask_schema_denial(
-    server: "HTTPServer", server_name: str, tool_name: str
-) -> dict[str, Any] | None:
-    try:
-        allowed = await asyncio.to_thread(current_ask_allowed_tools, _ask_policy_service(server))
-    except AskPermissionDenied as exc:
-        reason = str(exc)
-    else:
-        if allowed is None or (server_name, tool_name) in allowed:
-            return None
-        reason = f"Ask managed agent cannot discover {server_name}.{tool_name}"
-    return {
-        "success": False,
-        "error": reason,
-        "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
-        "server_name": server_name,
-        "tool_name": tool_name,
-    }
-
-
-async def _ask_fallback_denial(
-    server: "HTTPServer",
-    server_name: str,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> dict[str, Any] | None:
-    reason = await asyncio.to_thread(
-        ask_tool_denial_reason,
-        _ask_policy_service(server),
-        server_name,
-        tool_name,
-        arguments,
-    )
-    if reason is None:
-        return None
-    return {
-        "success": False,
-        "error": reason,
-        "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
-        "server_name": server_name,
-        "tool_name": tool_name,
-    }
 
 
 def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -321,7 +263,10 @@ async def list_mcp_tools(
     ctx_token = await request_context._set_context_for_request(server, {}, request)
 
     try:
-        allowed = await asyncio.to_thread(current_ask_allowed_tools, _ask_policy_service(server))
+        allowed = await asyncio.to_thread(
+            ask_policy.current_allowed_tools,
+            server,
+        )
         if allowed is not None and not any(name == server_name for name, _ in allowed):
             return {
                 "success": True,
