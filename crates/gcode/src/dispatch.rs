@@ -168,6 +168,7 @@ fn service_config_selection(
         | Command::SchemaIdentity { .. }
         | Command::Init
         | Command::Projects
+        | Command::Ask(_)
         | Command::SearchText { .. }
         | Command::SearchContent { .. }
         | Command::Grep { .. }
@@ -211,6 +212,10 @@ fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<b
         }
         Command::Projects => {
             commands::status::projects(format)?;
+            Ok(true)
+        }
+        Command::Ask(args) => {
+            crate::dispatch_ask::run(args, cli.project.as_deref(), format)?;
             Ok(true)
         }
         Command::Prune {
@@ -417,6 +422,7 @@ fn run() -> anyhow::Result<()> {
         | Command::SchemaIdentity { .. }
         | Command::Init
         | Command::Projects
+        | Command::Ask(_)
         | Command::Prune { .. } => Ok(()),
         Command::Evidence { .. } => commands::evidence::run(
             &ctx,

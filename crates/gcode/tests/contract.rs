@@ -6,7 +6,8 @@ use serde_json::Value;
 use syn::{Expr, ExprLit, Item, Lit};
 
 fn pinned_contract() -> Value {
-    serde_json::from_str(include_str!("../contract/gcode.contract.json")).expect("pinned contract")
+    serde_json::from_str(include_str!("../../../tests/contracts/gcode.contract.json"))
+        .expect("pinned contract")
 }
 
 fn shared_graph_schema_doc() -> &'static str {
@@ -73,9 +74,74 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_nine_with_evidence_without_codewiki() {
+fn ask_command_contract_is_complete() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract JSON");
+    assert_eq!(contract["contract_version"], serde_json::json!(10));
+
+    let ask = command(&contract, "ask");
+    assert!(ask["daemon_consumed"].as_bool().expect("daemon flag"));
+    assert_eq!(
+        ask["positionals"],
+        serde_json::json!([{"name": "QUESTION", "required": false, "repeatable": false}])
+    );
+    let flags: Vec<&str> = ask["flags"]
+        .as_array()
+        .expect("Ask flags")
+        .iter()
+        .map(|flag| flag["name"].as_str().expect("flag name"))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            "--commit",
+            "--timeout-seconds",
+            "--retrieval",
+            "--background",
+            "--status",
+            "--resume",
+            "--cancel",
+            "--export",
+            "--output",
+            "--format",
+        ]
+    );
+    let retrieval = ask["flags"]
+        .as_array()
+        .expect("Ask flags")
+        .iter()
+        .find(|flag| flag["name"] == "--retrieval")
+        .expect("retrieval flag");
+    assert_eq!(
+        retrieval["allowed_values"],
+        serde_json::json!(["deterministic", "hybrid"])
+    );
+    assert_eq!(
+        output_keys(&contract, "ask"),
+        [
+            "run_id",
+            "status",
+            "current_stage",
+            "answer_outcome",
+            "typed_error",
+            "deadline_at",
+            "profile_identities",
+            "tool_identities",
+            "artifact_manifest",
+            "attempt_count",
+            "repair_count",
+            "binding",
+            "evidence",
+            "result_artifact",
+            "usage",
+            "output",
+        ]
+    );
+}
+
+#[test]
+fn contract_is_version_ten_with_ask_and_evidence_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(9));
+    assert_eq!(contract["contract_version"], serde_json::json!(10));
     assert!(
         contract["error_codes"]
             .as_array()

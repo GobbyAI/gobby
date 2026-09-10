@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
@@ -83,6 +84,7 @@ def setup_internal_registries(
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
+    ask_service_resolver: Callable[[], Any | None] | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -289,6 +291,28 @@ def setup_internal_registries(
     )
     manager.add_registry(workflows_registry)
     logger.debug("Workflows registry initialized")
+
+    if ask_service_resolver is not None and db is not None and project_id is not None:
+        from gobby.mcp_proxy.tools.ask import create_ask_registry
+        from gobby.storage.project_checkouts import require_root
+        from gobby.storage.workspace_machine_scope import require_local_machine_id
+
+        def resolve_ask_project_root(target_project_id: str) -> Path:
+            machine_id = require_local_machine_id(
+                None,
+                resource_kind="project_checkout",
+                resource_id=target_project_id,
+            )
+            return Path(require_root(db, target_project_id, machine_id))
+
+        manager.add_registry(
+            create_ask_registry(
+                ask_service_resolver,
+                project_id=project_id,
+                project_root_resolver=resolve_ask_project_root,
+            )
+        )
+        logger.debug("Ask registry initialized")
 
     # Initialize metrics registry if metrics_manager is available
     if metrics_manager is not None:

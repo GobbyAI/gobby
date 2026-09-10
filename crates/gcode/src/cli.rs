@@ -1,6 +1,9 @@
 use crate::output;
 use clap::{ArgGroup, Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 
+mod ask;
+pub(crate) use ask::{AskAction, AskArgs};
+
 const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
     crate::graph::code_graph::DEFAULT_SYMBOL_PATH_MAX_DEPTH;
 const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
@@ -61,6 +64,8 @@ pub(crate) enum Command {
         #[arg(long, value_name = "JSON", required_unless_present = "request_json")]
         snapshot_json: Option<String>,
     },
+    /// Ask a source-bound question through the durable Gobby pipeline
+    Ask(AskArgs),
 
     // ── Project Setup ────────────────────────────────────────────────
     /// Index this machine's registered Gobby checkout and install gcode skills
@@ -735,7 +740,7 @@ pub(crate) fn effective_format(
     command: &Command,
 ) -> output::Format {
     explicit_format.unwrap_or_else(|| {
-        if command.is_navigation() {
+        if command.is_navigation() || matches!(command, Command::Ask(_)) {
             output::Format::Text
         } else {
             output::Format::Json
