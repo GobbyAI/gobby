@@ -203,6 +203,10 @@ def _hydrate_existing_conflict(
         ours_content = None
     if stored_conflict.theirs_content is not None:
         theirs_content = None
+    if stored_conflict.resolved_content is not None:
+        # Manual resolutions remain unapplied while Git still contains markers.
+        # Hydrating those markers must not undo the review before merge_apply.
+        status = stored_conflict.status
     merge_storage.update_conflict(
         stored_conflict.id,
         status=status,
