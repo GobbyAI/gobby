@@ -26,7 +26,9 @@ from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -82,6 +84,17 @@ def _run_storage(
             timeout_seconds=timeout_seconds,
         ),
         repo,
+    )
+    caller_session = SessionManager(temp_db).register(
+        external_id=f"ask-snapshot-{record.run_id}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=project_id,
+    )
+    storage.bind_execution_context(
+        record.run_id,
+        project_root=repo,
+        caller_session_id=caller_session.id,
     )
     return storage, record.run_id
 
@@ -152,6 +165,7 @@ def test_historical_snapshot_isolation_and_recovery(
     managed = manager.worktree_storage.get(snapshot.worktree_id)
     assert managed is not None
     assert managed.workspace_role == "ask_snapshot"
+    assert managed.agent_session_id == storage.execution_inputs(run_id)["caller_session_id"]
     assert _git(repo, "rev-parse", "HEAD") == caller_head
     assert _git(repo, "status", "--porcelain=v1") == caller_status
 
@@ -476,17 +490,19 @@ async def test_snapshot_cancellation_revokes_grant_issued_in_blocking_call(
     _git(repo, "init", "--quiet", "-b", "main")
     (repo / "source.py").write_text("VALUE = 'pinned'\n", encoding="utf-8")
     commit_oid = _commit(repo, "pinned")
-    storage, _run_id = _run_storage(temp_db, project_id, repo, commit_oid)
+    storage, run_id = _run_storage(temp_db, project_id, repo, commit_oid)
     source_root = tmp_path / "source"
     source_root.mkdir()
-    session_id = uuid4()
+    spoofed_session_id = uuid4()
     execution_id = uuid4()
     entered = threading.Event()
     release = threading.Event()
     revoked: list[tuple[UUID, int | None, str]] = []
+    issued_for: list[UUID] = []
 
     class BlockingCredentialManager:
-        def issue_tool_request(self, **_kwargs: object) -> SimpleNamespace:
+        def issue_tool_request(self, **kwargs: object) -> SimpleNamespace:
+            issued_for.append(cast("UUID", kwargs["session_id"]))
             entered.set()
             assert release.wait(timeout=2)
             credential = SimpleNamespace(
@@ -512,17 +528,19 @@ async def test_snapshot_cancellation_revokes_grant_issued_in_blocking_call(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
         credential_manager=cast("ManagedCredentialManager", BlockingCredentialManager()),
-        session_id=session_id,
         snapshot_executable=_branch_gcode(),
     )
     task = asyncio.create_task(
-        manager._prepare_index(source_root, datetime.now(UTC) + timedelta(seconds=10))
+        manager._prepare_index(run_id, source_root, datetime.now(UTC) + timedelta(seconds=10))
     )
     assert await asyncio.to_thread(entered.wait, 2)
     task.cancel()
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
+    original_caller = UUID(str(storage.execution_inputs(run_id)["caller_session_id"]))
+    assert issued_for == [original_caller]
+    assert original_caller != spoofed_session_id
     assert revoked == [(execution_id, 1, "ask_snapshot_preparation_failed")]
 
 

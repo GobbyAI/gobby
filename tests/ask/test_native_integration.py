@@ -194,6 +194,11 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         ),
         repo,
     )
+    storage.bind_execution_context(
+        record.run_id,
+        project_root=repo,
+        caller_session_id=session.id,
+    )
     assert record.request.timeout_seconds == 600
     artifacts = AskArtifactStore(tmp_path / "state", project_id, record.run_id)
     runtime_root = tmp_path / "managed-runtimes"
@@ -234,7 +239,6 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         run_storage=storage,
         snapshot_executable=gcode_bin,
         credential_manager=credential_manager,
-        session_id=session_id,
     )
 
     snapshot = await manager.prepare_async(
@@ -324,6 +328,11 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
             timeout_seconds=120,
         ),
         repo,
+    )
+    storage.bind_execution_context(
+        root_record.run_id,
+        project_root=repo,
+        caller_session_id=session.id,
     )
     root_artifacts = AskArtifactStore(tmp_path / "state", project_id, root_record.run_id)
     root_snapshot = await manager.prepare_async(
