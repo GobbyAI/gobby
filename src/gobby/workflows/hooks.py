@@ -25,6 +25,7 @@ from gobby.storage.hub.operation_deadline import (
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
+from gobby.workflows.engine.event_utils import _get_tool_identity
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
@@ -659,20 +660,21 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     else:
                         logger.warning(message)
 
+                event_data = event.data if isinstance(event.data, dict) else {}
+                skip_checkout_status = event.event_type == HookEventType.BEFORE_TOOL and (
+                    _get_tool_identity(event_data) in {"close_task", "gobby-tasks:close_task"}
+                )
                 dirty_files = (
                     await get_dirty_files_categorized_async(
                         project_path,
                         timeout=_git_status_timeout(blocking_deadline),
                     )
-                    if project_path
+                    if project_path and not skip_checkout_status
                     else DirtyFiles(set(), set())
                 )
 
-                def _load_dirty_files() -> DirtyFiles:
-                    return dirty_files
-
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
-                if variables.get("baseline_dirty_files") in (
+                if not skip_checkout_status and variables.get("baseline_dirty_files") in (
                     None,
                     [GIT_STATUS_UNAVAILABLE_MARKER],
                 ):
@@ -709,7 +711,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     _edited: set[str] = session_edited,
                 ) -> bool:
                     # Only count files this session actually touched
-                    current_dirty = _load_dirty_files()
+                    current_dirty = dirty_files
                     dirty_tracked = current_dirty.tracked
                     dirty_untracked = current_dirty.untracked
                     session_dirty_tracked = _edited & dirty_tracked
@@ -721,7 +723,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 ) -> bool:
                     if not _edited:
                         return False
-                    return bool(_edited & _load_dirty_files().all)
+                    return bool(_edited & dirty_files.all)
 
                 eval_context = {
                     "has_dirty_files": LazyBool(_check_dirty),
@@ -761,7 +763,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             session_id=session_id,
                             project_id=event.project_id,
                             project_path=project_path,
-                            dirty_files=lambda: _load_dirty_files().all,
+                            dirty_files=lambda: dirty_files.all,
                         )
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""

@@ -592,6 +592,125 @@ class TestAgentRestartReconciliation:
         assert metadata == {fenced.id: {"reconciliation_pending": False}}
 
     @pytest.mark.asyncio
+    async def test_periodic_recovery_clears_fence_with_spawn_held_mutex(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        task = LocalTaskManager(temp_db).create_task(
+            sample_project["id"],
+            "Spawn-held restart task",
+            category="code",
+            validation_criteria="Restart recovery preserves the attached mutex holder.",
+            implementation_domain="backend",
+        )
+        parent = SessionManager(temp_db).register(
+            external_id="parent-spawn-held-restart",
+            machine_id=require_machine_id(),
+            source="test",
+            project_id=sample_project["id"],
+        )
+        run_storage = LocalAgentRunManager(temp_db)
+        run = run_storage.create(
+            parent_session_id=parent.id,
+            provider="codex",
+            prompt="work",
+            run_id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            task_id=task.id,
+        )
+        started_run = run_storage.start(run.id)
+        assert started_run is not None
+        run_storage.merge_resume_metadata(run.id, {"reconciliation_pending": True})
+        mutexes = TaskDispatchMutexManager(temp_db)
+        spawn_holder = "spawn-agent:0a5c9b1ed2f34cd6:11111111-2222-3333-4444-555555555555"
+        assert mutexes.acquire_mutex(
+            task.id,
+            holder=spawn_holder,
+            kind="spawn_agent",
+            ttl_seconds=600,
+            run_id=run.id,
+        )
+
+        runner = self._runner(run_storage, db=temp_db)
+        with patch(
+            "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
+            new=AsyncMock(return_value=True),
+        ):
+            reclassified = await _reclassify_reconciliation_pending_runs(runner)
+
+        recovered = run_storage.get(run.id)
+        mutex = mutexes.get_mutex(task.id)
+        assert reclassified == 2
+        assert recovered is not None
+        metadata = recovered.resume_metadata_json
+        assert metadata is not None
+        assert metadata["reconciliation_pending"] is False
+        assert mutex is not None
+        assert mutex.run_id == run.id
+        assert mutex.lease_holder == spawn_holder
+
+    @pytest.mark.asyncio
+    async def test_periodic_recovery_keeps_fence_for_other_run_mutex(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        task = LocalTaskManager(temp_db).create_task(
+            sample_project["id"],
+            "Conflicting restart task",
+            category="code",
+            validation_criteria="Restart recovery never takes another run's mutex.",
+            implementation_domain="backend",
+        )
+        parent = SessionManager(temp_db).register(
+            external_id="parent-conflicting-restart",
+            machine_id=require_machine_id(),
+            source="test",
+            project_id=sample_project["id"],
+        )
+        run_storage = LocalAgentRunManager(temp_db)
+        run = run_storage.create(
+            parent_session_id=parent.id,
+            provider="codex",
+            prompt="work",
+            run_id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            task_id=task.id,
+        )
+        started_run = run_storage.start(run.id)
+        assert started_run is not None
+        run_storage.merge_resume_metadata(run.id, {"reconciliation_pending": True})
+        mutexes = TaskDispatchMutexManager(temp_db)
+        other_run_id = "bd425e38-5425-4fe4-b1bc-12756197f248"
+        other_holder = "spawn-agent:other-run"
+        past = datetime.now(UTC) - timedelta(minutes=20)
+        assert mutexes.acquire_mutex(
+            task.id,
+            holder=other_holder,
+            kind="spawn_agent",
+            ttl_seconds=1,
+            run_id=other_run_id,
+            now=past,
+        )
+
+        runner = self._runner(run_storage, db=temp_db)
+        with patch(
+            "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
+            new=AsyncMock(return_value=True),
+        ):
+            reclassified = await _reclassify_reconciliation_pending_runs(runner)
+
+        recovered = run_storage.get(run.id)
+        mutex = mutexes.get_mutex(task.id)
+        assert reclassified == 1
+        assert recovered is not None
+        metadata = recovered.resume_metadata_json
+        assert metadata is not None
+        assert metadata["reconciliation_pending"] is True
+        assert mutex is not None
+        assert mutex.run_id == other_run_id
+        assert mutex.lease_holder == other_holder
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("fresh_pane_dead", [False, True])
     async def test_periodic_recovery_only_reconciles_captured_fenced_runs(
         self, fresh_pane_dead: bool

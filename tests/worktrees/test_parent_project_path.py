@@ -25,7 +25,8 @@ pytestmark = pytest.mark.unit
 class TestCopyProjectJsonToWorktree:
     """Tests for _copy_project_json_to_worktree function."""
 
-    def test_copies_project_json_with_parent_path(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_copies_project_json_with_parent_path(self, tmp_path: Path) -> None:
         """Verify parent_project_path is added when copying project.json to worktree."""
         # Setup main repo with .gobby/project.json
         main_repo = tmp_path / "main_repo"
@@ -44,7 +45,7 @@ class TestCopyProjectJsonToWorktree:
         worktree.mkdir()
 
         # Call the function
-        _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree)
 
         # Verify worktree project.json was created
         worktree_project_json = worktree / ".gobby" / "project.json"
@@ -61,7 +62,8 @@ class TestCopyProjectJsonToWorktree:
         assert marker["parent_project_path"] == str(main_repo.resolve())
         assert marker["parent_project_id"] == "proj-123"
 
-    def test_overwrites_existing_project_json_preserves_parent_project_id(
+    @pytest.mark.asyncio
+    async def test_overwrites_existing_project_json_preserves_parent_project_id(
         self, tmp_path: Path
     ) -> None:
         """Verify existing tracked project.json is left alone and a sidecar is written."""
@@ -84,7 +86,7 @@ class TestCopyProjectJsonToWorktree:
         )
 
         # Call the function
-        _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree)
 
         # Verify source content overwrites existing
         with open(worktree_project_json) as f:
@@ -95,7 +97,8 @@ class TestCopyProjectJsonToWorktree:
         assert marker["parent_project_path"] == str(main_repo.resolve())
         assert marker["parent_project_id"] == "new-id"
 
-    def test_no_project_json_in_main_repo(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_no_project_json_in_main_repo(self, tmp_path: Path) -> None:
         """Verify function handles missing project.json in main repo gracefully."""
         # Setup main repo without project.json
         main_repo = tmp_path / "main_repo"
@@ -106,13 +109,14 @@ class TestCopyProjectJsonToWorktree:
         worktree.mkdir()
 
         # Call the function - should not raise
-        _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree)
 
         # Verify no project.json was created in worktree
         worktree_project_json = worktree / ".gobby" / "project.json"
         assert not worktree_project_json.exists()
 
-    def test_creates_gobby_dir_if_missing(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_creates_gobby_dir_if_missing(self, tmp_path: Path) -> None:
         """Verify .gobby directory is created in worktree if it doesn't exist."""
         # Setup main repo
         main_repo = tmp_path / "main_repo"
@@ -127,7 +131,7 @@ class TestCopyProjectJsonToWorktree:
         worktree.mkdir()
 
         # Call the function
-        _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree)
 
         # Verify .gobby dir was created
         assert (worktree / ".gobby").is_dir()
@@ -362,7 +366,8 @@ class TestEdgeCases:
         assert result is not None
         assert result.resolve() == worktree.resolve()
 
-    def test_copy_propagates_json_write_error(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_copy_propagates_json_write_error(self, tmp_path: Path) -> None:
         """Worktree setup propagates project metadata write failures."""
         # Setup main repo
         main_repo = tmp_path / "main_repo"
@@ -380,12 +385,13 @@ class TestEdgeCases:
             patch("gobby.utils.project_context.os.replace", side_effect=OSError("Write failed")),
             pytest.raises(IsolationProjectJsonError),
         ):
-            _copy_project_json_to_worktree(main_repo, worktree)
+            await _copy_project_json_to_worktree(main_repo, worktree)
 
         # Verify .gobby dir was created (function gets that far before error)
         assert (worktree / ".gobby").is_dir()
 
-    def test_copy_propagates_invalid_json_in_source(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_copy_propagates_invalid_json_in_source(self, tmp_path: Path) -> None:
         """Worktree setup propagates invalid source metadata failures."""
         # Setup main repo with invalid JSON
         main_repo = tmp_path / "main_repo"
@@ -400,7 +406,7 @@ class TestEdgeCases:
         worktree.mkdir()
 
         with pytest.raises(IsolationProjectJsonError) as exc_info:
-            _copy_project_json_to_worktree(main_repo, worktree)
+            await _copy_project_json_to_worktree(main_repo, worktree)
 
         assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
         worktree_project_json = worktree / ".gobby" / "project.json"

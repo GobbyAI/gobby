@@ -55,7 +55,8 @@ def _checkout_project(
     return isolated.project
 
 
-def test_branch_cleanup_ignores_branch_already_deleted(
+@pytest.mark.asyncio
+async def test_branch_cleanup_ignores_branch_already_deleted(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -73,10 +74,16 @@ def test_branch_cleanup_ignores_branch_already_deleted(
     )
     branch = branch_cleanup.default_task_branch_name(task)
 
-    monkeypatch.setattr(branch_cleanup, "local_branches", lambda _repo_path: {branch})
-    monkeypatch.setattr(branch_cleanup, "current_branch", lambda _repo_path: "main")
+    async def local_branches(_repo_path: Path) -> set[str]:
+        return {branch}
 
-    def branch_deleted_by_peer(
+    async def current_branch(_repo_path: Path) -> str:
+        return "main"
+
+    monkeypatch.setattr(branch_cleanup, "local_branches", local_branches)
+    monkeypatch.setattr(branch_cleanup, "current_branch", current_branch)
+
+    async def branch_deleted_by_peer(
         _repo_path: Path,
         _args: list[str],
         *,
@@ -91,13 +98,14 @@ def test_branch_cleanup_ignores_branch_already_deleted(
 
     monkeypatch.setattr(branch_cleanup, "git", branch_deleted_by_peer)
 
-    deleted, errors = branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
+    deleted, errors = await branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
 
     assert deleted == 0
     assert errors == []
 
 
-def test_branch_cleanup_refuses_missing_project_repo_path(  # tdd-red window
+@pytest.mark.asyncio
+async def test_branch_cleanup_refuses_missing_project_repo_path(  # tdd-red window
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
 ) -> None:
@@ -118,7 +126,7 @@ def test_branch_cleanup_refuses_missing_project_repo_path(  # tdd-red window
         validation_criteria="Branch cleanup rejects a missing repository path.",
     )
 
-    def fail_git_operation(*_args: object, **_kwargs: object) -> None:
+    async def fail_git_operation(*_args: object, **_kwargs: object) -> None:
         pytest.fail("branch cleanup must not inspect or delete branches without a checkout")
 
     monkeypatch.setattr(branch_cleanup, "local_branches", fail_git_operation)
@@ -128,7 +136,7 @@ def test_branch_cleanup_refuses_missing_project_repo_path(  # tdd-red window
     with pytest.raises(CheckoutNotFoundError):
         branch_cleanup.project_path(temp_db, project.id)
 
-    deleted, errors = branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
+    deleted, errors = await branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
 
     assert deleted == 0
     assert errors

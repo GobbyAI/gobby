@@ -32,10 +32,12 @@ pub(crate) mod visibility;
 
 extern crate self as gobby_code;
 
+mod ask_client;
 mod cli;
 mod cli_error;
 mod daemon;
 mod dispatch;
+mod dispatch_ask;
 
 #[cfg(test)]
 #[path = "../tests/common/mod.rs"]

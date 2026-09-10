@@ -12,7 +12,8 @@ from gobby.build.workspace_git import _git
 pytestmark = pytest.mark.unit
 
 
-def test_workspace_git_resolves_git_from_fallback_path(
+@pytest.mark.asyncio
+async def test_workspace_git_resolves_git_from_fallback_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     fallback_bin = tmp_path / "fallback-bin"
@@ -24,7 +25,7 @@ def test_workspace_git_resolves_git_from_fallback_path(
     monkeypatch.setattr("gobby.utils.git.GIT_FALLBACK_PATHS", (str(fallback_bin),))
     monkeypatch.setenv("PATH", "")
 
-    result = _git(tmp_path, ["status", "--porcelain"], timeout=5)
+    result = await _git(tmp_path, ["status", "--porcelain"], timeout=5)
 
     assert result.returncode == 0
     assert result.stdout == "workspace-fallback\n"

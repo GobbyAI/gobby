@@ -7,18 +7,23 @@ These tests verify that the ToolProxyService:
 4. Valid parameters pass through normally
 """
 
+import asyncio
 import logging
+import threading
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.git_utils import GitStatusUnavailable
+from gobby.workflows.hooks import WorkflowHookHandler
 
 pytestmark = pytest.mark.unit
 
@@ -1453,6 +1458,67 @@ class TestWorkflowBeforeToolEnforcement:
 
 class TestDirectMcpAfterToolWorkflow:
     """Direct MCP completion ownership follows session-source capabilities."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("event_type", [HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL])
+    async def test_direct_workflow_uses_isolated_runtime(
+        self,
+        event_type: HookEventType,
+        tool_proxy_with_hooks: ToolProxyService,
+        mock_hook_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        daemon_thread = threading.get_ident()
+        evaluation_threads: list[int] = []
+        observed_events: list[HookEventType] = []
+
+        async def blocked_rules(
+            event: HookEvent,
+            *,
+            blocking_deadline: BlockingEffectDeadline | None = None,
+        ) -> HookResponse:
+            evaluation_threads.append(threading.get_ident())
+            observed_events.append(event.event_type)
+            started.set()
+            # Bound cleanup even if the regression runs this on the daemon loop.
+            release.wait(2)
+            return HookResponse(decision="allow")
+
+        handler = WorkflowHookHandler(
+            timeout=5, evaluation_runtime=WorkflowEvaluationRuntime(max_workers=1)
+        )
+        monkeypatch.setattr(handler, "_evaluate_rules", blocked_rules)
+        monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
+        mock_hook_manager._workflow_handler = handler
+        mock_hook_manager._session_manager.get.return_value.source = "pipeline"
+
+        async def evaluate() -> None:
+            if event_type is HookEventType.BEFORE_TOOL:
+                result = await tool_proxy_with_hooks._apply_before_tool_enforcement(
+                    "gobby-tasks", "list_tasks", {}, "session-123"
+                )
+                assert result[3:] == (None, None)
+            else:
+                await tool_proxy_with_hooks._apply_after_tool_workflow(
+                    "gobby-tasks", "list_tasks", {}, "session-123", {"success": True}
+                )
+
+        evaluation = asyncio.create_task(evaluate())
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            assert len(evaluation_threads) == 1
+            assert evaluation_threads[0] != daemon_thread
+            # Reaching here while rules are blocked proves daemon-loop responsiveness.
+            assert not evaluation.done()
+        finally:
+            release.set()
+            try:
+                await evaluation
+            finally:
+                handler.shutdown()
+        assert observed_events == [event_type]
 
     @pytest.fixture
     def mock_hook_manager(self):

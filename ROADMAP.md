@@ -4,8 +4,8 @@ Gobby is a local-first control plane for AI coding tools: persistent sessions,
 task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
 automation around the tools developers already use.
 
-Last refreshed: 2026-09-09. This document is the roadmap and the architecture
-decision record. The live tracker is epic #21542.
+Last refreshed: 2026-09-09 (decision 17). This document is the roadmap and the
+architecture decision record. The live tracker is epic #21542.
 
 ## Where we are (2026-09-01)
 
@@ -80,24 +80,24 @@ machine's node daemon over its authenticated channel; remote terminal viewing
 rides the daemon WS proxy. Coming home, `gobby` attaches locally at full
 fidelity to the same terminals.
 
-**C. Hosted Gobby — deferred.** gobby.ai runs the data stack and hub daemon.
-Story C differs from story B only in who hosts the hub and in WAN latency, which
-is why the story-B datastore tunnel is a LAN-era bridge. Deferred until Gobby is
-proven in local and Tailscale production. Datastore TLS and Qdrant
-authentication are prerequisites and are not yet tasks.
+**C. Hosted Gobby — deferred.** gobby.ai runs the data stack and hub daemon as
+one compose unit, one hub per customer. Story C differs from story B only in who
+hosts the hub and in WAN latency; the datastores never leave the hub network in
+either story, so the only prerequisite is TLS on the front door. Deferred until
+Gobby is proven in local and Tailscale production.
 
 ### Target architecture
 
 - **One daemon binary, `gdaemon`, three modes.** `standalone` (default; hub and
   node on one box — story A), `hub` (owns the datastores and everything
   database-backed, and performs node duties for the hub machine), `node`
-  (per-machine: registers to a hub, authenticates with a
-  machine API key, never holds datastore credentials, forwards every semantic
-  call, runs only machine-local duties — agents, worktrees, gterm supervision,
-  hook ingress and its ledger). A node requires a hub connection; offline is a
-  typed error, never a fallback. Hub-owned launchers coordinate dispatch; the
-  selected local or remote node owns child execution. One service container is
-  assembled per mode.
+  (per-machine: registers to a hub, authenticates with a user-issued API key
+  bound to the machine, never holds datastore credentials, forwards every
+  semantic call, runs only machine-local duties — agents, worktrees, gterm
+  supervision, hook ingress and its ledger). A node requires a hub connection;
+  offline is a typed error, never a fallback. Hub-owned launchers coordinate
+  dispatch; the selected local or remote node owns child execution. One service
+  container is assembled per mode.
 - **`gterm` is permanently a separate supervised process.** It survives daemon
   restarts, upgrades, and lease handoffs; the daemon adopts it by epoch. Folding
   PTY ownership into the daemon would kill every agent terminal on every daemon
@@ -201,7 +201,8 @@ the two-machine smoke #19600.
 
 The front door comes **first**. `gdaemon` takes `:60887`/`:60888`, reverse-
 proxies HTTP and WS to the Python daemon on an internal loopback port, and owns
-the mode enum, the singleton lease, and machine registration from day one.
+the mode enum, the singleton lease, machine registration, and API keys from day
+one.
 Subsystem absorption then happens behind that boundary, one routing-table change
 at a time. This inverts the older "Python front door delegating to a `:60890`
 sidecar" framing: no Python-side `rust_migration` flags, no `APIRoute` compare
@@ -212,12 +213,11 @@ wrapper, no mismatch latch. Compare mode is a proxy feature.
 | **S1.1** · #21551 | `gdaemon serve`: axum front door on `:60887`/`:60888` proxying HTTP and WS to Python on loopback; native `GET /api/health`; bearer pass-through; the WS proxy passes the `terminal_ws_golden` corpus and chat WS unchanged; defines the `RouteFamily` seam and the per-family `Proxy | Native | Compare` backend read from bootstrap |
 | **S1.2** · #21553 | Mode enum `standalone`/`hub`/`node` and the mode-assembled service container; boundary semantics only, duties come in Stage 4 |
 | **S1.3** · #21554 | Singleton lease and Python backend lifecycle in Rust; retires the Python lease modules; `hub` and `standalone` lease, a node registers instead |
-| **S1.4** · #21555 | Node registration over WS and machine API keys; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines` |
+| **S1.4** · #21555 | API keys and node registration: `api_keys` (user, machine, hash, label, revocation) replaces the shared `local_cli_token`; front-door middleware resolves a key to user and machine; the runtime handshake bootstraps a fresh machine's first key; node registration over WS; `machines` gains platform/capabilities/heartbeat/endpoint columns; `/api/machines`; revocation drops the node's channel |
 | **S1.5** · #21552 | HTTP contract corpus for the proxied surface (`tests/contracts/http/`), dual-consumed by pytest and Rust; the parity gate for every Stage 2 takeover |
-| **S1.6** · #21556 | Datastore tunnel for node mode: loopback PostgreSQL, Qdrant, and FalkorDB multiplexed over the authenticated channel to the hub, which connects as a machine-scoped PostgreSQL role under row-level security |
 
 Edges: `S1.2` ← `S1.1`; `S1.3` ← `S1.2`, `#21548`; `S1.4` ← `S1.2`;
-`S1.6` ← `S1.4`; `S1.5` independent.
+`S1.5` independent.
 Stage 1 starts now, in its own worktree, concurrent with #21334, #19664, and the
 #21363 burndown.
 
@@ -269,23 +269,22 @@ is real.
 | Ref | Piece |
 | --- | --- |
 | **S4.1** · #17436 | Node mode: the per-machine daemon that holds no datastore credentials and runs only local duties |
-| **S4.1a** · #21578 | Transitional Python node semantics — throwaway, re-implemented by S2.7 |
-| **S4.1b** · #21579 | Rust node duties — cross-reference to S2.7, S2.8, S2.11; closes when a node needs no Python backend |
+| **S4.1b** · #21579 | Rust node duties — cross-reference to S2.7, S2.8, S2.11; closes when a node runs `gdaemon` alone |
 | **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone` |
 | **S4.3** · #20202 | Remote `gobby` attach — plan home stays under #21334 |
 | **S4.4** · #17769 | Per-user auth and multi-user; labeled `later` |
-| **S4.5** · #21577 | `gcode` on nodes — configuration, once the tunnel exists |
 | **S4.6** · #19652 | Hub transcript archive research |
 | **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine |
 | **S4.8** · #21576 | Move Telegram and comms attachments onto hub `files_home` |
 
-Edges: `S4` ← `S1`, `#19600`; `S4.1a` ← `S1.2`, `S1.4`, `S1.6`, `S4.2`, `#21549`;
-`S4.1b` ← `S2.7`, `S2.8`, `S2.11`; `S4.2` ← `S1.2`; `S4.4` ← `S1.4`;
-`S4.5` ← `S1.6`.
+Edges: `S4` ← `S1`, `#19600`; `S4.1b` ← `S2.7`, `S2.8`, `S2.11`, `#21549`;
+`S4.2` ← `S1.2`; `S4.4` ← `S1.4`.
 
-**Story B is testable when Stage 1, S4.1a, and S4.2 close** — months before
-agents, terminals, and hooks are absorbed, because the Python daemon can be a
-node behind the tunnel. Stage 4 as a whole closes with S4.1b.
+**Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2 runs right
+after S1.2 so the first hub-node pair test in S1.4 has a node running no
+maintenance. Stage 4 as a whole closes with S4.1b. `gcode` on a node writes its
+index through hub HTTP routes owned by whichever Stage 2 family absorbs the
+code-index routes (decision 17).
 
 ## Side quests
 
@@ -389,17 +388,16 @@ separate planning effort before implementation.
     2026-09-03). `hub` owns the datastores and everything database-backed while
     also performing node duties for the hub machine. Hub-owned launchers
     coordinate dispatch; the selected local or remote node owns child execution.
-    `node` registers, authenticates with a machine API key, holds no datastore
-    credential, forwards every semantic call, runs only machine-local duties, and
-    requires a hub connection — offline is a typed error, never a fallback.
+    `node` registers, authenticates with a user-issued API key bound to the
+    machine, holds no datastore credential, forwards every semantic call, runs
+    only machine-local duties, and requires a hub connection — offline is a
+    typed error, never a fallback.
     `standalone` is both on one box. This settles the authority matrix #19647 was
     chartered to research.
-14. **The Python daemon can be a node** (2026-09-01). Node `gdaemon` brokers
-    PostgreSQL, Qdrant, and FalkorDB over the authenticated channel to the hub,
-    which connects as a machine-scoped PostgreSQL role under row-level security.
-    The Python daemon points its DSNs at localhost, holds no credential, and
-    loses access when the key is revoked. HTTP-only node semantics arrive with
-    the Rust node (S2.7).
+14. **The Python daemon can be a node** (2026-09-01; superseded by decision 17
+    on 2026-09-09). The datastore tunnel, the machine-scoped PostgreSQL role
+    under row-level security, and the transitional Python node were dropped
+    before any of them was built.
 15. **Naming: `gobby` is the client and interface** (2026-09-01), taken from
     `gclient` as soon as it carries the daily operator verbs (S3.2). The
     Python package becomes `gobby-backend` until it retires at S3.4;
@@ -424,6 +422,29 @@ separate planning effort before implementation.
     family, created when its epic is claimed; S2.3 is the template. Naming:
     `crates/g<family>` → package `gobby-<family>`, after `crates/gcode` →
     `gobby-code`.
+17. **The node is thin and the datastores stay home** (2026-09-09; supersedes
+    decision 14). The Python daemon is chatty with the database, so a node that
+    tunnels queries to the hub puts the WAN on every query and is slower than
+    calling the hub directly. No tunnel, no machine-scoped role, no row-level
+    security, no datastore TLS: PostgreSQL, Qdrant, and FalkorDB never leave the
+    hub network, and the public surface is HTTP and WS behind the front door.
+    A node is `gdaemon` in node mode with machine-local duties only (decision
+    13); per-invocation binaries (`ghook`, `gcode`, `gobby`) call the hub over
+    HTTP with the machine's key. Story B therefore arrives with S4.1b, after the
+    Stage 2 families for agents, terminals, and hook ingress. Credentials: an
+    API key is a user credential bound to one machine at issue (`user_id`,
+    `machine_id`, hash, label, revocation); there is no separate machine key,
+    and the single shared `local_cli_token` retires when every caller holds a
+    key. Browser sessions and API keys both carry a user; hub-internal work runs
+    as a system principal. Tenancy: the hub is the tenant. Hosted Gobby
+    provisions one hub per customer (one database, one Qdrant collection set,
+    one FalkorDB graph set, one `gdaemon`) on shared datastore instances; no org
+    or tenant columns. Machine identity stays per `GOBBY_HOME`, so a second OS
+    user on one box is a second machine. Deferred, in order of cost: login
+    providers (login is the seam and issues the same browser session), key
+    scopes and unbound tokens, teams on one hub and per-user privacy inside a
+    hub. Open at S2.11: whether `ghook` posts to the hub directly or through
+    the local node; the envelope spool stays local either way (decision 9).
 
 ## References
 

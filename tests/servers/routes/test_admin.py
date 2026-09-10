@@ -68,10 +68,14 @@ class TestAdminRoutes:
     @pytest.fixture(autouse=True)
     def reset_restart_state(self) -> Iterator[None]:
         import gobby.servers.routes.admin._lifecycle as lifecycle
+        from gobby.sessions.handoff_shutdown import cancel_handoff_shutdown
+        from gobby.utils.machine_id import require_machine_id
 
         lifecycle._restart_lock = None
+        cancel_handoff_shutdown(require_machine_id())
         yield
         lifecycle._restart_lock = None
+        cancel_handoff_shutdown(require_machine_id())
 
     @pytest.fixture
     def mock_server(self) -> MagicMock:
@@ -97,6 +101,9 @@ class TestAdminRoutes:
 
         server.session_manager = MagicMock()
         server.session_manager.count_by_status.return_value = {"active": 1, "paused": 0}
+        handoff_conn = server.session_manager.db.transaction.return_value.__enter__.return_value
+        handoff_conn.execute.return_value.fetchone.return_value = {"acquired": True}
+        handoff_conn.execute.return_value.fetchall.return_value = []
 
         server.task_manager = MagicMock()
         server.task_manager.count_by_state.return_value = {"ready": 2}
@@ -778,6 +785,27 @@ class TestAdminRoutes:
         assert data["config"]["server"]["version"] == "1.0.0"
         assert data["config"]["features"]["session_manager"] is True
 
+    @pytest.mark.parametrize("path", ["shutdown", "restart", "restart?force=true"])
+    def test_lifecycle_refuses_pending_handoff_without_shutdown_side_effects(
+        self, path: str, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        conn = mock_server.session_manager.db.transaction.return_value.__enter__.return_value
+        conn.execute.return_value.fetchall.return_value = [
+            {"seq_num": 12332, "attempt_id": "queued-handoff"}
+        ]
+        with (
+            patch("gobby.runner_maintenance.write_shutdown_source") as marker,
+            patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper") as spawn,
+        ):
+            response = client.post(f"/api/admin/{path}")
+        assert response.status_code == 409
+        assert response.json()["status"] == "handoff_pending"
+        assert "#12332 (queued-handoff)" in response.json()["message"]
+        marker.assert_not_called()
+        spawn.assert_not_called()
+        assert mock_server._runner.request_shutdown_calls == []
+        mock_server._process_shutdown.assert_not_called()
+
     def test_shutdown_endpoint(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
             response = client.post("/api/admin/shutdown")
@@ -874,7 +902,7 @@ class TestAdminRoutes:
 
         mock_server._process_shutdown.assert_not_called()
         assert mock_server._background_tasks == set()
-        mock_server.run_db.assert_awaited_once_with(scheduler.list_protected_runs)
+        mock_server.run_db.assert_any_await(scheduler.list_protected_runs)
 
     @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
     @patch(
@@ -946,7 +974,7 @@ class TestAdminRoutes:
 
         assert response.status_code == 200
         assert response.json()["status"] == "restarting"
-        mock_server.run_db.assert_not_awaited()
+        scheduler.list_protected_runs.assert_not_called()
         mock_spawn.assert_called_once()
         assert mock_server._runner._shutdown_requested is True
 

@@ -13,6 +13,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +205,11 @@ class TranscriptEvidenceUnavailable(RuntimeError):
         self.source = source
         self.attempted_paths = tuple(dict.fromkeys(attempted_paths))
         self.retry_after = 5
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Preserve required keyword arguments across the evidence process pool."""
+        constructor = partial(type(self), source=self.source, attempted_paths=self.attempted_paths)
+        return constructor, self.args, self.__dict__
 
 
 @dataclass

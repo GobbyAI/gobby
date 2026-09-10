@@ -60,6 +60,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_voice_router,
         create_webhooks_router,
     )
+    from gobby.servers.routes.ask import create_ask_router
     from gobby.servers.routes.auth import create_auth_router
 
     app.include_router(create_auth_router(server))
@@ -68,6 +69,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_agent_spawn_router(server))
     app.include_router(create_agents_router(server))
     app.include_router(create_attention_router(server))
+    app.include_router(create_ask_router(server))
     app.include_router(create_terminals_router(server))
     app.include_router(create_build_router(server))
     app.include_router(create_chat_attachments_router(server))

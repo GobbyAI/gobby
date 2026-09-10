@@ -9,7 +9,7 @@ use schema::*;
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 9,
+        contract_version: 10,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -53,6 +53,46 @@ pub fn contract() -> CliContract {
                     "evidence",
                     "Read exact commit-bound evidence without agent or model orchestration.",
                 )
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![PositionalContract {
+                    name: "QUESTION",
+                    required: false,
+                    repeatable: false,
+                }],
+                flags: vec![
+                    FlagContract::value("--commit", "REF"),
+                    FlagContract::value("--timeout-seconds", "SECONDS"),
+                    FlagContract::value("--retrieval", "MODE")
+                        .allowed(vec!["deterministic", "hybrid"]),
+                    FlagContract::switch("--background"),
+                    FlagContract::value("--status", "RUN_ID"),
+                    FlagContract::value("--resume", "RUN_ID"),
+                    FlagContract::value("--cancel", "RUN_ID"),
+                    FlagContract::value("--export", "RUN_ID"),
+                    FlagContract::value("--output", "DIR"),
+                    format_flag(),
+                ],
+                json_output_keys: vec![
+                    "run_id",
+                    "status",
+                    "current_stage",
+                    "answer_outcome",
+                    "typed_error",
+                    "deadline_at",
+                    "profile_identities",
+                    "tool_identities",
+                    "artifact_manifest",
+                    "attempt_count",
+                    "repair_count",
+                    "binding",
+                    "evidence",
+                    "result_artifact",
+                    "usage",
+                    "output",
+                ],
+                ..CommandContract::new("ask", "Run or inspect a durable source-bound Ask pipeline.")
             },
             CommandContract {
                 positionals: vec![],
@@ -614,6 +654,17 @@ pub fn contract() -> CliContract {
             "stale_range",
             "unsupported_schema",
             "unsafe_path",
+            "invalid_ask_request",
+            "ask_unauthorized",
+            "ask_run_not_found",
+            "ask_wait_timeout",
+            "ask_daemon_error",
+            "malformed_ask_response",
+            "ask_daemon_unavailable",
+            "ask_wait_disconnected",
+            "ask_export_io",
+            "ask_failed",
+            "ask_cancelled",
         ],
         exit_codes: vec![
             ExitCodeContract {

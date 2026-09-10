@@ -1,5 +1,6 @@
 # mypy: disable-error-code="no-untyped-def,no-untyped-call,assignment,attr-defined,union-attr"
 import asyncio
+import json
 import os
 import threading
 import time
@@ -7,7 +8,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import psycopg
@@ -590,6 +591,54 @@ class TestSessionLifecycleManager:
             assert await manager._process_pending_transcripts(manager._capture_active()) == 0
         assert generate.await_args.kwargs["allow_llm"] is False
         manager.session_manager.mark_transcript_processed.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
+    async def test_process_session_transcript_preserves_unicode_separators(
+        self,
+        tmp_path: Path,
+        manager: SessionLifecycleManager,
+        separator: str,
+    ) -> None:
+        content = f"First{separator}second"
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-09-09T00:00:00Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": content}],
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        manager.token_event_store = EmptyTokenEventStore()
+        session_manager = cast(MagicMock, manager.session_manager)
+        session_manager.get.return_value = SimpleNamespace(
+            source="codex",
+            project_id="proj-1",
+            context_window=None,
+            model=None,
+            usage_input_tokens=0,
+            usage_output_tokens=0,
+            usage_cache_creation_tokens=0,
+            usage_cache_read_tokens=0,
+        )
+
+        await manager._process_session_transcript("session-1", str(transcript))
+
+        assert session_manager.update_stats.call_args.kwargs == {
+            "message_count": 1,
+            "turn_count": 1,
+            "tool_call_count": 0,
+            "last_assistant_content": content,
+        }
 
     @pytest.mark.asyncio
     async def test_process_session_transcript_real_parsing(

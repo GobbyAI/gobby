@@ -58,6 +58,46 @@ class TestHTTPServerInit:
         assert mock_semantic_search.call_args is not None
         assert mock_semantic_search.call_args.kwargs["embedding_dim"] == 1024
 
+    def test_init_forwards_lazy_project_aware_ask_service_resolver(self) -> None:
+        services = ServiceContainer(
+            database=MagicMock(),
+            session_manager=None,
+            task_manager=MagicMock(),
+            mcp_manager=MagicMock(),
+            mcp_db_manager=MagicMock(db=MagicMock()),
+        )
+        ask_services = {"project-one": object(), "project-two": object()}
+        get_ask_service = MagicMock(side_effect=ask_services.get)
+
+        with (
+            patch.object(ServiceContainer, "get_ask_service", get_ask_service, create=True),
+            patch("gobby.storage.secrets.SecretStore") as mock_secret_store,
+            patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
+            patch("gobby.storage.merge_resolutions.MergeResolutionManager"),
+            patch("gobby.worktrees.merge.resolver.MergeResolver"),
+            patch("gobby.servers.http.setup_internal_registries", return_value=[]) as mock_setup,
+            patch("gobby.servers.http.SemanticToolSearch"),
+            patch("gobby.servers.http.GobbyDaemonTools"),
+            patch("gobby.servers.http.create_mcp_server"),
+            patch("gobby.servers.app_factory.create_app", return_value=FastAPI()),
+        ):
+            mock_secret_store.return_value.get.return_value = None
+            HTTPServer(
+                services=services,
+                startup_config=DaemonConfig(),
+                port=8000,
+                test_mode=True,
+            )
+            resolver = mock_setup.call_args.kwargs["ask_service_resolver"]
+            assert resolver("project-one") is ask_services["project-one"]
+            assert resolver("project-two") is ask_services["project-two"]
+            assert resolver("unavailable-project") is None
+            assert get_ask_service.call_args_list == [
+                (("project-one",),),
+                (("project-two",),),
+                (("unavailable-project",),),
+            ]
+
     def test_init_minimal(self) -> None:
         """Test HTTPServer with minimal configuration."""
         services = ServiceContainer(

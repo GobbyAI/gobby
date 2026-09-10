@@ -25,6 +25,7 @@ from gobby.utils.git import (
     stash_oid_for_marker,
     stash_ref_for_oid,
 )
+from gobby.worktrees.git.manager import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
 
@@ -41,18 +42,14 @@ def _with_cutover_advisory(result: dict[str, Any], *, cutover_required: bool) ->
     return result
 
 
-def _worktree_path_for_branch(git_manager: Any, branch_name: str) -> str | None:
+async def _worktree_path_for_branch(
+    git_manager: WorktreeGitManager, branch_name: str
+) -> str | None:
     """Return the path where a branch is already checked out, if known."""
-    list_worktrees = getattr(git_manager, "list_worktrees", None)
-    if not callable(list_worktrees):
-        return None
-
     try:
-        for worktree in list_worktrees():
-            if getattr(worktree, "branch", None) == branch_name:
-                path = getattr(worktree, "path", None)
-                if isinstance(path, str) and path:
-                    return path
+        for worktree in await git_manager.list_worktrees():
+            if worktree.branch == branch_name and worktree.path:
+                return worktree.path
     except Exception as exc:
         logger.debug("Failed to inspect git worktrees for branch %s: %s", branch_name, exc)
     return None
@@ -225,9 +222,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         target_ref = f"refs/heads/{merge_target}"
         wt_path = worktree.worktree_path
         repo_path = str(resolved_git_mgr.repo_path)
-        target_worktree_path = await asyncio.to_thread(
-            _worktree_path_for_branch, resolved_git_mgr, merge_target
-        )
+        target_worktree_path = await _worktree_path_for_branch(resolved_git_mgr, merge_target)
         merge_cwd = target_worktree_path or repo_path
 
         target_ref_result = await resolved_git_mgr.run_git_command(

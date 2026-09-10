@@ -1035,7 +1035,7 @@ async def test_epic_integration_workspace_prefers_closed_commit_over_stale_links
         integration_workspace_id=integration.id,
         target_branch="main",
     )
-    task_manager.link_commit(leaf.id, stale_sha, cwd=repo)
+    task_manager.link_commit(leaf.id, stale_sha)
     task_manager.close_task_with_commit(leaf.id, accepted_sha, force=True, cwd=repo)
 
     await ensure_epic_integration_workspaces(

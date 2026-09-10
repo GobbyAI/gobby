@@ -225,6 +225,27 @@ class AgentCleanupHandler:
 
         return bool(await terminal_delivery.shielded_terminal_delivery(run_id, operation))
 
+    async def complete_workflow_run(
+        self,
+        run_id: str,
+        *,
+        notify_result: dict[str, Any],
+        message: str,
+        terminal_reason: AgentRunTerminalReason | None = None,
+    ) -> bool:
+        """Persist completion before awaiting owned resource cleanup."""
+
+        async def operation(acknowledge: Callable[[bool], None]) -> None:
+            await self._terminalize_successful_run_unshielded(
+                run_id,
+                notify_result=notify_result,
+                message=message,
+                terminal_reason=terminal_reason,
+                durable_completion=acknowledge,
+            )
+
+        return await terminal_delivery.run_terminal_delivery_until_durable(run_id, operation)
+
     async def _terminalize_successful_run_unshielded(
         self,
         run_id: str,
@@ -233,6 +254,7 @@ class AgentCleanupHandler:
         message: str,
         completion_result: str | None = None,
         terminal_reason: AgentRunTerminalReason | None = None,
+        durable_completion: Callable[[bool], None] | None = None,
     ) -> bool:
         """Complete an active run, notify subscribers, and clean child-owned state.
 
@@ -251,6 +273,8 @@ class AgentCleanupHandler:
         current = await self._run_db(self._agent_run_manager.get, run_id)
         if current is None:
             logger.debug("Successful terminalization no-op for missing run %s", run_id)
+            if durable_completion is not None:
+                durable_completion(False)
             return False
         completion_result = await self._run_db(
             closed_task_run_completion_result,
@@ -285,6 +309,8 @@ class AgentCleanupHandler:
             terminalize=_complete_run,
         )
         if routed and db_run is None:
+            if durable_completion is not None:
+                raise RuntimeError(f"Workflow completion was not persisted for agent {run_id}")
             return False
         if not routed:
             db_run = await _complete_run()
@@ -298,20 +324,35 @@ class AgentCleanupHandler:
                 latest.status if latest else "missing",
             )
             if latest is not None:
-                await self.post_terminal_cleanup(
-                    latest,
-                    cleanup_session_id=latest.child_session_id,
-                    allow_parent_session_fallback=False,
-                )
+                if durable_completion is not None and latest.status in ("pending", "running"):
+                    raise RuntimeError(f"Workflow completion was not persisted for agent {run_id}")
+
+                async def reconcile_cleanup() -> None:
+                    await self.post_terminal_cleanup(
+                        latest,
+                        cleanup_session_id=latest.child_session_id,
+                        allow_parent_session_fallback=False,
+                    )
+
+                if durable_completion is not None:
+                    durable_completion(False)
+                await reconcile_cleanup()
+            elif durable_completion is not None:
+                durable_completion(False)
             return False
 
-        await self.post_terminal_cleanup(
-            db_run,
-            cleanup_session_id=db_run.child_session_id,
-            allow_parent_session_fallback=False,
-            notification_result=notify_result,
-            notification_message=message,
-        )
+        async def completed_cleanup() -> None:
+            await self.post_terminal_cleanup(
+                db_run,
+                cleanup_session_id=db_run.child_session_id,
+                allow_parent_session_fallback=False,
+                notification_result=notify_result,
+                notification_message=message,
+            )
+
+        if durable_completion is not None:
+            durable_completion(True)
+        await completed_cleanup()
         return True
 
     async def terminalize_cancelled_run(

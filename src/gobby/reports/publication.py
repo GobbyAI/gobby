@@ -52,6 +52,18 @@ async def verify_publication(
     await git("show", f"{commit}:{report['report_path']}", consume=content_hash.update)
     if content_hash.hexdigest() != report["content_hash"]:
         raise ValueError("Committed report content does not match the persisted draft hash")
+    task = await asyncio.to_thread(LocalTaskManager(store.db).get_task, str(report["task_id"]))
+    linked_commit: str | None = None
+    for task_commit in task.commits or []:
+        if not task_commit or not commit.startswith(task_commit):
+            continue
+        # Task links use Git's abbreviated IDs. Resolve the link itself so an
+        # ambiguous prefix cannot authorize a different publication commit.
+        resolved = bytearray()
+        await git("rev-parse", "--verify", f"{task_commit}^{{commit}}", consume=resolved.extend)
+        if bytes(resolved).decode().strip() == commit:
+            linked_commit = task_commit
+            break
     return await asyncio.to_thread(
         _complete_publication,
         store,
@@ -59,6 +71,7 @@ async def verify_publication(
         attempt_id,
         branch,
         commit,
+        linked_commit,
     )
 
 
@@ -68,10 +81,11 @@ def _complete_publication(
     attempt_id: str,
     branch: str,
     commit: str,
+    linked_commit: str | None,
 ) -> str:
     """Validate durable linkage and commit the publication transaction off-loop."""
     task = LocalTaskManager(store.db).get_task(str(report["task_id"]))
-    if task.closed_at is None or commit not in (task.commits or []):
+    if task.closed_at is None or linked_commit is None or linked_commit not in (task.commits or []):
         raise ValueError("Publication commit must be linked to the closed documentation task")
     worktree = store.db.fetchone(
         "SELECT task_id, branch_name FROM worktrees WHERE id = %s", (report["worktree_id"],)

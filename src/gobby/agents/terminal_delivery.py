@@ -4,9 +4,11 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
+from gobby.storage.hub.operation_deadline import detached_database_operation_context
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -22,8 +24,23 @@ class _TerminalRunStorage(Protocol):
     def get(self, run_id: str) -> Any | None: ...
 
 
+type _DeliveryResult = dict[str, bool] | None
+
+
+@dataclass(frozen=True)
+class _DeliveryAttempt:
+    delivery: _DeliveryResult
+    subscriber_read_succeeded: bool
+    subscriber_cleanup_succeeded: bool
+
+
 _terminal_delivery_admission_open = True
 _in_flight_terminal_deliveries: dict[asyncio.Task[Any], str] = {}
+_in_flight_run_deliveries: dict[
+    tuple[asyncio.AbstractEventLoop, str],
+    asyncio.Future[_DeliveryAttempt],
+] = {}
+_terminal_delivery_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _default_terminal_delivery_offload[T](
@@ -46,18 +63,21 @@ def configure_terminal_delivery_offload(
     *,
     async_offload: Callable[..., Awaitable[Any]],
     sync_submit: Callable[..., Future[Any]] | None = None,
+    owner_loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
     """Route terminal storage work through the owned daemon executor."""
-    global _terminal_delivery_offload, _terminal_delivery_submit
+    global _terminal_delivery_offload, _terminal_delivery_submit, _terminal_delivery_loop
     _terminal_delivery_offload = async_offload
     _terminal_delivery_submit = sync_submit
+    _terminal_delivery_loop = owner_loop
 
 
 def reset_terminal_delivery_offload() -> None:
     """Restore default executor seams for tests and pre-daemon callers."""
-    global _terminal_delivery_offload, _terminal_delivery_submit
+    global _terminal_delivery_offload, _terminal_delivery_submit, _terminal_delivery_loop
     _terminal_delivery_offload = _default_terminal_delivery_offload
     _terminal_delivery_submit = None
+    _terminal_delivery_loop = None
 
 
 async def run_terminal_delivery_offload[T](
@@ -159,6 +179,122 @@ async def shielded_terminal_delivery[T](
     return owned.result()
 
 
+async def submit_terminal_delivery[T](
+    run_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+) -> Future[T]:
+    """Acknowledge tracked delivery admission without waiting for terminal cleanup.
+
+    Workflow evaluation may run on another loop. Admit on the daemon loop so
+    shutdown owns and drains the operation even after evaluation is cancelled.
+    """
+    loop = _terminal_delivery_loop or asyncio.get_running_loop()
+    admitted: Future[None] = Future()
+    result: Future[T] = Future()
+    context = detached_database_operation_context()
+
+    def settled(task: asyncio.Task[T]) -> None:
+        _in_flight_terminal_deliveries.pop(task, None)
+        if task.cancelled():
+            result.cancel()
+        elif (error := task.exception()) is not None:
+            result.set_exception(error)
+            logger.error("Submitted terminal delivery failed for agent %s", run_id, exc_info=error)
+        else:
+            result.set_result(task.result())
+
+    def admit() -> None:
+        if not _terminal_delivery_admission_open:
+            admitted.set_exception(
+                TerminalDeliveryAdmissionClosedError(
+                    f"Terminal delivery admission is closed for agent {run_id}"
+                )
+            )
+            return
+        try:
+            owned = loop.create_task(
+                operation(), name=f"terminal-delivery:{run_id}", context=context
+            )
+        except Exception as error:
+            admitted.set_exception(error)
+            return
+        _in_flight_terminal_deliveries[owned] = run_id
+        owned.add_done_callback(settled)
+        admitted.set_result(None)
+
+    if loop is asyncio.get_running_loop():
+        admit()
+    else:
+        loop.call_soon_threadsafe(admit)
+    await _await_terminal_result(admitted)
+    return result
+
+
+async def _await_terminal_result[T](result: Future[T]) -> T:
+    wrapped = asyncio.wrap_future(result)
+    # The owned task logs failures even if cancellation removes its caller.
+    wrapped.add_done_callback(lambda future: None if future.cancelled() else future.exception())
+    return await asyncio.shield(wrapped)
+
+
+async def run_terminal_delivery[T](
+    run_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+) -> T:
+    """Await an owned operation without abandoning it when its caller is cancelled."""
+    result = await submit_terminal_delivery(run_id, operation)
+    return await _await_terminal_result(result)
+
+
+async def run_terminal_delivery_until_durable[T](
+    run_id: str,
+    operation: Callable[[Callable[[T], None]], Coroutine[Any, Any, Any]],
+) -> T:
+    """Own a full delivery operation while waiting only for its durable boundary."""
+    durable: Future[T] = Future()
+
+    def acknowledge(result: T) -> None:
+        if durable.done():
+            raise RuntimeError(f"Durable terminal boundary acknowledged twice for agent {run_id}")
+        durable.set_result(result)
+
+    async def owned_operation() -> None:
+        try:
+            await operation(acknowledge)
+        except BaseException as error:
+            if not durable.done():
+                durable.set_exception(error)
+            raise
+        if not durable.done():
+            boundary_error = RuntimeError(
+                f"Terminal delivery for agent {run_id} finished before its durable boundary"
+            )
+            durable.set_exception(boundary_error)
+            raise boundary_error
+
+    try:
+        operation_result = await submit_terminal_delivery(run_id, owned_operation)
+    except asyncio.CancelledError:
+        # Admission is cancellation-shielded. A foreign caller can leave before the
+        # daemon loop admits the operation, which must retain its durable boundary.
+        raise
+    except BaseException as error:
+        if not durable.done():
+            durable.set_exception(error)
+        raise
+
+    def settle_unacknowledged_operation(completed: Future[None]) -> None:
+        if durable.done():
+            return
+        if completed.cancelled():
+            durable.cancel()
+            return
+        error = completed.exception()
+        if error is not None:
+            durable.set_exception(error)
+
+    operation_result.add_done_callback(settle_unacknowledged_operation)
+    return await _await_terminal_result(durable)
+
+
 async def drain_shielded_terminal_deliveries() -> None:
     """Await tracked terminal delivery scopes until the set is stably empty."""
     while _in_flight_terminal_deliveries:
@@ -183,22 +319,21 @@ async def _read_durable_subscribers_safely(
     db: HubDatabase,
     run_id: str,
     run_db: Callable[..., Awaitable[Any]],
-) -> list[str]:
-    """Read this run's durable subscriber rows, treating a read failure as none.
+) -> tuple[list[str], bool]:
+    """Read durable subscriber rows and report whether the read succeeded.
 
     Delivery must still proceed on the in-memory path when the durable read
-    fails, so the failure is logged and reported as an empty set rather than
-    raised.
+    fails, so the failure is logged and returned as an untrusted empty set.
     """
     try:
-        return list(await run_db(_read_durable_subscribers, db, run_id))
+        return list(await run_db(_read_durable_subscribers, db, run_id)), True
     except Exception:
         logger.warning(
             "Failed to read durable completion subscribers for agent %s",
             run_id,
             exc_info=True,
         )
-        return []
+        return [], False
 
 
 async def _wake_durable_subscribers(
@@ -253,6 +388,18 @@ def _read_durable_subscribers(db: HubDatabase, run_id: str) -> list[str]:
     return CompletionSubscriberManager(db).get_completion_subscribers(run_id)
 
 
+def _delivery_fully_acknowledged(attempt: _DeliveryAttempt) -> bool:
+    """Return whether a delivery result proves every attempted wake was durable."""
+    delivery = attempt.delivery
+    return (
+        attempt.subscriber_read_succeeded
+        and attempt.subscriber_cleanup_succeeded
+        and delivery is not None
+        and bool(delivery)
+        and all(delivery.values())
+    )
+
+
 async def deliver_and_cleanup_terminal_run(
     *,
     db: HubDatabase,
@@ -262,6 +409,63 @@ async def deliver_and_cleanup_terminal_run(
     message: str,
     run_db: Callable[..., Awaitable[Any]],
 ) -> dict[str, bool] | None:
+    """Coalesce concurrent successful deliveries while preserving failed-wake retries."""
+    loop = asyncio.get_running_loop()
+    key = (loop, run_id)
+    while True:
+        in_flight = _in_flight_run_deliveries.get(key)
+        if in_flight is None:
+            completed: asyncio.Future[_DeliveryAttempt] = loop.create_future()
+            completed.add_done_callback(
+                lambda future: None if future.cancelled() else future.exception()
+            )
+            _in_flight_run_deliveries[key] = completed
+            try:
+                attempt = await _deliver_and_cleanup_terminal_run_once(
+                    db=db,
+                    completion_registry=completion_registry,
+                    run_id=run_id,
+                    result=result,
+                    message=message,
+                    run_db=run_db,
+                )
+            except asyncio.CancelledError:
+                completed.cancel()
+                raise
+            except BaseException as error:
+                completed.set_exception(error)
+                raise
+            else:
+                completed.set_result(attempt)
+                return attempt.delivery
+            finally:
+                if _in_flight_run_deliveries.get(key) is completed:
+                    _in_flight_run_deliveries.pop(key, None)
+
+        try:
+            attempt = await asyncio.shield(in_flight)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            if in_flight.cancelled():
+                continue
+            raise
+        except Exception:
+            continue
+        if _delivery_fully_acknowledged(attempt):
+            return attempt.delivery
+
+
+async def _deliver_and_cleanup_terminal_run_once(
+    *,
+    db: HubDatabase,
+    completion_registry: CompletionEventRegistry | None,
+    run_id: str,
+    result: dict[str, Any] | None,
+    message: str,
+    run_db: Callable[..., Awaitable[Any]],
+) -> _DeliveryAttempt:
     """Deliver a terminal result, remove acknowledged rows, then evict registry state."""
     from gobby.tasks.close_review_delivery import terminal_review_delivery
 
@@ -273,13 +477,14 @@ async def deliver_and_cleanup_terminal_run(
     if isinstance(review_delivery, tuple) and len(review_delivery) == 2:
         result, message = review_delivery
     if completion_registry is None:
-        return None
+        return _DeliveryAttempt(None, False, False)
 
     delivery: dict[str, bool] | None = None
     notification_succeeded = False
+    subscriber_read_succeeded = False
     if result is not None:
         payload = result if "run_id" in result else {**result, "run_id": run_id}
-        durable_subscribers = await _read_durable_subscribers_safely(
+        durable_subscribers, subscriber_read_succeeded = await _read_durable_subscribers_safely(
             db=db,
             run_id=run_id,
             run_db=run_db,
@@ -308,6 +513,7 @@ async def deliver_and_cleanup_terminal_run(
         if isinstance(delivery, dict)
         else []
     )
+    subscriber_cleanup_succeeded = True
     try:
         if delivered_session_ids:
             from gobby.agents.completion_subscribers import (
@@ -324,6 +530,7 @@ async def deliver_and_cleanup_terminal_run(
 
             await run_db(remove_delivered_subscribers)
     except Exception:
+        subscriber_cleanup_succeeded = False
         logger.warning(
             "Failed to remove delivered completion subscribers for agent %s",
             run_id,
@@ -347,7 +554,11 @@ async def deliver_and_cleanup_terminal_run(
             )
     if notification_succeeded:
         completion_registry.cleanup(run_id)
-    return delivery
+    return _DeliveryAttempt(
+        delivery,
+        subscriber_read_succeeded,
+        subscriber_cleanup_succeeded,
+    )
 
 
 async def deliver_existing_terminal_run_unshielded(

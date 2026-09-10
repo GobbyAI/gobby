@@ -312,11 +312,14 @@ def stage_handoff_attempt(
         marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
     with db.transaction() as conn:
         session_row = conn.execute(
-            "SELECT handoff_markdown, status FROM sessions WHERE id = %s FOR UPDATE",
+            "SELECT handoff_markdown, status, machine_id FROM sessions WHERE id = %s FOR UPDATE",
             (session_id,),
         ).fetchone()
         if session_row is None:
             raise ValueError(f"Session {session_id} not found")
+        from gobby.sessions.handoff_shutdown import lock_handoff_staging
+
+        lock_handoff_staging(conn, str(session_row["machine_id"]))
         prior_status: str | None = None
         if transition_status is not None and session_row["status"] in ("active", "paused"):
             prior_status = str(session_row["status"])

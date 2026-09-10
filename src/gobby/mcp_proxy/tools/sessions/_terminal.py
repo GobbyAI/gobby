@@ -500,6 +500,10 @@ def register_terminal_tools(
         references: list[str] | None = None,
         clear_session: bool = False,
     ) -> dict[str, Any]:
+        feedback_status = _require_handoff_prerequisites(clear_session=clear_session)
+        if feedback_status.get("success") is False:
+            return feedback_status
+
         try:
             handoff = build_handoff_payload(
                 current_state=current_state,
@@ -514,10 +518,6 @@ def register_terminal_tools(
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
-
-        feedback_status = _require_handoff_feedback()
-        if feedback_status.get("success") is False:
-            return feedback_status
 
         if clear_session:
             from gobby.mcp_proxy.tools.sessions._terminal_clear import prepare_clear_session
@@ -536,7 +536,8 @@ def register_terminal_tools(
         result.update(feedback_status)
         return result
 
-    def _require_handoff_feedback() -> dict[str, Any]:
+    def _require_handoff_prerequisites(*, clear_session: bool) -> dict[str, Any]:
+        from gobby.storage.tasks import LocalTaskManager
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
@@ -577,6 +578,17 @@ def register_terminal_tools(
                     "This project requires the bounded Gobby-experience survey before handoff. "
                     "Call gobby-sessions:feedback with at most 3 observations, or "
                     "observations=[] when there is nothing to report. Then call set_handoff last."
+                ),
+            }
+        if clear_session and LocalTaskManager(db).list_tasks(
+            claimed_by_session_id=resolved_session_id, closed=False, limit=1
+        ):
+            return {
+                "success": False,
+                "error_code": "active_task_requires_compact",
+                "error": (
+                    "Use clear_session=false while working inside a task. "
+                    "clear_session=true is allowed only between tasks after task closure."
                 ),
             }
         return {"feedback_submitted": submitted}
