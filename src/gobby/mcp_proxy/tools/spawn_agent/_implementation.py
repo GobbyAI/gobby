@@ -31,6 +31,7 @@ from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
+from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.version_gate import (
@@ -449,8 +450,6 @@ async def spawn_agent_impl(
                 existing_worktree=existing_worktree,
                 git_manager=target_git_manager,
                 worktree_storage=worktree_storage,
-                clone_manager=target_clone_manager,
-                clone_storage=clone_storage,
                 spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
             )
@@ -458,6 +457,28 @@ async def spawn_agent_impl(
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
             )
+        except ReusedWorktreeRebaseConflict as exc:
+            return {
+                "success": False,
+                "error_code": "reused_worktree_rebase_conflict",
+                "error": (
+                    f"Reused worktree {existing_worktree.id} could not be rebased onto "
+                    f"{exc.base_ref}; the original worktree was preserved at "
+                    f"{existing_worktree.worktree_path}: {exc}"
+                ),
+                "worktree_id": existing_worktree.id,
+                "worktree_path": existing_worktree.worktree_path,
+                "branch_name": existing_worktree.branch_name,
+                "base_branch": existing_worktree.base_branch,
+                "rebase_target": exc.base_ref,
+                "base_commit_sha": exc.base_commit_sha,
+                "preserved": True,
+                "recovery": (
+                    "Check the preserved worktree's rebase state and resolve the branch against "
+                    f"'{exc.base_ref}' in the preserved worktree, then retry spawn_agent "
+                    f"with worktree_id='{existing_worktree.id}'."
+                ),
+            }
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
     elif clone_id and clone_storage:

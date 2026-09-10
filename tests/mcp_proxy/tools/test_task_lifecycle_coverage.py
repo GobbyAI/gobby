@@ -634,8 +634,8 @@ class TestCloseTask:
         assert "could not be resolved" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_close_task_passes_cwd_to_link_commit(self, mock_task_manager: MagicMock) -> None:
-        """Verifies link_commit receives the project repo_path as cwd."""
+    async def test_close_task_links_normalized_commit(self, mock_task_manager: MagicMock) -> None:
+        """Verifies close_task links the normalized commit without obsolete Git kwargs."""
         task = _make_task(commits=[])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.link_commit.return_value = task
@@ -653,12 +653,27 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
                 return_value=None,
             ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_task_scope",
+                return_value=TaskScopeEvaluation((), (), ()),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
+                return_value=set(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
+                return_value=(([], []), None),
+            ),
             patch.object(
                 lifecycle_close,
                 "launch_close_review",
                 new=_complete_valid_close_review,
             ),
-            patch("gobby.utils.git.normalize_commit_sha", return_value="abc1234"),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
+                return_value="abc1234",
+            ) as mock_norm,
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
             result = await registry.call(
@@ -666,10 +681,12 @@ class TestCloseTask:
                 {"task_id": task.id, "changes_summary": "done", "commit_sha": "abc1234"},
             )
 
-        # link_commit should have been called with cwd keyword arg
-        call_kwargs = mock_task_manager.link_commit.call_args
-        assert call_kwargs is not None, result
-        assert "cwd" in call_kwargs.kwargs
+        assert "error" not in result
+        assert result["closed"] is True
+        mock_task_manager.link_commit.assert_called_once_with(task.id, "abc1234")
+        mock_norm.assert_any_await("abc1234", cwd=str(Path.cwd()))
+        assert mock_norm.await_count == 3
+        assert mock_task_manager.close_task.call_args.kwargs["closed_commit_sha"] == "abc1234"
         task_validator.validate_task.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -700,6 +717,26 @@ class TestCloseTask:
                 return_value=None,
             ),
             patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_task_scope",
+                return_value=TaskScopeEvaluation((), (), ()),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
+                return_value=set(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
+                return_value=(([], []), None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.evaluate_task_scope",
+                return_value=TaskScopeEvaluation((), (), ()),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.unlinked_tagged_commits",
+                return_value=(([], []), None),
+            ),
+            patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close._task_dirty_paths",
                 return_value=set(),
             ),
@@ -722,7 +759,7 @@ class TestCloseTask:
                 new=_complete_valid_close_review,
             ),
             patch(
-                "gobby.utils.git.normalize_commit_sha",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
@@ -745,12 +782,8 @@ class TestCloseTask:
             )
 
         expected_cwd = str(repo_path.resolve())
-        mock_task_manager.link_commit.assert_called_with(
-            task.id,
-            "abc1234",
-            cwd=expected_cwd,
-        )
-        mock_norm.assert_called_with("abc1234", cwd=expected_cwd)
+        mock_task_manager.link_commit.assert_called_with(task.id, "abc1234")
+        mock_norm.assert_awaited_with("abc1234", cwd=expected_cwd)
         validation_task = mock_vcr.call_args.args[0]
         assert validation_task.commits == ["abc1234"]
         mock_vcr.assert_called_with(validation_task, "completed", expected_cwd)
@@ -791,6 +824,26 @@ class TestCloseTask:
                 return_value=None,
             ),
             patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_task_scope",
+                return_value=TaskScopeEvaluation((), (), ()),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
+                return_value=set(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
+                return_value=(([], []), None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.evaluate_task_scope",
+                return_value=TaskScopeEvaluation((), (), ()),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.unlinked_tagged_commits",
+                return_value=(([], []), None),
+            ),
+            patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close._task_dirty_paths",
                 return_value=set(),
             ),
@@ -813,7 +866,7 @@ class TestCloseTask:
                 new=_complete_valid_close_review,
             ),
             patch(
-                "gobby.utils.git.normalize_commit_sha",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
@@ -839,12 +892,8 @@ class TestCloseTask:
         expected_cwd = str(external_worktree)
         assert "error" not in result
         assert result.get("success", True) is not False
-        mock_task_manager.link_commit.assert_called_with(
-            task.id,
-            "abc1234",
-            cwd=expected_cwd,
-        )
-        mock_norm.assert_called_with("abc1234", cwd=expected_cwd)
+        mock_task_manager.link_commit.assert_called_with(task.id, "abc1234")
+        mock_norm.assert_awaited_with("abc1234", cwd=expected_cwd)
         validation_task = mock_vcr.call_args.args[0]
         assert validation_task.commits == ["abc1234"]
         mock_vcr.assert_called_with(validation_task, "completed", expected_cwd)
@@ -1274,7 +1323,8 @@ class TestCloseTask:
 class TestValidateCommitRequirementsStale:
     """Tests for stale SHA detection in validate_commit_requirements."""
 
-    def test_stale_commits_detected(self) -> None:
+    @pytest.mark.asyncio
+    async def test_stale_commits_detected(self) -> None:
         """Returns stale_commits error when linked SHAs don't exist in repo."""
         from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
             validate_commit_requirements,
@@ -1282,17 +1332,20 @@ class TestValidateCommitRequirementsStale:
 
         task = _make_task(commits=["abc1234", "def5678"])
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_norm:
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation.normalize_commit_sha"
+        ) as mock_norm:
             # First SHA resolves, second doesn't
             mock_norm.side_effect = ["abc1234", None]
-            result = validate_commit_requirements(task, reason="completed", repo_path="/repo")
+            result = await validate_commit_requirements(task, reason="completed", repo_path="/repo")
 
         assert not result.can_close
         assert result.error_type == "stale_commits"
         assert result.extra is not None
         assert "def5678" in result.extra["stale_shas"]
 
-    def test_all_commits_valid(self) -> None:
+    @pytest.mark.asyncio
+    async def test_all_commits_valid(self) -> None:
         """Passes when all linked SHAs exist in repo."""
         from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
             validate_commit_requirements,
@@ -1300,20 +1353,23 @@ class TestValidateCommitRequirementsStale:
 
         task = _make_task(commits=["abc1234"])
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_norm:
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation.normalize_commit_sha"
+        ) as mock_norm:
             mock_norm.return_value = "abc1234"
-            result = validate_commit_requirements(task, reason="completed", repo_path="/repo")
+            result = await validate_commit_requirements(task, reason="completed", repo_path="/repo")
 
         assert result.can_close
 
-    def test_skips_verification_without_repo_path(self) -> None:
+    @pytest.mark.asyncio
+    async def test_skips_verification_without_repo_path(self) -> None:
         """Degrades gracefully when no repo_path is available."""
         from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
             validate_commit_requirements,
         )
 
         task = _make_task(commits=["abc1234"])
-        result = validate_commit_requirements(task, reason="completed", repo_path=None)
+        result = await validate_commit_requirements(task, reason="completed", repo_path=None)
 
         assert result.can_close
 
@@ -2139,7 +2195,7 @@ def test_close_task_git_helper_calls_follow_repo_path_resolution() -> None:
     assert resolver_line < evaluation_lines["resolve_close_commit_shas"]
     assert resolver_line < evaluation_lines["validate_commit_requirements"]
     assert evaluation_source.index("resolve_task_repo_path(") < evaluation_source.index(
-        "collect_commit_diff_text,"
+        "await collect_commit_diff_text("
     )
 
     commit = ast.parse(inspect.getsource(lifecycle_close._commit_close))

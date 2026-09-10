@@ -12,6 +12,7 @@ import pytest
 
 from gobby.agents import sandbox_policy
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.utils.daemon_git import GitFailed
 
 pytestmark = pytest.mark.unit
 
@@ -68,7 +69,8 @@ def test_gcode_runtime_write_exception_matches_workspace_hash(
     ]
 
 
-def test_srt_policy_allows_only_current_workspace_gcode_runtime(
+@pytest.mark.asyncio
+async def test_srt_policy_allows_only_current_workspace_gcode_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gobby_home = Path("/opt/gobby-home")
@@ -77,7 +79,18 @@ def test_srt_policy_allows_only_current_workspace_gcode_runtime(
     unrelated_runtime = runtime_root / "unrelated-run"
     monkeypatch.setattr(sandbox_policy, "get_gobby_home", lambda: gobby_home)
 
-    paths = compute_sandbox_paths(
+    async def no_git_metadata(*_args: object, **_kwargs: object) -> GitFailed:
+        return GitFailed(
+            status="failed",
+            argv=("git", "rev-parse"),
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+
+    monkeypatch.setattr("gobby.agents.sandbox.daemon_git.run", no_git_metadata)
+
+    paths = await compute_sandbox_paths(
         config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
         workspace_path=str(workspace),
         provider="codex",

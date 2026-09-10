@@ -1,7 +1,6 @@
 """Hook event helpers for the tool proxy service."""
 
 import asyncio
-import inspect
 import logging
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -27,10 +26,7 @@ def _can_fail_open_on_git_status(server_name: str, tool_name: str) -> bool:
 
 
 async def _evaluate_workflow_handler(workflow_handler: Any, event: "HookEvent") -> Any:
-    """Use the async workflow API when the caller already owns an event loop."""
-    evaluate_async = getattr(workflow_handler, "evaluate_async", None)
-    if inspect.iscoroutinefunction(evaluate_async):
-        return await evaluate_async(event)
+    """Enter the isolated workflow runtime through its synchronous adapter."""
 
     from gobby.app_context import get_app_context
 

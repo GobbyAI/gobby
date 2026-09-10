@@ -1,7 +1,6 @@
 """Publication uses durable drafts and Git evidence without replaying source operations."""
 
 import hashlib
-import json
 import subprocess
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from gobby.reports.publication import verify_publication
 from gobby.reports.storage import ReportStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import GitTimeout, daemon_git
 
@@ -143,9 +143,20 @@ async def test_git_publication_verifies_hash_task_commit_and_retains_branch(
     report = store.get("dream", run_id)
     with pytest.raises(ValueError, match="closed documentation task"):
         await verify_publication(store, report, tmp_path, attempt)
+    unrelated_sha = _git(tmp_path, "rev-parse", "--short", "main")
+    LocalTaskManager(temp_db).link_commit(str(report["task_id"]), unrelated_sha)
     temp_db.execute(
-        "UPDATE tasks SET closed_at = now(), commits = %s WHERE id = %s",
-        (json.dumps([sha]), report["task_id"]),
+        "UPDATE tasks SET closed_at = now(), closed_commit_sha = %s WHERE id = %s",
+        (unrelated_sha, report["task_id"]),
+    )
+    with pytest.raises(ValueError, match="closed documentation task"):
+        await verify_publication(store, report, tmp_path, attempt)
+    # Normal task lifecycle stores Git-resolved abbreviated SHAs, not full IDs.
+    linked_sha = _git(tmp_path, "rev-parse", "--short", sha)
+    LocalTaskManager(temp_db).link_commit(str(report["task_id"]), linked_sha)
+    temp_db.execute(
+        "UPDATE tasks SET closed_at = now(), closed_commit_sha = %s WHERE id = %s",
+        (linked_sha, report["task_id"]),
     )
     with pytest.raises(ValueError, match="draft hash"):
         await verify_publication(store, {**report, "content_hash": "wrong"}, tmp_path, attempt)

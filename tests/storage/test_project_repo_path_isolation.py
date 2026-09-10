@@ -121,7 +121,8 @@ def _assert_canonical_checkout(db: HubDatabase, project_id: str, canonical_path:
 
 
 @pytest.mark.parametrize("isolation", ["worktree", "clone"])
-def test_isolated_agent_init_preserves_primary_checkout(
+@pytest.mark.asyncio
+async def test_isolated_agent_init_preserves_primary_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
     isolation: str,
@@ -132,7 +133,7 @@ def test_isolated_agent_init_preserves_primary_checkout(
     canonical_path.mkdir()
     isolated_path.mkdir()
     project = _seed_canonical_checkout(temp_db, canonical_path, name="shared-project")
-    ensure_project_json_for_isolation(canonical_path, isolated_path)
+    await ensure_project_json_for_isolation(canonical_path, isolated_path)
     child_session_id = _register_isolated_agent(
         temp_db,
         project=project,
