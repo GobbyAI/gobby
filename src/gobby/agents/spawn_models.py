@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.terminals import TerminalConfig
@@ -34,6 +34,25 @@ def resolve_terminal_backend(
     if requested == "tmux":
         return "tmux"
     raise ValueError(f"invalid terminal_backend: {requested}")
+
+
+class ManagedRuntimeProfile(Protocol):
+    """Internal launch restrictions supplied by a durable managed workflow."""
+
+    @property
+    def provider(self) -> str: ...
+
+    @property
+    def provider_args(self) -> tuple[str, ...]: ...
+
+    @property
+    def auto_approve(self) -> bool: ...
+
+    @property
+    def sandbox_config(self) -> SandboxConfig: ...
+
+    @property
+    def scratch_root(self) -> str: ...
 
 
 @dataclass
@@ -74,6 +93,8 @@ class SpawnRequest:
     reasoning_required: bool = False
     reasoning_status: str = "not_requested"
     reasoning_message: str | None = None
+    auto_approve: bool = True
+    provider_args: tuple[str, ...] = ()
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
     sandbox_env: dict[str, str] | None = None

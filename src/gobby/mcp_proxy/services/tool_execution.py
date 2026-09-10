@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
+from gobby.ask.permissions import ask_tool_denial_reason
 from gobby.hooks.tool_error_tracker import track_proxy_outcome
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.services.output_repair import maybe_repair_output
@@ -507,6 +508,30 @@ async def _call_tool_impl(
             )
         dispatch_id = config.id
         server_name = config.name
+
+    ask_denial = await asyncio.to_thread(
+        ask_tool_denial_reason,
+        service,
+        server_name,
+        tool_name,
+        arguments,
+    )
+    if ask_denial is not None:
+        result = {
+            "success": False,
+            "error": ask_denial,
+            "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
+            "server_name": server_name,
+            "tool_name": tool_name,
+        }
+        return _CallToolOutcome(
+            result,
+            ProxyOutcomeClass.POLICY_DENIED,
+            effective_session_id,
+            server_name,
+            tool_name,
+            arguments,
+        )
 
     if enforce_workflow:
         (

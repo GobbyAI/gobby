@@ -157,6 +157,60 @@ pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
     }
 }
 
+pub(super) fn audited_query_embedding(
+    ctx: &Context,
+    query: &str,
+    expected_endpoint: &str,
+    expected_model: &str,
+    expected_dimension: usize,
+) -> Result<Vec<f32>, VectorLifecycleError> {
+    let configured = ctx
+        .embedding
+        .as_ref()
+        .ok_or(VectorLifecycleError::MissingEmbeddingConfig)?;
+    if configured.api_base != expected_endpoint || configured.model != expected_model {
+        return Err(VectorLifecycleError::EmbeddingResponse(format!(
+            "configured embedding identity changed: expected endpoint {expected_endpoint:?} model {expected_model:?}, found endpoint {:?} model {:?}",
+            configured.api_base, configured.model
+        )));
+    }
+    #[cfg(feature = "ai")]
+    let embedding = {
+        let mut source = gobby_core::ai_context::LocalAiConfigSource::empty();
+        let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
+        context.bindings.embed.api_base = Some(expected_endpoint.to_string());
+        context.bindings.embed.model = Some(expected_model.to_string());
+        attach_grant(&mut context, ctx);
+        let result = daemon::embed_via_daemon(&context, &[query.to_string()], true)
+            .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))?;
+        if result.model != expected_model || result.dim != expected_dimension {
+            return Err(VectorLifecycleError::EmbeddingResponse(format!(
+                "daemon embedding identity changed: expected model {expected_model:?} dimension {expected_dimension}, found model {:?} dimension {}",
+                result.model, result.dim
+            )));
+        }
+        result.embeddings.into_iter().next().ok_or_else(|| {
+            VectorLifecycleError::EmbeddingResponse(
+                "daemon embedding response was empty".to_string(),
+            )
+        })?
+    };
+    #[cfg(not(feature = "ai"))]
+    let embedding = {
+        let _ = (ctx, query, expected_endpoint, expected_model);
+        return Err(VectorLifecycleError::EmbeddingResponse(
+            "gcode built without the ai feature".to_string(),
+        ));
+    };
+    if embedding.len() != expected_dimension {
+        return Err(VectorLifecycleError::EmbeddingResponse(format!(
+            "query embedding returned {} dimension(s), expected {expected_dimension}",
+            embedding.len()
+        )));
+    }
+    Ok(embedding)
+}
+
 #[cfg(feature = "ai")]
 fn embedding_source_from_resolved_ai_context(
     ai_context: AiContext,

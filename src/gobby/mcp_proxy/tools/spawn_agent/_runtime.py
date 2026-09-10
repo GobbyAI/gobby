@@ -34,6 +34,19 @@ class SpawnRuntimeRunner(Protocol):
     def run_storage(self) -> SpawnRunStorage: ...
 
 
+def _parent_session_ref(session_manager: Any | None, parent_session_id: str) -> str:
+    """Return the coordinator's ``#N`` ref so a leaf can address it by either form."""
+    if session_manager is None:
+        return parent_session_id
+    try:
+        parent_session = session_manager.get(parent_session_id)
+    except Exception:
+        logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
+        return parent_session_id
+    seq_num = getattr(parent_session, "seq_num", None)
+    return f"#{seq_num}" if seq_num else parent_session_id
+
+
 def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
         return []

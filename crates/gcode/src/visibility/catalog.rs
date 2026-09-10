@@ -91,7 +91,8 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
     let machine_id = local_machine_uuid()?;
     let rows = match &ctx.index_scope {
         ProjectIndexScope::Single => conn.query(
-            "SELECT fs.file_path, f.language, f.symbol_count::BIGINT AS symbol_count
+            "SELECT fs.file_path, f.language, f.symbol_count::BIGINT AS symbol_count,
+                    fs.content_hash
              FROM code_indexed_file_states fs
              JOIN code_indexed_files f
                ON f.project_id = fs.project_id
@@ -112,7 +113,8 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
             parent_project_id,
             ..
         } => conn.query(
-            "SELECT ofs.file_path, of.language, of.symbol_count::BIGINT AS symbol_count
+            "SELECT ofs.file_path, of.language, of.symbol_count::BIGINT AS symbol_count,
+                    ofs.content_hash
              FROM code_indexed_file_states ofs
              JOIN code_indexed_files of
                ON of.project_id = ofs.project_id
@@ -122,7 +124,8 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
                AND ofs.project_id = $2
                AND of.language != $4
              UNION ALL
-             SELECT pfs.file_path, pf.language, pf.symbol_count::BIGINT AS symbol_count
+             SELECT pfs.file_path, pf.language, pf.symbol_count::BIGINT AS symbol_count,
+                    pfs.content_hash
              FROM code_indexed_file_states pfs
              JOIN code_indexed_files pf
                ON pf.project_id = pfs.project_id
@@ -153,6 +156,7 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
                 file_path: row.try_get("file_path")?,
                 language: row.try_get("language")?,
                 symbol_count: row.try_get("symbol_count")?,
+                content_hash: row.try_get("content_hash")?,
             })
         })
         .collect()

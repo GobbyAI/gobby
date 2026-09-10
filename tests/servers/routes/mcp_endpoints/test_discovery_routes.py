@@ -757,6 +757,34 @@ class TestMCPDiscoveryRoutes:
         assert len(data["recommendations"]) == 1
         assert "response_time_ms" in data
 
+    def test_recommend_ordinary_response_preserves_handler_shape(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        mock_server._tools_handler = MagicMock()
+        mock_server._tools_handler.recommend_tools = AsyncMock(
+            return_value={
+                "success": True,
+                "recommendations": [{"tool": "write_file", "score": 0.9}],
+                "total_results": 41,
+                "available_servers": ["alpha", "beta"],
+                "provider_metadata": {"opaque": True},
+            }
+        )
+
+        response = client.post(
+            "/api/mcp/tools/recommend",
+            json={"task_description": "create a file"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "recommendation" not in data
+        assert data["recommendations"] == [{"tool": "write_file", "score": 0.9}]
+        assert data["total_results"] == 41
+        assert data["available_servers"] == ["alpha", "beta"]
+        assert data["provider_metadata"] == {"opaque": True}
+        assert "response_time_ms" in data
+
     def test_recommend_with_all_params(self, client: TestClient, mock_server: MagicMock) -> None:
         """Pass all optional params to recommend."""
         mock_server._tools_handler = MagicMock()

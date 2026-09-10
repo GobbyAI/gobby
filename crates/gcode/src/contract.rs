@@ -9,7 +9,7 @@ use schema::*;
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 8,
+        contract_version: 9,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -43,6 +43,16 @@ pub fn contract() -> CliContract {
                     "runner_protocol",
                 ],
                 ..CommandContract::new("schema-identity", "Print the embedded schema identity.")
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--request-json", "JSON").required()],
+                json_output_keys: evidence_keys(),
+                ..CommandContract::new(
+                    "evidence",
+                    "Read exact commit-bound evidence without agent or model orchestration.",
+                )
             },
             CommandContract {
                 positionals: vec![],
@@ -580,6 +590,30 @@ pub fn contract() -> CliContract {
             "backend_unavailable",
             "index_unavailable",
             "contract_violation",
+            "invalid_evidence_request",
+            "unsupported_evidence_format",
+            "stale_admission_bypass_forbidden",
+            "snapshot_binding_mismatch",
+            "continuation_mismatch",
+            "contract_error",
+            "excluded_path",
+            "fact_snapshot_mismatch",
+            "git_error",
+            "graph_unavailable",
+            "index_incomplete",
+            "inventory_incomplete",
+            "inventory_mismatch",
+            "invalid_object_id",
+            "invalid_selector",
+            "missing_git_object",
+            "narrowing_required",
+            "path_not_tracked",
+            "semantic_failure",
+            "semantic_identity_mismatch",
+            "semantic_identity_required",
+            "stale_range",
+            "unsupported_schema",
+            "unsafe_path",
         ],
         exit_codes: vec![
             ExitCodeContract {
@@ -592,7 +626,7 @@ pub fn contract() -> CliContract {
             },
             ExitCodeContract {
                 code: 2,
-                meaning: "usage error or typed error (grant, project_required, invalid_path_scope, capability_unavailable, graph sync contract); one JSON line on stderr",
+                meaning: "usage error or typed error (grant, project, path, evidence, capability, graph sync contract); one JSON line on stderr",
             },
             ExitCodeContract {
                 code: 3,

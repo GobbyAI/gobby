@@ -13,6 +13,7 @@ import pytest
 from gobby.agents import resume_executor
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
+from gobby.ask.permissions import AskPermissionStore
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 from tests.terminals.fakes import bind_spawn_runtime
@@ -32,6 +33,7 @@ def mock_codex_prompt_delivery(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """
     mock_delivery = MagicMock(return_value=True)
     monkeypatch.setattr(resume_executor, "schedule_codex_prompt_delivery", mock_delivery)
+    monkeypatch.setattr(AskPermissionStore, "find", lambda _self, _run_id: None)
     return mock_delivery
 
 

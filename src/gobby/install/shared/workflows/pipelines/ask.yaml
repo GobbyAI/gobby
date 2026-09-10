@@ -1,0 +1,130 @@
+name: native-ask
+type: pipeline
+version: "1.0"
+description: |
+  Execute one source-bound Ask run through deterministic evidence collection,
+  managed native investigation, validation, fresh review, at most one repair,
+  and immutable publication.
+enabled: true
+expose_as_tool: false
+resume_on_restart: true
+
+inputs:
+  run_id:
+    type: string
+    required: true
+  project_id:
+    type: string
+    required: true
+  project_root:
+    type: string
+    required: true
+  caller_session_id:
+    type: string
+    required: true
+
+outputs:
+  run_id: "${{ inputs.run_id }}"
+  status: "${{ steps.publish.output.status }}"
+  result: "${{ steps.publish.output }}"
+
+steps:
+  - id: prepare
+    mcp:
+      server: gobby-ask
+      tool: prepare
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        project_root: "${{ inputs.project_root }}"
+
+  - id: seed
+    mcp:
+      server: gobby-ask
+      tool: seed
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+
+  - id: investigate
+    mcp:
+      server: gobby-ask
+      tool: spawn
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        stage: investigator
+        attempt: 0
+        caller_session_id: "${{ inputs.caller_session_id }}"
+
+  - id: validate_initial
+    mcp:
+      server: gobby-ask
+      tool: validate
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        stage: investigator
+        attempt: 0
+
+  - id: review_initial
+    mcp:
+      server: gobby-ask
+      tool: spawn
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        stage: reviewer
+        attempt: 0
+        caller_session_id: "${{ inputs.caller_session_id }}"
+
+  - id: admit_repair
+    mcp:
+      server: gobby-ask
+      tool: admit_repair
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+
+  - id: repair
+    condition: "${{ steps.admit_repair.output.repair }}"
+    mcp:
+      server: gobby-ask
+      tool: spawn
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        stage: repair
+        attempt: 1
+        caller_session_id: "${{ inputs.caller_session_id }}"
+
+  - id: validate_repair
+    condition: "${{ steps.admit_repair.output.repair }}"
+    mcp:
+      server: gobby-ask
+      tool: validate
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        stage: repair
+        attempt: 1
+
+  - id: review_repair
+    condition: "${{ steps.admit_repair.output.repair }}"
+    mcp:
+      server: gobby-ask
+      tool: spawn
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"
+        stage: reviewer
+        attempt: 1
+        caller_session_id: "${{ inputs.caller_session_id }}"
+
+  - id: publish
+    mcp:
+      server: gobby-ask
+      tool: publish
+      arguments:
+        run_id: "${{ inputs.run_id }}"
+        project_id: "${{ inputs.project_id }}"

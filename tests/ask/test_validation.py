@@ -1,0 +1,698 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from copy import deepcopy
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+
+pytestmark = pytest.mark.unit
+
+
+def _json_hash(value: object, *, sort_keys: bool = True) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=sort_keys,
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _blob_oid(content: bytes) -> str:
+    return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+
+
+def _valid_case(
+    *, run_id: str = "run-1", project_id: str = "project"
+) -> tuple[Any, Any, dict[tuple[str, str], bytes], Any]:
+    from gobby.ask.claims import (
+        AnswerDraft,
+        AnswerSection,
+        Claim,
+        ClaimClassification,
+        QuestionPart,
+        ReviewClaimVerdict,
+        ReviewerResult,
+        SourceCitation,
+    )
+    from gobby.ask.validation import EvidenceManifest
+
+    content = b"def alpha():\n    return 1\n"
+    excerpt = b"    return 1\n"
+    blob_oid = _blob_oid(content)
+    content_hash = hashlib.sha256(content).hexdigest()
+    excerpt_hash = hashlib.sha256(excerpt).hexdigest()
+    changed_path = {
+        "status": "modified",
+        "similarity": None,
+        "old_path": "src/app.py",
+        "new_path": "src/app.py",
+        "old_exclusion": None,
+        "new_exclusion": None,
+        "old_mode": "100644",
+        "new_mode": "100644",
+        "old_blob_oid": "c" * 40,
+        "new_blob_oid": blob_oid,
+    }
+    changed_paths = [changed_path]
+    binding = {
+        "project_id": project_id,
+        "commit_oid": "a" * 40,
+        "tree_oid": "d" * 40,
+        "inventory_digest": "",
+        "commit": {
+            "parent_oids": ["b" * 40],
+            "comparison_parent_oid": "b" * 40,
+            "comparison_kind": "first_parent",
+            "changed_paths_digest": _json_hash(changed_paths, sort_keys=False),
+            "changed_paths": changed_paths,
+        },
+    }
+    entry = {
+        "path": "src/app.py",
+        "mode": "100644",
+        "kind": "file",
+        "object_oid": blob_oid,
+        "blob_oid": blob_oid,
+        "size_bytes": len(content),
+        "content_hash": content_hash,
+        "language": "python",
+        "exclusion": None,
+    }
+    binding["inventory_digest"] = _json_hash([entry], sort_keys=False)
+    source_identity = [
+        binding,
+        "src/app.py",
+        blob_oid,
+        len(b"def alpha():\n"),
+        len(content),
+        content_hash,
+        excerpt_hash,
+        None,
+    ]
+    source_id = f"src:{_json_hash(source_identity, sort_keys=False)}"
+    source_item = {
+        "item_type": "source",
+        "evidence_id": source_id,
+        "path": "src/app.py",
+        "blob_oid": blob_oid,
+        "content_hash": content_hash,
+        "excerpt_hash": excerpt_hash,
+        "line_start": 2,
+        "line_end": 2,
+        "byte_start": len(b"def alpha():\n"),
+        "byte_end": len(content),
+        "excerpt": excerpt.decode(),
+    }
+    request = {
+        "schema_version": 1,
+        "binding": binding,
+        "operation": "read",
+        "read": {
+            "kind": "range",
+            "path": "src/app.py",
+            "start_line": 2,
+            "end_line": 2,
+        },
+        "max_bytes": 262_144,
+    }
+    response = {
+        "request": request,
+        "request_fingerprint": _json_hash(request, sort_keys=False),
+        "binding": binding,
+        "contract": {
+            "name": "gcode-evidence",
+            "schema_version": 1,
+            "tool": "gobby-code",
+            "tool_version": "0.5.0",
+            "lane": "read",
+        },
+        "items": [source_item],
+        "complete": True,
+        "completeness": "complete",
+        "bounds": {
+            "max_bytes": 262_144,
+            "serialized_item_bytes": len(json.dumps(source_item, separators=(",", ":")).encode()),
+            "returned_items": 1,
+            "total_items": 1,
+            "result_limit": 1,
+        },
+        "exclusions": [],
+        "warnings": [],
+    }
+    evidence = EvidenceManifest.model_validate(
+        {
+            "run_id": run_id,
+            "snapshot_binding": binding,
+            "inventory": {
+                "schema_version": 1,
+                "complete": True,
+                "digest": binding["inventory_digest"],
+                "entries": [entry],
+            },
+            "records": [
+                {
+                    "run_id": run_id,
+                    "invocation_id": "invocation-1",
+                    "snapshot_inventory_digest": binding["inventory_digest"],
+                    "request_hash": _json_hash(request),
+                    "response_hash": _json_hash(response),
+                    "response": response,
+                }
+            ],
+        }
+    )
+    citation = SourceCitation(
+        run_id=run_id,
+        evidence_id=source_id,
+        path="src/app.py",
+        blob_oid=blob_oid,
+        content_hash=content_hash,
+        excerpt_hash=excerpt_hash,
+        line_start=2,
+        line_end=2,
+        byte_start=len(b"def alpha():\n"),
+        byte_end=len(content),
+    )
+    claims = (
+        Claim(
+            id="claim-return",
+            classification=ClaimClassification.DIRECT,
+            statement="alpha returns 1.",
+            citations=(citation,),
+            question_part_ids=("behavior",),
+        ),
+        Claim(
+            id="claim-stable",
+            classification=ClaimClassification.INFERRED,
+            statement="The return value is fixed by the pinned implementation.",
+            citations=(citation,),
+            premise_claim_ids=("claim-return",),
+            question_part_ids=("behavior",),
+            rationale="The pinned function returns the same literal value.",
+        ),
+    )
+    draft = AnswerDraft(
+        run_id=run_id,
+        investigator_run_id="investigator-1",
+        question="What does alpha return?",
+        question_parts=(QuestionPart(id="behavior", text="Return behavior"),),
+        claims=claims,
+        sections=(
+            AnswerSection(
+                id="answer",
+                title="Answer",
+                claim_ids=("claim-return", "claim-stable"),
+            ),
+        ),
+    )
+    review = ReviewerResult(
+        run_id=run_id,
+        reviewer_run_id="reviewer-1",
+        draft_hash=draft.content_hash,
+        evidence_manifest_hash=evidence.content_hash,
+        claim_verdicts=tuple(
+            ReviewClaimVerdict(
+                claim_id=claim.id,
+                accepted=True,
+                classification_supported=True,
+                rationale="Supported by the pinned source and stated premise.",
+            )
+            for claim in claims
+        ),
+        rationale="All question parts are supported.",
+    )
+    return draft, evidence, {("src/app.py", blob_oid): content}, review
+
+
+def test_repeated_canonical_evidence_retains_complete_invocation_provenance() -> None:
+    from gobby.ask.claims import AssertionKind, EvidenceScope
+    from gobby.ask.validation import _response_body, validate_claims
+
+    draft, evidence, blobs, _review = _valid_case()
+    source_id = evidence.records[0].response.items[0].evidence_id
+    scoped_claim = draft.claims[0].model_copy(
+        update={
+            "assertion_kind": AssertionKind.NEGATIVE,
+            "evidence_scope": EvidenceScope(
+                description="Every recorded return-value query.",
+                evidence_ids=(source_id,),
+            ),
+        }
+    )
+    draft = draft.model_copy(update={"claims": (scoped_claim, draft.claims[1])})
+    complete = evidence.records[0].model_copy(update={"invocation_id": "invocation-complete"})
+    partial_response = complete.response.model_copy(
+        update={"complete": False, "completeness": "truncated_index"}
+    )
+    partial = complete.model_copy(
+        update={
+            "invocation_id": "invocation-partial",
+            "response": partial_response,
+            "response_hash": _json_hash(_response_body(partial_response)),
+        }
+    )
+
+    for records in ((partial, complete), (complete, partial)):
+        repeated = evidence.model_copy(update={"records": records})
+        report = validate_claims(draft, repeated, pinned_blobs=blobs)
+        assert report.accepted_claim_ids == ("claim-return", "claim-stable")
+        assert "duplicate_evidence_id" not in report.diagnostic_codes
+
+    explicitly_partial = scoped_claim.model_copy(
+        update={
+            "evidence_scope": EvidenceScope(
+                description="The explicitly selected partial invocation.",
+                evidence_ids=(source_id,),
+                invocation_ids=(partial.invocation_id,),
+            )
+        }
+    )
+    explicit_report = validate_claims(
+        draft.model_copy(update={"claims": (explicitly_partial, draft.claims[1])}),
+        evidence.model_copy(update={"records": (complete, partial)}),
+        pinned_blobs=blobs,
+    )
+    assert "incomplete_exhaustive_scope" in explicit_report.diagnostic_codes
+
+    source = complete.response.items[0]
+    conflicting_source = source.model_copy(update={"excerpt": "    return 2\n"})
+    conflicting_response = complete.response.model_copy(update={"items": (conflicting_source,)})
+    conflicting = complete.model_copy(
+        update={
+            "invocation_id": "invocation-conflict",
+            "response": conflicting_response,
+            "response_hash": _json_hash(_response_body(conflicting_response)),
+        }
+    )
+    conflict_report = validate_claims(
+        draft,
+        evidence.model_copy(update={"records": (complete, conflicting)}),
+        pinned_blobs=blobs,
+    )
+    assert "conflicting_evidence_id" in conflict_report.diagnostic_codes
+
+
+def test_claim_validation_and_review_gates() -> None:
+    from gobby.ask.claims import (
+        ClaimClassification,
+        GitMetadataCitation,
+        GraphCitation,
+        QuestionPart,
+    )
+    from gobby.ask.validation import validate_claims, validate_review
+
+    draft, evidence, blobs, review = _valid_case()
+    valid = validate_claims(draft, evidence, pinned_blobs=blobs)
+    assert valid.accepted_claim_ids == ("claim-return", "claim-stable")
+    reviewed = validate_review(draft, evidence, valid, review)
+    assert reviewed.accepted_claim_ids == ("claim-return", "claim-stable")
+
+    citation = draft.claims[0].citations[0]
+    cross_run = draft.model_copy(
+        update={
+            "claims": (
+                draft.claims[0].model_copy(
+                    update={"citations": (citation.model_copy(update={"run_id": "run-2"}),)}
+                ),
+                draft.claims[1],
+            )
+        }
+    )
+    assert (
+        "cross_run_citation"
+        in validate_claims(cross_run, evidence, pinned_blobs=blobs).diagnostic_codes
+    )
+
+    stale_range = draft.model_copy(
+        update={
+            "claims": (
+                draft.claims[0].model_copy(
+                    update={"citations": (citation.model_copy(update={"byte_start": 0}),)}
+                ),
+                draft.claims[1],
+            )
+        }
+    )
+    assert (
+        "citation_selector_mismatch"
+        in validate_claims(stale_range, evidence, pinned_blobs=blobs).diagnostic_codes
+    )
+
+    cycled = draft.model_copy(
+        update={
+            "claims": (
+                draft.claims[0].model_copy(
+                    update={
+                        "classification": ClaimClassification.INFERRED,
+                        "premise_claim_ids": ("claim-stable",),
+                        "rationale": "cycle",
+                    }
+                ),
+                draft.claims[1],
+            )
+        }
+    )
+    assert "premise_cycle" in validate_claims(cycled, evidence, pinned_blobs=blobs).diagnostic_codes
+
+    source = evidence.records[0].response.items[0]
+    graph_citation = GraphCitation(
+        run_id="run-1",
+        evidence_id="graph:unrecorded",
+        source_evidence_id=source.evidence_id,
+        relation="call",
+        direction="outgoing",
+        from_id="alpha",
+        to_id="beta",
+        owner_path="src/app.py",
+        owner_content_hash=source.content_hash,
+        provenance="extracted",
+    )
+    graph_direct = draft.model_copy(
+        update={
+            "claims": (
+                draft.claims[0].model_copy(update={"citations": (graph_citation,)}),
+                draft.claims[1],
+            )
+        }
+    )
+    graph_report = validate_claims(graph_direct, evidence, pinned_blobs=blobs)
+    assert "unsupported_direct_evidence" in graph_report.diagnostic_codes
+    assert "fabricated_citation" in graph_report.diagnostic_codes
+    untyped_diagram = draft.model_copy(
+        update={
+            "claims": (
+                draft.claims[0].model_copy(update={"statement": "```mermaid\nA-->B\n```"}),
+                draft.claims[1],
+            )
+        }
+    )
+    assert (
+        "untyped_mermaid"
+        in validate_claims(untyped_diagram, evidence, pinned_blobs=blobs).diagnostic_codes
+    )
+
+    stale_review = review.model_copy(update={"draft_hash": "0" * 64})
+    assert "stale_review" in validate_review(draft, evidence, valid, stale_review).diagnostic_codes
+    same_agent = review.model_copy(update={"reviewer_run_id": "investigator-1"})
+    assert (
+        "reviewer_not_independent"
+        in validate_review(draft, evidence, valid, same_agent).diagnostic_codes
+    )
+    uncovered = draft.model_copy(
+        update={
+            "question_parts": draft.question_parts
+            + (QuestionPart(id="limits", text="Known limitations"),)
+        }
+    )
+    incomplete_coverage = review.model_copy(update={"draft_hash": uncovered.content_hash})
+    uncovered_validation = validate_claims(uncovered, evidence, pinned_blobs=blobs)
+    assert (
+        "invalid_question_coverage"
+        in validate_review(
+            uncovered,
+            evidence,
+            uncovered_validation,
+            incomplete_coverage,
+        ).diagnostic_codes
+    )
+
+    with pytest.raises(ValidationError):
+        GitMetadataCitation.model_validate(
+            {
+                "citation_type": "git_metadata",
+                "run_id": "run-1",
+                "evidence_id": "commit:fake",
+                "commit_oid": "a" * 40,
+                "parent_oids": ["b" * 40],
+                "comparison_parent_oid": "b" * 40,
+                "comparison_kind": "first_parent",
+                "changed_paths_digest": "c" * 64,
+                "changed_path_count": 1,
+                "record_hash": "d" * 64,
+                "line_start": 1,
+                "line_end": 2,
+            }
+        )
+
+
+def test_typed_git_metadata_citation_binds_canonical_comparison() -> None:
+    from gobby.ask.claims import (
+        AnswerDraft,
+        AnswerSection,
+        Claim,
+        ClaimClassification,
+        GitMetadataCitation,
+        QuestionPart,
+    )
+    from gobby.ask.validation import EvidenceManifest, validate_claims
+
+    draft, evidence, blobs, _review = _valid_case()
+    body = evidence.model_dump(mode="json")
+    binding = body["snapshot_binding"]
+    changed_path = binding["commit"]["changed_paths"][0]
+    record_hash = _json_hash(changed_path, sort_keys=False)
+    evidence_id = "commit:" + _json_hash(
+        [
+            binding["commit_oid"],
+            binding["commit"]["parent_oids"],
+            binding["commit"]["comparison_parent_oid"],
+            binding["commit"]["comparison_kind"],
+            binding["commit"]["changed_paths_digest"],
+            record_hash,
+        ],
+        sort_keys=False,
+    )
+    metadata = {
+        "item_type": "commit_metadata",
+        "evidence_id": evidence_id,
+        "commit_oid": binding["commit_oid"],
+        "parent_oids": binding["commit"]["parent_oids"],
+        "comparison_parent_oid": binding["commit"]["comparison_parent_oid"],
+        "comparison_kind": binding["commit"]["comparison_kind"],
+        "changed_paths_digest": binding["commit"]["changed_paths_digest"],
+        "changed_path_count": 1,
+        "changed_path": changed_path,
+        "record_hash": record_hash,
+    }
+    response = body["records"][0]["response"]
+    response["items"].append(metadata)
+    response["bounds"]["returned_items"] = 2
+    response["bounds"]["total_items"] = 2
+    response["bounds"]["serialized_item_bytes"] = sum(
+        len(json.dumps(item, separators=(",", ":")).encode()) for item in response["items"]
+    )
+    response["items"][0].pop("qualified_name")
+    response["contract"].pop("hybrid")
+    response["bounds"].pop("graph_depth")
+    response.pop("continuation")
+    body["records"][0]["response_hash"] = _json_hash(response)
+    evidence = EvidenceManifest.model_validate(body)
+    citation = GitMetadataCitation(
+        run_id="run-1",
+        evidence_id=evidence_id,
+        commit_oid=metadata["commit_oid"],
+        parent_oids=tuple(metadata["parent_oids"]),
+        comparison_parent_oid=metadata["comparison_parent_oid"],
+        comparison_kind=metadata["comparison_kind"],
+        changed_paths_digest=metadata["changed_paths_digest"],
+        changed_path_count=1,
+        changed_path=metadata["changed_path"],
+        record_hash=record_hash,
+    )
+    metadata_draft = AnswerDraft(
+        run_id="run-1",
+        investigator_run_id="investigator-1",
+        question="What changed?",
+        question_parts=(QuestionPart(id="change", text="Changed paths"),),
+        claims=(
+            Claim(
+                id="claim-change",
+                classification=ClaimClassification.DIRECT,
+                statement="src/app.py changed relative to the first parent.",
+                citations=(citation,),
+                question_part_ids=("change",),
+            ),
+        ),
+        sections=(AnswerSection(id="answer", title="Answer", claim_ids=("claim-change",)),),
+    )
+    assert validate_claims(metadata_draft, evidence, pinned_blobs=blobs).accepted_claim_ids == (
+        "claim-change",
+    )
+
+    altered = metadata_draft.model_copy(
+        update={
+            "claims": (
+                metadata_draft.claims[0].model_copy(
+                    update={
+                        "citations": (
+                            citation.model_copy(update={"comparison_parent_oid": "e" * 40}),
+                        )
+                    }
+                ),
+            )
+        }
+    )
+    report = validate_claims(altered, evidence, pinned_blobs=blobs)
+    assert "git_metadata_mismatch" in report.diagnostic_codes
+
+
+def test_negative_scope_requires_complete_evidence() -> None:
+    from gobby.ask.claims import AssertionKind, EvidenceScope
+    from gobby.ask.validation import EvidenceManifest, validate_claims
+
+    draft, evidence, blobs, _review = _valid_case()
+    scoped = draft.model_copy(
+        update={
+            "claims": (
+                draft.claims[0].model_copy(
+                    update={
+                        "assertion_kind": AssertionKind.NEGATIVE,
+                        "evidence_scope": EvidenceScope(
+                            description="All tracked source in the pinned inventory",
+                            evidence_ids=(draft.claims[0].citations[0].evidence_id,),
+                            invocation_ids=("invocation-1",),
+                        ),
+                    }
+                ),
+                draft.claims[1],
+            )
+        }
+    )
+    assert validate_claims(scoped, evidence, pinned_blobs=blobs).is_valid
+
+    partial_body = deepcopy(evidence.model_dump(mode="json"))
+    response = partial_body["records"][0]["response"]
+    response["complete"] = False
+    response["completeness"] = "truncated_index"
+    partial_body["records"][0]["response_hash"] = _json_hash(response)
+    partial = EvidenceManifest.model_validate(partial_body)
+    assert (
+        "incomplete_exhaustive_scope"
+        in validate_claims(scoped, partial, pinned_blobs=blobs).diagnostic_codes
+    )
+
+    excluded_body = deepcopy(evidence.model_dump(mode="json"))
+    excluded_response = excluded_body["records"][0]["response"]
+    excluded_response["complete"] = True
+    excluded_response["completeness"] = "excluded_scope"
+    excluded_body["records"][0]["response_hash"] = _json_hash(excluded_response)
+    excluded = EvidenceManifest.model_validate(excluded_body)
+    assert (
+        "incomplete_exhaustive_scope"
+        in validate_claims(scoped, excluded, pinned_blobs=blobs).diagnostic_codes
+    )
+
+
+def test_graph_citation_validates_canonical_owner_and_requires_inference() -> None:
+    from gobby.ask.claims import (
+        AnswerDraft,
+        AnswerSection,
+        Claim,
+        ClaimClassification,
+        GraphCitation,
+        QuestionPart,
+    )
+    from gobby.ask.validation import EvidenceManifest, validate_claims
+
+    _draft, evidence, blobs, _review = _valid_case()
+    body = evidence.model_dump(mode="json")
+    response = body["records"][0]["response"]
+    source = response["items"][0]
+    source.pop("item_type")
+    source.pop("qualified_name")
+    endpoint_from = {
+        "id": "alpha",
+        "name": "alpha",
+        "kind": "function",
+        "path": "src/app.py",
+    }
+    endpoint_to = {
+        "id": "beta",
+        "name": "beta",
+        "kind": "function",
+        "path": "src/app.py",
+    }
+    owner = {"path": "src/app.py", "content_hash": source["content_hash"]}
+    graph_id = "graph:" + _json_hash(
+        [
+            body["snapshot_binding"],
+            source["evidence_id"],
+            "call",
+            "outgoing",
+            endpoint_from,
+            endpoint_to,
+            owner,
+            "extracted",
+        ],
+        sort_keys=False,
+    )
+    graph_item = {
+        "item_type": "graph",
+        "evidence_id": graph_id,
+        "source": source,
+        "relation": "call",
+        "direction": "outgoing",
+        "from": endpoint_from,
+        "to": endpoint_to,
+        "owner": owner,
+        "provenance": "extracted",
+    }
+    response["items"] = [graph_item]
+    response["bounds"]["serialized_item_bytes"] = len(
+        json.dumps(graph_item, separators=(",", ":")).encode()
+    )
+    response["contract"].pop("hybrid")
+    response["bounds"].pop("graph_depth")
+    response.pop("continuation")
+    body["records"][0]["response_hash"] = _json_hash(response)
+    evidence = EvidenceManifest.model_validate(body)
+    citation = GraphCitation(
+        run_id="run-1",
+        evidence_id=graph_id,
+        source_evidence_id=source["evidence_id"],
+        relation="call",
+        direction="outgoing",
+        from_id="alpha",
+        to_id="beta",
+        owner_path="src/app.py",
+        owner_content_hash=source["content_hash"],
+        provenance="extracted",
+    )
+    draft = AnswerDraft(
+        run_id="run-1",
+        investigator_run_id="investigator-1",
+        question="What calls beta?",
+        question_parts=(QuestionPart(id="calls", text="Call relationship"),),
+        claims=(
+            Claim(
+                id="claim-call",
+                classification=ClaimClassification.INFERRED,
+                statement="Recorded graph facts associate alpha with a call to beta.",
+                citations=(citation,),
+                rationale="The extracted graph edge is owned by the cited pinned source.",
+                question_part_ids=("calls",),
+            ),
+        ),
+        sections=(AnswerSection(id="answer", title="Answer", claim_ids=("claim-call",)),),
+    )
+    assert validate_claims(draft, evidence, pinned_blobs=blobs).accepted_claim_ids == (
+        "claim-call",
+    )
+
+    corrupt = deepcopy(evidence.model_dump(mode="json"))
+    corrupt_response = corrupt["records"][0]["response"]
+    corrupt_response["items"][0]["owner"]["content_hash"] = "0" * 64
+    corrupt_response["contract"].pop("hybrid")
+    corrupt_response["bounds"].pop("graph_depth")
+    corrupt_response.pop("continuation")
+    corrupt_response["items"][0]["source"].pop("qualified_name")
+    corrupt["records"][0]["response_hash"] = _json_hash(corrupt_response)
+    corrupt_evidence = EvidenceManifest.model_validate(corrupt)
+    assert (
+        "graph_owner_mismatch"
+        in validate_claims(draft, corrupt_evidence, pinned_blobs=blobs).diagnostic_codes
+    )

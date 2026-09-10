@@ -93,6 +93,7 @@ fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
         .iter()
         .find(|file| file.path == "src/lib.rs")
         .expect("indexed source file is visible");
+    assert!(!source.content_hash.is_empty());
 
     let symbols = fixture.facts.symbols_in(std::slice::from_ref(&source.id))?;
     let symbol = symbols
@@ -126,6 +127,11 @@ fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
 
     let search = fixture.facts.search("fixture_add", 10)?;
     assert!(search.iter().any(|hit| hit.symbol.id == symbol.id));
+
+    let content = fixture
+        .facts
+        .search_content_with(&SearchQuery::new("fixture_add", 10))?;
+    assert!(content.iter().any(|hit| hit.path == "src/lib.rs"));
 
     let grep = fixture.facts.grep("fixture_add", &all)?;
     assert!(grep.hits.iter().any(|hit| hit.path == "src/lib.rs"));
