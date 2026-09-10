@@ -8,10 +8,11 @@ import asyncio
 import json
 import subprocess
 import threading
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -213,7 +214,7 @@ class TestEnsureIsolationCodeIndex:
         assert "--allow-stale" in calls[2].args[0]
         assert "--no-freshness" not in calls[2].args[0]
         assert calls[0].kwargs["cwd"] == str(tmp_path)
-        assert proc.communicate_timeouts == [5.0, 120.0, 10.0]
+        assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 10.0], abs=0.01)
 
     @pytest.mark.asyncio
     async def test_scoped_credential_creates_gcode_wrapper_runtime(
@@ -262,7 +263,9 @@ class TestEnsureIsolationCodeIndex:
         runtime_token = Path(result.runtime_home) / "local_cli_token"
         assert not runtime_token.exists()
         assert not runtime_token.is_symlink()
-        assert self._gcode_calls(popen)[0].args[0][0] == str(wrapper)
+        preflight = self._gcode_calls(popen)[0]
+        assert preflight.args[0][0] == "/tmp/gcode"
+        assert preflight.kwargs["env"]["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(grant_path)
         status = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=workspace,
@@ -678,6 +681,31 @@ class TestEnsureIsolationCodeIndex:
         assert proc.wait_count == 1
 
     @pytest.mark.asyncio
+    async def test_one_deadline_bounds_every_gcode_preflight_phase(self, tmp_path: Path) -> None:
+        observed: list[float] = []
+
+        async def run_gcode(*_args: Any, timeout: float, **_kwargs: Any) -> None:
+            observed.append(timeout)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch("gobby.agents.code_index._run_gcode", side_effect=run_gcode),
+            patch(
+                "gobby.agents.code_index.time.monotonic",
+                side_effect=[0.0, 0.01, 0.02, 0.03, 0.04, 0.05],
+            ),
+        ):
+            await ensure_isolation_code_index(
+                str(tmp_path),
+                timeout=0.2,
+                config_probe_timeout=5,
+                search_smoke_timeout=5,
+            )
+
+        assert len(observed) == 3
+        assert 0 < observed[2] < observed[1] < observed[0] <= 0.2
+
+    @pytest.mark.asyncio
     async def test_gcode_launch_oserror_uses_failure_code(self, tmp_path: Path) -> None:
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
@@ -740,10 +768,13 @@ class TestRepairIsolationEnvironment:
                 new=AsyncMock(),
             ),
         ):
-            result = await repair_isolation_environment(
-                main_repo_path="/main/repo",
-                isolated_path=str(tmp_path),
-                provider="codex",
+            result = await cast(
+                Awaitable[object],
+                repair_isolation_environment(
+                    main_repo_path="/main/repo",
+                    isolated_path=str(tmp_path),
+                    provider="codex",
+                ),
             )
 
         assert result is None
@@ -1010,8 +1041,7 @@ class TestNoneIsolationHandler:
             parent_session_id="sess",
         )
 
-        result = await handler.cleanup_environment(config)
-        assert result is None
+        await handler.cleanup_environment(config)
         assert handler.build_context_prompt("prompt", IsolationContext(cwd="/path")) == "prompt"
 
     def test_is_isolation_handler_subclass(self) -> None:
@@ -1021,7 +1051,7 @@ class TestNoneIsolationHandler:
     def test_isolation_handler_is_abstract(self) -> None:
         """Test IsolationHandler cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            IsolationHandler()
+            cast(type[object], IsolationHandler)()
 
 
 class TestWorktreeIsolationHandler:
@@ -1258,8 +1288,6 @@ class TestWorktreeIsolationHandler:
             git_manager=mock_git_manager,
             worktree_storage=mock_worktree_storage,
         )
-        handler._generate_worktree_path = MagicMock(return_value="/tmp/worktrees/stale-branch")
-
         config = SpawnConfig(
             prompt="Test",
             task_id=None,
@@ -1275,6 +1303,9 @@ class TestWorktreeIsolationHandler:
         )
 
         with (
+            patch.object(
+                handler, "_generate_worktree_path", return_value="/tmp/worktrees/stale-branch"
+            ),
             patch("pathlib.Path.is_dir", return_value=False),
             patch(
                 "gobby.agents.isolation_worktree.repair_isolation_environment",
@@ -2116,7 +2147,7 @@ class TestGetIsolationHandler:
     def test_get_isolation_handler_invalid_mode_raises(self) -> None:
         """Test get_isolation_handler raises ValueError for invalid mode."""
         with pytest.raises(ValueError, match="Unknown isolation mode"):
-            get_isolation_handler("invalid")
+            get_isolation_handler(cast(Literal["none", "worktree", "clone"], "invalid"))
 
     def test_get_isolation_handler_worktree_missing_deps_raises(self) -> None:
         """Test get_isolation_handler('worktree') raises if dependencies missing."""
@@ -2240,9 +2271,9 @@ class TestProviderMcpConfigPreflight:
     """Tests for provider_mcp_config_error."""
 
     def test_reports_missing_mcp_json(self, tmp_path: Path) -> None:
-        assert provider_mcp_config_error(str(tmp_path), "qwen").startswith(
-            "provider_mcp_config_missing:"
-        )
+        error = provider_mcp_config_error(str(tmp_path), "qwen")
+        assert error is not None
+        assert error.startswith("provider_mcp_config_missing:")
 
     def test_accepts_non_claude_mcp_json(self, tmp_path: Path) -> None:
         (tmp_path / ".mcp.json").write_text(

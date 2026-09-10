@@ -17,6 +17,7 @@ pub use qdrant::{
     list_code_symbol_collections,
 };
 pub use repository::{fetch_symbols_for_file, fetch_symbols_for_project};
+pub(crate) use search::audited_semantic_search;
 pub use search::semantic_search;
 pub use types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput, CodeSymbolVectorPayload,

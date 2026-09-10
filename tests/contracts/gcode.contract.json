@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 8,
+  "contract_version": 9,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -116,6 +116,115 @@
         "latest_checksum",
         "assets_root_hash",
         "runner_protocol"
+      ]
+    },
+    {
+      "name": "evidence",
+      "summary": "Read exact commit-bound evidence without agent or model orchestration.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--request-json",
+          "takes_value": true,
+          "value_name": "JSON",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "request",
+        "request_fingerprint",
+        "binding",
+        "contract",
+        "items",
+        "complete",
+        "completeness",
+        "bounds",
+        "exclusions",
+        "warnings",
+        "continuation",
+        "schema_version",
+        "project_id",
+        "commit_oid",
+        "tree_oid",
+        "inventory_digest",
+        "commit",
+        "parent_oids",
+        "comparison_parent_oid",
+        "comparison_kind",
+        "changed_paths_digest",
+        "changed_paths",
+        "status",
+        "similarity",
+        "old_path",
+        "new_path",
+        "old_exclusion",
+        "new_exclusion",
+        "old_mode",
+        "new_mode",
+        "old_blob_oid",
+        "new_blob_oid",
+        "operation",
+        "search",
+        "read",
+        "graph",
+        "max_bytes",
+        "lane",
+        "query",
+        "paths",
+        "language",
+        "kind",
+        "limit",
+        "hybrid_identity",
+        "endpoint",
+        "model",
+        "dimension",
+        "index_id",
+        "start_line",
+        "end_line",
+        "qualified_name",
+        "source",
+        "target",
+        "direction",
+        "depth",
+        "relations",
+        "id",
+        "name",
+        "path",
+        "item_type",
+        "evidence_id",
+        "blob_oid",
+        "content_hash",
+        "excerpt_hash",
+        "line_start",
+        "line_end",
+        "byte_start",
+        "byte_end",
+        "excerpt",
+        "relation",
+        "from",
+        "to",
+        "owner",
+        "provenance",
+        "changed_path_count",
+        "changed_path",
+        "record_hash",
+        "tool",
+        "tool_version",
+        "hybrid",
+        "serialized_item_bytes",
+        "returned_items",
+        "total_items",
+        "result_limit",
+        "graph_depth",
+        "mode",
+        "object_oid",
+        "size_bytes",
+        "exclusion",
+        "code",
+        "message"
       ]
     },
     {
@@ -258,7 +367,7 @@
     },
     {
       "name": "search",
-      "summary": "Hybrid symbol and content search over the code index.",
+      "summary": "Hybrid symbol search.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -742,7 +851,7 @@
     },
     {
       "name": "outline",
-      "summary": "Show a hierarchical symbol tree for a file.",
+      "summary": "Show a hierarchical AST symbol tree for a parser-backed source file.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -2197,6 +2306,50 @@
       "json_output_keys": []
     },
     {
+      "name": "retire-files",
+      "summary": "Validate or apply exact manifest-bound retirement of missing file content; apply requires a private receipt.",
+      "daemon_consumed": false,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--manifest",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--apply",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--receipt",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "version",
+        "manifest_digest",
+        "backends",
+        "source_inventory_digest",
+        "project_id",
+        "machine_id",
+        "root_path",
+        "mode",
+        "complete",
+        "files"
+      ]
+    },
+    {
       "name": "prune",
       "summary": "Remove stale project records and reconcile projections across indexed projects.",
       "daemon_consumed": false,
@@ -2220,7 +2373,31 @@
     "missing_project",
     "backend_unavailable",
     "index_unavailable",
-    "contract_violation"
+    "contract_violation",
+    "invalid_evidence_request",
+    "unsupported_evidence_format",
+    "stale_admission_bypass_forbidden",
+    "snapshot_binding_mismatch",
+    "continuation_mismatch",
+    "contract_error",
+    "excluded_path",
+    "fact_snapshot_mismatch",
+    "git_error",
+    "graph_unavailable",
+    "index_incomplete",
+    "inventory_incomplete",
+    "inventory_mismatch",
+    "invalid_object_id",
+    "invalid_selector",
+    "missing_git_object",
+    "narrowing_required",
+    "path_not_tracked",
+    "semantic_failure",
+    "semantic_identity_mismatch",
+    "semantic_identity_required",
+    "stale_range",
+    "unsupported_schema",
+    "unsafe_path"
   ],
   "exit_codes": [
     {
@@ -2233,7 +2410,7 @@
     },
     {
       "code": 2,
-      "meaning": "usage error or typed error (grant, project_required, invalid_path_scope, capability_unavailable, graph sync contract); one JSON line on stderr"
+      "meaning": "usage error or typed error (grant, project, path, evidence, capability, graph sync contract); one JSON line on stderr"
     },
     {
       "code": 3,

@@ -484,6 +484,17 @@ pub fn detect_language(file_path: &str) -> Option<&'static str> {
     None
 }
 
+/// Detect a historical file's language without consulting the live filesystem.
+pub fn detect_language_from_content(file_path: &str, content: &[u8]) -> Option<&'static str> {
+    let path = Path::new(file_path);
+    let extension = path.extension()?.to_string_lossy().to_lowercase();
+    if extension != "h" {
+        return detect_language(file_path);
+    }
+    let source = String::from_utf8_lossy(content);
+    Some(detect_header_source(&source))
+}
+
 /// Return whether `file_path` is supported by the shared language registry.
 pub fn is_supported_language(file_path: &str) -> bool {
     detect_language(file_path).is_some()
@@ -501,9 +512,13 @@ fn detect_header_language(path: &Path) -> &'static str {
         return "c";
     };
 
-    if source_contains_objc_header_signal(&source) {
+    detect_header_source(&source)
+}
+
+fn detect_header_source(source: &str) -> &'static str {
+    if source_contains_objc_header_signal(source) {
         "objc"
-    } else if source_contains_cpp_header_signal(&source) {
+    } else if source_contains_cpp_header_signal(source) {
         "cpp"
     } else {
         "c"

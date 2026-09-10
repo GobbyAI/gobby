@@ -36,6 +36,7 @@ pub struct GraphEdge {
     pub target_file: String,
     pub owner_path: String,
     pub owner_hash: String,
+    pub provenance: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -202,6 +203,7 @@ impl CodewikiFacts {
                 target_file: edge.target_file,
                 owner_path: edge.owner_path,
                 owner_hash: edge.owner_hash,
+                provenance: edge.provenance,
             })
             .collect::<Vec<_>>();
         let outcome = if edges.is_empty() {
@@ -406,6 +408,7 @@ struct FetchedEdge {
     target_name: String,
     owner_path: String,
     owner_hash: String,
+    provenance: String,
 }
 
 impl FetchedEdge {
@@ -473,6 +476,10 @@ fn rows_to_fetched(kind: GraphEdgeKind, rows: &[Row]) -> Vec<FetchedEdge> {
                 .get("owner_hash")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
+            let provenance = row
+                .get("provenance")
+                .and_then(|value| value.as_str())
+                .unwrap_or("UNRESOLVED");
             Some(FetchedEdge {
                 source: source.to_string(),
                 target: target.to_string(),
@@ -485,6 +492,7 @@ fn rows_to_fetched(kind: GraphEdgeKind, rows: &[Row]) -> Vec<FetchedEdge> {
                 target_name: target_name.to_string(),
                 owner_path: owner_path.to_string(),
                 owner_hash: owner_hash.to_string(),
+                provenance: provenance.to_string(),
             })
         })
         .collect()
@@ -526,6 +534,7 @@ mod tests {
         assert_eq!(fetched[0].source_file, "src/a.py");
         assert_eq!(fetched[0].target_file, "");
         assert_eq!(fetched[0].owner_path, "src/a.py");
+        assert_eq!(fetched[0].provenance, "UNRESOLVED");
 
         let mut bare = Row::new();
         bare.insert("source".to_string(), serde_json::json!("sym-1"));
@@ -535,5 +544,6 @@ mod tests {
         assert_eq!(fetched[0].target_file, "");
         assert_eq!(fetched[0].owner_path, "");
         assert_eq!(fetched[0].rel, "INHERITS");
+        assert_eq!(fetched[0].provenance, "UNRESOLVED");
     }
 }

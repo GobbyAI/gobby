@@ -19,6 +19,7 @@ pub struct VisibleFile {
     pub file_path: String,
     pub language: String,
     pub symbol_count: i64,
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

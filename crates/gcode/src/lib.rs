@@ -4,6 +4,7 @@ mod commands;
 mod config;
 pub mod contract;
 mod db;
+pub mod evidence;
 mod freshness;
 mod git;
 #[allow(
@@ -23,7 +24,7 @@ mod schema;
 mod search;
 mod skill;
 #[doc(hidden)]
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", gcode_postgres_tests))]
 pub mod test_env;
 mod utils;
 mod vector;

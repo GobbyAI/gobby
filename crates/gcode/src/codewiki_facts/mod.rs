@@ -38,7 +38,7 @@ pub use graph::{
 };
 pub use graph_query::PublicEdge;
 pub use scope::{FileFact, FileId, ScopeSelector};
-pub use search::{SearchHit, SearchQuery};
+pub use search::{ContentFact, SearchHit, SearchQuery};
 pub use symbols::SymbolFact;
 pub use text::{
     GrepContextLineFact, GrepHit, GrepOutcome, GrepQuery, GrepSpanFact, LeadingChunkFact,

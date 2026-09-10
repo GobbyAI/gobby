@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context, ProjectIndexScope};
 use crate::{db, visibility};
 
-use super::embedding::{embed_query_with_source, embedding_source_from_context};
-use super::qdrant::{collection_name, vector_search};
+use super::embedding::{
+    audited_query_embedding, embed_query_with_source, embedding_source_from_context,
+};
+use super::qdrant::{collection_name, vector_search, vector_search_strict};
 #[cfg(test)]
 use super::types::{CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest};
 
@@ -20,6 +22,7 @@ pub enum SearchError {
     InvalidCollectionName(gobby_core::qdrant::CollectionNameError),
     VectorSearch(String),
     Visibility(String),
+    AuditedSemantic(String),
 }
 
 impl std::fmt::Display for SearchError {
@@ -33,8 +36,47 @@ impl std::fmt::Display for SearchError {
             Self::Visibility(error) => {
                 write!(f, "semantic vector visibility lookup failed: {error}")
             }
+            Self::AuditedSemantic(error) => write!(f, "audited semantic search failed: {error}"),
         }
     }
+}
+
+pub(crate) fn audited_semantic_search(
+    ctx: &Context,
+    query: &str,
+    limit: usize,
+    expected_endpoint: &str,
+    expected_model: &str,
+    expected_dimension: usize,
+) -> Result<(Vec<RankedHit>, bool), SearchError> {
+    if ctx.runtime_config_capture_degraded() {
+        return Err(SearchError::AuditedSemantic(
+            "runtime configuration capture is degraded".to_string(),
+        ));
+    }
+    let qdrant = ctx
+        .qdrant
+        .as_ref()
+        .ok_or(SearchError::MissingQdrantConfig)?;
+    let embedding = audited_query_embedding(
+        ctx,
+        query,
+        expected_endpoint,
+        expected_model,
+        expected_dimension,
+    )
+    .map_err(|error| SearchError::AuditedSemantic(error.to_string()))?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)
+        .map_err(SearchError::InvalidCollectionName)?;
+    let fetch_limit = post_filter_fetch_limit(limit);
+    let hits = vector_search_strict(qdrant, &collection, &embedding, fetch_limit)
+        .map_err(|error| SearchError::VectorSearch(error.to_string()))?;
+    // Filtering cannot establish that the backend exhausted its ranked candidates.
+    let backend_truncated = hits.len() >= fetch_limit;
+    Ok((
+        post_filter_ranked_hits(ctx, hits, limit)?,
+        backend_truncated,
+    ))
 }
 
 impl std::error::Error for SearchError {}
