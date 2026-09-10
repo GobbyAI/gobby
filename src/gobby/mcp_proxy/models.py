@@ -52,6 +52,14 @@ class MCPError(Exception):
         self.missing_secrets = missing_secrets
 
 
+class MCPAuthorizationRequired(MCPError):
+    """An OAuth connector needs interactive consent before it can connect."""
+
+    def __init__(self, command: str) -> None:
+        self.command = command
+        super().__init__(f"MCP server needs authorization; run {command}")
+
+
 class TemplateOwnedFieldsError(ValueError):
     """A PATCH named template-owned runtime fields on a templated instance."""
 

@@ -16,7 +16,13 @@ from gobby.mcp_proxy.connection_cleanup import (
     finalize_disconnect_all,
 )
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
-from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPError, MCPServerConfig
+from gobby.mcp_proxy.models import (
+    ConnectionState,
+    MCPAuthorizationRequired,
+    MCPConnectionHealth,
+    MCPError,
+    MCPServerConfig,
+)
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
 CreateConnection = Callable[[MCPServerConfig], BaseTransportConnection]
@@ -83,7 +89,7 @@ async def _connect_with_retries(
                 return cast(ClientSession, session)
             raise MCPError(f"Connection returned no session for '{label}'")
         except MCPError as exc:
-            if exc.missing_secrets:
+            if exc.missing_secrets or isinstance(exc, MCPAuthorizationRequired):
                 raise
             last_error = exc
             manager._lazy_connector.mark_failed(server_id, str(exc))
@@ -228,14 +234,14 @@ async def connect_server(
 
         return cast(ClientSession | None, session)
     except MCPError as exc:
-        if exc.missing_secrets:
+        if exc.missing_secrets or isinstance(exc, MCPAuthorizationRequired):
             from gobby.mcp_proxy.client_manager.server_registry import _set_health
 
             _set_health(
                 manager,
                 config,
                 ConnectionState.NEEDS_CONFIGURATION,
-                missing_secrets=list(exc.missing_secrets),
+                missing_secrets=list(exc.missing_secrets or []),
                 last_error=str(exc),
             )
             manager._connections.pop(config.id, None)

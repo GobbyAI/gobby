@@ -460,6 +460,9 @@ def add_server(
         sys.exit(0)
 
     click.echo(f"Added MCP server: {name}")
+    if result.get("needs_configuration"):
+        for configure_command in result.get("configure") or []:
+            click.echo(configure_command)
 
 
 @mcp_proxy.command("remove-server")

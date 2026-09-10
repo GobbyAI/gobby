@@ -227,6 +227,12 @@ class ServerManagementService:
                     }
                 raise
 
+            configure = _configure_commands(
+                missing_secrets, global_scope=scope_project == GLOBAL_PROJECT_ID
+            )
+            authorization_commands = add_result.get("configure")
+            if isinstance(authorization_commands, list):
+                configure.extend(item for item in authorization_commands if isinstance(item, str))
             response: dict[str, Any] = {
                 "success": True,
                 "message": f"Server {name} added successfully",
@@ -236,10 +242,10 @@ class ServerManagementService:
                 "scope": _scope_label(scope_project),
                 "template": template_name,
                 "missing_secrets": missing_secrets,
-                "needs_configuration": bool(missing_secrets),
-                "configure": _configure_commands(
-                    missing_secrets, global_scope=scope_project == GLOBAL_PROJECT_ID
+                "needs_configuration": bool(
+                    missing_secrets or add_result.get("needs_configuration")
                 ),
+                "configure": configure,
             }
             if add_result.get("error") is not None:
                 response["error"] = add_result["error"]

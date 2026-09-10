@@ -18,7 +18,14 @@ def test_add_server_oauth_flag_reaches_api() -> None:
         patch(
             "gobby.cli.mcp_proxy.resolve_cli_mcp_project", return_value=("project-id", "project")
         ),
-        patch("gobby.cli.mcp_proxy.call_mcp_api", return_value={"success": True}) as api,
+        patch(
+            "gobby.cli.mcp_proxy.call_mcp_api",
+            return_value={
+                "success": True,
+                "needs_configuration": True,
+                "configure": ["gobby mcp-proxy auth fieldy"],
+            },
+        ) as api,
     ):
         result = CliRunner().invoke(
             mcp_proxy,
@@ -34,6 +41,7 @@ def test_add_server_oauth_flag_reaches_api() -> None:
         )
     assert result.exit_code == 0, result.output
     assert api.call_args.kwargs["json_data"]["requires_oauth"] is True
+    assert "gobby mcp-proxy auth fieldy" in result.output
 
 
 @pytest.mark.parametrize("global_scope", [False, True])

@@ -312,6 +312,21 @@ class TestHTTPConnectError:
 
 class TestHTTPRunConnection:
     @pytest.mark.asyncio
+    async def test_nested_real_failure_remains_an_error(
+        self, conn: HTTPTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        harness = _ClientHarness(
+            handshake_error=ExceptionGroup(
+                "task group", [ExceptionGroup("inner", [OSError("network unavailable")])]
+            )
+        )
+        http_patch, client_patch = harness.patches()
+        with http_patch, client_patch, pytest.raises(MCPError, match="network unavailable"):
+            await conn.connect()
+        assert "unhandled errors" not in caplog.text
+        assert any(record.levelname == "ERROR" for record in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_missing_url_sets_connection_error(self) -> None:
         """When config.url is None, _run_connection records a ValueError-based MCPError."""
         cfg = _make_config(url=None)

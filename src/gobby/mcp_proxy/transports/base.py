@@ -8,7 +8,12 @@ from typing import Any, Literal
 
 from mcp.client import Client, ClientSession, Transport
 
-from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
+from gobby.mcp_proxy.models import (
+    ConnectionState,
+    MCPAuthorizationRequired,
+    MCPError,
+    MCPServerConfig,
+)
 
 logger = logging.getLogger("gobby.mcp.client")
 
@@ -228,6 +233,10 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
                     logger.debug("Disconnect requested for %s", self.config.name)
 
         except Exception as e:
+            # SDK task groups wrap handshake failures; preserve the actionable leaf
+            # and its type when the group contains exactly one failure.
+            while isinstance(e, ExceptionGroup) and len(e.exceptions) == 1:
+                e = e.exceptions[0]
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
             if connected:
                 # The session was live; this is a teardown failure, and the
@@ -239,7 +248,8 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
                     error_msg,
                 )
                 return
-            logger.error(
+            logger.log(
+                logging.INFO if isinstance(e, MCPAuthorizationRequired) else logging.ERROR,
                 "Failed to connect to %s server '%s': %s",
                 self._TRANSPORT_LABEL,
                 self.config.name,

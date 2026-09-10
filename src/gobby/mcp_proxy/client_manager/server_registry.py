@@ -10,6 +10,7 @@ from typing import Any, Protocol, cast
 
 from gobby.mcp_proxy.models import (
     ConnectionState,
+    MCPAuthorizationRequired,
     MCPConnectionHealth,
     MCPError,
     MCPServerConfig,
@@ -324,9 +325,12 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     tool_schemas: list[dict[str, Any]] = []
     connected = False
     connection_error: str | None = None
+    authorization: MCPAuthorizationRequired | None = None
     if config.enabled:
         try:
             session = await manager._connect_server(config)
+        except MCPAuthorizationRequired as exc:
+            authorization = exc
         except Exception as exc:
             connection_error = str(exc)
             LOGGER.warning("Failed to connect newly added MCP server %s: %s", config.name, exc)
@@ -343,6 +347,9 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     }
     if connection_error is not None:
         result["error"] = connection_error
+    if authorization is not None:
+        result["needs_configuration"] = True
+        result["configure"] = [authorization.command]
     return result
 
 
