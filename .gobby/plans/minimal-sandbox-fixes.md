@@ -47,7 +47,7 @@ Targets:
 - `src/gobby/agents/resume_executor.py::*` — scope-reason: revalidate grants before resume allocation
 - `src/gobby/mcp_proxy/tools/agents_payloads.py::*` — scope-reason: expose recorded external grants in run inspection
 - `src/gobby/agents/sandbox_policy.py::*` — scope-reason: constrain zsh heredoc temporary files to the current run
-- `src/gobby/agents/sandbox_run_environment.py`
+- `src/gobby/agents/sandbox_run_environment.py::*` — scope-reason: own run paths and subprocess environment redirects
 - `src/gobby/agents/spawn_executor_support.py::*` — scope-reason: propagate run-local TMPPREFIX through Codex shell overrides
 - `tests/agents/test_external_write_grants.py::*` — scope-reason: verify grant authority and path boundaries
 - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py::*` — scope-reason: verify integration and repair asynchronous test lifecycle

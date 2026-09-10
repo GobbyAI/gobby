@@ -53,9 +53,11 @@ Daemon-owned provider launches continue through their managed launch path.
 
 The shell allowlist is deliberately literal: a single `--help`, `-h`, or
 `--version` argument; `codex -V`; `-v` for Claude, Droid, Grok, or Qwen;
-bare `help` for Codex, Droid, Grok, or AGY; `codex login status`; and
-`claude auth status`. Other arguments, including launch commands with a help
-flag appended, do not qualify. The two status forms are verified against the
+bare `help` for Codex, Droid, Grok, or AGY; `grok version`/`grok v`;
+`codex login status`; and `claude auth status` (optionally `--json` or `--text`).
+Recognized subcommand help, such as `codex exec --help`, `codex help login`,
+and `claude auth status --help`, also qualifies. Prompt operands or other
+options alongside help do not qualify. The status forms are verified against the
 supported CLI help. Authentication login/logout and unknown status forms are
 blocked. Command-location queries such as `command -v codex` are ordinary
 shell queries.

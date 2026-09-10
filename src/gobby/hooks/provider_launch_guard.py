@@ -250,6 +250,38 @@ def _unwrap(words: list[str]) -> list[str]:
 
 def _administration(args: list[str], provider: str) -> bool:
     # Only complete, literal forms: a help flag buried in a launch is not an exemption.
+    help_commands = {
+        "codex": {"exec", "review", "login", "logout", "mcp", "resume", "fork"},
+        "claude": {"auth", "mcp", "plugin", "doctor", "install", "update"},
+        "droid": {"exec", "daemon", "search", "update", "mcp", "plugin", "computer"},
+        "grok": {"agent", "login", "logout", "mcp", "sessions", "doctor", "version"},
+        "qwen": {
+            "auth",
+            "channel",
+            "extensions",
+            "hooks",
+            "mcp",
+            "review",
+            "serve",
+            "sessions",
+            "update",
+        },
+        "agy": {"agent", "agents", "mcp", "models", "plugin", "plugins", "update"},
+    }
+    help_path = args[:-1] if args and args[-1] in {"--help", "-h"} else []
+    if provider in {"codex", "droid", "grok", "agy"} and args[:1] == ["help"]:
+        help_path = args[1:]
+    if len(help_path) == 1 and help_path[0] in help_commands[provider]:
+        return True
+    if (provider, help_path) in [("codex", ["login", "status"]), ("claude", ["auth", "status"])]:
+        return True
+    if provider == "claude" and args in [
+        ["auth", "status", "--json"],
+        ["auth", "status", "--text"],
+    ]:
+        return True
+    if provider == "grok" and args in [["version"], ["v"]]:
+        return True
     return args in [["--help"], ["-h"], ["--version"]] or (
         (provider == "codex" and args == ["login", "status"])
         or (provider == "claude" and args == ["auth", "status"])

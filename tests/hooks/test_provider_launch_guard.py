@@ -23,7 +23,9 @@ SESSION = "abababab-0000-4000-8000-000000000001"
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "droid", "grok", "qwen", "agy"])
 @pytest.mark.parametrize("prefix", ["", "/opt/bin/", "'/some path/bin/"])
-@pytest.mark.parametrize("args", ["", " exec hi", " resume", " -p hi", " unknown", " exec --help"])
+@pytest.mark.parametrize(
+    "args", ["", " exec hi", " resume", " -p hi", " unknown", " exec prompt --help"]
+)
 def test_provider_launches(provider: str, prefix: str, args: str) -> None:
     executable = prefix + provider + ("'" if prefix.startswith("'") else "")
     assert blocks_direct_provider_launch("Bash", {"command": executable + args})
@@ -41,6 +43,19 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "codex help",
         "codex -V",
         "codex login status",
+        "codex help login",
+        "codex help login status",
+        "codex exec --help",
+        "codex login status -h",
+        "claude auth status --help",
+        "claude auth status --json",
+        "claude auth status --text",
+        "droid help exec",
+        "grok agent --help",
+        "grok version",
+        "grok v",
+        "qwen mcp --help",
+        "agy help mcp",
         "claude auth status",
         "env A=b /opt/bin/codex login status",
         "command -- codex --help",
@@ -78,6 +93,21 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
 )
 def test_administration_and_documentation(command: str) -> None:
     assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "codex exec prompt --help",
+        "codex help unknown",
+        "claude auth status --text --resume",
+        "qwen help mcp",
+        "grok agent prompt --help",
+        "agy mcp unknown --help",
+    ],
+)
+def test_help_does_not_exempt_launch_operands(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
 
 
 @pytest.mark.parametrize(
