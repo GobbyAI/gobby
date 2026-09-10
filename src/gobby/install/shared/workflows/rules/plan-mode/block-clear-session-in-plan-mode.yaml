@@ -14,5 +14,5 @@ rules:
         mcp_tools:
           - "gobby-sessions:set_handoff"
         reason: >-
-          Plan Mode handoffs compact in place. Call gobby-sessions:set_handoff with
-          clear_session=false, then continue planning or review in this session.
+          Call gobby-sessions:set_handoff with clear_session=false to compact
+          Plan Mode in place, then continue planning or review in this session.

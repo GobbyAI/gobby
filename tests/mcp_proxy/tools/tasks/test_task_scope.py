@@ -344,18 +344,24 @@ def test_collect_commit_paths_includes_root_and_later_commits(tmp_path: Path) ->
     first = tmp_path / "tests" / "test_service.py"
     first.parent.mkdir()
     first.write_text("def test_service():\n    assert True\n")
-    git("add", "tests/test_service.py")
+    newline_path = tmp_path / "tests" / "test_line\nfeed.py"
+    newline_path.write_text("def test_line_feed():\n    assert True\n")
+    git("add", "tests/test_service.py", "tests/test_line\nfeed.py")
     git("commit", "-qm", "root")
     root_sha = git("rev-parse", "HEAD")
 
     second = tmp_path / "src" / "gobby" / "service.py"
     second.parent.mkdir(parents=True)
     second.write_text("VALUE = 1\n")
-    git("add", "src/gobby/service.py")
+    backslash_path = tmp_path / "src" / "gobby" / "back\\slash.py"
+    backslash_path.write_text("VALUE = 2\n")
+    git("add", "src/gobby/service.py", "src/gobby/back\\slash.py")
     git("commit", "-qm", "later")
     later_sha = git("rev-parse", "HEAD")
 
     assert collect_commit_paths((root_sha, later_sha), str(tmp_path)) == {
+        "src/gobby/back\\slash.py",
         "src/gobby/service.py",
+        "tests/test_line\nfeed.py",
         "tests/test_service.py",
     }

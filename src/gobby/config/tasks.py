@@ -190,6 +190,13 @@ class TaskValidationConfig(FeatureDefaultConfig):
             "including fallbacks. Expiry fails closed into validation backoff."
         ),
     )
+    require_clean_attributed_paths_on_close: bool = Field(
+        default=True,
+        description=(
+            "Require a path-scoped Git status proof that task-attributed paths are clean "
+            "before final close."
+        ),
+    )
     close_review_validator_timeout_seconds: float = Field(
         default=1200.0,
         gt=0,

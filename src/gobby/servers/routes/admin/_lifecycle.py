@@ -12,8 +12,14 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Response
 
 from gobby.paths import get_gobby_home
+from gobby.sessions.handoff_shutdown import (
+    HandoffShutdownBlocked,
+    cancel_handoff_shutdown,
+    prepare_handoff_shutdown,
+)
 from gobby.shutdown_intent import ShutdownIntent, shutdown_marker_details
 from gobby.telemetry.instruments import inc_counter
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -201,6 +207,25 @@ def _request_runner_shutdown(
     return True
 
 
+async def _prepare_handoff_shutdown(server: "HTTPServer", machine_id: str) -> None:
+    """Finish or undo admission if the HTTP caller disconnects during the DB check."""
+    if server.session_manager is None:
+        raise RuntimeError("Session storage unavailable; cannot check pending handoffs")
+    pending = asyncio.create_task(
+        server.run_db(prepare_handoff_shutdown, server.session_manager.db, machine_id)
+    )
+    try:
+        await asyncio.shield(pending)
+    except asyncio.CancelledError:
+        try:
+            await pending
+        except Exception:
+            pass  # Admission was never granted; preserve caller cancellation.
+        else:
+            cancel_handoff_shutdown(machine_id)
+        raise
+
+
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/cron/protected-runs")
     async def protected_cron_runs() -> dict[str, Any]:
@@ -227,8 +252,13 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         start_time = time.perf_counter()
         inc_counter("shutdown_requests_total")
+        machine_id = require_machine_id()
+        shutdown_initiated = False
+        admission_prepared = False
 
         try:
+            await _prepare_handoff_shutdown(server, machine_id)
+            admission_prepared = True
             logger.debug("Shutdown requested via HTTP endpoint")
             from gobby.runner_maintenance import write_shutdown_source
 
@@ -248,6 +278,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 task = asyncio.create_task(server._process_shutdown())
                 server._background_tasks.add(task)
                 task.add_done_callback(server._background_tasks.discard)
+            shutdown_initiated = True
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -257,6 +288,9 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "response_time_ms": response_time_ms,
             }
 
+        except HandoffShutdownBlocked as e:
+            response.status_code = 409
+            return {"status": "handoff_pending", "message": str(e)}
         except Exception as e:
             logger.exception("Error initiating shutdown: %s", e)
             response.status_code = 500
@@ -264,6 +298,9 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "status": "error",
                 "message": "Shutdown failed to initiate",
             }
+        finally:
+            if admission_prepared and not shutdown_initiated:
+                cancel_handoff_shutdown(machine_id)
 
     @router.post("/restart")
     async def restart(
@@ -285,6 +322,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             return {"status": "already_restarting", "message": "Restart already in progress"}
 
         shutdown_initiated = False
+        machine_id = require_machine_id()
+        admission_prepared = False
         try:
             await restart_lock.acquire()
 
@@ -301,6 +340,9 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                             "message": "Restart blocked by active protected cron runs",
                             "protected_runs": protected_runs,
                         }
+
+            await _prepare_handoff_shutdown(server, machine_id)
+            admission_prepared = True
 
             service_managed = await asyncio.to_thread(_should_restart_via_service_manager)
             logger.info(
@@ -347,6 +389,11 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "response_time_ms": response_time_ms,
             }
 
+        except HandoffShutdownBlocked as e:
+            if restart_lock.locked():
+                restart_lock.release()
+            response.status_code = 409
+            return {"status": "handoff_pending", "message": str(e)}
         except Exception as e:
             if not shutdown_initiated and restart_lock.locked():
                 restart_lock.release()
@@ -356,6 +403,11 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "status": "error",
                 "message": "Restart failed to initiate",
             }
+        finally:
+            if admission_prepared and not shutdown_initiated:
+                cancel_handoff_shutdown(machine_id)
+            if not shutdown_initiated and restart_lock.locked():
+                restart_lock.release()
 
     @router.post("/workflows/reload")
     async def reload_workflows(

@@ -32,6 +32,16 @@ def test_parse_porcelain_v1_z_preserves_literal_and_rename_paths() -> None:
     ]
 
 
+def test_parse_porcelain_v1_z_accepts_empty_status() -> None:
+    assert parse_porcelain_v1_z("") == ()
+
+
+@pytest.mark.parametrize("output", ["\0", "\0\0", " M tracked.py\0\0", " M tracked.py"])
+def test_parse_porcelain_v1_z_rejects_empty_or_unterminated_records(output: str) -> None:
+    with pytest.raises(ValueError, match="invalid porcelain-v1 status output"):
+        parse_porcelain_v1_z(output)
+
+
 def _write_fake_git(tmp_path: Path) -> None:
     executable = tmp_path / "git"
     executable.write_text(
@@ -318,6 +328,9 @@ async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> N
 
     assert isinstance(result, GitTimeout)
     leader, child = map(int, pids.read_text(encoding="utf-8").split())
+    assert "phase=running" in result.stderr
+    assert "spawn_seconds=" in result.stderr
+    assert "running_seconds=" in result.stderr
     await _assert_processes_gone(leader, child)
 
 
@@ -379,6 +392,7 @@ async def test_deadline_includes_slow_spawn(
         assert isinstance(result, GitTimeout)
         assert time.monotonic() - started < 0.5
         assert not created
+        assert "phase=spawning" in result.stderr
     finally:
         release_spawn.set()
         assert await asyncio.to_thread(finished.wait, 2)

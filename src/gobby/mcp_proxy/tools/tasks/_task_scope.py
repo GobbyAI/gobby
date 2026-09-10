@@ -245,14 +245,14 @@ async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str)
     paths: set[str] = set()
     for sha in commit_shas:
         result = await daemon_git.run(
-            ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha],
+            ["diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r", sha],
             cwd=repo_path,
             timeout=10,
         )
         if not isinstance(result, GitOk):
             raise RuntimeError(f"Cannot inspect changed paths for commit {sha}.")
-        for path in result.stdout.splitlines():
-            normalized = _normalize_repo_path(path)
+        for path in result.stdout.split("\0"):
+            normalized = _normalize_git_repo_path(path)
             if normalized is not None:
                 paths.add(normalized)
     return paths
@@ -309,6 +309,16 @@ def _normalize_repo_path(value: str) -> str | None:
     if not candidate or candidate.startswith("/"):
         return None
     path = PurePosixPath(candidate)
+    if ".." in path.parts:
+        return None
+    return path.as_posix()
+
+
+def _normalize_git_repo_path(value: str) -> str | None:
+    """Normalize Git's literal repo-relative output without rewriting filename bytes."""
+    if not value or value.startswith("/"):
+        return None
+    path = PurePosixPath(value)
     if ".." in path.parts:
         return None
     return path.as_posix()

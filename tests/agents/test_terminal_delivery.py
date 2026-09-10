@@ -4,6 +4,8 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future
+from contextvars import ContextVar
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents import terminal_delivery
+from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.storage.hub.operation_deadline import (
+    current_database_operation_deadline,
+    database_operation_deadline,
+)
 from tests.agents.cleanup_test_support import (
     AcknowledgingCompletionRegistry,
     RecordingDb,
@@ -21,6 +28,242 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_submitted_delivery_moves_to_owner_loop_and_is_drained() -> None:
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+    trace = ContextVar("terminal_test_trace", default="missing")
+    observations: list[tuple[bool, bool, str]] = []
+
+    async def operation() -> None:
+        observations.append(
+            (
+                asyncio.get_running_loop() is loop,
+                current_database_operation_deadline() is None,
+                trace.get(),
+            )
+        )
+        started.set()
+        await release.wait()
+        settled.set()
+
+    async def submit() -> None:
+        trace.set("caller")
+        with database_operation_deadline(timeout_seconds=1) as deadline:
+            await terminal_delivery.submit_terminal_delivery("cross-loop", operation)
+            assert current_database_operation_deadline() is deadline
+
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread, owner_loop=loop
+    )
+    try:
+        await asyncio.to_thread(asyncio.run, submit())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert observations == [(True, True, "caller")]
+        assert not settled.is_set()
+        draining = asyncio.create_task(terminal_delivery.drain_shielded_terminal_deliveries())
+        done, _ = await asyncio.wait({draining}, timeout=0.01)
+        assert not done
+        release.set()
+        await asyncio.wait_for(draining, timeout=2)
+        assert settled.is_set()
+    finally:
+        release.set()
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+        terminal_delivery.reset_terminal_delivery_offload()
+
+
+@pytest.mark.asyncio
+async def test_submitted_delivery_rejects_closed_admission() -> None:
+    invoked = False
+
+    async def operation() -> None:
+        nonlocal invoked
+        invoked = True
+
+    terminal_delivery.close_terminal_delivery_admission()
+    try:
+        with pytest.raises(terminal_delivery.TerminalDeliveryAdmissionClosedError):
+            await terminal_delivery.submit_terminal_delivery("closed-submit", operation)
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+        assert not invoked
+    finally:
+        terminal_delivery.reopen_terminal_delivery_admission()
+
+
+@pytest.mark.asyncio
+async def test_waiting_caller_cancellation_preserves_owned_operation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def operation() -> None:
+        started.set()
+        await release.wait()
+        raise RuntimeError("failure after caller cancellation")
+
+    caller = asyncio.create_task(
+        terminal_delivery.run_terminal_delivery("cancelled-caller", operation)
+    )
+    await started.wait()
+    caller.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+    finally:
+        release.set()
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+    assert "Submitted terminal delivery failed for agent cancelled-caller" in caplog.text
+    assert "failure after caller cancellation" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_durable_boundary_reports_pre_boundary_failure() -> None:
+    async def operation(_acknowledge: Callable[[str], None]) -> None:
+        raise RuntimeError("failed before persistence")
+
+    with pytest.raises(RuntimeError, match="failed before persistence"):
+        await terminal_delivery.run_terminal_delivery_until_durable(
+            "pre-boundary-failure", operation
+        )
+    await terminal_delivery.drain_shielded_terminal_deliveries()
+
+
+@pytest.mark.asyncio
+async def test_durable_boundary_reports_owned_operation_cancellation() -> None:
+    started = asyncio.Event()
+
+    async def operation(_acknowledge: Callable[[str], None]) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    caller = asyncio.create_task(
+        terminal_delivery.run_terminal_delivery_until_durable(
+            "pre-boundary-cancellation", operation
+        )
+    )
+    await started.wait()
+    assert terminal_delivery.detach_shielded_terminal_deliveries() == ["pre-boundary-cancellation"]
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(caller, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_durable_boundary_reports_cancellation_before_operation_starts() -> None:
+    operation_result: Future[None] = Future()
+    operation_result.cancel()
+    operation = AsyncMock()
+
+    with (
+        patch.object(
+            terminal_delivery,
+            "submit_terminal_delivery",
+            new=AsyncMock(return_value=operation_result),
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await terminal_delivery.run_terminal_delivery_until_durable(
+            "cancelled-before-start", operation
+        )
+    operation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_durable_boundary_caller_cancellation_preserves_owned_operation() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def operation(acknowledge: Callable[[str], None]) -> None:
+        started.set()
+        await release.wait()
+        acknowledge("persisted")
+        settled.set()
+
+    caller = asyncio.create_task(
+        terminal_delivery.run_terminal_delivery_until_durable("cancelled-boundary", operation)
+    )
+    await started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    release.set()
+    await terminal_delivery.drain_shielded_terminal_deliveries()
+    assert settled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_durable_boundary_caller_cancellation_before_cross_loop_admission() -> None:
+    owner_loop = asyncio.get_running_loop()
+    foreign_loop = asyncio.new_event_loop()
+    foreign_loop_ready = threading.Event()
+    caller_cancelled = threading.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_settled = asyncio.Event()
+
+    async def operation(acknowledge: Callable[[str], None]) -> None:
+        cleanup_started.set()
+        acknowledge("persisted")
+        await release_cleanup.wait()
+        cleanup_settled.set()
+
+    async def cancel_foreign_caller() -> None:
+        caller = asyncio.create_task(
+            terminal_delivery.run_terminal_delivery_until_durable(
+                "cancelled-before-admission", operation
+            )
+        )
+        await asyncio.sleep(0)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        caller_cancelled.set()
+
+    def run_foreign_loop() -> None:
+        asyncio.set_event_loop(foreign_loop)
+        foreign_loop_ready.set()
+        foreign_loop.run_forever()
+
+    thread = threading.Thread(target=run_foreign_loop)
+    terminal_delivery.configure_terminal_delivery_offload(
+        async_offload=asyncio.to_thread,
+        owner_loop=owner_loop,
+    )
+    try:
+        thread.start()
+        assert foreign_loop_ready.wait(timeout=2)
+        foreign_result = asyncio.run_coroutine_threadsafe(cancel_foreign_caller(), foreign_loop)
+        assert caller_cancelled.wait(timeout=2)
+        foreign_result.result(timeout=2)
+        await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+        release_cleanup.set()
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+        assert cleanup_settled.is_set()
+    finally:
+        release_cleanup.set()
+        terminal_delivery.reset_terminal_delivery_offload()
+        foreign_loop.call_soon_threadsafe(foreign_loop.stop)
+        thread.join(timeout=2)
+        foreign_loop.close()
+
+
+@pytest.mark.asyncio
+async def test_submitted_delivery_reports_background_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def operation() -> None:
+        raise RuntimeError("terminal test failure")
+
+    await terminal_delivery.submit_terminal_delivery("failed-submit", operation)
+    await terminal_delivery.drain_shielded_terminal_deliveries()
+    assert "Submitted terminal delivery failed for agent failed-submit" in caplog.text
+    assert "terminal test failure" in caplog.text
 
 
 async def test_shielded_terminal_delivery_settles_before_cancellation_propagates() -> None:
@@ -415,6 +658,204 @@ async def test_terminal_delivery_retains_rows_for_undelivered_durable_sessions()
         message="Agent terminal",
     )
 
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_terminal_delivery_coalesces_acknowledged_wake(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = DurableDb(["session-a"])
+    wake_started = asyncio.Event()
+    release_wake = asyncio.Event()
+    wake_calls = 0
+
+    async def wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, object],
+    ) -> dict[str, bool]:
+        nonlocal wake_calls
+        wake_calls += 1
+        wake_started.set()
+        await release_wake.wait()
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake)
+    registry.register("run-1", ["session-a"])
+    handler = _handler(db, completion_registry=registry)
+    first = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.wait_for(wake_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert wake_calls == 1
+    release_wake.set()
+    await asyncio.gather(first, second)
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]
+    assert "went terminal with no in-memory completion subscribers" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_concurrent_terminal_delivery_honors_waiter_cancellation() -> None:
+    db = DurableDb(["session-a"])
+    wake_started = asyncio.Event()
+    release_wake = asyncio.Event()
+    wake_calls = 0
+
+    async def wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, object],
+    ) -> dict[str, bool]:
+        nonlocal wake_calls
+        wake_calls += 1
+        wake_started.set()
+        await release_wake.wait()
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake)
+    registry.register("run-1", ["session-a"])
+    handler = _handler(db, completion_registry=registry)
+    first = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.wait_for(wake_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.sleep(0)
+
+    first.cancel()
+    second.cancel()
+    release_wake.set()
+    outcomes = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert all(isinstance(outcome, asyncio.CancelledError) for outcome in outcomes)
+    assert wake_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_terminal_delivery_retries_unacknowledged_wake() -> None:
+    db = DurableDb(["session-a"])
+    wake_started = asyncio.Event()
+    release_wake = asyncio.Event()
+    wake_calls = 0
+
+    async def wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, object],
+    ) -> dict[str, bool] | None:
+        nonlocal wake_calls
+        wake_calls += 1
+        if wake_calls == 1:
+            wake_started.set()
+            await release_wake.wait()
+            return None
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=wake)
+    registry.register("run-1", ["session-a"])
+    handler = _handler(db, completion_registry=registry)
+    first = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.wait_for(wake_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    release_wake.set()
+    await asyncio.gather(first, second)
+
+    assert wake_calls == 2
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["session-a"]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_terminal_delivery_retries_failed_row_cleanup() -> None:
+    db = DurableDb(["session-a"])
+    wake_started = asyncio.Event()
+    release_wake = asyncio.Event()
+    removal_attempts = 0
+    wake_calls = 0
+
+    async def wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, object],
+    ) -> dict[str, bool]:
+        nonlocal wake_calls
+        wake_calls += 1
+        if wake_calls == 1:
+            wake_started.set()
+            await release_wake.wait()
+        return {"ism_persisted": True}
+
+    async def run_db(
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        nonlocal removal_attempts
+        if func.__name__ == "terminal_review_delivery":
+            return None
+        if func.__name__ == "remove_delivered_subscribers":
+            removal_attempts += 1
+            if removal_attempts == 1:
+                raise RuntimeError("injected subscriber cleanup failure")
+        return func(*args, **kwargs)
+
+    registry = CompletionEventRegistry(wake_callback=wake)
+    registry.register("run-1", ["session-a"])
+    handler = _handler(db, run_db, completion_registry=registry)
+    first = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    await asyncio.wait_for(wake_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        handler.notify_terminal_completion(
+            "run-1", result={"status": "completed"}, message="Agent terminal"
+        )
+    )
+    release_wake.set()
+    await asyncio.gather(first, second)
+
+    assert wake_calls == 2
+    assert removal_attempts == 2
     assert db.executed == [
         (
             "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",

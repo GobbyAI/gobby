@@ -912,8 +912,10 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
     seed_primary_checkout(&mut conn, &project_id, project_root.path())
         .expect("seed primary checkout");
 
-    let import_context =
-        parser::build_import_resolution_context(project_root.path(), &[absolute_path.clone()]);
+    let import_context = parser::build_import_resolution_context(
+        project_root.path(),
+        std::slice::from_ref(&absolute_path),
+    );
     let mut resolver = RewriteDuringParse {
         path: absolute_path.clone(),
         replacement: replacement.to_vec(),

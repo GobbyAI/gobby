@@ -121,7 +121,8 @@ def _commit(repo: Path, message: str, *, committed_at: str | None = None) -> str
 
 
 @pytest.mark.integration
-def test_escalated_then_de_escalated_task_resolves_commits_from_the_prior_claimants_window(
+@pytest.mark.asyncio
+async def test_escalated_then_de_escalated_task_resolves_commits_from_the_prior_claimants_window(
     temp_db: HubDatabase, sample_git_project: dict[str, Any]
 ) -> None:
     """Escalation clears the owner; the earlier claimant's window still bounds the scan."""
@@ -159,7 +160,7 @@ def test_escalated_then_de_escalated_task_resolves_commits_from_the_prior_claima
     window = claimed_session_window_start(ctx, fresh, task.id)
     assert window is not None
 
-    shas, error = resolve_close_commit_shas(
+    shas, error = await resolve_close_commit_shas(
         task_manager,
         task=fresh,
         task_id=task.id,

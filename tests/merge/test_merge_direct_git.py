@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.merge_resolutions import MergeResolutionManager
+    from gobby.storage.worktrees import Worktree
 
 pytestmark = pytest.mark.unit
 
@@ -100,13 +107,13 @@ def _commit_on_branch(
 
 
 def _create_registry(
-    temp_db,
+    temp_db: HubDatabase,
     repo: Path,
     worktree_path: Path,
     branch: str,
     *,
     base_branch: str = "main",
-):
+) -> tuple[InternalToolRegistry, MergeResolutionManager, Worktree]:
     from gobby.mcp_proxy.tools.merge import create_merge_registry
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.storage.worktrees import LocalWorktreeManager
@@ -141,7 +148,9 @@ def _create_registry(
 
 
 @pytest.mark.asyncio
-async def test_merge_start_rejects_target_branch_as_source(temp_db, tmp_path: Path) -> None:
+async def test_merge_start_rejects_target_branch_as_source(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     branch = "feature/reject-target-source"
@@ -161,7 +170,7 @@ async def test_merge_start_rejects_target_branch_as_source(temp_db, tmp_path: Pa
 @pytest.mark.parametrize("target_branch", ["main", "0.4.7"])
 @pytest.mark.asyncio
 async def test_merge_start_uses_local_target_branch_ref(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
     target_branch: str,
 ) -> None:
@@ -204,7 +213,7 @@ async def test_merge_start_uses_local_target_branch_ref(
 
 @pytest.mark.asyncio
 async def test_merge_start_uses_remote_ref_when_origin_target_is_explicit(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -227,7 +236,7 @@ async def test_merge_start_uses_remote_ref_when_origin_target_is_explicit(
 
 @pytest.mark.asyncio
 async def test_merge_start_refreshes_stale_resolved_resolution(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -260,7 +269,7 @@ async def test_merge_start_refreshes_stale_resolved_resolution(
 
 @pytest.mark.asyncio
 async def test_pending_resolution_without_rows_hydrates_current_git_conflicts(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -314,13 +323,15 @@ async def test_pending_resolution_without_rows_hydrates_current_git_conflicts(
     assert normalized["resolved_count"] == 0
     assert normalized["conflicts"][0]["status"] == "pending"
     assert normalized["resolution"]["status"] == "pending"
-    assert merge_storage.get_conflict(stored[0].id).status == "pending"
-    assert merge_storage.get_resolution(resolution.id).status == "pending"
+    pending_conflict = merge_storage.get_conflict(stored[0].id)
+    pending_resolution = merge_storage.get_resolution(resolution.id)
+    assert pending_conflict is not None and pending_conflict.status == "pending"
+    assert pending_resolution is not None and pending_resolution.status == "pending"
 
 
 @pytest.mark.asyncio
 async def test_merge_status_rehydrates_existing_stale_conflict_content(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -377,10 +388,30 @@ async def test_merge_status_rehydrates_existing_stale_conflict_content(
     assert verbose["conflicts"][0]["ours_content"] == "value = 'feature'"
     assert verbose["conflicts"][0]["theirs_content"] == "value = 'main'"
 
+    chosen = "value = 'reviewed'\n"
+    resolved = await registry.call(
+        "merge_resolve",
+        {"conflict_id": stale.id, "resolved_content": chosen, "use_ai": False},
+    )
+    assert resolved["success"] is True
+
+    reviewed_status = await registry.call("merge_status", {"resolution_id": resolution.id})
+    assert reviewed_status["pending_count"] == 0
+    assert reviewed_status["resolved_count"] == 1
+    stored = merge_storage.get_conflict(stale.id)
+    assert stored is not None
+    assert stored.status == "resolved"
+    assert stored.resolved_content == chosen
+
+    applied = await registry.call("merge_apply", {"resolution_id": resolution.id})
+    assert applied["success"] is True
+    assert (worktree_path / "shared.py").read_text(encoding="utf-8") == chosen
+    assert not _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+
 
 @pytest.mark.asyncio
 async def test_merge_apply_commits_active_merge_with_legacy_inverted_resolution(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -431,12 +462,13 @@ async def test_merge_apply_commits_active_merge_with_legacy_inverted_resolution(
     assert (worktree_path / "shared.py").read_text(encoding="utf-8") == "value = 'resolved'\n"
     assert _git(worktree_path, "merge-base", "--is-ancestor", main_sha, "HEAD") == ""
     assert not _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-    assert merge_storage.get_resolution(resolution.id).status == "resolved"
+    stored_resolution = merge_storage.get_resolution(resolution.id)
+    assert stored_resolution is not None and stored_resolution.status == "resolved"
 
 
 @pytest.mark.asyncio
 async def test_merge_apply_never_commits_manual_resolution_with_markers(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -488,7 +520,8 @@ async def test_merge_apply_never_commits_manual_resolution_with_markers(
     assert "conflict markers" in result["error"]
     assert _git(worktree_path, "rev-parse", "HEAD") == head_before
     assert _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-    assert merge_storage.get_resolution(resolution.id).status == "pending"
+    stored_resolution = merge_storage.get_resolution(resolution.id)
+    assert stored_resolution is not None and stored_resolution.status == "pending"
 
 
 @pytest.mark.asyncio
@@ -532,7 +565,7 @@ async def test_resolver_never_reports_git_auto_for_malformed_conflict_body(
 
 @pytest.mark.asyncio
 async def test_merge_apply_resolves_with_warning_for_dirty_worktree_after_commit(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -592,12 +625,13 @@ async def test_merge_apply_resolves_with_warning_for_dirty_worktree_after_commit
     assert result["dirty_files"] == [" M shared.py"]
     assert result["merge_sha"] == _git(worktree_path, "rev-parse", "HEAD")
     assert not _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-    assert merge_storage.get_resolution(resolution.id).status == "resolved"
+    stored_resolution = merge_storage.get_resolution(resolution.id)
+    assert stored_resolution is not None and stored_resolution.status == "resolved"
 
 
 @pytest.mark.asyncio
 async def test_merge_apply_rejects_dirty_tree_before_direct_merge(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -613,7 +647,9 @@ async def test_merge_apply_rejects_dirty_tree_before_direct_merge(
         {"worktree_id": worktree.id, "source_branch": branch, "target_branch": "main"},
     )
     main_before = _git(repo, "rev-parse", "main")
-    status_before = merge_storage.get_resolution(started["resolution_id"]).status
+    before = merge_storage.get_resolution(started["resolution_id"])
+    assert before is not None
+    status_before = before.status
 
     result = await registry.call("merge_apply", {"resolution_id": started["resolution_id"]})
 
@@ -621,12 +657,13 @@ async def test_merge_apply_rejects_dirty_tree_before_direct_merge(
     assert result["error"] == "worktree is dirty; commit or stash changes before merging"
     assert result["dirty_files"] == ["?? unrelated.txt"]
     assert _git(repo, "rev-parse", "main") == main_before
-    assert merge_storage.get_resolution(started["resolution_id"]).status == status_before
+    after = merge_storage.get_resolution(started["resolution_id"])
+    assert after is not None and after.status == status_before
 
 
 @pytest.mark.asyncio
 async def test_merge_apply_allows_gobby_sync_file_dirty_after_direct_merge(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -660,7 +697,9 @@ async def test_merge_apply_allows_gobby_sync_file_dirty_after_direct_merge(
 
 
 @pytest.mark.asyncio
-async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_path: Path) -> None:
+async def test_merge_apply_fast_forwards_reused_clean_resolution(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     branch = "feature/direct-ff"
@@ -694,7 +733,7 @@ async def test_merge_apply_fast_forwards_reused_clean_resolution(temp_db, tmp_pa
 
 @pytest.mark.asyncio
 async def test_merge_apply_restores_detached_head_after_direct_merge(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -721,7 +760,7 @@ async def test_merge_apply_restores_detached_head_after_direct_merge(
 
 @pytest.mark.asyncio
 async def test_no_ff_strategy_bypasses_reuse_and_creates_merge_commit(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -749,7 +788,8 @@ async def test_no_ff_strategy_bypasses_reuse_and_creates_merge_commit(
     assert no_ff["success"] is True
     assert "reused_resolution" not in no_ff
     assert no_ff["tier"] == "git_no_ff"
-    assert merge_storage.get_resolution(no_ff["resolution_id"]).tier_used == "git_no_ff"
+    stored_resolution = merge_storage.get_resolution(no_ff["resolution_id"])
+    assert stored_resolution is not None and stored_resolution.tier_used == "git_no_ff"
 
     result = await registry.call("merge_apply", {"resolution_id": no_ff["resolution_id"]})
 
@@ -764,7 +804,7 @@ async def test_no_ff_strategy_bypasses_reuse_and_creates_merge_commit(
 
 @pytest.mark.asyncio
 async def test_merge_abort_clears_git_merge_before_deleting_resolution(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"

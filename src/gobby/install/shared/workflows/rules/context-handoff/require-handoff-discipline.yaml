@@ -1,6 +1,69 @@
 tags: [context-handoff, skill-discovery, gobby, default]
 
 rules:
+  require-handoff-feedback-before-authoring:
+    description: "Require the current-epoch survey before handoff schema discovery or submission"
+    event: before_tool
+    enabled: true
+    priority: 22
+    when: >
+      variables.get('_gobby_feedback_survey_active')
+      and not variables.get('_gobby_feedback_epoch_submitted')
+      and (
+        (event.data.get('mcp_server') == 'gobby-sessions'
+         and event.data.get('mcp_tool') == 'set_handoff')
+        or (
+          (event.data.get('mcp_tool') == 'get_tool_schema'
+           or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
+          and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-sessions'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) == 'set_handoff'
+        )
+      )
+    effects:
+      - type: block
+        reason: |
+          Call gobby-sessions:feedback to submit the current-epoch survey first,
+          with at most 3 observations, or observations=[] when there is nothing to report.
+          Submission acknowledges feedback; it does not mark it human-reviewed.
+          Then load handoff-discipline and keep the rendered handoff within 10,000
+          JSON-escaped characters, including headings. Call set_handoff last.
+          Use clear_session=false inside tasks; clear_session=true only between
+          tasks after task closure. Do not repeat feedback already submitted this epoch.
+
+  block-clear-session-with-claimed-tasks:
+    description: "Keep handoffs inside active tasks in the same session"
+    event: before_tool
+    enabled: true
+    priority: 23
+    when: >
+      bool(variables.get('claimed_tasks'))
+      and ((tool_input.get('arguments') or tool_input) or {}).get('clear_session') is True
+    effects:
+      - type: block
+        mcp_tools: ["gobby-sessions:set_handoff"]
+        reason: >-
+          Use clear_session=false while working inside a task.
+          clear_session=true is allowed only between tasks after task closure.
+
+  require-handoff-discipline-on-schema-discovery:
+    description: "Load handoff authoring guidance when discovering set_handoff"
+    event: before_tool
+    enabled: true
+    priority: 24
+    when: >
+      not skill_loaded('handoff-discipline')
+      and (event.data.get('mcp_tool') == 'get_tool_schema'
+           or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
+      and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-sessions'
+      and (tool_input.get('tool_name') or tool_input.get('tool')) == 'set_handoff'
+    effects:
+      - type: block
+        reason: |
+          {{ skill_fetch_directive("handoff-discipline") }}
+          Submit required feedback first, then author within the 10,000 JSON-escaped
+          character limit. Use clear_session=false inside tasks and clear_session=true
+          only between tasks after closure.
+
   require-handoff-discipline:
     description: "Teach handoff discipline before authoring a session or agent handoff"
     event: before_tool

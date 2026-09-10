@@ -62,6 +62,88 @@ def _tool_event(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
+async def test_handoff_requires_feedback_even_with_skill_loaded(
+    db: HubDatabase, shape: str
+) -> None:
+    engine = RuleEngine(db)
+    event = _tool_event("gobby-sessions", "set_handoff", {"clear_session": False}, shape)
+    variables: dict[str, Any] = {
+        "loaded_skills": [SKILL],
+        "project": {"name": "gobby"},
+    }
+    blocked = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert blocked.decision == "block"
+    assert "gobby-sessions:feedback" in (blocked.reason or "")
+    variables["_gobby_feedback_epoch_submitted"] = True
+    allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert allowed.decision != "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["get_tool_schema", "mcp__gobby__get_tool_schema"])
+async def test_schema_discovery_requires_feedback_then_handoff_skill(
+    db: HubDatabase, tool_name: str
+) -> None:
+    event = _tool_event("gobby-sessions", "get_handoff", {})
+    event.data = {
+        "tool_name": tool_name,
+        "tool_input": {"server_name": "gobby-sessions", "tool_name": "set_handoff"},
+    }
+    normalize_tool_fields(event.data)
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {"project": {"name": "gobby"}}
+    feedback_block = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert feedback_block.decision == "block"
+    assert "gobby-sessions:feedback" in (feedback_block.reason or "")
+    assert "10,000" in (feedback_block.reason or "")
+    variables["_gobby_feedback_epoch_submitted"] = True
+    skill_block = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert skill_block.decision == "block"
+    assert skill_fetch_directive(SKILL) in (skill_block.reason or "")
+    variables["loaded_skills"] = [SKILL]
+    allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert allowed.decision != "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
+async def test_clear_requires_closed_tasks(db: HubDatabase, shape: str) -> None:
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {"loaded_skills": [SKILL], "claimed_tasks": {"task": "#1"}}
+    event = _tool_event("gobby-sessions", "set_handoff", {"clear_session": True}, shape)
+    blocked = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert blocked.decision == "block"
+    assert "clear_session=false" in (blocked.reason or "")
+    compact = _tool_event("gobby-sessions", "set_handoff", {"clear_session": False}, shape)
+    allowed = await engine.evaluate(compact, session_id=SESSION_ID, variables=variables)
+    assert allowed.decision != "block"
+    variables["claimed_tasks"] = {}
+    allowed = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert allowed.decision != "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server", "tool"),
+    [("gobby-sessions", "feedback"), ("gobby-sessions", "get_handoff"), ("other", "set_handoff")],
+)
+async def test_handoff_schema_gate_leaves_prerequisites_available(
+    db: HubDatabase, server: str, tool: str
+) -> None:
+    event = _tool_event("gobby-sessions", "get_handoff", {})
+    event.data = {
+        "tool_name": "mcp__gobby__get_tool_schema",
+        "tool_input": {"server_name": server, "tool_name": tool},
+    }
+    normalize_tool_fields(event.data)
+    result = await RuleEngine(db).evaluate(
+        event, session_id=SESSION_ID, variables={"project": {"name": "gobby"}}
+    )
+    assert result.decision != "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["wrapper", "direct", "json"])
 @pytest.mark.parametrize(
     "server,tool",
     [("gobby-sessions", "set_handoff"), ("gobby-agents", "end_agent_run")],

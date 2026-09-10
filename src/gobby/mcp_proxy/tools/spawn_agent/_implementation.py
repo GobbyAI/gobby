@@ -20,13 +20,13 @@ from gobby.agents.isolation import (
     repair_isolation_environment,
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
-from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_models import ManagedRuntimeProfile, SpawnRequest, resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
+from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.version_gate import (
@@ -66,7 +66,7 @@ from ._provider_resolution import (
 from ._runtime import (
     _normalize_optional_model,
     _normalize_string_list,
-    _parent_session_ref,
+    build_spawn_context,
 )
 from ._spawn_guards import (
     TaskSpawnLease,
@@ -466,8 +466,6 @@ async def spawn_agent_impl(
                 existing_worktree=existing_worktree,
                 git_manager=target_git_manager,
                 worktree_storage=worktree_storage,
-                clone_manager=target_clone_manager,
-                clone_storage=clone_storage,
                 spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
             )
@@ -475,6 +473,28 @@ async def spawn_agent_impl(
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
             )
+        except ReusedWorktreeRebaseConflict as exc:
+            return {
+                "success": False,
+                "error_code": "reused_worktree_rebase_conflict",
+                "error": (
+                    f"Reused worktree {existing_worktree.id} could not be rebased onto "
+                    f"{exc.base_ref}; the original worktree was preserved at "
+                    f"{existing_worktree.worktree_path}: {exc}"
+                ),
+                "worktree_id": existing_worktree.id,
+                "worktree_path": existing_worktree.worktree_path,
+                "branch_name": existing_worktree.branch_name,
+                "base_branch": existing_worktree.base_branch,
+                "rebase_target": exc.base_ref,
+                "base_commit_sha": exc.base_commit_sha,
+                "preserved": True,
+                "recovery": (
+                    "Check the preserved worktree's rebase state and resolve the branch against "
+                    f"'{exc.base_ref}' in the preserved worktree, then retry spawn_agent "
+                    f"with worktree_id='{existing_worktree.id}'."
+                ),
+            }
         except Exception as e:
             return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
     elif clone_id and clone_storage:
@@ -575,80 +595,21 @@ async def spawn_agent_impl(
     spawn_request = None
     machine_id = await asyncio.to_thread(get_machine_id)
 
-    # 10. Build initial_variables (merge factory's with impl's own)
-    effective_initial_variables: dict[str, Any] = {}
-    if initial_variables:
-        effective_initial_variables.update(initial_variables)
-    if reasoning.status != "not_requested":
-        effective_initial_variables.update(
-            {
-                "_requested_reasoning_effort": reasoning.requested_effort,
-                "_effective_reasoning_effort": reasoning.effective_effort,
-                "_reasoning_required": reasoning.reasoning_required,
-                "_reasoning_status": reasoning.status,
-            }
-        )
-    if resolved_task_id:
-        effective_initial_variables["assigned_task_id"] = (
-            f"#{task_seq_num}" if task_seq_num else resolved_task_id
-        )
-        effective_initial_variables["assigned_task_uuid"] = resolved_task_id
-    if "assigned_task_id" in effective_initial_variables:
-        effective_initial_variables["parent_session_id"] = parent_session_id
-        effective_initial_variables["parent_session_ref"] = await asyncio.to_thread(
-            _parent_session_ref, session_manager, parent_session_id
-        )
-    if enhanced_prompt:
-        effective_initial_variables["prompt"] = enhanced_prompt
-    additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
-    if task_additional_skills is not None:
-        additional_skills = task_additional_skills
-    effective_initial_variables["additional_skills"] = additional_skills
-
-    # 10b. Inject isolation context so workflow variables can reference them
-    if isolation_ctx.clone_id:
-        effective_initial_variables["clone_id"] = isolation_ctx.clone_id
-    if isolation_ctx.worktree_id:
-        effective_initial_variables["worktree_id"] = isolation_ctx.worktree_id
-    if isolation_ctx.extra.get("reused_worktree") is True:
-        effective_initial_variables["reused_worktree"] = True
-    if isolation_ctx.branch_name:
-        effective_initial_variables["branch_name"] = isolation_ctx.branch_name
-    base_commit_sha = isolation_ctx.extra.get("base_commit_sha")
-    if isinstance(base_commit_sha, str) and base_commit_sha:
-        effective_initial_variables["base_commit_sha"] = base_commit_sha
-
-    # 11. Build resume metadata without seeding an automatic session title.
     agent_display_name = requested_agent_name
-
-    stage_name = effective_initial_variables.get("stage_name")
-    stage_state = effective_initial_variables.get("stage_state")
-    resume_metadata = build_resume_metadata(
-        provider=effective_provider,
-        model=requested_model_selector,
-        requested_reasoning_effort=reasoning.requested_effort,
-        effective_reasoning_effort=reasoning.effective_effort,
-        reasoning_required=reasoning.reasoning_required,
-        reasoning_status=reasoning.status,
-        reasoning_message=reasoning.message,
-        sandbox_config=effective_sandbox_config,
-        cwd=str(isolation_ctx.cwd),
-        project_id=project_id,
-        project_path=resolved_project_path,
-        parent_session_id=parent_session_id,
-        isolation=effective_isolation,
-        worktree_id=isolation_ctx.worktree_id,
-        clone_id=isolation_ctx.clone_id,
-        branch_name=isolation_ctx.branch_name,
-        base_branch=effective_base_branch,
-        base_commit_sha=base_commit_sha if isinstance(base_commit_sha, str) else None,
-        task_id=resolved_task_id,
-        task_ref=f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-        stage_name=stage_name if isinstance(stage_name, str) else None,
-        stage_state=stage_state if isinstance(stage_state, str) else None,
-        agent_slug=agent_display_name,
-        workflow=effective_workflow,
-        initial_variables=effective_initial_variables,
+    base_commit_sha = isolation_ctx.extra.get("base_commit_sha")
+    effective_initial_variables, resume_metadata = await build_spawn_context(
+        spawn_config=spawn_config,
+        isolation_ctx=isolation_ctx,
+        effective_isolation=effective_isolation,
+        reasoning=reasoning,
+        initial_variables=initial_variables,
+        session_manager=session_manager,
+        task_additional_skills=task_additional_skills,
+        enhanced_prompt=enhanced_prompt,
+        requested_model_selector=requested_model_selector,
+        effective_sandbox_config=effective_sandbox_config,
+        effective_workflow=effective_workflow,
+        agent_display_name=agent_display_name,
     )
 
     task_spawn_lease = TaskSpawnLease(

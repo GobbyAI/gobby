@@ -162,9 +162,9 @@ class EnforcementCompletionMixin:
         terminal_reason = raw_terminal_reason if isinstance(raw_terminal_reason, str) else None
 
         lifecycle_monitor = getattr(self._runner, "agent_lifecycle_monitor", None)
-        terminalize_successful_run: Any = getattr(
+        complete_workflow_run: Any = getattr(
             lifecycle_monitor,
-            "terminalize_successful_run",
+            "complete_workflow_run",
             None,
         )
         cleanup_session_id: str | None = (
@@ -225,30 +225,26 @@ class EnforcementCompletionMixin:
             )
         # Lifecycle monitor terminalizers are async by contract. A sync callable
         # is treated as unavailable so workflow completion uses the runner path.
-        if inspect.iscoroutinefunction(terminalize_successful_run):
+        if inspect.iscoroutinefunction(complete_workflow_run):
             terminalize_kwargs: dict[str, Any] = {
                 "notify_result": notify_result,
                 "message": message,
             }
             if terminal_reason is not None:
                 terminalize_kwargs["terminal_reason"] = terminal_reason
-            terminalized = await terminalize_successful_run(run_id, **terminalize_kwargs)
+            terminalized = await complete_workflow_run(run_id, **terminalize_kwargs)
             logger.debug(
                 "Workflow lifecycle terminalization settled acknowledged delivery for %s: %s",
                 run_id,
                 terminalized,
             )
-            await offload(
-                cleanup_agent_runtime_state,
-                self.db,
-                run_id=run_id,
-                child_session_id=cleanup_session_id,
-                terminal_reason=terminal_reason,
-            )
+            # The admitted lifecycle operation releases worktrees and clones before
+            # clearing the dispatch mutex and workflow instance. Keep that ordering
+            # after returning at its durable completion boundary.
             return
-        if callable(terminalize_successful_run):
+        if callable(complete_workflow_run):
             logger.warning(
-                "Ignoring synchronous terminalize_successful_run hook for run %s",
+                "Ignoring synchronous complete_workflow_run hook for run %s",
                 run_id,
             )
 
@@ -287,6 +283,25 @@ class EnforcementCompletionMixin:
             return None
         definition = instance.snapshot
         cas_token = (str(instance.id), instance.updated_at)
+
+        # Retry a persisted exit step if its previous completion attempt failed.
+        if definition.exit_condition:
+            merged_vars = {**variables, **instance.variables}
+            if await offload(
+                self._evaluate_condition,
+                definition.exit_condition,
+                {
+                    "current_step": instance.current_step,
+                    "vars": merged_vars,
+                    "variables": merged_vars,
+                },
+                "block",
+            ):
+                await self._complete_agent_workflow_run(
+                    session_id, instance.agent_name, merged_vars
+                )
+                variables["step_workflow_complete"] = True
+                return None
 
         tool_name = event.data.get("tool_name", "")
         tool_input = event.data.get("tool_input") or {}
@@ -506,7 +521,6 @@ class EnforcementCompletionMixin:
                         ),
                     )
                     if exit_met:
-                        variables["step_workflow_complete"] = True
                         logger.info(
                             "Exit condition met for workflow %s (session=%s, step=%s)",
                             instance.agent_name,
@@ -518,6 +532,7 @@ class EnforcementCompletionMixin:
                             instance.agent_name,
                             merged_vars,
                         )
+                        variables["step_workflow_complete"] = True
 
                 break
 

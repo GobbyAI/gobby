@@ -62,7 +62,7 @@ class TestBundledBlockReasonFraming:
 
 
 def test_deny_reason_not_compacted() -> None:
-    rule_name = "require-clean-tree-before-status"
+    rule_name = "require-commit-before-status"
     template_reason = _BUNDLED_BEFORE_TOOL_BLOCK_REASONS[rule_name]
     agent_reason = f"Rule enforced by Gobby: [{rule_name}]\n{template_reason.rstrip()}"
     assert len(agent_reason) > 300
@@ -74,7 +74,7 @@ def test_deny_reason_not_compacted() -> None:
 
     visible_reason = result["hookSpecificOutput"]["permissionDecisionReason"]
     assert visible_reason == agent_reason
-    assert "release_task_paths" in visible_reason
+    assert "pass `commit_sha` explicitly" in visible_reason
 
 
 class TestClaudeCodeAdapterInit:

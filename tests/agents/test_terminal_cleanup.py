@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from dataclasses import replace
 from types import SimpleNamespace
@@ -129,6 +131,21 @@ async def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> Non
     cleanup.assert_called_once_with(db, "task-1")
 
 
+async def test_terminal_worktree_release_runs_off_event_loop() -> None:
+    loop_thread = threading.get_ident()
+    release_threads: list[int] = []
+    coordinator = MagicMock()
+    coordinator.release_session_worktrees.side_effect = lambda _session_id: release_threads.append(
+        threading.get_ident()
+    )
+    await _handler(
+        RecordingDb(), run_db=asyncio.to_thread, session_coordinator=coordinator
+    ).post_terminal_cleanup(_run(task_id=None))
+    assert len(release_threads) == 1
+    assert release_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
 async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -378,6 +395,27 @@ async def test_subscriber_notify_failure_does_not_abort_terminal_cleanup(
     session_coordinator.release_session_worktrees.assert_called_once_with("child-1")
     assert artifact_calls == [(db, "task-1")]
     assert db.executed == []
+
+
+@pytest.mark.integration
+async def test_artifact_cleanup_ignores_expired_caller_deadline(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"], "Unmerged task", validation_criteria="Keep unmerged artifacts."
+    )
+    now = time.monotonic()
+    monkeypatch.setattr(operation_deadline, "time", SimpleNamespace(monotonic=lambda: now))
+
+    with database_operation_deadline(timeout_seconds=0.04) as caller_deadline:
+        now += 0.06
+        artifacts = await cleanup_merged_task_artifacts_after_agent_exit(temp_db, task.id)
+        assert artifacts == []
+        assert operation_deadline.current_database_operation_deadline() is caller_deadline
+        with pytest.raises(operation_deadline.DatabaseOperationDeadlineExceeded):
+            caller_deadline.remaining_seconds()
 
 
 @pytest.mark.integration
