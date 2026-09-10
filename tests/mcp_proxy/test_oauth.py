@@ -6,13 +6,15 @@ import json
 import time
 from dataclasses import replace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
+import click
 import httpx2
 import pytest
 from mcp.client.auth import AuthorizationCodeResult, OAuthFlowError
 
+from gobby.cli.mcp_oauth import authorize_server
 from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
 from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
 from gobby.mcp_proxy.transports.factory import create_transport_connection
@@ -122,6 +124,80 @@ class AuthorizationServer:
                 },
             )
         raise AssertionError(f"Unexpected OAuth request: {request.method} {request.url}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [True, False])
+async def test_cli_login_discovers_tools_after_public_initialization(
+    secret_store: SecretStore, protected: bool
+) -> None:
+    server = AuthorizationServer()
+    methods: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path != "/mcp":
+            return server.respond(request)
+        if request.method != "POST":
+            return httpx2.Response(405)
+        body = json.loads(request.content)
+        method = body["method"]
+        if method == "server/discover":
+            return httpx2.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                },
+            )
+        methods.append(method)
+        if method == "initialize":
+            result = {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "public-init", "version": "1"},
+            }
+        elif method == "notifications/initialized":
+            return httpx2.Response(202)
+        elif method == "tools/list":
+            if protected and not request.headers.get("Authorization"):
+                return server.respond(request)
+            result = {"tools": []}
+        else:
+            raise AssertionError(f"Unexpected MCP method: {method}")
+        return httpx2.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+    config = MCPServerConfig(
+        name="public-init", project_id="project", url="https://resource.example/mcp"
+    )
+    callback = AsyncMock()
+    callback.redirect_uri = "http://127.0.0.1:54321/callback"
+    callback.redirect = server.redirect
+    callback.wait = server.callback
+    callback.__aenter__.return_value = callback
+
+    def http_client(headers: object, auth: httpx2.Auth) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(auth=auth, transport=httpx2.MockTransport(respond))
+
+    with (
+        patch("gobby.cli.mcp_oauth.OAuthCallback", return_value=callback),
+        patch("gobby.cli.mcp_oauth.build_mcp_http_client", side_effect=http_client),
+    ):
+        if protected:
+            await authorize_server(config, secret_store, 5)
+        else:
+            with pytest.raises(click.ClickException, match="did not request OAuth"):
+                await authorize_server(config, secret_store, 5)
+    assert methods[:3] == ["initialize", "notifications/initialized", "tools/list"]
+    storage = MCPOAuthStorage(secret_store, config)
+    await storage.load()
+    if protected:
+        assert storage.state.tokens is not None
+        assert storage.state.tokens.access_token == "access"
+        assert methods.count("tools/list") == 2
+    else:
+        assert storage.state.tokens is None
+        assert server.registration == {}
 
 
 async def login(store: SecretStore, server: AuthorizationServer) -> MCPServerConfig:

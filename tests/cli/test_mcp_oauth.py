@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -80,7 +81,17 @@ def test_auth_enables_oauth_only_after_success(global_scope: bool) -> None:
     assert payload.get("project_id") == project_id
 
 
-def test_auth_failure_does_not_enable_oauth_or_expose_error_body() -> None:
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (RuntimeError("private-token-response"), "OAuth authorization failed (RuntimeError)"),
+        (ValueError("private-token-response"), "OAuth authorization failed (ValueError)"),
+        (click.ClickException("The MCP server did not request OAuth"), "did not request OAuth"),
+    ],
+)
+def test_auth_failure_does_not_enable_oauth_or_expose_error_body(
+    error: Exception, message: str
+) -> None:
     row = SimpleNamespace(
         name="fieldy",
         id="instance-id",
@@ -102,9 +113,9 @@ def test_auth_failure_does_not_enable_oauth_or_expose_error_body() -> None:
         patch("gobby.cli.mcp_oauth.call_mcp_api") as api,
     ):
         registry.return_value.get_server.return_value = row
-        authorize.side_effect = RuntimeError("private-token-response")
+        authorize.side_effect = error
         result = CliRunner().invoke(mcp_proxy, ["auth", "fieldy"])
     assert result.exit_code == 1
     assert "private-token-response" not in result.output
-    assert "OAuth authorization failed" in result.output
+    assert message in result.output
     api.assert_not_called()
