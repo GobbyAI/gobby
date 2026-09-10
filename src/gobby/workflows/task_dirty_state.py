@@ -60,7 +60,13 @@ async def task_dirty_paths_async(paths: set[str], cwd: str) -> set[str] | None:
     result = await daemon_git.status(cwd, paths=paths, timeout=10.0)
     if not isinstance(result, GitOk):
         return None
-    return {entry.path for entry in parse_porcelain_v1_z(result.stdout)}
+    try:
+        entries = parse_porcelain_v1_z(result.stdout)
+    except ValueError:
+        return None
+    return {
+        path for entry in entries for path in (entry.path, entry.original_path) if path is not None
+    }
 
 
 def _porcelain_path(line: str) -> str:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import replace
 from pathlib import Path
@@ -58,10 +57,10 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     active_validation_backoff,
+    apply_task_cleanliness_gate,
     record_validation_infrastructure_failure,
     validate_commit_requirements,
     validate_parent_task,
-    validate_uncommitted_task_edits,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import (
@@ -91,7 +90,6 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
 )
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
-from gobby.workflows.task_dirty_state import task_dirty_paths_async as _task_dirty_paths
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
 logger = logging.getLogger(__name__)
@@ -514,31 +512,14 @@ async def _evaluate_close(
                 skipped=not scope.declared_paths,
             )
 
-    dirty_paths = (
-        await _task_dirty_paths(evaluation.edited_paths, repo_path)
-        if evaluation.edited_paths
-        else set()
-    )
-    if dirty_paths is None:
-        dirty_paths = set(evaluation.edited_paths)
-    dirty_result = await asyncio.to_thread(
-        validate_uncommitted_task_edits,
+    await apply_task_cleanliness_gate(
         ctx,
-        dirty_paths=dirty_paths,
+        evaluation,
+        edited_paths=attribution.clean_proof_paths,
         owner_session_id=attribution.owner_session_id,
         project_id=task.project_id,
         repo_path=repo_path,
     )
-    if not dirty_result.can_close:
-        evaluation.collect_failure(
-            9,
-            "uncommitted_task_edits",
-            dirty_result.error_type or "uncommitted_task_edits",
-            dirty_result.message or "Task-attributed files still have uncommitted changes.",
-            details=dirty_result.extra,
-        )
-    else:
-        evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
 
     try:
         committed_paths = await collect_commit_paths(commit_shas, repo_path)

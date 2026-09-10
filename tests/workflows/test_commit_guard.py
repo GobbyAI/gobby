@@ -650,62 +650,9 @@ async def test_foreign_path_only_commit_is_blocked(guard_harness: GuardHarness) 
 
 
 @pytest.mark.asyncio
-async def test_owner_path_release_breaks_commit_and_close_cycle(
+async def test_21049_owner_release_reports_later_dirt_as_foreign(
     guard_harness: GuardHarness,
 ) -> None:
-    guard_harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
-        (RULE_NAME, "require-clean-tree-before-status"),
-    )
-    (guard_harness.repo / "foreign.txt").write_text("current session change\n", encoding="utf-8")
-    _git(guard_harness.repo, "add", "--", "foreign.txt")
-
-    commit_response = await guard_harness.handler._evaluate_rules(
-        guard_harness.event("git commit -m 'blocked by stale attribution'")
-    )
-    close_response = await guard_harness.handler._evaluate_rules(
-        guard_harness.foreign_close_event()
-    )
-
-    assert commit_response.decision == "block"
-    assert close_response.decision == "block"
-
-    variables = SessionVariableManager(guard_harness.db)
-    variables.merge_variables(
-        guard_harness.foreign_session.id,
-        {
-            "task_edited_files": {
-                guard_harness.foreign_task.id: ["foreign.txt"],
-            }
-        },
-    )
-    released, remaining = variables.release_task_edited_files(
-        guard_harness.foreign_session.id,
-        guard_harness.foreign_task.id,
-        ["foreign.txt"],
-        checkout_root=str(guard_harness.repo),
-    )
-
-    assert released == ["foreign.txt"]
-    assert remaining == []
-    commit_response = await guard_harness.handler._evaluate_rules(
-        guard_harness.event("git commit -m 'released by owner'")
-    )
-    close_response = await guard_harness.handler._evaluate_rules(
-        guard_harness.foreign_close_event()
-    )
-    assert commit_response.decision == "allow"
-    assert close_response.decision == "allow"
-
-
-@pytest.mark.asyncio
-async def test_21049_owner_release_allows_close_when_later_dirt_is_foreign(
-    guard_harness: GuardHarness,
-) -> None:
-    guard_harness.db.execute(
-        "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
-        (RULE_NAME, "require-clean-tree-before-status"),
-    )
     last_commit_epoch = int(
         _git(guard_harness.repo, "log", "-1", "--format=%ct", "--", "foreign.txt")
     )
@@ -736,9 +683,6 @@ async def test_21049_owner_release_allows_close_when_later_dirt_is_foreign(
         encoding="utf-8",
     )
 
-    blocked_close = await guard_harness.handler._evaluate_rules(guard_harness.foreign_close_event())
-    assert blocked_close.decision == "block"
-
     registry = create_task_registry(LocalTaskManager(guard_harness.db))
     with session_context_for_test(guard_harness.foreign_session.id):
         released = await registry.call(
@@ -762,9 +706,6 @@ async def test_21049_owner_release_allows_close_when_later_dirt_is_foreign(
     assert guard_harness.foreign_task.id not in variables.get_variables(
         guard_harness.foreign_session.id
     ).get("task_edited_files", {})
-
-    allowed_close = await guard_harness.handler._evaluate_rules(guard_harness.foreign_close_event())
-    assert allowed_close.decision == "allow"
 
 
 @pytest.mark.asyncio

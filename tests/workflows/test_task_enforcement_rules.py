@@ -8,11 +8,10 @@ task claim/release tracking.
 from __future__ import annotations
 
 import shlex
-import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,7 +30,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -173,12 +171,6 @@ def _skill_fetch_template(name: str) -> str:
     return f'{{{{ skill_fetch_directive("{name}") }}}}'
 
 
-def _git_repo(path: Path) -> str:
-    """Create an empty git repository so the dirty-tree scan has a worktree to read."""
-    subprocess.run(["git", "init", "-q", str(path)], check=True, capture_output=True)
-    return str(path)
-
-
 def _close_task_event(
     task_id: str = "#1",
     *,
@@ -300,7 +292,6 @@ TASK_ENFORCEMENT_RULES = {
     DISCLOSURE_RULE_NAME,
     "require-claimed-task-extra-skills",
     "require-commit-before-status",
-    "require-clean-tree-before-status",
     "task-commit-project-path-allowlist-before-git",
     "block-ask-during-stop-compliance",
     "block-needs-review-interactive",
@@ -1910,129 +1901,6 @@ class TestTouchedFileHelpers:
         )
 
         assert result is True
-
-
-class TestRequireCleanTreeBeforeStatus:
-    """Verify require-clean-tree-before-status blocks on dirty files."""
-
-    def test_blocks_close_task_mcp(self, db, manager) -> None:
-        """Should block gobby-tasks:close_task and de_escalate_task."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-clean-tree-before-status")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "before_tool"
-        assert body.effects[0].type == "block"
-        assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
-        assert "gobby-tasks:de_escalate_task" in body.effects[0].mcp_tools
-
-    def test_when_checks_target_task_dirty_files(self, db, manager) -> None:
-        """Should check only dirty files attributed to the target task."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-clean-tree-before-status")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        assert body.when is not None
-        assert "has_target_task_dirty_files" in body.when
-        assert "preview" not in body.when
-        assert "has_dirty_files" not in body.when
-        assert "task_has_commits" not in body.when
-
-    @pytest.mark.asyncio
-    async def test_target_task_dirty_file_blocks(self, db, tmp_path: Path) -> None:
-        """Should block when the target task's attributed file is dirty."""
-        variables = _status_gate_variables(
-            active_task_id="task-1",
-            task_edited_files={"task-1": ["src/owned.py"]},
-        )
-
-        with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
-            return_value=DirtyFiles({"src/owned.py"}, set()),
-        ):
-            response = await _evaluate_close_event(
-                db, variables, preview=True, cwd=_git_repo(tmp_path)
-            )
-
-        assert response.decision == "block"
-        assert response.reason is not None
-        assert "uncommitted" in response.reason.lower()
-
-    @pytest.mark.asyncio
-    async def test_unrelated_dirty_file_allows(self, db, tmp_path: Path) -> None:
-        """Should allow dirty files not attributed to the target task."""
-        variables = _status_gate_variables(
-            active_task_id="task-1",
-            task_edited_files={"task-1": ["src/owned.py"]},
-        )
-
-        with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
-            return_value=DirtyFiles({"src/unrelated.py"}, set()),
-        ):
-            response = await _evaluate_close_event(db, variables, cwd=_git_repo(tmp_path))
-
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_different_task_dirty_file_allows(self, db, tmp_path: Path) -> None:
-        """Should allow dirty files attributed only to another task."""
-        variables = _status_gate_variables(
-            claimed_tasks={"task-1": "#1", "task-2": "#2"},
-            active_task_id="task-1",
-            task_edited_files={"task-2": ["src/other.py"]},
-        )
-
-        with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
-            return_value=DirtyFiles({"src/other.py"}, set()),
-        ):
-            response = await _evaluate_close_event(db, variables, cwd=_git_repo(tmp_path))
-
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_unresolved_target_task_allows(self, db) -> None:
-        """Should not run the clean-tree gate when the target task cannot resolve."""
-        _sync_bundled(db)
-        SessionVariableManager(db).merge_variables(
-            SESSION_ID,
-            _status_gate_variables(
-                active_task_id="task-1",
-                task_edited_files={"task-1": ["src/owned.py"]},
-            ),
-        )
-        handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
-
-        with patch(
-            "gobby.workflows.git_utils.get_dirty_files_categorized_async",
-            return_value=DirtyFiles({"src/owned.py"}, set()),
-        ):
-            response = await handler._evaluate_rules(_close_task_event("#999"))
-
-        assert response.decision == "allow"
-
-    def test_error_message_mentions_uncommitted(self, db, manager) -> None:
-        """Error message should specifically mention uncommitted changes."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-clean-tree-before-status")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        reason = body.effects[0].reason or ""
-        assert "uncommitted" in reason.lower()
-
-    def test_higher_priority_than_commit_rule(self, db, manager) -> None:
-        """Should fire before require-commit-before-status (lower number = higher priority)."""
-        _sync_bundled(db)
-
-        dirty_rule = manager.get_by_name("require-clean-tree-before-status")
-        commit_rule = manager.get_by_name("require-commit-before-status")
-
-        assert dirty_rule.priority < commit_rule.priority
 
 
 class TestRequireCommitBeforeStatus:

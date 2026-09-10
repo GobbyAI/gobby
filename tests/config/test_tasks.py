@@ -250,6 +250,7 @@ class TestTaskValidationConfigDefaults:
         assert config.close_validation_escalation_threshold == 5
         assert config.close_review_prompt_max_chars == 256_000
         assert config.close_review_prompt_budget_chars == 50_000
+        assert config.require_clean_attributed_paths_on_close is True
         assert config.close_review_validator_timeout_seconds == 1200.0
         assert config.escalation_enabled is True
         assert config.escalation_notify == "none"
