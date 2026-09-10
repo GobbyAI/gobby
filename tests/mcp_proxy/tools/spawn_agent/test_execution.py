@@ -1125,7 +1125,7 @@ class TestSpawnAgentPreRegistration:
         assert result["reasoning"]["status"] == "not_requested"
         assert run is not None
         assert run.status == "cancelled"
-        assert run.error is None
+        assert run.error == error
         assert run.child_session_id is None
         mock_execute.assert_not_awaited()
         mock_handler.cleanup_environment.assert_not_awaited()
