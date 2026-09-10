@@ -49,6 +49,7 @@ from gobby.ask.runtime_validation import (
     normalized_ask_srt_policy_digest,
     write_ask_runtime_probe_artifact,
 )
+from gobby.utils.durable_file import durable_replace_text
 
 _HOSTILE_FIXTURE_PATH = Path("tests/ask/fixtures/native_ask_probe_hostile.txt")
 _HOSTILE_FIXTURE_MARKER = "ASK_NATIVE_PROBE_EVIDENCE_MARKER=leaf-22018-hostile-repository-evidence"
@@ -483,6 +484,10 @@ def _write_contained_config(
     return config_path
 
 
+def _seed_contained_machine_identity(gobby_home: Path, machine_id: str) -> None:
+    durable_replace_text(gobby_home / "machine_id", str(uuid.UUID(machine_id)))
+
+
 def _seed_contained_state(
     database_url: str,
     *,
@@ -537,6 +542,30 @@ def _seed_contained_state(
         )
     finally:
         database.close()
+
+
+def _assert_contained_runner_identity(
+    runner: Any,
+    *,
+    project_id: str,
+    project_root: Path,
+    expected_machine_id: str,
+) -> None:
+    from gobby.storage.project_checkouts import require_root
+
+    expected_machine_id = str(uuid.UUID(expected_machine_id))
+    if runner.machine_id != expected_machine_id:
+        raise RuntimeError(
+            "contained runner machine identity is not isolated: "
+            f"expected {expected_machine_id}, observed {runner.machine_id}"
+        )
+    checkout_root = Path(require_root(runner.database, project_id, runner.machine_id)).resolve()
+    expected_root = project_root.resolve(strict=True)
+    if checkout_root != expected_root:
+        raise RuntimeError(
+            "contained runner checkout is not isolated: "
+            f"expected {expected_root}, observed {checkout_root}"
+        )
 
 
 def _assert_contained_runner_config(runner: Any, *, runtime_root: Path) -> None:
@@ -766,6 +795,12 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
         _assert_contained_runner_config(
             runner,
             runtime_root=arguments.control_dir.parent,
+        )
+        _assert_contained_runner_identity(
+            runner,
+            project_id=arguments.project_id,
+            project_root=arguments.project_root,
+            expected_machine_id=os.environ["GOBBY_MACHINE_ID"],
         )
     except BaseException:
         from gobby.runner_rollback import rollback_runner_resources_async
@@ -3004,6 +3039,7 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             gobby_home,
             runtime_root=runtime_root,
         )
+        _seed_contained_machine_identity(gobby_home, machine_id)
         apply_schema(base_database_url, schema=schema_name)
         schema_created = True
         daemon_port = _find_free_port()

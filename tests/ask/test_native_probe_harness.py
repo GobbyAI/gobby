@@ -453,6 +453,93 @@ def test_contained_state_persists_owned_terminal_host_config(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_contained_machine_identity_reaches_actual_ask_prepare_and_seed(
+    tmp_path: Path,
+    postgres_db: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy.registries import setup_internal_registries
+    from gobby.utils.machine_id import clear_cache, require_machine_id
+    from gobby.utils.project_context import reset_project_context, set_project_context
+    from gobby.utils.session_context import session_context_for_test
+
+    gobby_home = tmp_path / "runtime" / "gobby"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project_id = str(uuid.uuid4())
+    machine_id = str(uuid.uuid4())
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def prepare(**kwargs: Any) -> dict[str, object]:
+        calls.append(("prepare", kwargs))
+        return {"status": "prepared"}
+
+    async def seed(**kwargs: Any) -> dict[str, object]:
+        calls.append(("seed", kwargs))
+        return {"status": "seeded"}
+
+    service = SimpleNamespace(prepare=prepare, seed=seed)
+    harness._seed_contained_machine_identity(gobby_home, machine_id)
+    harness._seed_contained_state(
+        postgres_db.conninfo,
+        project_root=project_root,
+        project_id=project_id,
+        project_name="ask-probe-identity",
+        machine_id=machine_id,
+        tmux_socket=tmp_path / "runtime" / "gterm.sock",
+    )
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    clear_cache()
+    try:
+        harness._assert_contained_runner_identity(
+            SimpleNamespace(machine_id=require_machine_id(), database=postgres_db),
+            project_id=project_id,
+            project_root=project_root,
+            expected_machine_id=machine_id,
+        )
+        manager = setup_internal_registries(
+            config_resolver=lambda: None,
+            db=postgres_db,
+            project_id=project_id,
+            ask_service_resolver=lambda _project_id: service,
+        )
+        registry = manager.get_registry("gobby-ask")
+        assert registry is not None
+        assert require_machine_id() == machine_id
+        token = set_project_context({"id": project_id})
+        try:
+            with session_context_for_test(str(uuid.uuid4())):
+                await registry.call(
+                    "prepare",
+                    {"run_id": "ask-run", "project_id": project_id},
+                )
+                await registry.call(
+                    "seed",
+                    {"run_id": "ask-run", "project_id": project_id},
+                )
+        finally:
+            reset_project_context(token)
+    finally:
+        clear_cache()
+
+    assert calls == [
+        (
+            "prepare",
+            {
+                "run_id": "ask-run",
+                "project_id": project_id,
+                "project_root": project_root.resolve(),
+            },
+        ),
+        ("seed", {"run_id": "ask-run", "project_id": project_id}),
+    ]
+    identity_path = gobby_home / "machine_id"
+    assert identity_path.read_text(encoding="utf-8") == machine_id
+    assert identity_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_contained_worker_rejects_default_host_config_before_runner_start(
     tmp_path: Path,
     postgres_db: PostgresHubDatabase,

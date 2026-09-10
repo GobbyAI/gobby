@@ -4,6 +4,7 @@ import argparse
 import json
 import shutil
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -205,9 +206,13 @@ async def test_bootstrap_failure_rolls_back_created_runner(
         database=SimpleNamespace(close=lambda: closed.append("database")),
     )
     monkeypatch.setenv("DATABASE_URL", _SCOPED_TEST_DATABASE_URL)
+    monkeypatch.setenv("GOBBY_MACHINE_ID", str(uuid.uuid4()))
     monkeypatch.setattr("gobby.runner.GobbyRunner.create", AsyncMock(return_value=runner))
     # Configuration admission has its own database-backed regression; reach bootstrap here.
     monkeypatch.setattr(harness, "_assert_contained_runner_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        harness, "_assert_contained_runner_identity", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(shutil, "which", lambda _name: "/probe/claude")
     monkeypatch.setattr(
         harness, "_bootstrap_policy_identity", AsyncMock(side_effect=RuntimeError("SRT missing"))
@@ -216,6 +221,7 @@ async def test_bootstrap_failure_rolls_back_created_runner(
         timeout_seconds=60,
         config_path=tmp_path / "config.yaml",
         project_root=tmp_path,
+        project_id=str(uuid.uuid4()),
         control_dir=tmp_path / "control",
         phase="fresh",
     )
