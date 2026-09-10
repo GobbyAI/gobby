@@ -1,0 +1,24 @@
+Subject: [PATCH] normalize native Darwin static archives without SIMD
+
+Reuse the existing ranlib normalization before libtool so Apple ld can load
+all 64-bit Mach-O members, including compiler_rt.o, with SIMD disabled.
+
+Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
+---
+diff --git a/vendor/libghostty-vt/src/build/GhosttyLibVt.zig b/vendor/libghostty-vt/src/build/GhosttyLibVt.zig
+--- a/vendor/libghostty-vt/src/build/GhosttyLibVt.zig
++++ b/vendor/libghostty-vt/src/build/GhosttyLibVt.zig
+@@ -280,8 +280,9 @@ fn initLib(
+-    // For static libraries with vendored SIMD dependencies, combine
+-    // all archives into a single fat archive so consumers only need
+-    // to link one file.
++    // Combine vendored SIMD dependencies into one archive. Native Darwin
++    // archives also need the combine step's ranlib normalization without
++    // SIMD, so Apple ld retains every 64-bit member at an aligned offset.
+     if (kind == .static and
+-        zig.simd_libs.items.len > 0)
++        (zig.simd_libs.items.len > 0 or
++            (target.result.os.tag.isDarwin() and builtin.os.tag.isDarwin())))
+     {
+         var sources: SharedDeps.LazyPathList = .empty;
+         try sources.append(b.allocator, lib.getEmittedBin());

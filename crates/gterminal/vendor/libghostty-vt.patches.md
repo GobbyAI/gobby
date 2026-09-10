@@ -38,3 +38,33 @@ cargo nextest run --locked grapheme_cluster_mode_is_default_and_survives_full_re
 cargo nextest run --locked grapheme_cluster_mode_renders_flag_emoji_in_single_wide_cell
 cargo nextest run --locked grapheme_cluster_mode_renders_zwj_family_in_single_wide_cell
 ```
+
+## 0002 normalize native Darwin static archives without SIMD
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0002-normalize-darwin-nonsimd-archive.patch`
+
+upstream discussion/pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/build/GhosttyLibVt.zig`
+
+reason: Zig 0.15.2 can place `compiler_rt.o` at a four-byte rather than
+eight-byte aligned offset. Apple `ld` rejects it, and `libtool` directly can
+discard the member. Route native Darwin static archives through the existing
+`CombineArchivesStep` even without SIMD; its `LibtoolStep` copies and normalizes
+each input with Apple `ranlib` before combining archives.
+
+remove when: upstream normalizes all native Darwin static archives and the
+non-SIMD regression passes without this patch.
+
+verification: build in temporary output/cache directories, retain the compiler
+runtime member, and force-load all members through Apple's linker:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+```

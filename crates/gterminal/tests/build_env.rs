@@ -76,3 +76,60 @@ fn default_features_build_invokes_no_zig() {
     );
     assert!(!marker.exists(), "default-features build invoked Zig");
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn darwin_nonsimd_archive_links_every_member() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vendor = workspace_root().join("crates/gterminal/vendor/libghostty-vt");
+    let prefix = temp.path().join("install");
+    let cache = temp.path().join("cache");
+    let version = fs::read_to_string(vendor.join("VERSION")).expect("vendor version");
+    let output = Command::new(std::env::var_os("ZIG").unwrap_or_else(|| "zig".into()))
+        .current_dir(&vendor)
+        .args([
+            "build",
+            "-Demit-lib-vt",
+            "-Dsimd=false",
+            "-Doptimize=ReleaseFast",
+            "-Demit-xcframework=false",
+        ])
+        .arg(format!("-Dtarget={}-macos", std::env::consts::ARCH))
+        .arg(format!("-Dversion-string={}", version.trim()))
+        .arg("--prefix")
+        .arg(&prefix)
+        .arg("--cache-dir")
+        .arg(&cache)
+        .output()
+        .expect("build non-SIMD archive with Zig");
+    assert!(
+        output.status.success(),
+        "non-SIMD Zig build failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let archive = prefix.join("lib/libghostty-vt.a");
+    let members = Command::new("ar")
+        .arg("t")
+        .arg(&archive)
+        .output()
+        .expect("list archive members");
+    assert!(members.status.success());
+    assert!(
+        String::from_utf8_lossy(&members.stdout)
+            .lines()
+            .any(|name| name == "compiler_rt.o"),
+        "archive normalization must retain the compiler runtime"
+    );
+    let output = Command::new("cc")
+        .arg("-dynamiclib")
+        .arg(format!("-Wl,-force_load,{}", archive.display()))
+        .arg("-o")
+        .arg(temp.path().join("archive-probe.dylib"))
+        .output()
+        .expect("force-load every archive member with Apple linker");
+    assert!(
+        output.status.success(),
+        "non-SIMD archive must retain linkable members:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

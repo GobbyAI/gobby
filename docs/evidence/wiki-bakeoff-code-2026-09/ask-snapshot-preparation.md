@@ -123,3 +123,42 @@ receipt during shutdown. The existing attempt cannot recover that missing receip
 The harness now captures it after process cleanup and before raw export or state
 removal. A focused regression verifies that a late failure receipt reaches both
 the raw export and retained runtime identity before deletion.
+
+## Integrated call-write fix and release preparation
+
+Commit `95d34054d2ab4d21d8430657873c7adaf8a9128b` replaces per-call inserts
+with 500-row `UNNEST` batches. The delete scope, nine stored fields, NULL/sentinel
+behavior, unique constraint, inserted-row count, and caller-owned transaction
+remain intact. Parent review requested and verified a duplicate across the batch
+boundary, empty replacement, and rollback after a late invalid UUID.
+
+The worker reported a same-process, isolated PostgreSQL transaction benchmark
+of 10,000 unique calls: 3,900.83 ms for the former loop and 130.42 ms for batching
+(29.91 times faster). The temporary comparison helper was removed before the
+commit; these are worker diagnostic measurements, not an end-to-end Ask result.
+Parent reran the five focused database regressions successfully on integration
+`71476b2f79032cb20fcdfa3a8566331884cd2926`.
+
+That integration also includes stage authority commit
+`c4daecb0840c212a0b71c239ae4704f41c3d1aba` and main through `4b5262b8b4`.
+Parent validation passed 431 focused Python tests and three real managed
+snapshot/query/recovery tests using the optimized release `gcode` SHA-256
+`7a2f3556b67e919ace7a87003f8474830fc75e04d16a9d3a9e4fea240a212b9d`.
+Main through workspace-path fix `323753556f` and OAuth fix `6f21e72c73` was
+subsequently merged at `2164568b944d5ca564ef04df862cb8d973cdc960`; 72 focused
+spawn/Ask/resume/OAuth checks passed on the combined source.
+
+Fresh `gterm` release preparation exposed two independent toolchain failures.
+Zig 0.15.2's SIMD-enabled libc++ build fails with the active macOS 27 SDK;
+selecting the installed Xcode macOS 26.5 SDK through `DEVELOPER_DIR` produced
+a successful release build. Disabling SIMD exposed an unnormalized static
+archive whose `compiler_rt.o` was not eight-byte aligned. The local vendor patch
+now routes native Darwin static archives through the existing `ranlib`/`libtool`
+combination step even without SIMD. A real build/link regression failed before
+the patch and passed afterward while verifying that the runtime member remains.
+The development guide records the SDK selection and regression command.
+
+These checks do not establish native provider security or cohort accuracy.
+Contained attempt 10 remains unrun pending the coordinated shared-daemon resume
+test window. Attempts 1–9 remain unchanged; no shared binary installation has
+occurred.

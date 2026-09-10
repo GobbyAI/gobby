@@ -277,11 +277,12 @@ fn initLib(
     else
         null;
 
-    // For static libraries with vendored SIMD dependencies, combine
-    // all archives into a single fat archive so consumers only need
-    // to link one file.
+    // Combine vendored SIMD dependencies into one archive. Native Darwin
+    // archives also need the combine step's ranlib normalization without
+    // SIMD, so Apple ld retains every 64-bit member at an aligned offset.
     if (kind == .static and
-        zig.simd_libs.items.len > 0)
+        (zig.simd_libs.items.len > 0 or
+            (target.result.os.tag.isDarwin() and builtin.os.tag.isDarwin())))
     {
         var sources: SharedDeps.LazyPathList = .empty;
         try sources.append(b.allocator, lib.getEmittedBin());

@@ -51,6 +51,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GTERM_BUILD_ID");
     println!("cargo:rerun-if-env-changed=GTERM_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=ZIG");
+    println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let vendored_dir = manifest_dir.join("vendor/libghostty-vt");

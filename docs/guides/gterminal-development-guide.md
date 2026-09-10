@@ -21,6 +21,24 @@ cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 cargo build --release -p gobby-client
 ```
 
+On macOS, Zig 0.15.2's libc++ build is incompatible with the macOS 27 SDK
+(`INFINITY` is undeclared in `__random/clamp_to_integral.h`). Select an installed
+Xcode with the macOS 26.5 SDK for this toolchain, for example:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk macosx --show-sdk-version
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo build --release -p gobby-terminal --features vt-engine --bin gterm
+```
+
+Verify that the first command reports `26.5`. `SDKROOT` does not override Zig's
+`xcrun --sdk macosx` lookup. Keep SIMD enabled for normal builds. The optional
+non-SIMD Darwin archive uses the same member-preserving normalization as the
+SIMD archive; its focused build/link regression is:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer cargo nextest run -p gobby-terminal --test build_env -E 'test(darwin_nonsimd_archive_links_every_member)'
+```
+
 End users receive prebuilt GitHub release assets. The installer local-workspace
 fallback for `gterm` builds `--features vt-engine` with a 600s timeout; if
 `zig` is missing it skips that step with an explicit reason and continues to
