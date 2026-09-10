@@ -24,7 +24,10 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     resolve_close_commit_shas,
     unlinked_tagged_commits,
 )
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import determine_close_outcome
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
+    determine_close_outcome,
+    evaluate_task_clean_proof,
+)
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     collect_commit_paths_async as collect_commit_paths,
@@ -36,9 +39,6 @@ from gobby.storage.tasks import Task, TaskHasOpenChildrenError, TaskStaleStateEr
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.workflows.task_dirty_state import (
     committable_task_paths_async as _committable_task_paths,
-)
-from gobby.workflows.task_dirty_state import (
-    has_committable_edits_async as _has_committable_edits,
 )
 
 logger = logging.getLogger(__name__)
@@ -254,10 +254,18 @@ async def commit_close(
     fresh_edited_paths = (
         set(fresh_attribution.edited_paths) if fresh_attribution is not None else set()
     )
-    has_dirty_edits = bool(fresh_edited_paths and evaluation.repo_path) and (
-        await _has_committable_edits(fresh_edited_paths, evaluation.repo_path or "")
+    clean_proof = await evaluate_task_clean_proof(
+        ctx,
+        edited_paths=fresh_edited_paths,
+        repo_path=evaluation.repo_path or "",
     )
-    if has_dirty_edits:
+    evaluation.extra["clean_proof"] = clean_proof.as_dict()
+    if clean_proof.status == "unavailable":
+        evaluation.error = "task_clean_proof_unavailable"
+        evaluation.message = "Git could not prove that task-attributed files are clean."
+        evaluation.action = "Retry close_task after Git recovers."
+        return evaluation.response(preview=False)
+    if clean_proof.status == "dirty":
         return stale_close_response(
             evaluation,
             "Task-attributed files changed after evaluation; commit them and retry close_task.",
@@ -289,6 +297,9 @@ async def commit_close(
             if audit_reason
             else scope_reason
         )
+    if clean_proof.status == "skipped":
+        clean_reason = "Task clean proof: disabled_by_configuration"
+        audit_reason = f"{audit_reason}\n\n{clean_reason}" if audit_reason else clean_reason
     current_commit_sha = commit_shas[-1] if commit_shas else None
     closed_ancestors: list[str] = []
     try:

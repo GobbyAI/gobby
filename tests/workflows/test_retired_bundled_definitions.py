@@ -13,9 +13,11 @@ import yaml
 from gobby.agents.sync import sync_bundled_agents
 from gobby.skills.sync import sync_bundled_skills
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -62,6 +64,7 @@ RETIRED_RULES = {
     "memory-capture-nudge",
     "no-npx",
     "require-memory-review-before-status",
+    "require-clean-tree-before-status",
 }
 MONOLITH_RULES = {
     "require-decompose-monolith-before-threshold-write",
@@ -268,6 +271,43 @@ steps:
     assert row.deleted_at is not None
     assert row.enabled is True
     assert "deprecated" not in json.dumps(row.definition_json)
+
+
+def test_removed_clean_tree_rule_sync_soft_deletes_installed_row(
+    tmp_path: Path, temp_db: HubDatabase
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    manager.create(
+        name="require-clean-tree-before-status",
+        definition_json={
+            "event": "before_tool",
+            "effects": [{"type": "block", "reason": "old clean-tree gate"}],
+        },
+        source="installed",
+        tags=["gobby"],
+        enabled=True,
+    )
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    (rules_dir / "retained.yaml").write_text(
+        """rules:
+  retained-rule:
+    event: before_tool
+    effect:
+      type: block
+      reason: retained
+""",
+        encoding="utf-8",
+    )
+
+    result = sync_bundled_rules(temp_db, rules_dir)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == 1
+    assert manager.get_by_name("require-clean-tree-before-status") is None
+    row = manager.get_by_name("require-clean-tree-before-status", include_deleted=True)
+    assert row is not None
+    assert row.deleted_at is not None
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)

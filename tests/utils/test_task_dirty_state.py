@@ -146,7 +146,10 @@ async def test_task_dirty_paths_async_uses_typed_status_boundary(
         return GitOk(
             status="ok",
             argv=("git", "status"),
-            stdout=" M first.py\0?? third.py\0",
+            stdout=(
+                " M first.py\0?? third.py\0R  renamed.py\0original.py\0"
+                "C  copied.py\0copy-source.py\0"
+            ),
             stderr="",
         )
 
@@ -157,7 +160,14 @@ async def test_task_dirty_paths_async_uses_typed_status_boundary(
         "/repo",
     )
 
-    assert dirty == {"first.py", "third.py"}
+    assert dirty == {
+        "copied.py",
+        "copy-source.py",
+        "first.py",
+        "original.py",
+        "renamed.py",
+        "third.py",
+    }
     assert calls == [
         ("/repo", {"third.py", "second.py", "first.py"}, 10.0),
     ]
@@ -176,6 +186,27 @@ async def test_task_dirty_paths_async_preserves_unavailable_state(
             status="timeout",
             argv=("git", "status"),
             timeout=timeout,
+        )
+
+    monkeypatch.setattr(daemon_git, "status", fake_status)
+
+    assert await task_dirty_state.task_dirty_paths_async({"first.py"}, "/repo") is None
+
+
+async def test_task_dirty_paths_async_treats_malformed_status_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_status(
+        cwd: str,
+        paths: set[str],
+        *,
+        timeout: float,
+    ) -> GitOk:
+        return GitOk(
+            status="ok",
+            argv=("git", "status"),
+            stdout="malformed\0",
+            stderr="",
         )
 
     monkeypatch.setattr(daemon_git, "status", fake_status)

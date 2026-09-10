@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
@@ -25,12 +26,14 @@ from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths,
 )
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+    from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
     from gobby.tasks.validation import TaskValidator
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,96 @@ class ValidationResult:
     validation_status: str | None = None
     validation_feedback: str | None = None
     reset_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TaskCleanProof:
+    """Result of proving only the target task's attributed paths clean."""
+
+    status: Literal["clean", "dirty", "unavailable", "skipped"]
+    dirty_paths: frozenset[str] = frozenset()
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        details: dict[str, object] = {"status": self.status}
+        if self.dirty_paths:
+            details["dirty_paths"] = sorted(self.dirty_paths)
+        if self.reason is not None:
+            details["reason"] = self.reason
+        return details
+
+
+async def evaluate_task_clean_proof(
+    ctx: RegistryContext,
+    *,
+    edited_paths: AbstractSet[str],
+    repo_path: str,
+) -> TaskCleanProof:
+    """Prove target-attributed paths clean, or report why proof was skipped or unavailable."""
+    if (
+        ctx.validation_config is not None
+        and not ctx.validation_config.require_clean_attributed_paths_on_close
+    ):
+        return TaskCleanProof(status="skipped", reason="disabled_by_configuration")
+
+    dirty_paths = await task_dirty_paths_async(set(edited_paths), repo_path)
+    if dirty_paths is None:
+        return TaskCleanProof(status="unavailable", reason="git_status_unavailable")
+    if dirty_paths:
+        return TaskCleanProof(status="dirty", dirty_paths=frozenset(dirty_paths))
+    return TaskCleanProof(status="clean")
+
+
+async def apply_task_cleanliness_gate(
+    ctx: RegistryContext,
+    evaluation: CloseEvaluation,
+    *,
+    owner_session_id: str,
+    project_id: str,
+    repo_path: str,
+) -> None:
+    """Apply target-attributed clean-path proof to the close checklist."""
+    proof = await evaluate_task_clean_proof(
+        ctx,
+        edited_paths=evaluation.edited_paths,
+        repo_path=repo_path,
+    )
+    evaluation.extra["clean_proof"] = proof.as_dict()
+    if proof.status == "skipped":
+        evaluation.pass_gate(
+            9,
+            "uncommitted_task_edits",
+            "Clean-path proof disabled by configuration.",
+            skipped=True,
+        )
+        return
+    if proof.status == "unavailable":
+        evaluation.collect_failure(
+            9,
+            "uncommitted_task_edits",
+            "task_clean_proof_unavailable",
+            "Git could not prove that task-attributed files are clean. Retry after Git recovers.",
+        )
+        return
+
+    dirty_result = await asyncio.to_thread(
+        validate_uncommitted_task_edits,
+        ctx,
+        dirty_paths=proof.dirty_paths,
+        owner_session_id=owner_session_id,
+        project_id=project_id,
+        repo_path=repo_path,
+    )
+    if dirty_result.can_close:
+        evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
+        return
+    evaluation.collect_failure(
+        9,
+        "uncommitted_task_edits",
+        dirty_result.error_type or "uncommitted_task_edits",
+        dirty_result.message or "Task-attributed files still have uncommitted changes.",
+        details=dirty_result.extra,
+    )
 
 
 async def validate_commit_requirements(
