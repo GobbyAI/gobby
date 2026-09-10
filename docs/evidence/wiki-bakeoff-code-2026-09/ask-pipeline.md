@@ -11,8 +11,8 @@ provider launch, measurement, or success claim.
 | #22019 | Final accepted integration evidence and SHA-256 | UNRUN |
 | Normal-loader runtime admission | Accepted evidence and SHA-256 | UNRUN |
 | Installed CLI acceptance | Accepted evidence and SHA-256 | UNRUN |
-| `ask-investigator` profile snapshot | Database-derived definition/provider/model/reasoning/content hash | UNRUN |
-| `ask-reviewer` profile snapshot | Database-derived definition/provider/model/reasoning/content hash | UNRUN |
+| `ask-investigator` profile snapshot | Definition metadata, full effective profile, and content hash | UNRUN |
+| `ask-reviewer` profile snapshot | Definition metadata, full effective profile, and content hash | UNRUN |
 | Installed `gcode` | Path, binary SHA-256, version, and CLI contract v10 | UNRUN |
 
 The runtime receipt must name exactly these tool identities:
@@ -77,12 +77,20 @@ case-sensitive longest-prefix rules, automatic non-excluded scope, Hobby Supplie
 minimum 2, and `Sleeves: ` minimum 4. The scorer never treats the historical 6/14
 retrieval result as answer correctness and never uses an LLM answer key.
 
+Every direct or inferred claim requires at least one valid citation; an uncited claim
+fails citation integrity even when another claim has a valid citation. Unknown claims
+may remain uncited, including the honest Q08 unknown.
+
 ## Accounting and conclusion
 
 Every primary is authoritative as completed, failed, contract-error, interrupted, or
 UNRUN. Raw prompt, stdout, stderr, result, publication manifest, answer, evidence,
 source excerpts, hashes, wall time, and usage remain reviewable. Retry and hybrid
 artifacts are separately labelled.
+
+The accepted installed-binary hash is rechecked immediately before every primary,
+retry, and hybrid invocation. A mismatch is recorded as an immutable contract-error
+attempt and never replaced by a resumed run.
 
 Conclusion: **BLOCKED / UNRUN** pending #22018, #22019, final runtime admission,
 installed CLI acceptance, fourteen native primary attempts, and parent/validation-agent review.

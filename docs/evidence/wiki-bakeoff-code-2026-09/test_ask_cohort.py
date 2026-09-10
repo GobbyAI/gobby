@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import yaml
 from ask_cohort import (
     EXPECTED_TOOL_IDENTITIES,
     AttemptError,
@@ -17,6 +18,7 @@ from ask_cohort import (
     PreparationError,
     cohort_contract,
     prepare_cohort,
+    primary_accounting,
     run_primary,
     run_supplement,
 )
@@ -29,6 +31,12 @@ from ask_scoring import (
     score_retrieval,
     scoring_contract,
 )
+
+from gobby.ask.artifacts import AskArtifactStore
+from gobby.ask.contracts import ProfileSnapshot
+from gobby.ask.publication import publish_answer
+from gobby.ask.validation import validate_claims, validate_review
+from gobby.workflows.agent_models import AgentDefinitionBody
 
 EXPECTED_QUESTIONS = (
     ("Q01", "What is the shared platform, and which systems remain standalone?"),
@@ -46,6 +54,8 @@ EXPECTED_QUESTIONS = (
     ("Q13", "Which artifacts express intent rather than implemented truth?"),
     ("Q14", "What changed at the C3 commit?"),
 )
+
+REPO_ROOT = Path(__file__).parents[3]
 
 
 def _sha256(value: bytes) -> str:
@@ -99,17 +109,25 @@ def _publication_export(attempt_dir: Path) -> dict[str, object]:
 
 
 def _profile(identifier: str, digest: str) -> dict[str, object]:
-    return {
-        "identifier": identifier,
-        "definition_id": f"definition-{identifier}",
-        "definition_updated_at": "2026-09-10T12:00:00+00:00",
-        "effective": {
-            "provider": "claude",
-            "model": "fable",
-            "reasoning_effort": "high",
-        },
-        "content_hash": digest,
-    }
+    definition_path = (
+        REPO_ROOT
+        / "src"
+        / "gobby"
+        / "install"
+        / "shared"
+        / "workflows"
+        / "agents"
+        / f"{identifier}.yaml"
+    )
+    body = AgentDefinitionBody.model_validate(yaml.safe_load(definition_path.read_bytes()))
+    snapshot = ProfileSnapshot(
+        identifier=identifier,
+        definition_id=f"definition-{identifier}",
+        definition_updated_at="2026-09-10T12:00:00+00:00",
+        effective=body.model_dump(mode="json"),
+        content_hash=digest,
+    )
+    return cast(dict[str, object], snapshot.model_dump(mode="json"))
 
 
 def _runtime_identity(gcode_bytes: bytes) -> dict[str, object]:
@@ -309,14 +327,51 @@ def test_prepare_freezes_cli_source_profiles_and_execution_gates(tmp_path: Path)
     runtime = cast(dict[str, object], manifest["runtime_identity"])
     profiles = cast(dict[str, dict[str, object]], runtime["profiles"])
     assert profiles["investigator"]["content_hash"] == "1" * 64
-    assert profiles["reviewer"]["effective"] == {
-        "provider": "claude",
-        "model": "fable",
-        "reasoning_effort": "high",
-    }
+    reviewer_effective = cast(dict[str, object], profiles["reviewer"]["effective"])
+    assert reviewer_effective["blocked_tools"]
+    assert reviewer_effective["prompts"]
+    assert reviewer_effective["step_workflow"]
     assert manifest_path.with_suffix(".sha256").read_text(encoding="ascii").strip() == (
         _sha256(manifest_bytes)
     )
+
+
+def test_prepare_preserves_profiles_serialized_by_production_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from tests.ask.test_validation import _valid_case
+
+    manifest_path = _prepare(tmp_path)
+    manifest = cast(dict[str, object], json.loads(manifest_path.read_bytes()))
+    runtime = cast(dict[str, object], manifest["runtime_identity"])
+    prepared_profiles = cast(dict[str, object], runtime["profiles"])
+    production_profiles = {
+        "investigator": _profile("ask-investigator", "1" * 64),
+        "reviewer": _profile("ask-reviewer", "2" * 64),
+    }
+
+    draft, evidence, blobs, review = _valid_case()
+    deterministic = validate_claims(draft, evidence, pinned_blobs=blobs)
+    reviewed = validate_review(draft, evidence, deterministic, review)
+    published = publish_answer(
+        AskArtifactStore(tmp_path / "published", "project", draft.run_id),
+        draft,
+        evidence,
+        deterministic,
+        reviewed,
+        request={"question": draft.question},
+        binding=evidence.snapshot_binding.model_dump(mode="json"),
+        profiles=production_profiles,
+        tool_identities=("gobby-code@0.5.0",),
+        attempt_history=({"attempt": 1, "status": "reviewed"},),
+    )
+    publication = cast(
+        dict[str, object], json.loads((published.root / "manifest.json").read_bytes())
+    )
+    provenance = cast(dict[str, object], publication["provenance"])
+
+    assert prepared_profiles == provenance["profiles"] == production_profiles
 
 
 def test_prepare_refuses_unaccepted_final_prerequisite(tmp_path: Path) -> None:
@@ -389,6 +444,114 @@ def test_primary_runner_is_serial_exact_and_append_only(tmp_path: Path) -> None:
     assert run_primary(manifest_path, command_runner=invoke) == accounting
     assert len(calls) == 14
     assert first.read_bytes() == first_bytes
+
+
+def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Path) -> None:
+    manifest_path = _prepare(tmp_path)
+    manifest = cast(dict[str, object], json.loads(manifest_path.read_bytes()))
+    binary = Path(cast(str, cast(dict[str, object], manifest["gcode"])["path"]))
+    accepted_bytes = binary.read_bytes()
+    calls: list[tuple[str, ...]] = []
+
+    def replace_after_first(argv: tuple[str, ...], timeout: float) -> CommandResult:
+        assert timeout == 630
+        calls.append(argv)
+        binary.write_bytes(b"replaced-gcode-binary")
+        return CommandResult(
+            exit_code=2,
+            stdout=json.dumps(
+                _failed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+            ).encode(),
+            stderr=b"Ask failed\n",
+            wall_seconds=1.0,
+        )
+
+    with pytest.raises(PreparationError, match="installed CLI acceptance"):
+        run_primary(manifest_path, command_runner=replace_after_first)
+
+    assert len(calls) == 1
+    binary.write_bytes(accepted_bytes)
+    accounting = primary_accounting(manifest_path)
+    assert [row["disposition"] for row in accounting[:3]] == [
+        "failed",
+        "contract_error",
+        "unrun",
+    ]
+    q02 = manifest_path.parent / "attempts" / "Q02" / "primary"
+    preserved_attempt = q02.joinpath("attempt.json").read_bytes()
+    preserved_outcome = q02.joinpath("outcome.json").read_bytes()
+
+    resumed_calls: list[tuple[str, ...]] = []
+
+    def resume(argv: tuple[str, ...], timeout: float) -> CommandResult:
+        resumed_calls.append(argv)
+        question_index = len(resumed_calls) + 1
+        question_id = f"Q{question_index + 1:02d}"
+        commit = (
+            "8b24ac26699aac8b24254a647aa70b208287b492"
+            if question_id == "Q14"
+            else "0216f1e33f05962d49467d95fe84609041c6dba8"
+        )
+        return CommandResult(
+            exit_code=2,
+            stdout=json.dumps(_failed_result(question_id, commit)).encode(),
+            stderr=b"Ask failed\n",
+            wall_seconds=1.0,
+        )
+
+    run_primary(manifest_path, command_runner=resume)
+
+    assert len(resumed_calls) == 12
+    assert EXPECTED_QUESTIONS[2][1] in resumed_calls[0]
+    assert q02.joinpath("attempt.json").read_bytes() == preserved_attempt
+    assert q02.joinpath("outcome.json").read_bytes() == preserved_outcome
+
+
+def test_supplement_rechecks_installed_binary_immediately_before_invocation(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _prepare(tmp_path)
+    manifest = cast(dict[str, object], json.loads(manifest_path.read_bytes()))
+    binary = Path(cast(str, cast(dict[str, object], manifest["gcode"])["path"]))
+    accepted_bytes = binary.read_bytes()
+    primary = manifest_path.parent / "attempts" / "Q01" / "primary"
+    primary.mkdir(parents=True)
+    primary.joinpath("attempt.json").write_text("{}", encoding="utf-8")
+    invoked = False
+
+    def replace_after_manifest_load() -> str:
+        binary.write_bytes(b"replaced-gcode-binary")
+        return "2026-09-10T13:00:00+00:00"
+
+    def unexpected_invocation(argv: tuple[str, ...], timeout: float) -> CommandResult:
+        nonlocal invoked
+        invoked = True
+        raise AssertionError((argv, timeout))
+
+    with pytest.raises(PreparationError, match="installed CLI acceptance"):
+        run_supplement(
+            manifest_path,
+            question_id="Q01",
+            kind="retry",
+            reason="diagnosed retry",
+            command_runner=unexpected_invocation,
+            now=replace_after_manifest_load,
+        )
+
+    assert invoked is False
+    supplement = manifest_path.parent / "attempts" / "Q01" / "retry-001"
+    assert json.loads(supplement.joinpath("outcome.json").read_bytes())["disposition"] == (
+        "contract_error"
+    )
+    binary.write_bytes(accepted_bytes)
+    with pytest.raises(AttemptError, match="only one retry supplement"):
+        run_supplement(
+            manifest_path,
+            question_id="Q01",
+            kind="retry",
+            reason="must not replace the failed supplement",
+            command_runner=unexpected_invocation,
+        )
 
 
 def test_interruption_and_retry_are_separate_from_primary(tmp_path: Path) -> None:
@@ -642,10 +805,20 @@ def test_citation_integrity_requires_exact_source_span_identity() -> None:
         "run_id": "run-1",
         "records": [{"response": {"items": [source]}}],
     }
-    answer = {"claims": [{"id": "claim-1", "citations": [citation]}]}
+    answer = {"claims": [{"id": "claim-1", "classification": "direct", "citations": [citation]}]}
 
     valid = citation_integrity(answer, evidence)
     assert valid["score"] == 1.0
+
+    answer["claims"].append({"id": "claim-2", "classification": "inferred", "citations": []})
+    missing = citation_integrity(answer, evidence)
+    assert missing["score"] == 0.5
+    assert missing["uncited_claim_ids"] == ["claim-2"]
+
+    unknown = {"claims": [{"id": "unknown", "classification": "unknown", "citations": []}]}
+    honest_unknown = citation_integrity(unknown, {"run_id": "run-1", "records": []})
+    assert honest_unknown["score"] is None
+    assert honest_unknown["uncited_claim_ids"] == []
 
     citation["line_start"] = 39
     invalid = citation_integrity(answer, evidence)

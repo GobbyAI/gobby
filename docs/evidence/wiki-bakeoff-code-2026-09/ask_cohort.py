@@ -163,17 +163,15 @@ def _profile(value: object, *, role: str, identifier: str) -> dict[str, Any]:
     if profile.get("identifier") != identifier:
         raise PreparationError(f"{role} profile must identify {identifier}")
     effective = _mapping(profile.get("effective"), name=f"{role} effective profile")
-    selected = {
-        key: _string(effective.get(key), name=f"{role} {key}")
-        for key in ("provider", "model", "reasoning_effort")
-    }
+    for key in ("provider", "model", "reasoning_effort"):
+        _string(effective.get(key), name=f"{role} {key}")
     return {
         "identifier": identifier,
         "definition_id": _string(profile.get("definition_id"), name=f"{role} definition_id"),
         "definition_updated_at": _string(
             profile.get("definition_updated_at"), name=f"{role} definition_updated_at"
         ),
-        "effective": selected,
+        "effective": effective,
         "content_hash": _digest(profile.get("content_hash"), name=f"{role} content_hash"),
     }
 
@@ -619,15 +617,19 @@ def _execute_attempt(
     }
     _write_json_new(attempt_dir / "attempt.json", attempt)
     try:
+        expected_binary_hash = manifest["gcode"]["executable_sha256"]
+        if _sha256_file(Path(manifest["gcode"]["path"])) != expected_binary_hash:
+            raise PreparationError("gcode executable hash differs from installed CLI acceptance")
         command = command_runner(argv, CLIENT_TIMEOUT_SECONDS)
     except BaseException as error:
+        contract_error = isinstance(error, CohortError)
         outcome = {
             **attempt,
             "ended_at": now(),
-            "disposition": "interrupted",
+            "disposition": "contract_error" if contract_error else "interrupted",
             "exit_code": None,
             "termination_signal": None,
-            "interruption": type(error).__name__,
+            "interruption": None if contract_error else type(error).__name__,
             "wall_seconds": "unknown",
             "error": {"type": type(error).__name__, "message": str(error)},
             "result": None,

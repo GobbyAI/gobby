@@ -387,6 +387,7 @@ def citation_integrity(answer: object, evidence_manifest: object) -> dict[str, A
     evidence_items = _evidence_index(evidence)
     claims = _list(published.get("claims"), name="published claims")
     invalid: list[dict[str, str]] = []
+    uncited: list[str] = []
     total = 0
     valid = 0
     for raw_claim in claims:
@@ -394,7 +395,17 @@ def citation_integrity(answer: object, evidence_manifest: object) -> dict[str, A
         claim_id = claim.get("id")
         if not isinstance(claim_id, str) or not claim_id:
             raise ScoringError("published claim has no non-empty id")
-        for raw_citation in _list(claim.get("citations"), name="claim citations"):
+        citations = _list(claim.get("citations"), name="claim citations")
+        if claim.get("classification") in {"direct", "inferred"} and not citations:
+            uncited.append(claim_id)
+            invalid.append(
+                {
+                    "claim_id": claim_id,
+                    "evidence_id": "",
+                    "reason": "direct or inferred claim has no citation",
+                }
+            )
+        for raw_citation in citations:
             citation = _mapping(raw_citation, name="claim citation")
             evidence_id = citation.get("evidence_id")
             total += 1
@@ -414,7 +425,8 @@ def citation_integrity(answer: object, evidence_manifest: object) -> dict[str, A
     return {
         "citation_count": total,
         "valid_citation_count": valid,
-        "score": valid / total if total else None,
+        "score": valid / (total + len(uncited)) if total or uncited else None,
+        "uncited_claim_ids": uncited,
         "invalid_citations": invalid,
     }
 
