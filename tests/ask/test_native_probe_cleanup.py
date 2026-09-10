@@ -138,6 +138,33 @@ def test_finalizer_cleans_latest_hosts_and_preserves_launch_group_authority(
 pytestmark = pytest.mark.unit
 
 
+def test_owned_runtime_cleanup_removes_immutable_srt_without_following_symlinks(
+    tmp_path: Path,
+) -> None:
+    runtime_root = harness._create_owned_runtime_root(parent=tmp_path)
+    package = runtime_root / "gobby" / "tools" / "srt" / "0.0.66"
+    package.mkdir(parents=True)
+    (package / "runner.mjs").write_text("immutable runtime")
+    (package / "runner.mjs").chmod(0o400)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("outside state")
+    (package / "outside").symlink_to(outside, target_is_directory=True)
+    outside.chmod(0o500)
+    package.chmod(0o500)
+    try:
+        harness._remove_owned_runtime_root(runtime_root)
+        assert not runtime_root.exists()
+        assert outside.stat().st_mode & 0o777 == 0o500
+        assert (outside / "keep.txt").read_text() == "outside state"
+    finally:
+        outside.chmod(0o700)
+        if package.exists():
+            package.chmod(0o700)
+        if runtime_root.exists():
+            shutil.rmtree(runtime_root)
+
+
 def test_wait_reports_worker_error_before_nested_receipt_or_process_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

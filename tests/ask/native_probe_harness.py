@@ -2347,6 +2347,8 @@ def _remaining_seconds(deadline_monotonic: float) -> float:
 
 
 def _remove_owned_runtime_root(runtime_root: Path) -> None:
+    from gobby.cli.install_setup_srt import _cleanup_install_tree
+
     try:
         root_stat = runtime_root.lstat()
         resolved_root = runtime_root.resolve(strict=True)
@@ -2377,7 +2379,7 @@ def _remove_owned_runtime_root(runtime_root: Path) -> None:
         uuid.UUID(nonce)
     except ValueError as error:
         raise RuntimeError("refusing to remove an unowned Ask probe runtime root") from error
-    shutil.rmtree(resolved_root)
+    _cleanup_install_tree(resolved_root)
 
 
 def _terminate_owned_agent_process(
