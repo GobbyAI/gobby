@@ -1,6 +1,11 @@
 use postgres::GenericClient;
 use serde::{Deserialize, Serialize};
 
+mod calls;
+
+use calls::insert_call;
+pub use calls::upsert_calls;
+
 pub use crate::index::indexer::{
     IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest,
     UnsupportedFileType, index_files, project_changed_since,
@@ -12,6 +17,10 @@ use crate::models::{
     CallRelation, ContentChunk, ImportRelation, IndexedFile, IndexedProject, InheritanceRelation,
     Symbol,
 };
+
+#[cfg(test)]
+#[path = "api/calls/tests.rs"]
+mod call_tests;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphSyncedFile {
@@ -769,62 +778,6 @@ pub fn upsert_imports(
         )? as usize;
     }
     Ok(rows_affected)
-}
-
-pub fn upsert_calls(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-    file_path: &str,
-    content_hash: &str,
-    calls: &[CallRelation],
-) -> anyhow::Result<usize> {
-    let project_uuid = id_param(project_id)?;
-    conn.execute(
-        "DELETE FROM code_calls
-         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
-        &[&project_uuid, &file_path, &content_hash],
-    )?;
-    let mut rows_affected = 0usize;
-    for call in calls {
-        rows_affected += insert_call(conn, project_id, content_hash, call)?;
-    }
-    Ok(rows_affected)
-}
-
-fn insert_call(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-    content_hash: &str,
-    call: &CallRelation,
-) -> anyhow::Result<usize> {
-    let project_id = id_param(project_id)?;
-    // The domain "" sentinel (module-scope caller, absent callee) becomes NULL
-    // in the nullable uuid columns; `code_calls_unique_call_target` is declared
-    // NULLS NOT DISTINCT, so ON CONFLICT dedup still applies to NULL targets.
-    let caller_symbol_id = opt_id_param(&call.caller_symbol_id)?;
-    let callee_symbol_id = opt_id_param(call.callee_symbol_id.as_deref().unwrap_or(""))?;
-    let rows = conn.execute(
-        "INSERT INTO code_calls
-         (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
-          callee_target_kind, callee_external_module, file_path, content_hash, line)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (
-            project_id, file_path, content_hash, caller_symbol_id, callee_symbol_id,
-            callee_name, callee_target_kind, callee_external_module, line
-         ) DO NOTHING",
-        &[
-            &project_id,
-            &caller_symbol_id,
-            &callee_symbol_id,
-            &call.callee_name,
-            &call.callee_target_kind.as_str(),
-            &call.callee_external_module.as_deref().unwrap_or(""),
-            &call.file_path,
-            &content_hash,
-            &to_i32(call.line),
-        ],
-    )?;
-    Ok(rows as usize)
 }
 
 pub fn upsert_inheritance(
