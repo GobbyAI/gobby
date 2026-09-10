@@ -24,6 +24,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import write_project_marker
@@ -804,6 +805,46 @@ class TestRegisterTerminalTools:
 
 
 class TestSetHandoffFeedback:
+    def test_clear_waits_for_persisted_task_closure(
+        self, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        session = manager.get(session_id)
+        assert session is not None
+        tasks = LocalTaskManager(temp_db)
+        task = tasks.create_task(
+            project_id=session.project_id,
+            title="Handoff boundary task",
+            validation_criteria="Clearing is blocked until this task closes.",
+            claimed_by_session_id=session_id,
+        )
+        registry = _feedback_registry(temp_db, manager)
+        set_handoff = registry.get_tool("set_handoff")
+        feedback = registry.get_tool("feedback")
+        assert set_handoff is not None and feedback is not None
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal_clear.prepare_clear_session",
+                new_callable=AsyncMock,
+                return_value={"handoff_staged": True},
+            ) as stage_clear,
+        ):
+            assert feedback(observations=[])["success"] is True
+            blocked = asyncio.run(
+                set_handoff(current_state="Ready", next_steps=["Continue"], clear_session=True)
+            )
+            assert blocked["error_code"] == "active_task_requires_compact"
+            assert "clear_session=false" in blocked["error"]
+            assert _handoff_row_count(temp_db, session_id) == 0
+            stage_clear.assert_not_awaited()
+            tasks.close_task(task.id)
+            allowed = asyncio.run(
+                set_handoff(current_state="Closed", next_steps=["Next task"], clear_session=True)
+            )
+            assert allowed["handoff_staged"] is True
+            stage_clear.assert_awaited_once()
+
     """Separate feedback submission is a prerequisite, never human review."""
 
     def test_authoring_guidance_comes_from_installed_prompt(
@@ -926,8 +967,19 @@ class TestSetHandoffFeedback:
         self, temp_db: HubDatabase, tmp_path: Path, clear_session: bool
     ) -> None:
         manager, session_id = _persistent_session(temp_db, tmp_path)
-        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
-        assert set_handoff is not None
+        registry = _feedback_registry(temp_db, manager)
+        set_handoff = registry.get_tool("set_handoff")
+        feedback = registry.get_tool("feedback")
+        assert set_handoff is not None and feedback is not None
+        with session_context_for_test(session_id):
+            blocked = asyncio.run(
+                set_handoff(
+                    current_state="x" * 10_001, next_steps=["Continue"], clear_session=clear_session
+                )
+            )
+            assert blocked["error_code"] == "feedback_required"
+            assert _handoff_row_count(temp_db, session_id) == 0
+            assert feedback(observations=[])["success"] is True
         before = SessionVariableManager(temp_db).get_variables(session_id)
         with session_context_for_test(session_id):
             result = asyncio.run(

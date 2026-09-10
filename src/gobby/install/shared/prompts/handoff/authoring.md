@@ -4,6 +4,9 @@ description: Guidance for authoring a bounded current-epoch continuation handoff
 Persist a structured handoff, then compact the current session or clear into a
 successor when clear_session=true. Submit any required survey separately through
 gobby-sessions:feedback first, then call set_handoff last.
+Feedback is checked before content limits. Use clear_session=false while working
+inside tasks. Use clear_session=true only between tasks after task closure;
+an open claimed task blocks clearing.
 
 Write a handoff from the current context epoch only: current state, concrete next
 actions, and still-active constraints or blockers the next epoch needs. Do not

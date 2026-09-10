@@ -54,6 +54,9 @@ calling `set_handoff`:
    gratuitous duplicate.
 4. Call `set_handoff` last.
 
+Discovering `set_handoff` with `get_tool_schema` gates on the required survey and
+this skill. The handoff call also checks feedback before validating content limits.
+
 In other projects, follow their configured survey scope.
 
 `set_handoff` accepts at most 10,000 JSON-escaped characters of rendered handoff
@@ -61,6 +64,7 @@ content, including section headings and formatting. Oversized content is rejecte
 before staging; shorten it and retry, retaining current state and concrete next
 actions and referencing existing evidence for detail. Its `clear_session` boolean is
 the boundary control. `clear_session=true` is reserved for moving between tasks after
-the current task closes. A spawned worker supplies nonblank `current_state` and at
-least one nonblank coordinator action in `next_steps` before cooperative success or a
+the current task closes; open claimed tasks block clearing. A spawned worker supplies
+nonblank `current_state` and at least one nonblank coordinator action in `next_steps`
+before cooperative success or a
 `task_blocker` exit. Forced kills and crashes may have no authored handoff.
