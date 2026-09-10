@@ -26,6 +26,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -233,6 +234,7 @@ def _parser() -> argparse.ArgumentParser:
     worker.add_argument("--config-path", type=Path, required=True)
     worker.add_argument("--project-root", type=Path, required=True)
     worker.add_argument("--project-id", required=True)
+    worker.add_argument("--source-commit", required=True)
     worker.add_argument("--caller-external-id", required=True)
     worker.add_argument("--bootstrap-marker", type=Path, required=True)
     worker.add_argument("--control-dir", type=Path, required=True)
@@ -709,6 +711,401 @@ def _capture_runtime_identity(project_root: Path) -> dict[str, object]:
     }
 
 
+def _provision_private_parent_index(
+    *,
+    project_root: Path,
+    manager: Any,
+    database: Any,
+    session_id: uuid.UUID,
+    project_id: str,
+    machine_id: str,
+    runtime_root: Path,
+    gcode_bin: Path,
+    source_commit: str,
+    deadline_monotonic: float,
+    database_scope: str,
+    evidence_path: Path,
+) -> dict[str, object]:
+    """Seed the owned probe schema from the exact commit used by Ask."""
+    from gobby.agents.code_index import _prepare_gcode_runtime
+    from gobby.ask.snapshots import _safe_process_env
+
+    if (
+        not database_scope.startswith("gobby_test_")
+        or not database_scope.replace("_", "").isalnum()
+    ):
+        raise ValueError("private parent index requires an owned test schema")
+    source_root = project_root.resolve(strict=True)
+    owned_root = runtime_root.resolve()
+    gcode_bin = gcode_bin.resolve(strict=True)
+    if not gcode_bin.is_file() or not os.access(gcode_bin, os.X_OK):
+        raise ValueError("private parent index requires an executable gcode binary")
+    with gcode_bin.open("rb") as stream:
+        gcode_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    if owned_root.is_relative_to(source_root):
+        raise ValueError("private parent index runtime must be outside the source checkout")
+    if len(source_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in source_commit
+    ):
+        raise ValueError("private parent index requires a full lowercase commit OID")
+
+    remaining_at_start = _remaining_seconds(deadline_monotonic)
+    started_at = datetime.now(UTC)
+    started_monotonic = time.monotonic()
+    seed_root = owned_root / "source"
+    launch_root = owned_root / "launch"
+    owned_root.mkdir(parents=True, exist_ok=False, mode=0o700)
+    seed_root.mkdir(mode=0o700)
+    launch_root.mkdir(mode=0o700)
+    commands: list[dict[str, object]] = []
+    evidence: dict[str, object] = {
+        "schema_version": 1,
+        "status": "failed",
+        "database_scope": database_scope,
+        "project_id": project_id,
+        "machine_id": machine_id,
+        "session_id": str(session_id),
+        "source_root": str(source_root),
+        "source_commit": source_commit,
+        "seed_root": str(seed_root),
+        "gcode": {"path": str(gcode_bin), "sha256": gcode_sha256},
+        "started_at": started_at.isoformat(),
+        "deadline_budget_seconds": remaining_at_start,
+        "commands": commands,
+    }
+    issued: Any | None = None
+    primary_error: BaseException | None = None
+    source_status_before: str | None = None
+    checkout_rebound = False
+
+    def output_hash(value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            encoded = value
+        elif isinstance(value, str):
+            encoded = value.encode()
+        else:
+            encoded = repr(value).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    def failure_receipt(
+        *,
+        name: str,
+        command: list[str],
+        cwd: Path,
+        started: float,
+        error: BaseException,
+        returncode: int | None,
+        stdout: object = None,
+        stderr: object = None,
+    ) -> dict[str, object]:
+        return {
+            "name": name,
+            "argv": list(command),
+            "cwd": str(cwd),
+            "returncode": returncode,
+            "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            "stdout_sha256": output_hash(stdout),
+            "stderr_sha256": output_hash(stderr),
+            "error": {
+                "error_type": type(error).__name__,
+                "message_sha256": hashlib.sha256(str(error).encode()).hexdigest(),
+            },
+        }
+
+    def run_command(
+        name: str,
+        command: list[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        command_started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=command_env if env is None else env,
+                check=False,
+                capture_output=True,
+                timeout=_remaining_seconds(deadline_monotonic),
+            )
+        except subprocess.TimeoutExpired as error:
+            commands.append(
+                failure_receipt(
+                    name=name,
+                    command=command,
+                    cwd=cwd,
+                    started=command_started,
+                    error=error,
+                    returncode=None,
+                    stdout=error.stdout,
+                    stderr=error.stderr,
+                )
+            )
+            raise
+        except OSError as error:
+            commands.append(
+                failure_receipt(
+                    name=name,
+                    command=command,
+                    cwd=cwd,
+                    started=command_started,
+                    error=error,
+                    returncode=None,
+                )
+            )
+            raise
+        receipt: dict[str, object] = {
+            "name": name,
+            "argv": list(command),
+            "cwd": str(cwd),
+            "returncode": completed.returncode,
+            "duration_ms": round((time.monotonic() - command_started) * 1000, 3),
+            "stdout_sha256": hashlib.sha256(completed.stdout).hexdigest(),
+            "stderr_sha256": hashlib.sha256(completed.stderr).hexdigest(),
+        }
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).decode(errors="replace").strip()
+            receipt["error"] = {
+                "error_type": "SubprocessExitError",
+                "message_sha256": hashlib.sha256(detail.encode()).hexdigest(),
+            }
+            commands.append(receipt)
+            raise RuntimeError(
+                f"private parent index {name} failed: {completed.returncode}:{detail[:500]}"
+            )
+        commands.append(receipt)
+        return completed
+
+    def source_status(name: str) -> str:
+        result = run_command(
+            name,
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=source_root,
+        )
+        return hashlib.sha256(result.stdout).hexdigest()
+
+    command_env = dict(os.environ)
+    try:
+        source_status_before = source_status("source_status_before")
+        snapshot_request = {
+            "action": "materialize",
+            "commit_oid": source_commit,
+            "project_id": project_id,
+            "schema_version": 1,
+            "target_root": str(seed_root),
+        }
+        snapshot_request_json = json.dumps(
+            snapshot_request,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        snapshot_command = [
+            str(gcode_bin),
+            "--quiet",
+            "--format",
+            "json",
+            "--project",
+            str(source_root),
+            "evidence",
+            "--snapshot-json",
+            snapshot_request_json,
+        ]
+        try:
+            materialized = run_command(
+                "snapshot_materialize",
+                snapshot_command,
+                cwd=source_root,
+                env=_safe_process_env(),
+            )
+        finally:
+            if commands and commands[-1].get("name") == "snapshot_materialize":
+                commands[-1]["request_sha256"] = hashlib.sha256(
+                    snapshot_request_json.encode()
+                ).hexdigest()
+        response = json.loads(materialized.stdout)
+        if not isinstance(response, dict) or response.get("schema_version") != 1:
+            raise RuntimeError("private parent snapshot returned an unsupported contract")
+        binding = response.get("binding")
+        inventory = response.get("inventory")
+        if not isinstance(binding, dict) or not isinstance(inventory, dict):
+            raise RuntimeError("private parent snapshot omitted binding or inventory")
+        if binding.get("project_id") != project_id or binding.get("commit_oid") != source_commit:
+            raise RuntimeError("private parent snapshot identity changed")
+        if inventory.get("complete") is not True or (
+            inventory.get("digest") != binding.get("inventory_digest")
+        ):
+            raise RuntimeError("private parent snapshot inventory is incomplete or mismatched")
+        source_project_json = source_root / ".gobby" / "project.json"
+        project_metadata = json.loads(source_project_json.read_bytes())
+        if not isinstance(project_metadata, dict) or project_metadata.get("id") != project_id:
+            raise RuntimeError("private parent seed project identity changed")
+        seed_project_json = seed_root / ".gobby" / "project.json"
+        seed_project_json.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_project_json, seed_project_json)
+        if (seed_root / ".gobby" / "isolation.json").exists():
+            raise RuntimeError("private parent seed unexpectedly retained isolation metadata")
+        issued = manager.issue_tool_request(
+            session_id=session_id,
+            requested_project_path=str(source_root),
+            expires_at=datetime.now(UTC)
+            + timedelta(seconds=_remaining_seconds(deadline_monotonic)),
+        )
+        if (
+            str(issued.project_id) != project_id
+            or Path(issued.project_path).resolve() != source_root
+        ):
+            raise RuntimeError("private parent index credential resolved a different project")
+        evidence.update(
+            {
+                "credential_project_id": str(issued.project_id),
+                "credential_project_path": str(Path(issued.project_path).resolve()),
+                "credential_generation": issued.credential.credential_generation,
+                "managed_execution_id": str(issued.credential.managed_execution_id),
+            }
+        )
+        indexed = database.fetchone(
+            """SELECT COUNT(*) AS count FROM code_indexed_file_states
+            WHERE machine_id = %s AND project_id = %s""",
+            (machine_id, project_id),
+        )
+        if indexed is None or int(indexed["count"]) != 0:
+            raise RuntimeError("private parent index requires an empty owned index scope")
+        from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+
+        checkout_manager = LocalProjectCheckoutManager(database)
+        checkout = checkout_manager.get(machine_id, project_id)
+        if checkout is None or Path(checkout.root_path).resolve() != source_root:
+            raise RuntimeError("private parent index source checkout binding changed")
+        rebound = checkout_manager.rebind(machine_id, project_id, str(seed_root))
+        checkout_rebound = True
+        if Path(rebound.root_path).resolve() != seed_root:
+            raise RuntimeError("private parent index checkout rebind was not durable")
+        evidence["checkout_root_before"] = str(source_root)
+        evidence["checkout_root_during_index"] = str(Path(rebound.root_path).resolve())
+        identity_env = {
+            "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
+            "GOBBY_MACHINE_ID": machine_id,
+            "GOBBY_PROJECT_ID": project_id,
+            "GOBBY_SESSION_ID": str(session_id),
+        }
+        runtime = _prepare_gcode_runtime(
+            workspace=launch_root,
+            gcode_bin=gcode_bin,
+            credential=issued.credential,
+            runtime_root=owned_root / "managed",
+            machine_id=machine_id,
+            project_id=project_id,
+            session_id=str(session_id),
+            principal_kind="tool_chat",
+        )
+        command_env.update(runtime.env)
+        command_env.update(identity_env)
+        status_command = [
+            str(gcode_bin),
+            "status",
+            "--quiet",
+            "--format",
+            "json",
+            "--allow-stale",
+            "--project",
+            str(seed_root),
+        ]
+        run_command("status_before", status_command, cwd=seed_root)
+        run_command(
+            "index",
+            [str(gcode_bin), "index", "--quiet", "--project", str(seed_root)],
+            cwd=seed_root,
+        )
+        final_status = run_command("status_after", status_command, cwd=seed_root)
+        status_body = json.loads(final_status.stdout)
+        if not isinstance(status_body, dict) or status_body.get("id") != project_id:
+            raise RuntimeError("private parent index status reported a different project")
+        indexed_project = database.fetchone(
+            """SELECT root_path, total_files FROM code_indexed_project_states
+            WHERE machine_id = %s AND project_id = %s""",
+            (machine_id, project_id),
+        )
+        if indexed_project is None or Path(indexed_project["root_path"]).resolve() != seed_root:
+            raise RuntimeError("private parent index did not persist the canonical seed root")
+        source_status_after = source_status("source_status_after")
+        evidence.update(
+            {
+                "tree_oid": binding["tree_oid"],
+                "inventory_digest": binding["inventory_digest"],
+                "inventory_entry_count": len(inventory["entries"]),
+                "indexed_root": str(Path(indexed_project["root_path"]).resolve()),
+                "indexed_file_count": int(indexed_project["total_files"]),
+                "source_status_before": source_status_before,
+                "source_status_after": source_status_after,
+            }
+        )
+        if source_status_before != source_status_after:
+            raise RuntimeError("private parent indexing mutated the source checkout")
+        evidence["status"] = "completed"
+    except BaseException as error:
+        primary_error = error
+        evidence["status"] = "failed"
+        evidence["error"] = {"error_type": type(error).__name__, "message": str(error)}
+    finally:
+        if checkout_rebound:
+            try:
+                with database.transaction() as connection:
+                    restored = connection.execute(
+                        """UPDATE project_checkouts
+                        SET root_path = %s, updated_at = now()
+                        WHERE machine_id = %s AND project_id = %s AND root_path = %s
+                        RETURNING root_path""",
+                        (str(source_root), machine_id, project_id, str(seed_root)),
+                    ).fetchone()
+                if restored is None or Path(restored["root_path"]).resolve() != source_root:
+                    raise RuntimeError("private parent index checkout restoration failed")
+                evidence["checkout_root_after"] = str(source_root)
+            except BaseException as restore_error:
+                evidence["checkout_restore_error"] = {
+                    "error_type": type(restore_error).__name__,
+                    "message": str(restore_error),
+                }
+                if primary_error is None:
+                    primary_error = restore_error
+                    evidence["status"] = "failed"
+                    evidence["error"] = evidence["checkout_restore_error"]
+        if issued is not None:
+            try:
+                manager.revoke(
+                    issued.credential.managed_execution_id,
+                    generation=issued.credential.credential_generation,
+                    reason=(
+                        "ask_native_probe_parent_index_prepared"
+                        if primary_error is None
+                        else "ask_native_probe_parent_index_failed"
+                    ),
+                )
+                evidence["credential_revoked"] = True
+            except BaseException as revoke_error:
+                evidence["credential_revoked"] = False
+                if primary_error is None:
+                    primary_error = revoke_error
+                    evidence["status"] = "failed"
+                    evidence["error"] = {
+                        "error_type": type(revoke_error).__name__,
+                        "message": str(revoke_error),
+                    }
+        evidence["duration_ms"] = round((time.monotonic() - started_monotonic) * 1000, 3)
+        try:
+            evidence["deadline_remaining_seconds"] = _remaining_seconds(deadline_monotonic)
+        except TimeoutError:
+            evidence["deadline_remaining_seconds"] = 0.0
+        evidence["completed_at"] = datetime.now(UTC).isoformat()
+        _atomic_json(evidence_path, evidence)
+
+    if primary_error is not None:
+        raise primary_error
+    return evidence
+
+
 async def _bootstrap_policy_identity(
     *,
     project_root: Path,
@@ -992,6 +1389,32 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
         if service is None:
             raise RuntimeError("native Ask service did not initialize in contained runner")
 
+        if arguments.phase == "fresh":
+            credential_manager = services.managed_credential_manager
+            if credential_manager is None or runner.machine_id is None:
+                raise RuntimeError("contained parent index services are unavailable")
+            database_scope = _protected_database_url(
+                os.environ["DATABASE_URL"],
+                require_unique_schema=True,
+            )
+            if database_scope is None:
+                raise RuntimeError("contained parent index schema is unavailable")
+            await asyncio.to_thread(
+                _provision_private_parent_index,
+                project_root=arguments.project_root,
+                manager=credential_manager,
+                database=runner.database,
+                session_id=uuid.UUID(caller_session_id),
+                project_id=arguments.project_id,
+                machine_id=runner.machine_id,
+                runtime_root=arguments.control_dir.parent / "private-parent-index",
+                gcode_bin=(Path(os.environ["GOBBY_NATIVE_BIN_DIR"]) / "gcode").resolve(strict=True),
+                source_commit=arguments.source_commit,
+                deadline_monotonic=deadline_monotonic,
+                database_scope=database_scope,
+                evidence_path=arguments.control_dir / "private-parent-index.json",
+            )
+
         if arguments.phase == "recover":
             if not arguments.run_id:
                 raise ValueError("recover worker requires the original Ask run ID")
@@ -1009,6 +1432,7 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
                 AskRequest(
                     question=f"{_probe_question(arguments.project_root)}\nProbe phase: {arguments.phase}.",
                     project_id=arguments.project_id,
+                    commit_ref=arguments.source_commit,
                     investigator_profile="ask-investigator",
                     reviewer_profile="ask-reviewer",
                     timeout_seconds=remaining,
@@ -2435,6 +2859,7 @@ def _spawn_worker(
     config_path: Path,
     project_root: Path,
     project_id: str,
+    source_commit: str,
     caller_external_id: str,
     bootstrap_marker: Path,
     control_dir: Path,
@@ -2458,6 +2883,8 @@ def _spawn_worker(
         str(project_root),
         "--project-id",
         project_id,
+        "--source-commit",
+        source_commit,
         "--caller-external-id",
         caller_external_id,
         "--bootstrap-marker",
@@ -3208,6 +3635,7 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             config_path=config_path,
             project_root=project_root,
             project_id=project_id,
+            source_commit=str(runtime_identity["source_head"]),
             caller_external_id=f"ask-probe-fresh-{uuid.uuid4()}",
             bootstrap_marker=marker.path,
             control_dir=control_dir,
@@ -3269,6 +3697,7 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             config_path=config_path,
             project_root=project_root,
             project_id=project_id,
+            source_commit=str(runtime_identity["source_head"]),
             caller_external_id=resumed_caller_external_id,
             bootstrap_marker=marker.path,
             control_dir=control_dir,
@@ -3338,6 +3767,7 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
             config_path=config_path,
             project_root=project_root,
             project_id=project_id,
+            source_commit=str(runtime_identity["source_head"]),
             caller_external_id=resumed_caller_external_id,
             bootstrap_marker=marker.path,
             control_dir=control_dir,
@@ -3416,6 +3846,18 @@ def _contained_drive(arguments: argparse.Namespace) -> int:
         failure = {"error_type": type(error).__name__, "message": str(error)}
         _atomic_json(output_dir / "failure.json", failure)
     finally:
+        private_index_path = control_dir / "private-parent-index.json"
+        if private_index_path.is_file():
+            try:
+                runtime_identity["private_parent_index"] = _json_mapping(
+                    json.loads(private_index_path.read_bytes()),
+                    name="private parent index evidence",
+                )
+            except Exception as error:
+                runtime_identity["private_parent_index_capture_error"] = {
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
         cleanup_errors = _finalize_contained_probe(
             base_database_url=base_database_url,
             scoped_database_url=scoped_database_url,

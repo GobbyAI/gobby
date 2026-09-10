@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
-from datetime import UTC, datetime, timedelta
+import time
 from pathlib import Path
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
 
-from gobby.agents.code_index import _prepare_gcode_runtime
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
@@ -20,8 +22,10 @@ from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.ask import native_probe_harness as harness
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
@@ -60,65 +64,86 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
 
 
 def _branch_gcode() -> Path:
-    executable = Path(__file__).parents[2] / "target" / "debug" / "gcode"
-    assert executable.is_file(), "build the branch-local gcode binary before integration"
-    return executable
-
-
-def _seed_parent_index(
-    *,
-    repo: Path,
-    manager: ManagedCredentialManager,
-    session_id: UUID,
-    project_id: str,
-    machine_id: str,
-    runtime_root: Path,
-    gcode_bin: Path,
-) -> None:
-    issued = manager.issue_tool_request(
-        session_id=session_id,
-        requested_project_path=str(repo),
-        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    native_bin_dir = os.environ.get("GOBBY_NATIVE_BIN_DIR")
+    executable = (
+        Path(native_bin_dir) / "gcode"
+        if native_bin_dir
+        else Path(__file__).parents[2] / "target" / "debug" / "gcode"
     )
-    try:
-        runtime = _prepare_gcode_runtime(
-            workspace=repo,
+    assert executable.is_file(), "build the branch-local gcode binary before integration"
+    return executable.resolve(strict=True)
+
+
+@pytest.mark.parametrize("failure_kind", ["timeout", "nonzero"])
+def test_private_parent_index_records_snapshot_failure_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    evidence_path = tmp_path / "parent-index-bootstrap.json"
+    gcode_bin = tmp_path / "gcode"
+    gcode_bin.write_bytes(b"private gcode fixture")
+    gcode_bin.chmod(0o700)
+    real_run = subprocess.run
+
+    def fail_snapshot(
+        command: list[str],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if command[0] == str(gcode_bin) and "evidence" in command:
+            if failure_kind == "timeout":
+                raise subprocess.TimeoutExpired(
+                    cmd=command,
+                    timeout=1.0,
+                    output=b"partial stdout",
+                    stderr=b"partial stderr",
+                )
+            return subprocess.CompletedProcess(
+                command,
+                17,
+                stdout=b"partial stdout",
+                stderr=b"partial stderr",
+            )
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_snapshot)
+
+    expected_error = subprocess.TimeoutExpired if failure_kind == "timeout" else RuntimeError
+    with pytest.raises(expected_error):
+        harness._provision_private_parent_index(
+            project_root=repo,
+            manager=object(),
+            database=object(),
+            session_id=UUID("00000000-0000-0000-0000-000000000001"),
+            project_id="00000000-0000-0000-0000-000000000002",
+            machine_id="00000000-0000-0000-0000-000000000003",
+            runtime_root=tmp_path / "private-parent-index",
             gcode_bin=gcode_bin,
-            credential=issued.credential,
-            runtime_root=runtime_root,
-            machine_id=machine_id,
-            project_id=project_id,
-            session_id=str(session_id),
-            principal_kind="tool_chat",
+            source_commit="0" * 40,
+            deadline_monotonic=time.monotonic() + 10,
+            database_scope="gobby_test_timeout_receipt",
+            evidence_path=evidence_path,
         )
-        env = {
-            **os.environ,
-            **runtime.env,
-            "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
-            "GOBBY_MACHINE_ID": machine_id,
-            "GOBBY_PROJECT_ID": project_id,
-            "GOBBY_SESSION_ID": str(session_id),
-        }
-        subprocess.run(
-            [
-                str(gcode_bin),
-                "index",
-                "--quiet",
-                "--project",
-                str(repo),
-            ],
-            cwd=repo,
-            env=env,
-            check=True,
-            capture_output=True,
-            timeout=180,
-        )
-    finally:
-        manager.revoke(
-            issued.credential.managed_execution_id,
-            generation=issued.credential.credential_generation,
-            reason="ask_native_integration_parent_seed",
-        )
+
+    evidence = json.loads(evidence_path.read_bytes())
+    assert evidence["status"] == "failed"
+    assert evidence["gcode"] == {
+        "path": str(gcode_bin),
+        "sha256": hashlib.sha256(b"private gcode fixture").hexdigest(),
+    }
+    receipt = next(
+        command for command in evidence["commands"] if command["name"] == "snapshot_materialize"
+    )
+    assert receipt["argv"][0] == str(gcode_bin)
+    assert receipt["returncode"] == (None if failure_kind == "timeout" else 17)
+    assert receipt["stdout_sha256"] == hashlib.sha256(b"partial stdout").hexdigest()
+    assert receipt["stderr_sha256"] == hashlib.sha256(b"partial stderr").hexdigest()
+    assert receipt["error"]["error_type"] == (
+        "TimeoutExpired" if failure_kind == "timeout" else "SubprocessExitError"
+    )
 
 
 @pytest.mark.asyncio
@@ -171,6 +196,10 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     historical_merge = _git(repo, "rev-parse", "HEAD")
     (repo / "src" / "tip.rs").write_text("pub fn later_tip() {}\n", encoding="utf-8")
     _commit(repo, "later tip")
+    (repo / "src" / "dirty.rs").write_text(
+        "pub fn dirty_parent_only() {}\n",
+        encoding="utf-8",
+    )
 
     project_id = isolated.project.id
     session = SessionManager(temp_db).register(
@@ -225,15 +254,66 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     )
     session_id = UUID(session.id)
     gcode_bin = _branch_gcode()
-    _seed_parent_index(
-        repo=repo,
+    schema_row = temp_db.fetchone("SELECT current_schema() AS schema")
+    assert schema_row is not None
+    database_scope = str(schema_row["schema"])
+    bootstrap = harness._provision_private_parent_index(
+        project_root=repo,
         manager=credential_manager,
+        database=temp_db,
         session_id=session_id,
         project_id=project_id,
         machine_id=isolated.machine_id,
         runtime_root=runtime_root / "parent",
         gcode_bin=gcode_bin,
+        source_commit=historical_merge,
+        deadline_monotonic=time.monotonic() + 600,
+        database_scope=database_scope,
+        evidence_path=tmp_path / "parent-index-bootstrap.json",
     )
+    assert bootstrap["status"] == "completed"
+    assert bootstrap["source_commit"] == historical_merge
+    assert bootstrap["database_scope"] == database_scope
+    gcode_identity = cast(dict[str, object], bootstrap["gcode"])
+    assert gcode_identity["path"] == str(gcode_bin)
+    with gcode_bin.open("rb") as stream:
+        assert gcode_identity["sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
+    assert bootstrap["credential_project_id"] == project_id
+    assert bootstrap["credential_project_path"] == str(repo.resolve())
+    assert bootstrap["checkout_root_before"] == str(repo.resolve())
+    assert bootstrap["checkout_root_during_index"] == bootstrap["seed_root"]
+    assert bootstrap["checkout_root_after"] == str(repo.resolve())
+    assert bootstrap["indexed_root"] == bootstrap["seed_root"]
+    indexed_file_count = bootstrap["indexed_file_count"]
+    assert isinstance(indexed_file_count, int)
+    assert indexed_file_count > 0
+    assert bootstrap["credential_revoked"] is True
+    commands = cast(list[dict[str, object]], bootstrap["commands"])
+    assert [command["name"] for command in commands] == [
+        "source_status_before",
+        "snapshot_materialize",
+        "status_before",
+        "index",
+        "status_after",
+        "source_status_after",
+    ]
+    assert all(command["returncode"] == 0 for command in commands)
+    assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
+    restored_checkout = LocalProjectCheckoutManager(temp_db).get(
+        isolated.machine_id,
+        project_id,
+    )
+    assert restored_checkout is not None
+    assert Path(restored_checkout.root_path).resolve() == repo.resolve()
+    indexed_parent = temp_db.fetchone(
+        """SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s""",
+        (isolated.machine_id, project_id),
+    )
+    assert indexed_parent is not None
+    seed_root = bootstrap["seed_root"]
+    assert isinstance(seed_root, str)
+    assert Path(indexed_parent["root_path"]).resolve() == Path(seed_root)
     manager = AskSnapshotManager(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
@@ -276,6 +356,14 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         "search",
         {"lane": "literal", "query": "pub fn", "paths": ["src"], "limit": 1},
     )
+    newer_parent = await admission.query(
+        "search",
+        {"lane": "literal", "query": "later_tip", "paths": [], "limit": 100},
+    )
+    dirty_parent = await admission.query(
+        "search",
+        {"lane": "literal", "query": "dirty_parent_only", "paths": [], "limit": 100},
+    )
 
     assert snapshot.commit_oid == historical_merge
     assert len(snapshot.binding["commit"]["parent_oids"]) == 2
@@ -287,6 +375,8 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     assert partial["complete"] is False
     assert partial["completeness"] == "truncated_index"
     assert partial.get("continuation") is None
+    assert newer_parent["items"] == []
+    assert dirty_parent["items"] == []
     secret_entry = next(
         item for item in snapshot.inventory["entries"] if item["path"] == "src/public_config.rs"
     )
