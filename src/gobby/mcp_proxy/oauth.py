@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import shlex
 from collections.abc import Awaitable, Callable
 
 import httpx2
@@ -15,7 +16,8 @@ from mcp.shared.auth import (
 )
 from pydantic import AnyUrl, BaseModel
 
-from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
 
 
@@ -77,13 +79,13 @@ class PersistentOAuthProvider(OAuthClientProvider):
             raise ValueError("OAuth requires an HTTP or SSE MCP server")
         self.persistent_storage = storage
         self.interactive = redirect_handler is not None
-        self.server_name = config.name
+        command = ["gobby", "mcp-proxy", "auth", config.name]
+        if config.project_id == GLOBAL_PROJECT_ID:
+            command.append("--global")
+        self.auth_command = shlex.join(command)
 
         async def needs_login(_url: str) -> None:
-            raise OAuthFlowError(
-                f"MCP server {config.name!r} needs authorization; "
-                f"run gobby mcp-proxy auth {config.name}"
-            )
+            raise MCPAuthorizationRequired(self.auth_command)
 
         async def no_callback() -> AuthorizationCodeResult:
             raise OAuthFlowError("Interactive OAuth is only available through mcp-proxy auth")
@@ -106,10 +108,7 @@ class PersistentOAuthProvider(OAuthClientProvider):
         await self.persistent_storage.load()
         state = self.persistent_storage.state
         if not self.interactive and state.tokens is None:
-            raise OAuthFlowError(
-                f"MCP server {self.server_name!r} needs authorization; "
-                f"run gobby mcp-proxy auth {self.server_name}"
-            )
+            raise MCPAuthorizationRequired(self.auth_command)
         await super()._initialize()
         self.context.token_expiry_time = state.expires_at
         self.context.oauth_metadata = state.metadata

@@ -13,6 +13,7 @@ import pytest
 
 from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
@@ -21,6 +22,60 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, IsolatedCheckoutProject
+
+
+async def test_no_isolation_preserves_requested_worktree_for_sandbox(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    mock_runner: MagicMock,
+    agent_body: AgentDefinitionBody,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "nested-workspace")
+    _initialize_repo(project, "main", "main")
+    workspace = tmp_path / "existing-worktree"
+    _git(Path(project.root_path), "worktree", "add", "-b", "nested", str(workspace))
+    parent = _register_parent(temp_db, project, "workspace-parent")
+    manager = WorktreeGitManager(project.root_path)
+    execute = AsyncMock(
+        return_value=MagicMock(success=True, run_id="run-123", child_session_id="child-456")
+    )
+    from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+    registry = create_spawn_agent_registry(
+        mock_runner,
+        git_manager=manager,
+        git_manager_resolver=MagicMock(return_value=manager),
+        session_manager=SessionManager(temp_db),
+        db=temp_db,
+    )
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body", return_value=agent_body
+        ),
+        patch("gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn", new=execute),
+    ):
+        result = await registry.call(
+            "spawn_agent",
+            {
+                "prompt": "Verify the existing workspace without external grants",
+                "parent_session_id": parent,
+                "project_path": str(workspace),
+                "isolation": "none",
+            },
+        )
+        await _drain_spawn_background_tasks()
+
+    assert result["success"] is True
+    assert result["external_write_grant"] is None
+    assert execute.await_args is not None
+    request = execute.await_args.args[0]
+    assert request.cwd == str(workspace)
+    assert request.resume_metadata_json["workspace_path"] == str(workspace)
+    paths = await compute_sandbox_paths(SandboxConfig(), request.cwd)
+    assert str(workspace.resolve()) in paths.write_paths
+    assert project.root_path not in paths.write_paths
+
 
 pytestmark = pytest.mark.integration
 

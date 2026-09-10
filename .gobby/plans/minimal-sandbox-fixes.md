@@ -16,7 +16,10 @@ Both tasks remain open until the combined post-restart gate passes.
 Implementation substeps (native tracker unavailable in this provider):
 - [x] Diagnose live native cmd alias failure; normalization repair passes 653 focused tests.
 - [x] Fix 71 encountered baseline type errors in normalization tests; scoped mypy, test-type and quality audits pass with zero findings.
-- [ ] Commit alias repair, restart and repeat live smoke.
+- [x] Commit alias repair 4b5262b8b4, restart at 21:37 UTC and pass 20 live hook cases.
+- [x] Repair no-isolation spawn replacing an explicit worktree with the main checkout; focused regression reproduced the defect, all 8 project-scope tests now pass.
+- [x] Update stale spawn-failure reason and batch grant-summary expectations found by broader focused checks.
+- [ ] Commit workspace repair and repeat affected live checks after restart.
 - [x] Materialize and validate this plan (base validation passed).
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
 - [x] Repair baseline provider tests that outlive their launch mocks (11 pass).
@@ -55,6 +58,9 @@ Targets:
 - `tests/agents/test_external_write_grants.py::*` — scope-reason: verify grant authority and path boundaries
 - `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py::*` — scope-reason: verify integration and repair asynchronous test lifecycle
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: verify MCP grant propagation
+- `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: assert persisted spawn failure diagnostics
+- `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py::*` — scope-reason: assert batch grant summary
+- `tests/mcp_proxy/tools/spawn_agent/test_project_scope.py::*` — scope-reason: preserve requested existing worktree in launch and sandbox policy
 - `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: verify HTTP grant propagation
 - `tests/agents/test_resume_executor.py::*` — scope-reason: verify resume grant propagation
 - `tests/mcp_proxy/tools/test_agent_capture_results.py::*` — scope-reason: verify recorded grant inspection

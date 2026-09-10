@@ -13,7 +13,7 @@ import httpx2
 import pytest
 from mcp.client.auth import AuthorizationCodeResult, OAuthFlowError
 
-from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
 from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
 from gobby.mcp_proxy.transports.factory import create_transport_connection
 from gobby.mcp_proxy.transports.http import HTTPTransportConnection
@@ -190,7 +190,7 @@ async def test_missing_credentials_fail_without_registration(secret_store: Secre
     async with httpx2.AsyncClient(
         auth=auth, transport=httpx2.MockTransport(server.respond)
     ) as client:
-        with pytest.raises(OAuthFlowError, match="gobby mcp-proxy auth fieldy"):
+        with pytest.raises(MCPAuthorizationRequired, match="gobby mcp-proxy auth fieldy"):
             await client.get(config.url or "")
     assert server.requests == []
 
@@ -208,7 +208,7 @@ async def test_failed_refresh_requires_consent_and_clears_token(secret_store: Se
     async with httpx2.AsyncClient(
         auth=auth, transport=httpx2.MockTransport(server.respond)
     ) as client:
-        with pytest.raises(OAuthFlowError, match="needs authorization"):
+        with pytest.raises(MCPAuthorizationRequired, match="needs authorization"):
             await client.get(config.url or "")
     await storage.load()
     assert storage.state.tokens is None
