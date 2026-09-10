@@ -10,6 +10,7 @@ from typing import Any, cast
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.capture import TerminationErrorCode, terminate_managed_runtime_async
 from gobby.agents.completion_stats import resolve_completion_stats
+from gobby.agents.run_completion import closed_task_completion_result
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import (
@@ -19,7 +20,8 @@ from gobby.storage.agents import (
     TerminalAction,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import TaskDispatchMutexManager
+from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
+from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 
 logger = logging.getLogger(__name__)
@@ -203,6 +205,86 @@ class LifecycleReconciliation:
                     result.error_code,
                 )
         return reconciled
+
+    async def check_completed_task_agents(
+        self,
+        runs: list[AgentRun],
+        task_manager: LocalTaskManager | None,
+        terminalize: Callable[..., Awaitable[bool]],
+    ) -> int:
+        """Complete active task-bound runs whose authoritative task is closed."""
+        if task_manager is None:
+            return 0
+
+        handled = 0
+        for run in runs:
+            if run.task_id is None:
+                continue
+            try:
+                task = await self._run_db(task_manager.get_task, run.task_id)
+            except Exception as e:
+                logger.warning(
+                    "Bound task lookup failed for active agent run %s task_id=%s: %s",
+                    run.id,
+                    run.task_id,
+                    e,
+                )
+                continue
+            if not is_task_closed(task):
+                continue
+
+            if await self._cooperative_close_handoff_pending(run):
+                logger.debug(
+                    "Deferring closed-task completion for agent %s until its "
+                    "cooperative close-review handoff or stagnation fallback",
+                    run.id,
+                )
+                continue
+
+            task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
+            completed = await terminalize(
+                run.id,
+                notify_result={
+                    "status": "success",
+                    "run_id": run.id,
+                    "task_id": run.task_id,
+                },
+                message=f"Agent {run.id} completed bound task {task_ref}",
+                completion_result=closed_task_completion_result(task, run.result),
+                terminal_reason="task_completed",
+            )
+            if completed:
+                handled += 1
+                logger.info(
+                    "Completed active agent run %s after bound task %s closed",
+                    run.id,
+                    task_ref,
+                )
+
+        return handled
+
+    async def _cooperative_close_handoff_pending(self, run: AgentRun) -> bool:
+        """Keep a close-review caller alive while it can cooperatively report."""
+        if run.task_id is None or run.child_session_id is None:
+            return False
+
+        from gobby.autonomous.progress_tracker import ProgressTracker
+        from gobby.storage.task_close_reviews import TaskCloseReviewStore
+
+        review = await self._run_db(
+            TaskCloseReviewStore(self._db).get_latest_agentic_for_task_caller,
+            task_id=run.task_id,
+            caller_session_id=run.child_session_id,
+        )
+        if review is None or (not review.active and review.status != "closed"):
+            return False
+        if review.active or review.delivered_at is None:
+            return True
+
+        return not await self._run_db(
+            ProgressTracker(self._db).is_stagnant,
+            run.child_session_id,
+        )
 
     async def reap_stale_pending(self) -> int:
         """Fail pending terminals older than the 2.3 in-doubt deadline."""

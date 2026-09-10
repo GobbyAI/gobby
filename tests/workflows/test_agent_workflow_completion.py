@@ -370,7 +370,7 @@ async def test_assigned_task_blocker_terminalizes_with_blocked_payload(
     runner.run_storage.get_by_session.return_value = run
     runner._session_manager = None
     terminalize = AsyncMock(return_value=True)
-    runner.agent_lifecycle_monitor.terminalize_successful_run = terminalize
+    runner.agent_lifecycle_monitor.complete_workflow_run = terminalize
     engine = RuleEngine(db, runner=runner)
     variables: dict[str, object] = {
         "assigned_task_id": "#21617",
@@ -432,7 +432,7 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.agent_lifecycle_monitor = MagicMock()
-        runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
+        runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
         runner.run_storage.db = db
         runner.get_run.return_value = MagicMock(status="success", error=None)
@@ -450,7 +450,7 @@ class TestAgentWorkflowCompletion:
         assert variables["step_workflow_complete"] is True
         assert response.decision == "allow"
         runner.complete_run.assert_not_called()
-        runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
+        runner.agent_lifecycle_monitor.complete_workflow_run.assert_awaited_once_with(
             "ff807256-1906-55de-b7b3-94163bb18352",
             notify_result={
                 "status": "success",
@@ -677,7 +677,7 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.agent_lifecycle_monitor = MagicMock()
-        runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
+        runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
         runner.run_storage.db = db
         runner.get_run.return_value = MagicMock(status="success", error=None)
@@ -735,7 +735,7 @@ class TestAgentWorkflowCompletion:
         assert variables["step_workflow_complete"] is True
         assert "qa_check -> terminate" in (verdict_response.context or "")
         runner.complete_run.assert_not_called()
-        runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
+        runner.agent_lifecycle_monitor.complete_workflow_run.assert_awaited_once_with(
             "ff807256-1906-55de-b7b3-94163bb18352",
             notify_result={
                 "status": "success",
@@ -991,6 +991,9 @@ class TestAgentWorkflowCompletion:
             variables={},
         )
 
+        from gobby.agents.terminal_delivery import drain_shielded_terminal_deliveries
+
+        await drain_shielded_terminal_deliveries()
         assert subscribers.get_completion_subscribers(run.id) == []
         assert not completion_registry.is_registered(run.id)
         wake_callback.assert_awaited_once()
