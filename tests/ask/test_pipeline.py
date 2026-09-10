@@ -306,8 +306,9 @@ class _NativeAgents:
 
 
 class _AskToolProxy:
-    def __init__(self) -> None:
+    def __init__(self, project_root: Path) -> None:
         self.service: AskService | None = None
+        self.project_root = project_root
 
     async def call_tool(
         self,
@@ -329,7 +330,7 @@ class _AskToolProxy:
             return await self.service.prepare(
                 run_id=run_id,
                 project_id=project_id,
-                project_root=Path(str(arguments["project_root"])),
+                project_root=self.project_root,
             )
         if tool == "seed":
             return await self.service.seed(run_id=run_id, project_id=project_id)
@@ -339,7 +340,7 @@ class _AskToolProxy:
                 project_id=project_id,
                 stage=AskAgentStage(str(arguments["stage"])),
                 attempt=int(arguments["attempt"]),
-                caller_session_id=str(arguments["caller_session_id"]),
+                caller_session_id=session_id,
             )
         if tool == "validate":
             return await self.service.validate(
@@ -405,7 +406,7 @@ async def test_native_investigation_review_and_single_repair(
 
     agents = _NativeAgents(events)
     permissions = _PermissionStore(events, project_id)
-    proxy = _AskToolProxy()
+    proxy = _AskToolProxy(tmp_path)
     injected_boundaries = {"investigator:0:submitted", "publish"}
 
     def inject_fault(boundary_id: str) -> None:
@@ -587,7 +588,7 @@ async def test_publication_termination_cannot_expose_completed_answer(
 
     agents = _NativeAgents(events)
     permissions = _PermissionStore(events, project_id)
-    proxy = _AskToolProxy()
+    proxy = _AskToolProxy(tmp_path)
     executor = PipelineExecutor(
         db=temp_db,
         execution_manager=manager,

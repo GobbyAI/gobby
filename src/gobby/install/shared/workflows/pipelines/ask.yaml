@@ -36,7 +36,6 @@ steps:
       arguments:
         run_id: "${{ inputs.run_id }}"
         project_id: "${{ inputs.project_id }}"
-        project_root: "${{ inputs.project_root }}"
 
   - id: seed
     mcp:
@@ -55,7 +54,6 @@ steps:
         project_id: "${{ inputs.project_id }}"
         stage: investigator
         attempt: 0
-        caller_session_id: "${{ inputs.caller_session_id }}"
 
   - id: validate_initial
     mcp:
@@ -76,7 +74,6 @@ steps:
         project_id: "${{ inputs.project_id }}"
         stage: reviewer
         attempt: 0
-        caller_session_id: "${{ inputs.caller_session_id }}"
 
   - id: admit_repair
     mcp:
@@ -96,7 +93,6 @@ steps:
         project_id: "${{ inputs.project_id }}"
         stage: repair
         attempt: 1
-        caller_session_id: "${{ inputs.caller_session_id }}"
 
   - id: validate_repair
     condition: "${{ steps.admit_repair.output.repair }}"
@@ -119,7 +115,6 @@ steps:
         project_id: "${{ inputs.project_id }}"
         stage: reviewer
         attempt: 1
-        caller_session_id: "${{ inputs.caller_session_id }}"
 
   - id: publish
     mcp:

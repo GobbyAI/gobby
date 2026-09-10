@@ -492,7 +492,7 @@
     "workflows/agents/tech-writer.yaml": "c8a364f8d5d79aec9906cbcb675c60e1fefa12fd756dd2e86b3ebf7c049a7e49",
     "workflows/agents/trajectory-monitor.yaml": "dbb5f575577a98b592abe88173038ccccffb81c254a3269a90bc97b4de915cf4",
     "workflows/agents/triage-agent.yaml": "ff8ee2a478313bce61de9915647a07eaea125efd1af7fdc8734e8f5e63821426",
-    "workflows/pipelines/ask.yaml": "7cde1813606382d6c5c37b1971b2faaa3b04166a9c72932a3660ee4232ab00c0",
+    "workflows/pipelines/ask.yaml": "165ca2979cab62d6796dd33641b4101bfbbda85d3a3896febadcf788cc3825cb",
     "workflows/pipelines/expand-task.yaml": "b675596488c5cd56857b6ad93b5f9f06e86f338764cd87ead33a89b68176cb42",
     "workflows/pipelines/gobby-merge.yaml": "787b2d5a346293744e76f9208a65bdf85dd5fbbc3c60a5d812f39b5dc419f962",
     "workflows/review.yaml": "3609b4c23ce43380007b60ae03b59ea6498ea8d4b3221693d476422916c84805",
