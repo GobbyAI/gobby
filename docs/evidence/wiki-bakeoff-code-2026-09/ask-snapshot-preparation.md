@@ -159,6 +159,34 @@ the patch and passed afterward while verifying that the runtime member remains.
 The development guide records the SDK selection and regression command.
 
 These checks do not establish native provider security or cohort accuracy.
-Contained attempt 10 remains unrun pending the coordinated shared-daemon resume
-test window. Attempts 1–9 remain unchanged; no shared binary installation has
-occurred.
+Attempts 1–9 remain unchanged; no shared binary installation has occurred.
+
+## Contained attempt 10
+
+Attempt 10 ran from clean commit `549db0456b405dbf89a99f73b3d64d78c21274a8`
+after the other coordinator cleared the isolated run. Both release binaries
+were rebuilt with the installed Xcode SDK selected:
+
+- `gcode`: `a95b97258ff1fa2c81674bbbe6da1aad3a1e5b6e16ce32ce8a4d6c46686e4383`
+- `gterm`: `a910dd61e2f379ac91362ef492c667fb69b7adf3b9cc95959839ad11d18b7326`
+
+The private parent index completed for 6,722 files. Snapshot materialization took
+39,602.931 ms and indexing took 260,994.578 ms. All six bootstrap commands exited
+zero, the checkout was restored, and the bootstrap credential was revoked. The
+original controller/run deadline remained unchanged. A two-second process sample
+during the later index phase was entirely under local-import resolution; it is a
+phase observation, not a whole-run performance attribution.
+
+Ask run `266c6783-849b-43e0-b3b9-54a9f51afb5e` completed `prepare`, then failed
+at `seed` with `malformed: malformed grant: grant machine does not match local
+machine`. No provider agent or launch receipt was created, so this attempt proves
+neither native security nor resume behavior. Investigation is tracing the direct
+Ask evidence environment against the managed wrapper's `GOBBY_HOME` identity.
+
+The original evidence is retained at `/tmp/gobby-ask-native-probe-12261-tenth`.
+Raw export SHA-256:
+`ecfe65f7719b2798a0ccdd9e0c7e88fa862f0c2b191c0cf18e5c28534d61b18a`.
+Cleanup reported `errors=[]`, complete raw export, private schema dropped,
+runtime removed, and worker/host absent. The parent verified that no probe or
+pinned `gcode` process remained. This failure remains an owned implementation
+finding; the native proof and all 14 cohort questions are still pending.
