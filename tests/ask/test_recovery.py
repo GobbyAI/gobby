@@ -372,9 +372,13 @@ async def test_daemon_recovery_adopts_pending_start_before_enqueue(
         state_root=tmp_path / "state",
     )
 
-    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    claims = await asyncio.gather(
+        service.recover_daemon_execution(record.run_id, project_id=project_id),
+        service.recover_daemon_execution(record.run_id, project_id=project_id),
+    )
     await service.wait(record.run_id, project_id=project_id, timeout=1)
 
+    assert sorted(claims) == [False, True]
     assert [(call[0], call[1]) for call in executor.calls] == [(record.run_id, "original-caller")]
     row = temp_db.fetchone(
         "SELECT COUNT(*) AS count FROM pipeline_executions WHERE id = %s",

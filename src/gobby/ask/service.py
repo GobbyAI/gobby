@@ -385,6 +385,7 @@ class AskService:
                     session_id=caller_session_id,
                 )
         except asyncio.CancelledError:
+            await self.stage_runtime.wait_for_publication_cleanup(record.run_id)
             raise
         except AskFaultInjected as error:
             release_resources = False

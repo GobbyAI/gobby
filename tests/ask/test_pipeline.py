@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -519,14 +520,25 @@ async def test_native_investigation_review_and_single_repair(
     )
 
 
+@pytest.mark.parametrize(
+    ("termination", "stall_point"),
+    [
+        pytest.param("cancel", "write", id="cancel-during-write"),
+        pytest.param("cancel", "rename", id="cancel-after-final-guard"),
+        pytest.param("deadline", "write", id="deadline-during-write"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_cancel_during_publication_cannot_expose_completed_answer(
+async def test_publication_termination_cannot_expose_completed_answer(
+    termination: str,
+    stall_point: str,
     temp_db: HubDatabase,
     sample_project: dict[str, object],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.ask import publication as publication_module
+    from gobby.ask import service as service_module
     from gobby.ask import stage_runtime as stage_runtime_module
     from gobby.ask.service import AskService
     from gobby.ask.stages import AskStageStore
@@ -587,13 +599,20 @@ async def test_cancel_during_publication_cannot_expose_completed_answer(
     release_write = threading.Event()
     producer_finished = threading.Event()
     original_write = publication_module._write_file
+    original_rename = publication_module.os.rename
     original_publish = stage_runtime_module.publish_answer
 
     def stalled_write(path: Path, payload: bytes) -> None:
-        if not write_started.is_set():
+        if stall_point == "write" and not write_started.is_set():
             write_started.set()
             assert release_write.wait(timeout=10)
         original_write(path, payload)
+
+    def stalled_rename(source: Path, target: Path) -> None:
+        if stall_point == "rename" and not write_started.is_set():
+            write_started.set()
+            assert release_write.wait(timeout=10)
+        original_rename(source, target)
 
     def tracked_publish(*args: Any, **kwargs: Any) -> Any:
         try:
@@ -602,38 +621,62 @@ async def test_cancel_during_publication_cannot_expose_completed_answer(
             producer_finished.set()
 
     monkeypatch.setattr(publication_module, "_write_file", stalled_write)
+    monkeypatch.setattr(publication_module.os, "rename", stalled_rename)
     monkeypatch.setattr(stage_runtime_module, "publish_answer", tracked_publish)
+    if termination == "deadline":
+        monkeypatch.setattr(service_module, "_REVIEW_RESERVE_SECONDS", 0)
+
+        async def skip_seed(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        monkeypatch.setattr(stage_runtime_module.AskStageRuntime, "_seed", skip_seed)
     started = await service.start(
         AskRequest(
             question="What does alpha return?",
             project_id=project_id,
             investigator_profile="ask-investigator",
             reviewer_profile="ask-reviewer",
+            timeout_seconds=3 if termination == "deadline" else 600,
         ),
         project_root=tmp_path,
         caller_session_id="caller-session",
     )
     assert await asyncio.to_thread(write_started.wait, 10)
     producer = service._tasks[started.run_id]
-
-    cancel_task = asyncio.create_task(
-        service.cancel(
-            started.run_id,
-            project_id=project_id,
-            caller_session_id="caller-session",
+    if termination == "cancel":
+        cancel_task = asyncio.create_task(
+            service.cancel(
+                started.run_id,
+                project_id=project_id,
+                caller_session_id="caller-session",
+            )
         )
-    )
-    await asyncio.sleep(0)
-    cancelled_execution = manager.get_execution(started.run_id)
-    assert cancelled_execution is not None
-    assert cancelled_execution.status is ExecutionStatus.CANCELLED
-    release_write.set()
-    result = await asyncio.wait_for(cancel_task, timeout=10)
+        await asyncio.sleep(0)
+        cancelled_execution = manager.get_execution(started.run_id)
+        assert cancelled_execution is not None
+        assert cancelled_execution.status is ExecutionStatus.CANCELLED
+        release_write.set()
+        result = await asyncio.wait_for(cancel_task, timeout=10)
+        assert result.status == ExecutionStatus.CANCELLED.value
+        assert producer_finished.is_set()
+    else:
+        started_waiting = time.monotonic()
+        try:
+            result = await service.wait(started.run_id, project_id=project_id, timeout=5)
+        finally:
+            release_write.set()
+        assert time.monotonic() - started_waiting < 4
+        assert result.status == ExecutionStatus.FAILED.value
+        assert result.typed_error is not None
+        assert result.typed_error["code"] == "deadline_exceeded"
+        await service.stage_runtime.wait_for_publication_cleanup(started.run_id)
+        assert producer_finished.is_set()
 
-    assert result.status == ExecutionStatus.CANCELLED.value
     assert producer.done()
-    assert producer_finished.is_set()
     assert service.stage_runtime.resources == {}
     with pytest.raises(ValueError, match="no completed publication"):
         service.publication_root(started.run_id, project_id=project_id)
-    assert not (tmp_path / "state" / project_id / started.run_id / "publication").exists()
+    publication_root = (
+        AskArtifactStore(tmp_path / "state", project_id, started.run_id).run_root / "publication"
+    )
+    assert not publication_root.exists()

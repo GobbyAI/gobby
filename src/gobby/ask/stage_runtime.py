@@ -7,6 +7,7 @@ import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from gobby.ask.evidence_runtime import (
     pinned_blobs,
 )
 from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime
-from gobby.ask.publication import PublicationError, publish_answer
+from gobby.ask.publication import PublicationError, PublishedAnswer, publish_answer
 from gobby.ask.stages import AskAttemptCheckpoint, AskOrchestrationState, AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
 from gobby.ask.validation import (
@@ -48,16 +49,6 @@ RepairTimeRemains = Callable[[datetime], bool]
 class _RunResources:
     snapshot: PreparedAskSnapshot
     artifacts: AskArtifactStore
-
-
-async def _owned_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
-    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        with contextlib.suppress(BaseException):
-            await asyncio.shield(task)
-        raise
 
 
 class AskStageRuntime:
@@ -96,6 +87,8 @@ class AskStageRuntime:
         self.repair_time_remains = repair_time_remains
         self.fault = fault_injector
         self.resources: dict[str, _RunResources] = {}
+        self._publication_tasks: dict[str, asyncio.Task[PublishedAnswer]] = {}
+        self._publication_cleanup_tasks: dict[str, asyncio.Task[None]] = {}
         self.evidence = AskEvidenceRuntime(
             stages=stages,
             manifest_factory=manifest_factory,
@@ -273,7 +266,7 @@ class AskStageRuntime:
                     f"Ask publication is not authorized from {execution.status.value}"
                 )
 
-        publication = await _owned_thread(
+        publish = partial(
             publish_answer,
             resources.artifacts,
             draft,
@@ -290,6 +283,7 @@ class AskStageRuntime:
             attempt_history=[item.model_dump(mode="json") for item in state.attempts],
             deadline_check=check_publication_authority,
         )
+        publication = await self._run_publication(record.run_id, publish)
         publication_body = {
             "root": str(publication.root),
             "manifest_sha256": publication.manifest_sha256,
@@ -347,6 +341,65 @@ class AskStageRuntime:
         return resources
 
     async def release(self, run_id: str) -> None:
+        publication = self._publication_tasks.get(run_id)
+        if publication is not None and not publication.done():
+            if run_id not in self._publication_cleanup_tasks:
+                cleanup = asyncio.create_task(
+                    self._release_after_publication(run_id, publication),
+                    name=f"native-ask-publication-cleanup:{run_id}",
+                )
+                self._publication_cleanup_tasks[run_id] = cleanup
+            return
+        self._publication_tasks.pop(run_id, None)
+        await self._release_resources(run_id)
+
+    async def wait_for_publication_cleanup(self, run_id: str) -> None:
+        """Wait for any tracked synchronous publisher and deferred resource release."""
+        publication = self._publication_tasks.get(run_id)
+        if publication is not None:
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(publication)
+            if self._publication_tasks.get(run_id) is publication:
+                self._publication_tasks.pop(run_id, None)
+        cleanup = self._publication_cleanup_tasks.get(run_id)
+        if cleanup is not None and cleanup is not asyncio.current_task():
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(cleanup)
+
+    async def _run_publication(
+        self,
+        run_id: str,
+        operation: Callable[[], PublishedAnswer],
+    ) -> PublishedAnswer:
+        task = self._publication_tasks.get(run_id)
+        if task is None or task.done():
+            task = asyncio.create_task(
+                asyncio.to_thread(operation),
+                name=f"native-ask-publication:{run_id}",
+            )
+            self._publication_tasks[run_id] = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done() and self._publication_tasks.get(run_id) is task:
+                self._publication_tasks.pop(run_id, None)
+
+    async def _release_after_publication(
+        self,
+        run_id: str,
+        publication: asyncio.Task[PublishedAnswer],
+    ) -> None:
+        try:
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(publication)
+            if self._publication_tasks.get(run_id) is publication:
+                self._publication_tasks.pop(run_id, None)
+            await self._release_resources(run_id)
+        finally:
+            if self._publication_cleanup_tasks.get(run_id) is asyncio.current_task():
+                self._publication_cleanup_tasks.pop(run_id, None)
+
+    async def _release_resources(self, run_id: str) -> None:
         resources = self.resources.pop(run_id, None)
         self.evidence.deactivate(run_id)
         if resources is not None:

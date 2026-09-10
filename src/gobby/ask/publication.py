@@ -470,6 +470,12 @@ def publish_answer(
             if error.errno not in {errno.EEXIST, errno.ENOTEMPTY} and not target.exists():
                 raise
             return _existing_publication(target, manifest_bytes)
+        try:
+            check_deadline()
+        except BaseException:
+            shutil.rmtree(target, ignore_errors=True)
+            _fsync_directory(store.run_root)
+            raise
         _fsync_directory(store.run_root)
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
