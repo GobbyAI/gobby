@@ -150,6 +150,7 @@ async def launch_close_review(
                 "task_id": None,
                 "isolation": "none",
                 "parent_session_id": review.caller_session_id,
+                "project_id": task.project_id,
                 "project_path": evaluation.repo_path,
                 "notify_parent_on_completion": True,
                 "timeout": validator_timeout_seconds,

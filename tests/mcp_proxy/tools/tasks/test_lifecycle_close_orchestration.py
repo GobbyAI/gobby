@@ -98,6 +98,9 @@ async def test_close_persists_and_launches_one_taskless_validator(
     assert launch_args["agent"] == "task-close-validator"
     assert launch_args["task_id"] is None
     assert launch_args["isolation"] == "none"
+    # Registered clones may have no on-disk .gobby project metadata.
+    assert launch_args["project_id"] == evaluation.task.project_id
+    assert launch_args["project_path"] == evaluation.repo_path
     assert launch_args["provider"] == "codex"
     assert launch_args["model"] == "gpt-5.6-terra"
     # An unpinned candidate inherits the profile default, which is always `auto`.
