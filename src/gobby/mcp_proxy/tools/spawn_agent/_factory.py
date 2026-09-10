@@ -188,7 +188,9 @@ def _resolve_spawn_project_context(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Resolve project context for a spawned agent.
 
-    Explicit ``project_path`` wins. Otherwise the parent session project
+    Explicit ``project_path`` wins. If that checkout has no project metadata,
+    retain the parent session's identity while keeping the explicit path.
+    Otherwise the parent session project
     intentionally wins over the ambient current process project, so spawned
     children stay in their parent's project even when the daemon call is made
     from another workspace. If the parent session has project metadata but no
@@ -199,6 +201,13 @@ def _resolve_spawn_project_context(
     explicit_path = _non_empty_string(project_path)
     if explicit_path:
         explicit_ctx = _context_from_project_path(explicit_path)
+        if explicit_ctx is None and parent_session_id:
+            parent_ctx = _parent_session_project_context(
+                parent_session_id=parent_session_id,
+                session_manager=session_manager,
+                db=db,
+            )
+            return parent_ctx, explicit_path
         return explicit_ctx, _project_path_from_context(explicit_ctx) or explicit_path
 
     parent_ctx = None
