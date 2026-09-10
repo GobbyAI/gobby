@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from tests.ask import native_probe_harness as harness
 from tests.ask.test_native_probe_harness import (
     _SCHEMA,
@@ -192,26 +193,60 @@ def test_wait_reports_worker_error_before_nested_receipt_or_process_exit(
         )
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_bootstrap_failure_rolls_back_created_runner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    postgres_db: PostgresHubDatabase,
+    postgres_database_url: str,
+    postgres_schema: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from gobby.agents.code_index import _active_deployment_grant_context
+    from gobby.daemon_lease import current_lease
+    from gobby.runner_pid_file import held_singleton_claim
+
     executor = ThreadPoolExecutor(max_workers=1)
     executor.submit(lambda: None).result()
     closed: list[str] = []
+    bound_epochs: list[int] = []
+    machine_id = str(uuid.uuid4())
+    gobby_home = tmp_path / "runtime" / "gobby"
+    database_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    harness._seed_contained_machine_identity(gobby_home, machine_id)
     runner = SimpleNamespace(
         http_server=SimpleNamespace(services=SimpleNamespace()),
         bootstrap_config=SimpleNamespace(daemon_port=60001, websocket_port=60002),
         db_executor=SimpleNamespace(shutdown=executor.shutdown, join=lambda: None),
         database=SimpleNamespace(close=lambda: closed.append("database")),
     )
-    monkeypatch.setenv("DATABASE_URL", _SCOPED_TEST_DATABASE_URL)
-    monkeypatch.setenv("GOBBY_MACHINE_ID", str(uuid.uuid4()))
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setenv("GOBBY_MACHINE_ID", machine_id)
     monkeypatch.setattr("gobby.runner.GobbyRunner.create", AsyncMock(return_value=runner))
     # Configuration admission has its own database-backed regression; reach bootstrap here.
     monkeypatch.setattr(harness, "_assert_contained_runner_config", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         harness, "_assert_contained_runner_identity", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        harness,
+        "_protected_database_url",
+        lambda *_args, **_kwargs: postgres_schema,
+    )
+
+    def bind_authority(_runner: object, authority: harness.ContainedRuntimeAuthority) -> object:
+        context = _active_deployment_grant_context()
+        assert current_lease() is authority.lease
+        assert held_singleton_claim() is authority.ownership
+        assert context.signing_secret == authority.lease.grant_signing_secret
+        bound_epochs.append(context.fencing_epoch)
+        return context
+
+    monkeypatch.setattr(
+        harness,
+        "_bind_and_verify_contained_runtime_authority",
+        bind_authority,
     )
     monkeypatch.setattr(shutil, "which", lambda _name: "/probe/claude")
     monkeypatch.setattr(
@@ -228,6 +263,9 @@ async def test_bootstrap_failure_rolls_back_created_runner(
     try:
         with pytest.raises(RuntimeError, match="SRT missing"):
             await harness._contained_worker_async(arguments)
+        assert bound_epochs
+        assert current_lease() is None
+        assert held_singleton_claim() is None
         assert closed == ["database"]
         with pytest.raises(RuntimeError, match="cannot schedule new futures after shutdown"):
             executor.submit(lambda: None)

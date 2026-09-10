@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -540,6 +541,83 @@ async def test_contained_machine_identity_reaches_actual_ask_prepare_and_seed(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_contained_runtime_authority_binds_real_grants_and_releases_fencing(
+    tmp_path: Path,
+    postgres_db: PostgresHubDatabase,
+    postgres_database_url: str,
+    postgres_schema: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.agents.code_index import _active_deployment_grant_context
+    from gobby.daemon_lease import current_lease
+    from gobby.runner import GobbyRunner
+    from gobby.runner_pid_file import held_singleton_claim
+    from gobby.runner_rollback import rollback_runner_resources_async
+    from gobby.utils.machine_id import clear_cache
+
+    runtime_root = tmp_path / "runtime"
+    gobby_home = runtime_root / "gobby"
+    machine_id = str(uuid.uuid4())
+    database_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    harness._seed_contained_machine_identity(gobby_home, machine_id)
+    owner = postgres_db.fetchone("SELECT id FROM users ORDER BY id LIMIT 1")
+    assert owner is not None
+    postgres_db.execute(
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)",
+        (machine_id, f"ask-probe-{machine_id}", owner["id"]),
+    )
+    config_path = harness._write_contained_config(
+        gobby_home,
+        database_url=database_url,
+        daemon_port=harness._find_free_port(),
+        websocket_port=harness._find_free_port(),
+    )
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setenv("GOBBY_MACHINE_ID", machine_id)
+    monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    clear_cache()
+
+    authority = await harness._acquire_contained_runtime_authority(
+        database_url=database_url,
+        gobby_home=gobby_home,
+        machine_id=machine_id,
+    )
+    runner = None
+    try:
+        runner = await GobbyRunner.create(config_path)
+        context = harness._bind_and_verify_contained_runtime_authority(runner, authority)
+        first_epoch = context.fencing_epoch
+
+        assert current_lease() is authority.lease
+        assert held_singleton_claim() is authority.ownership
+        assert context.token == authority.lease.deployment_token
+        assert context.signing_secret == authority.lease.grant_signing_secret
+        assert runner.http_server.grant_service is not None
+        assert runner.http_server.handshake_service is not None
+        assert _active_deployment_grant_context() == context
+    finally:
+        if runner is not None:
+            await rollback_runner_resources_async(runner)
+        authority.release()
+        clear_cache()
+
+    assert current_lease() is None
+    assert held_singleton_claim() is None
+
+    recovered = await harness._acquire_contained_runtime_authority(
+        database_url=database_url,
+        gobby_home=gobby_home,
+        machine_id=machine_id,
+    )
+    try:
+        assert recovered.lease.fencing_epoch == first_epoch + 1
+    finally:
+        recovered.release()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_contained_worker_rejects_default_host_config_before_runner_start(
     tmp_path: Path,
     postgres_db: PostgresHubDatabase,
@@ -555,6 +633,7 @@ async def test_contained_worker_rejects_default_host_config_before_runner_start(
     defaults = DaemonConfig()
     runs: list[str] = []
     rollbacks: list[object] = []
+    authority_releases: list[str] = []
 
     async def run(**_kwargs: object) -> None:
         runs.append("run")
@@ -599,6 +678,13 @@ async def test_contained_worker_rejects_default_host_config_before_runner_start(
         lambda _name: "/usr/bin/true",
     )
     monkeypatch.setattr(GobbyRunner, "create", classmethod(create))
+    monkeypatch.setattr(
+        harness,
+        "_acquire_contained_runtime_authority",
+        AsyncMock(
+            return_value=SimpleNamespace(release=lambda: authority_releases.append("released"))
+        ),
+    )
     monkeypatch.setattr(harness, "_bootstrap_policy_identity", bootstrap_policy_identity)
     monkeypatch.setattr(harness, "_wait_for_runner_startup", wait_for_startup)
     monkeypatch.setattr(
@@ -619,6 +705,7 @@ async def test_contained_worker_rejects_default_host_config_before_runner_start(
 
     assert runs == []
     assert rollbacks == [runner]
+    assert authority_releases == ["released"]
 
 
 def test_owned_runtime_root_requires_its_exact_marker_for_removal(tmp_path: Path) -> None:
