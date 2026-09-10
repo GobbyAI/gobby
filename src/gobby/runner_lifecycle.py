@@ -184,6 +184,7 @@ async def run_daemon(
         configure_terminal_delivery_offload(
             async_offload=runner.db_executor.run,
             sync_submit=runner.db_executor.submit,
+            owner_loop=main_loop,
         )
 
         from gobby.runner_service_readiness import require_managed_services_ready

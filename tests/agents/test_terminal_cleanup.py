@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from dataclasses import replace
 from types import SimpleNamespace
@@ -129,6 +131,21 @@ async def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> Non
     cleanup.assert_called_once_with(db, "task-1")
 
 
+async def test_terminal_worktree_release_runs_off_event_loop() -> None:
+    loop_thread = threading.get_ident()
+    release_threads: list[int] = []
+    coordinator = MagicMock()
+    coordinator.release_session_worktrees.side_effect = lambda _session_id: release_threads.append(
+        threading.get_ident()
+    )
+    await _handler(
+        RecordingDb(), run_db=asyncio.to_thread, session_coordinator=coordinator
+    ).post_terminal_cleanup(_run(task_id=None))
+    assert len(release_threads) == 1
+    assert release_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
 async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

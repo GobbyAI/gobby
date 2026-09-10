@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -112,6 +113,19 @@ class TerminalResourceCleaner:
         """Release in-memory and isolation state for a terminal agent run."""
         from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
+        phase_started = time.monotonic()
+
+        def finish_phase(phase: str) -> None:
+            nonlocal phase_started
+            now = time.monotonic()
+            logger.debug(
+                "Terminal cleanup phase for agent %s: phase=%s elapsed_seconds=%.3f",
+                run.id,
+                phase,
+                now - phase_started,
+            )
+            phase_started = now
+
         parking = run.terminal_reason == "daemon_stop" and not force_full_cleanup
         session_id = cleanup_session_id
         if session_id is None:
@@ -139,6 +153,7 @@ class TerminalResourceCleaner:
                     exc_info=True,
                 )
 
+        finish_phase("delivery")
         if self._attention_manager is not None:
             try:
                 await self._attention_manager.transition_async(
@@ -153,6 +168,7 @@ class TerminalResourceCleaner:
                     exc_info=True,
                 )
 
+        finish_phase("attention")
         fd = self._master_fds.pop(run.id, None)
         if fd is not None:
             try:
@@ -169,10 +185,17 @@ class TerminalResourceCleaner:
                 run.id,
                 exc_info=True,
             )
+        finish_phase("tmux")
         if not parking:
             try:
-                await reap_srt_runner_process_tree(run.id)
-                await reap_sandbox_run_roots(run.id)
+                try:
+                    await reap_srt_runner_process_tree(run.id)
+                finally:
+                    finish_phase("srt_reap")
+                try:
+                    await reap_sandbox_run_roots(run.id)
+                finally:
+                    finish_phase("sandbox_reap")
             except Exception:
                 logger.warning(
                     "Failed to reap SRT sandbox resources for terminal agent %s",
@@ -193,7 +216,7 @@ class TerminalResourceCleaner:
         ):
             if not parking and session_coordinator and session_id:
                 try:
-                    session_coordinator.release_session_worktrees(session_id)
+                    await self._run_db(session_coordinator.release_session_worktrees, session_id)
                 except Exception as exc:
                     logger.warning("Failed to release worktrees for agent %s: %s", run.id, exc)
 
@@ -210,6 +233,7 @@ class TerminalResourceCleaner:
                 child_session_id=run.child_session_id,
                 terminal_reason=run.terminal_reason if parking else None,
             )
+        finish_phase("ownership_runtime")
         if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
             logger.debug(
                 "Cleaned runtime state for agent %s: dispatch_mutex=%s agent_step_instances=%s",
@@ -250,6 +274,7 @@ class TerminalResourceCleaner:
                     run.task_id,
                     exc_info=True,
                 )
+        finish_phase("merge_artifacts")
 
     async def _close_tmux_session(self, run: AgentRun) -> bool:
         from gobby.agents.capture import backend_session_present

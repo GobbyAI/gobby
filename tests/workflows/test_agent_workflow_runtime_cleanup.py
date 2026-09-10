@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
+from gobby.agents import terminal_delivery
+from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -30,6 +33,64 @@ from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec, s
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
+    temp_db: HubDatabase,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def slow_cleanup(*_args: Any, **_kwargs: Any) -> bool:
+        started.set()
+        await release.wait()
+        settled.set()
+        return True
+
+    cleanup = AgentCleanupHandler(
+        agent_run_manager=MagicMock(),
+        db=temp_db,
+        get_session_manager=lambda: None,
+        get_session_coordinator=lambda: None,
+        clone_storage=None,
+        completion_registry=None,
+        task_recovery=MagicMock(),
+        prompt_detector=MagicMock(),
+        terminal_prompt_monitor=MagicMock(),
+        stall_classifier=MagicMock(),
+        loop_tracker=MagicMock(),
+        master_fds={},
+    )
+    runner = MagicMock()
+    runner.run_storage.get_by_session.return_value = SimpleNamespace(
+        id="workflow-slow-cleanup", child_session_id="child", terminal_reason=None, task_id=None
+    )
+    runner.agent_lifecycle_monitor = cleanup
+    engine = RuleEngine(db=temp_db, runner=runner)
+    with (
+        patch.object(cleanup, "_terminalize_successful_run_unshielded", side_effect=slow_cleanup),
+        patch("gobby.workflows.engine.enforcement.cleanup_agent_runtime_state") as clear_runtime,
+        patch(
+            "gobby.workflows.engine.enforcement.build_workflow_completion_notification",
+            return_value=({"success": True}, "Complete"),
+        ),
+    ):
+        completion = asyncio.create_task(engine._complete_agent_workflow_run("child", "test", {}))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            done, _ = await asyncio.wait({completion}, timeout=0.1)
+            assert completion in done, "Workflow evaluation waited for terminal cleanup"
+            assert not settled.is_set()
+            clear_runtime.assert_not_called()
+        finally:
+            release.set()
+            await completion
+            await terminal_delivery.drain_shielded_terminal_deliveries()
+    assert settled.is_set()
+    clear_runtime.assert_called_once()
+
 
 # Session/instance id columns are native uuid in PostgreSQL; synthetic ids
 # like "child-session" would fail with `invalid input syntax for type uuid`.
@@ -100,6 +161,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         return_value=True,
     ) as complete:
         await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "tech-writer-steps", {})
+        await terminal_delivery.drain_shielded_terminal_deliveries()
 
     complete.assert_awaited_once()
     assert mutex.get_mutex(task.id) is None
@@ -280,13 +342,16 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     )
 
     registry = stage_ops.create_stage_ops_registry(RegistryContext(task_manager=task_manager))
+    submit_review = registry.get_tool("submit_for_review")
+    assert submit_review is not None
     with session_context_for_test(child.id):
-        handoff = registry.get_tool("submit_for_review")(
+        handoff = await asyncio.to_thread(
+            submit_review,
             task_id=task.id,
             stage_name="development",
             review_notes="ready for QA",
         )
-    assert handoff["ok"] is True
+    assert handoff.get("ok") is True, handoff
     assert mutex.get_mutex(task.id) is None
 
     runner = SimpleNamespace(
@@ -320,6 +385,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         child.id,
         {"is_spawned_agent": True, "step_workflow_complete": False},
     )
+    await terminal_delivery.drain_shielded_terminal_deliveries()
 
     assert response.decision == "allow"
     assert run_manager.get(run.id).status == "success"
