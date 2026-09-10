@@ -14,6 +14,9 @@ bypass, environment escape, or session-variable exemption is introduced.
 Both tasks remain open until the combined post-restart gate passes.
 
 Implementation substeps (native tracker unavailable in this provider):
+- [x] Diagnose live native cmd alias failure; normalization repair passes 653 focused tests.
+- [x] Fix 71 encountered baseline type errors in normalization tests; scoped mypy, test-type and quality audits pass with zero findings.
+- [ ] Commit alias repair, restart and repeat live smoke.
 - [x] Materialize and validate this plan (base validation passed).
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
 - [x] Repair baseline provider tests that outlive their launch mocks (11 pass).
@@ -95,6 +98,8 @@ extraction (858 lines before the split on commit 622ef8c992).
 
 Targets:
 - `src/gobby/hooks/provider_launch_guard.py::*` — scope-reason: implement bounded literal execution classification
+- `src/gobby/hooks/_normalization_tools.py::*` — scope-reason: normalize cmd for every command-pattern rule while preserving raw input
+- `tests/hooks/test_normalization.py::*` — scope-reason: verify canonical command alias and raw-input preservation
 - `src/gobby/workflows/safe_evaluator.py::*` — scope-reason: register shell classifier for rules
 - `src/gobby/install/shared/workflows/rules/worker-safety/block-direct-provider-launch.yaml::*` — scope-reason: install the default and worker safety guard
 - `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: regenerate bundled rule content hashes

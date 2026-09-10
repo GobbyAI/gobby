@@ -3,6 +3,7 @@
 from typing import Any
 from unittest.mock import patch
 
+import httpx2
 import pytest
 
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
@@ -31,11 +32,17 @@ async def test_sse_config_connects_with_explicit_timeout() -> None:
     captured: dict[str, Any] = {}
     clients: list[FakeClient] = []
 
-    def fake_sse_client(url: str, headers: dict[str, str] | None = None, timeout: float = 5) -> Any:
-        captured.update(url=url, headers=headers, timeout=timeout)
+    def fake_sse_client(
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: float = 5,
+        auth: httpx2.Auth | None = None,
+    ) -> Any:
+        captured.update(url=url, headers=headers, timeout=timeout, auth=auth)
         return recording_transport(lifecycle)
 
-    def fake_client(transport: Any) -> FakeClient:
+    def fake_client(transport: Any, *, mode: str = "auto") -> FakeClient:
+        assert mode == "auto"
         client = FakeClient(transport, lifecycle=lifecycle)
         clients.append(client)
         return client
@@ -51,7 +58,7 @@ async def test_sse_config_connects_with_explicit_timeout() -> None:
 
         await connection.disconnect()
 
-    assert connection.state == ConnectionState.DISCONNECTED
+    assert not connection.is_connected
     assert lifecycle == [
         "streams-open",
         "transport-enter",
@@ -63,4 +70,5 @@ async def test_sse_config_connects_with_explicit_timeout() -> None:
         "url": "https://example.test/sse",
         "headers": {"X-Tenant": "example"},
         "timeout": 4.0,
+        "auth": None,
     }

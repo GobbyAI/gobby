@@ -218,7 +218,20 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-exclude = [".archive", ".gobby", "*.yaml", "*.yml", "*.json", "*.md", "*.sh", "*.mjs", "*.txt", "*.j2", "*.sql"]
+exclude = [
+    ".archive",
+    ".gobby",
+    "crates/gterminal/vendor",  # vendored upstream trees are never linted or reformatted
+    "*.yaml",
+    "*.yml",
+    "*.json",
+    "*.md",
+    "*.sh",
+    "*.mjs",
+    "*.txt",
+    "*.j2",
+    "*.sql",
+]
 force-exclude = true
 
 [tool.ruff.lint]

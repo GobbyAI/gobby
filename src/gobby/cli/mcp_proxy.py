@@ -329,12 +329,13 @@ def call_tool(
 
 @mcp_proxy.command("add-server")
 @click.argument("name")
-@click.option("--transport", "-t", type=click.Choice(["http", "stdio", "websocket"]))
+@click.option("--transport", "-t", type=click.Choice(["http", "sse", "stdio", "websocket"]))
 @click.option("--url", "-u", help="Server URL (for http/websocket)")
 @click.option("--command", "-c", help="Command to run (for stdio)")
 @click.option("--args", "-A", "cmd_args", help="Command arguments as JSON array (for stdio)")
 @click.option("--env", "-e", help="Environment variables as JSON object")
 @click.option("--headers", help="HTTP headers as JSON object")
+@click.option("--oauth", is_flag=True, help="Use browser OAuth; sign in with mcp-proxy auth")
 @click.option("--disabled", is_flag=True, help="Add server as disabled")
 @click.option("--template", help="Instantiate from a named MCP server template")
 @click.option("--set", "value_sets", multiple=True, help="Template value as key=value")
@@ -350,6 +351,7 @@ def add_server(
     cmd_args: str | None,
     env: str | None,
     headers: str | None,
+    oauth: bool,
     disabled: bool,
     template: str | None,
     value_sets: tuple[str, ...],
@@ -370,7 +372,7 @@ def add_server(
     if not template and not transport:
         click.echo("Error: --transport is required without --template", err=True)
         sys.exit(1)
-    if transport in ("http", "websocket") and not url:
+    if transport in ("http", "sse", "websocket") and not url:
         click.echo(f"Error: --url is required for {transport} transport", err=True)
         sys.exit(1)
     if transport == "stdio" and not command:
@@ -422,6 +424,8 @@ def add_server(
         "enabled": not disabled,
         "scope": scope,
     }
+    if oauth:
+        payload["requires_oauth"] = True
     if project_id:
         payload["project_id"] = project_id
     if template:
@@ -856,9 +860,11 @@ def proxy_status(ctx: click.Context, json_format: bool) -> None:
 
 def register_template_commands() -> None:
     """Load template subcommands after the Click group exists."""
+    import gobby.cli.mcp_oauth as oauth_commands
     import gobby.cli.mcp_proxy_templates as template_commands
 
     _ = (template_commands.list_templates, template_commands.show_template)
+    _ = oauth_commands.auth_server
 
 
 register_template_commands()

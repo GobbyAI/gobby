@@ -25,7 +25,6 @@ from tests.terminals.fakes import (
     runtime_registry,
 )
 
-
 TmuxResult = tuple[int, str, str]
 
 

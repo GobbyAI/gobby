@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Depends, HTTPException, Request
 
 from gobby.mcp_proxy.client_manager.server_registry import visible_configs
+from gobby.mcp_proxy.config import bool_field, optional_string, string_dict, string_list
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError, TemplateOwnedFieldsError, TemplateValuesInvalidError
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
@@ -22,7 +23,6 @@ from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.models import MCPServerConfig
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -71,14 +71,6 @@ def _exact_server(manager: Any, name: str, project_id: str) -> Any:
     return config
 
 
-def _string_dict(value: Any) -> dict[str, str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise ValueError("env and headers must be JSON objects")
-    return {str(key): str(item) for key, item in value.items() if str(key)}
-
-
 def _public_secret_refs(value: Mapping[str, str] | None) -> dict[str, str] | None:
     """Return only safe secret-reference values for unauthenticated server listings."""
     if not value:
@@ -89,77 +81,6 @@ def _public_secret_refs(value: Mapping[str, str] | None) -> dict[str, str] | Non
         if str(key) and isinstance(item, str) and item.startswith("$secret:")
     }
     return refs or None
-
-
-def _string_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ValueError("args must be a JSON array")
-    return [str(item) for item in value]
-
-
-def _optional_string(value: Any) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        return str(value)
-    return value
-
-
-def _bool_field(body: Mapping[str, Any], name: str, default: bool) -> bool:
-    value = body.get(name, default)
-    if not isinstance(value, bool):
-        raise ValueError(f"{name} must be a boolean")
-    return value
-
-
-def _build_mcp_server_config(
-    body: Mapping[str, Any],
-    *,
-    name: str,
-    project_id: str,
-    base: "MCPServerConfig | None" = None,
-) -> "MCPServerConfig":
-    from gobby.mcp_proxy.models import MCPServerConfig
-
-    connect_timeout = body.get("connect_timeout", 30.0 if base is None else base.connect_timeout)
-    if connect_timeout is None:
-        connect_timeout = 30.0 if base is None else base.connect_timeout
-
-    config = MCPServerConfig(
-        name=name,
-        project_id=project_id if base is None else base.project_id,
-        transport=str(body.get("transport") or (base.transport if base else "http")),
-        url=_optional_string(body["url"]) if "url" in body else (base.url if base else None),
-        command=_optional_string(body["command"])
-        if "command" in body
-        else (base.command if base else None),
-        args=_string_list(body["args"]) if "args" in body else (base.args if base else None),
-        env=_string_dict(body["env"]) if "env" in body else (base.env if base else None),
-        headers=_string_dict(body["headers"])
-        if "headers" in body
-        else (base.headers if base else None),
-        enabled=_bool_field(body, "enabled", True if base is None else base.enabled),
-        description=_optional_string(body["description"])
-        if "description" in body
-        else (base.description if base else None),
-        requires_oauth=_bool_field(
-            body, "requires_oauth", False if base is None else base.requires_oauth
-        ),
-        oauth_provider=_optional_string(body.get("oauth_provider"))
-        if "oauth_provider" in body
-        else (base.oauth_provider if base else None),
-        connect_timeout=float(connect_timeout),
-    )
-    if base is not None:
-        config.id = base.id
-        config.template_id = base.template_id
-        config.template = base.template
-        config.runtime_hook = base.runtime_hook
-        config.template_values = dict(base.template_values or {})
-    config.validate()
-    return config
 
 
 async def list_mcp_servers(
@@ -287,17 +208,20 @@ async def add_mcp_server(
         result = await service.add_server(
             name,
             str(transport) if isinstance(transport, str) else None,
-            url=_optional_string(body.get("url")),
-            command=_optional_string(body.get("command")),
-            args=_string_list(body.get("args")),
-            env=_string_dict(body.get("env")),
-            headers=_string_dict(body.get("headers")),
-            enabled=_bool_field(body, "enabled", True) if "enabled" in body else True,
+            url=optional_string(body.get("url")),
+            command=optional_string(body.get("command")),
+            args=string_list(body.get("args")),
+            env=string_dict(body.get("env")),
+            headers=string_dict(body.get("headers")),
+            enabled=bool_field(body, "enabled", True) if "enabled" in body else True,
             project_id=scope_project,
             template=str(template) if isinstance(template, str) else None,
             values=_string_values(body.get("values")),
             scope=scope_label,
-            description=_optional_string(body.get("description")),
+            description=optional_string(body.get("description")),
+            requires_oauth=bool_field(body, "requires_oauth", False),
+            oauth_provider=optional_string(body.get("oauth_provider")),
+            connect_timeout=float(body.get("connect_timeout", 30.0)),
         )
         ws = server.services.websocket_server
         if ws and result.get("success"):

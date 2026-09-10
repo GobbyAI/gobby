@@ -470,8 +470,11 @@ async def _update_server_patch(
                 raise TemplateOwnedFieldsError(owned)
         if "values" in patch and config.template_id:
             _merge_template_values(manager, config, patch.get("values"))
-        if "description" in patch:
-            config.description = None if patch["description"] is None else str(patch["description"])
+        from gobby.mcp_proxy.config import build_mcp_server_config
+
+        config = build_mcp_server_config(
+            patch, name=config.name, project_id=config.project_id, base=config
+        )
         config.validate()
         effective_project_id = project_id or config.project_id
         await _persist_and_replace(manager, existing, config, effective_project_id)
