@@ -265,6 +265,10 @@ class HTTPServer:
             service = self._runtime_service("task_validator")
             return service if isinstance(service, TaskValidator) else services.task_validator
 
+        def resolve_ask_service(project_id: str) -> Any | None:
+            resolver = getattr(services, "get_ask_service", None)
+            return resolver(project_id) if callable(resolver) else None
+
         memory_services = captured_service("memory_services")
         mcp_manager = resolve_mcp_manager()
         llm_service = resolve_llm_service()
@@ -360,6 +364,7 @@ class HTTPServer:
             terminal_runtime_registry=getattr(services, "terminal_runtime_registry", None),
             write_coordinator=getattr(services, "write_coordinator", None),
             dream_coordinator_resolver=lambda: getattr(services, "memory_dream_coordinator", None),
+            ask_service_resolver=resolve_ask_service,
         )
         registry_count = len(self._internal_manager)
         logger.debug("Internal registries initialized: %s registries", registry_count)
