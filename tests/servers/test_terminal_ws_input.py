@@ -20,7 +20,6 @@ from gobby.terminals.runtime import Delivered, TerminalWriteError, WriteOutcome
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal, runtime_registry
 
-
 TmuxResult = tuple[int, str, str]
 
 
@@ -161,10 +160,10 @@ async def test_single_input_handler_is_bound_and_backend_neutral() -> None:
     terminal = make_memory_terminal()
     server, _attachment_id = _server(terminal, _RecordingRuntime())
     websocket = _WebSocket()
-    setattr(
-        server,
-        "_handle_terminal_input",
-        AsyncMock(side_effect=AssertionError("dispatch must bind TerminalWsMixin explicitly")),
+    # Shadow the mixin method on the instance: dispatch must bind TerminalWsMixin
+    # explicitly rather than looking the handler up through the instance.
+    server.__dict__["_handle_terminal_input"] = AsyncMock(
+        side_effect=AssertionError("dispatch must bind TerminalWsMixin explicitly")
     )
 
     await server._handle_message(

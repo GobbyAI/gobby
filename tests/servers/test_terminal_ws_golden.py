@@ -16,8 +16,8 @@ import pytest
 from gobby.servers.websocket import broadcast as broadcast_module
 from gobby.servers.websocket.proxy_relay import _map_host_frame
 from gobby.servers.websocket.server import WebSocketServer
-from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
+from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals import web_spawn
 from gobby.terminals.leases import TerminalLeaseRegistry
