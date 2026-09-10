@@ -307,7 +307,8 @@ async def spawn_agent_impl(
 
     manager_repo_path = getattr(target_git_manager, "repo_path", None)
     if git_manager_resolver is not None and manager_repo_path is not None:
-        resolved_project_path = str(manager_repo_path)
+        if effective_isolation != "none" or not resolved_project_path:
+            resolved_project_path = str(manager_repo_path)
 
     if not resolved_project_path or not isinstance(resolved_project_path, str):
         return {"success": False, "error": "Could not resolve project_path from context"}

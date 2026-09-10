@@ -1070,6 +1070,7 @@ class TestDispatchBatchIsolationParity:
             "run_id": "run-merge-worker",
             "success": True,
             "agent": "merge-worker",
+            "external_write_grant": None,
         }
         spawn_kwargs = mock_spawn_impl.call_args.kwargs
         assert spawn_kwargs["prompt"] == prompt
