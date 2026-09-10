@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Generator
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _background_tasks,
@@ -40,6 +42,7 @@ def _make_execution(
     pipeline_name: str = "test-pipeline",
     status: ExecutionStatus = ExecutionStatus.RUNNING,
     inputs_json: str | None = None,
+    definition_json: str | None = None,
     session_id: str | None = None,
     project_id: str = "test-project",
 ) -> MagicMock:
@@ -49,6 +52,7 @@ def _make_execution(
     execution.pipeline_name = pipeline_name
     execution.status = status
     execution.inputs_json = inputs_json
+    execution.definition_json = definition_json
     execution.session_id = session_id
     execution.project_id = project_id
     return execution
@@ -65,6 +69,75 @@ def _make_pipeline(
     pipeline.resume_on_restart = resume_on_restart
     pipeline.enabled = enabled
     return pipeline
+
+
+@pytest.mark.asyncio
+async def test_native_ask_restart_routes_through_ask_service() -> None:
+    pipeline_path = (
+        Path(__file__).parents[3] / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+    )
+    definition = yaml.safe_load(pipeline_path.read_text())
+    execution = _make_execution(
+        pipeline_name="native-ask",
+        definition_json=json.dumps(definition),
+        inputs_json=json.dumps({"run_id": "pe-test-1234"}),
+        session_id="immutable-caller",
+    )
+    loader = AsyncMock()
+    loader.load_pipeline.side_effect = AssertionError("native Ask loaded mutable registry state")
+    executor = MagicMock()
+    executor.execute = AsyncMock(side_effect=AssertionError("native Ask bypassed AskService"))
+    execution_manager = MagicMock()
+    execution_manager.list_executions.side_effect = [[execution], []]
+    ask_service = MagicMock()
+    ask_service.recover_daemon_execution = AsyncMock(return_value=True)
+    ask_service_resolver = MagicMock(return_value=ask_service)
+
+    resumed = await resume_interrupted_pipelines(
+        loader=loader,
+        executor=executor,
+        execution_manager=execution_manager,
+        ask_service_resolver=ask_service_resolver,
+    )
+
+    assert resumed == [execution.id]
+    loader.load_pipeline.assert_not_called()
+    executor.execute.assert_not_awaited()
+    ask_service_resolver.assert_called_once_with(execution.project_id)
+    ask_service.recover_daemon_execution.assert_awaited_once_with(
+        execution.id,
+        project_id=execution.project_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_ask_restart_discovers_pending_crash_window() -> None:
+    execution = _make_execution(
+        pipeline_name="native-ask",
+        status=ExecutionStatus.PENDING,
+        definition_json=json.dumps({"name": "native-ask"}),
+    )
+    loader = AsyncMock()
+    executor = MagicMock()
+    executor.execute = AsyncMock(side_effect=AssertionError("native Ask bypassed AskService"))
+    execution_manager = MagicMock()
+    execution_manager.list_executions.side_effect = [[], [execution]]
+    ask_service = MagicMock()
+    ask_service.recover_daemon_execution = AsyncMock(return_value=True)
+
+    resumed = await resume_interrupted_pipelines(
+        loader=loader,
+        executor=executor,
+        execution_manager=execution_manager,
+        ask_service_resolver=lambda _project_id: ask_service,
+    )
+
+    assert resumed == [execution.id]
+    ask_service.recover_daemon_execution.assert_awaited_once_with(
+        execution.id,
+        project_id=execution.project_id,
+    )
+    executor.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

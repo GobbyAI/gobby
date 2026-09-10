@@ -16,8 +16,12 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 from fastapi import Depends, HTTPException, Request
 from mcp.types import ListToolsResult
 
+from gobby.ask.permissions import current_ask_allowed_tools
 from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief
+from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
+from gobby.servers.routes.mcp.endpoints import request_context
+from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -61,6 +65,59 @@ def _object_attr(value: object, attr: str) -> object | None:
 
 def _response_tool_briefs(tool_briefs: list[ToolBrief]) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], tool_briefs)
+
+
+async def _current_ask_tools(
+    request: Request, server: "HTTPServer", arguments: Mapping[str, Any]
+) -> frozenset[tuple[str, str]] | None:
+    headers = request.headers
+    if not (
+        headers.get(AGENT_RUN_ID_HEADER)
+        or headers.get("x-gobby-session-id")
+        or headers.get(TERMINAL_CONTEXT_HEADER)
+        or headers.get(MCP_WRAPPER_PROTOCOL_VERSION_HEADER)
+        or isinstance(arguments.get("session_id"), str)
+    ):
+        return None
+    tokens = await request_context._set_context_for_request(server, dict(arguments), request)
+    try:
+        service = server.tool_proxy or server
+        return await asyncio.to_thread(current_ask_allowed_tools, service)
+    finally:
+        request_context._reset_context(tokens)
+
+
+def _filter_tool_map(
+    tools_by_server: Mapping[str, list[dict[str, Any]]],
+    allowed: frozenset[tuple[str, str]] | None,
+) -> dict[str, list[dict[str, Any]]]:
+    if allowed is None:
+        return dict(tools_by_server)
+    filtered: dict[str, list[dict[str, Any]]] = {}
+    for server_name, tools in tools_by_server.items():
+        visible = [tool for tool in tools if (server_name, str(tool.get("name"))) in allowed]
+        if visible:
+            filtered[server_name] = visible
+    return filtered
+
+
+def _filter_records(
+    records: object,
+    allowed: frozenset[tuple[str, str]] | None,
+    *,
+    server_key: str,
+    tool_key: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(records, ABCSequence) or isinstance(records, str | bytes):
+        return []
+    mapped = [dict(record) for record in records if isinstance(record, Mapping)]
+    if allowed is None:
+        return mapped
+    return [
+        record
+        for record in mapped
+        if (str(record.get(server_key)), str(record.get(tool_key))) in allowed
+    ]
 
 
 def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:
@@ -238,6 +295,7 @@ async def list_all_mcp_tools(
         from gobby.servers.routes.mcp.endpoints.request_context import request_mcp_scope
         from gobby.storage.projects import GLOBAL_PROJECT_ID
 
+        allowed = await _current_ask_tools(request, server, {})
         scope = request_mcp_scope(request, server, {})
         tools_by_server: dict[str, list[dict[str, Any]]] = {}
 
@@ -251,7 +309,7 @@ async def list_all_mcp_tools(
                 resolved_project_id = None
 
         # If specific server requested
-        if server_filter:
+        if server_filter and (allowed is None or any(name == server_filter for name, _ in allowed)):
             # Check internal first
             if server._internal_manager and server._internal_manager.is_internal(server_filter):
                 registry = server._internal_manager.get_registry(server_filter)
@@ -268,7 +326,7 @@ async def list_all_mcp_tools(
                             resolved.id,
                             timeout=_mcp_call_timeout(server),
                         )
-        else:
+        elif not server_filter:
             # Get tools from all servers
             # Internal servers
             if server._internal_manager:
@@ -287,6 +345,8 @@ async def list_all_mcp_tools(
                             tools_by_server[config.name] = _response_tool_briefs(
                                 _cached_tool_briefs(config)
                             )
+
+        tools_by_server = _filter_tool_map(tools_by_server, allowed)
 
         # Enrich with metrics if requested
         if include_metrics and metrics_manager and resolved_project_id:
@@ -398,6 +458,25 @@ async def recommend_mcp_tools(
                 min_similarity=min_similarity,
                 project_id=project_id,
             )
+            allowed = await _current_ask_tools(request, server, body)
+            if allowed is not None:
+                for result_key in ("recommendation", "recommendations"):
+                    result[result_key] = _filter_records(
+                        result.get(result_key),
+                        allowed,
+                        server_key="server",
+                        tool_key="tool",
+                    )
+                recommendations = result.get("recommendations")
+                result["total_results"] = (
+                    len(recommendations) if isinstance(recommendations, list) else 0
+                )
+                available_servers = result.get("available_servers")
+                if isinstance(available_servers, list):
+                    allowed_servers = {server_name for server_name, _tool_name in allowed}
+                    result["available_servers"] = [
+                        name for name in available_servers if name in allowed_servers
+                    ]
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result["response_time_ms"] = response_time_ms
             return result
@@ -528,12 +607,18 @@ async def search_mcp_tools(
                     min_similarity=min_similarity,
                     server_filter=server_filter,
                 )
+                visible_results = _filter_records(
+                    [result.to_dict() for result in results],
+                    await _current_ask_tools(request, server, body),
+                    server_key="server_name",
+                    tool_key="tool_name",
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return {
                     "success": True,
                     "query": query,
-                    "results": [r.to_dict() for r in results],
-                    "total_results": len(results),
+                    "results": visible_results,
+                    "total_results": len(visible_results),
                     "response_time_ms": response_time_ms,
                 }
             except Exception as e:

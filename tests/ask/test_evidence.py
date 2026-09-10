@@ -454,9 +454,9 @@ async def test_durable_scoped_evidence_admission(
             },
         )
 
-    persisted = execution_manager.get_execution(record.run_id)
-    assert persisted is not None
-    checkpoint = json.loads(persisted.outputs_json or "{}")["ask"]["evidence"]
+    checkpoint = [
+        item.model_dump(mode="json") for item in storage.evidence_references(record.run_id)
+    ]
     assert len(checkpoint) == 44
     assert len({item["invocation_id"] for item in checkpoint}) == 44
     assert any(item["status"] == "failed" for item in checkpoint)
@@ -491,9 +491,10 @@ async def test_durable_scoped_evidence_admission(
     assert b"request-secret" not in persisted_bytes
     assert b"successful-secret" not in persisted_bytes
 
-    timed_persisted = execution_manager.get_execution(timed_record.run_id)
-    assert timed_persisted is not None
-    timed_checkpoint = json.loads(timed_persisted.outputs_json or "{}")["ask"]["evidence"]
+    timed_checkpoint = [
+        item.model_dump(mode="json")
+        for item in timed_storage.evidence_references(timed_record.run_id)
+    ]
     assert [item["status"] for item in timed_checkpoint] == ["timeout"]
 
     tampered_lifecycle = {**lifecycle, "generation": 2, "retrieval_mode": "audited_hybrid"}
@@ -558,9 +559,7 @@ def test_evidence_checkpoint_row_lock_obeys_deadline(
             )
         assert time.monotonic() - started < 0.5
 
-    persisted = execution_manager.get_execution(record.run_id)
-    assert persisted is not None
-    assert json.loads(persisted.outputs_json or "{}")["ask"].get("evidence") is None
+    assert storage.evidence_references(record.run_id) == []
 
 
 @pytest.mark.asyncio
@@ -612,9 +611,9 @@ async def test_evidence_publication_timeout_records_only_terminal_timeout(
             )
         await release_task
 
-    persisted = execution_manager.get_execution(record.run_id)
-    assert persisted is not None
-    references = json.loads(persisted.outputs_json or "{}")["ask"]["evidence"]
+    references = [
+        item.model_dump(mode="json") for item in storage.evidence_references(record.run_id)
+    ]
     assert [item["status"] for item in references] == ["timeout"]
 
 

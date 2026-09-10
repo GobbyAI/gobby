@@ -1315,12 +1315,12 @@ fn snapshot_distinguishes_credential_expressions_from_literals() -> anyhow::Resu
             "const token = config.authenticationToken;\n",
             false,
         ),
-        ("literal.py", "token = '0123456789abcdef'\n", true),
+        ("literal.py", "token = 'testtesttesttest'\n", true),
         ("numeric.py", "password = 1234567890123456\n", true),
-        ("mapping.json", "{\"token\": \"0123456789abcdef\"}\n", true),
-        ("settings.yaml", "token: 0123456789abcdef\n", true),
-        ("settings.ini", "token=0123456789abcdef\n", true),
-        ("configure.sh", "token=0123456789abcdef\n", true),
+        ("mapping.json", "{\"token\": \"testtesttesttest\"}\n", true),
+        ("settings.yaml", "token: testtesttesttest\n", true),
+        ("settings.ini", "token=testtesttesttest\n", true),
+        ("configure.sh", "token=testtesttesttest\n", true),
     ];
     for (path, content, _) in cases {
         std::fs::write(repo.join(path), content)?;

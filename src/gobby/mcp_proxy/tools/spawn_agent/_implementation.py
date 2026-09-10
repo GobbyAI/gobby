@@ -1,8 +1,4 @@
-"""Core spawn_agent implementation.
-
-Contains spawn_agent_impl() — the internal implementation used by both
-the spawn_agent MCP tool and direct callers.
-"""
+"""Core spawn-agent implementation used by MCP and direct callers."""
 
 from __future__ import annotations
 
@@ -29,7 +25,7 @@ from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
-from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
+from gobby.agents.spawn_models import ManagedRuntimeProfile, SpawnRequest, resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
@@ -58,6 +54,11 @@ from ._failure_cleanup import (
     remember_spawn_pid,
 )
 from ._idempotency import non_actionable_task_spawn_response
+from ._managed_runtime import (
+    managed_runtime_pair_error,
+    managed_runtime_path_error,
+    managed_runtime_selection_error,
+)
 from ._provider_resolution import (
     concrete_provider,
     resolve_spawn_provider,
@@ -66,6 +67,7 @@ from ._provider_resolution import (
 from ._runtime import (
     _normalize_optional_model,
     _normalize_string_list,
+    _parent_session_ref,
 )
 from ._spawn_guards import (
     TaskSpawnLease,
@@ -87,19 +89,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _spawn_background_tasks: dict[str, asyncio.Task[None]] = {}
-
-
-def _parent_session_ref(session_manager: Any | None, parent_session_id: str) -> str:
-    """Return the coordinator's ``#N`` ref so a leaf can address it by either form."""
-    if session_manager is None:
-        return parent_session_id
-    try:
-        parent_session = session_manager.get(parent_session_id)
-    except Exception:
-        logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
-        return parent_session_id
-    seq_num = getattr(parent_session, "seq_num", None)
-    return f"#{seq_num}" if seq_num else parent_session_id
 
 
 async def spawn_agent_impl(
@@ -145,6 +134,8 @@ async def spawn_agent_impl(
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
     terminal_backend: Literal["tmux", "native"] | None = None,
+    managed_runtime_profile: ManagedRuntimeProfile | None = None,
+    prelaunch_authority: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     if agent_body is not None:
@@ -157,9 +148,10 @@ async def spawn_agent_impl(
         resolved_terminal_backend = resolve_terminal_backend(terminal_backend, daemon_config)
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
-    # 0. Plan-validation gate for planning agents.
-    # Structural failures block planning roles. Authoring roles may continue
-    # past symbol-only failures with repair diagnostics appended to the prompt.
+    managed_error = managed_runtime_pair_error(managed_runtime_profile, prelaunch_authority)
+    if managed_error:
+        return {"success": False, "error": managed_error}
+    # Structural plan failures block planning roles; authoring roles may repair symbol failures.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
     gate_result = await asyncio.to_thread(
@@ -203,6 +195,13 @@ async def spawn_agent_impl(
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
+    managed_error = managed_runtime_selection_error(
+        managed_runtime_profile,
+        isolation=effective_isolation,
+        provider=effective_provider,
+    )
+    if managed_error:
+        return {"success": False, "error": managed_error}
     if effective_provider == "agy":
         # Gate on the published support record before any isolation, slot,
         # session, or agent-run side effect exists to clean up.
@@ -261,6 +260,17 @@ async def spawn_agent_impl(
                 effective_api_token = os.environ.get(token[2:-1])
             else:
                 effective_api_token = token
+
+    if managed_runtime_profile is not None:
+        try:
+            managed_runtime_profile.validate_selection(
+                provider=effective_provider,
+                model=effective_model,
+                reasoning_effort=requested_reasoning_effort,
+                api_base=effective_api_base,
+            )
+        except (RuntimeError, ValueError) as selection_error:
+            return {"success": False, "error": str(selection_error)}
 
     requested_model_selector = effective_model
     from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
@@ -324,6 +334,9 @@ async def spawn_agent_impl(
 
     if not resolved_project_path or not isinstance(resolved_project_path, str):
         return {"success": False, "error": "Could not resolve project_path from context"}
+    managed_error = managed_runtime_path_error(managed_runtime_profile, resolved_project_path)
+    if managed_error:
+        return {"success": False, "error": managed_error}
 
     target_clone_manager = clone_manager
     if target_git_manager is not None and (effective_isolation == "clone" or clone_id):
@@ -353,7 +366,11 @@ async def spawn_agent_impl(
     effective_base_branch = effective_base_branch or "main"
 
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
-    effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
+    effective_sandbox_config: SandboxConfig = (
+        managed_runtime_profile.sandbox_config
+        if managed_runtime_profile is not None
+        else agent_sandbox_config(daemon_config)
+    )
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
 
     # 3. Validate parent_session_id and spawn depth
@@ -545,6 +562,17 @@ async def spawn_agent_impl(
             if isinstance(error_code, str):
                 response["error_code"] = error_code
             return response
+
+    if (
+        managed_runtime_profile is not None
+        and Path(isolation_ctx.cwd).resolve()
+        != Path(managed_runtime_profile.scratch_root).resolve()
+    ):
+        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
+        return {
+            "success": False,
+            "error": "managed runtime cwd does not match immutable scratch root",
+        }
 
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
@@ -760,6 +788,28 @@ async def spawn_agent_impl(
             "worktree_id": isolation_ctx.worktree_id,
             "branch_name": isolation_ctx.branch_name,
         }
+        if prelaunch_authority is not None:
+            try:
+                await asyncio.to_thread(prelaunch_authority, prepared_spawn.agent_run_id)
+            except Exception as exc:
+                await asyncio.to_thread(task_spawn_lease.release_unattached)
+                await cleanup_failed_spawn(
+                    runner,
+                    run_id,
+                    str(exc),
+                    handler,
+                    spawn_config,
+                    completion_registry=completion_registry,
+                    cleanup_isolation=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
+                    child_session_id=prepared_spawn.session_id,
+                )
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    **spawn_identity,
+                    "reasoning": reasoning.to_dict(),
+                }
         attach_error = await asyncio.to_thread(task_spawn_lease.attach, run_id)
         if attach_error is not None:
             await asyncio.to_thread(task_spawn_lease.release_unattached)
@@ -813,6 +863,7 @@ async def spawn_agent_impl(
             prompt=enhanced_prompt,
             cwd=isolation_ctx.cwd,
             provider=effective_provider,
+            managed_runtime_profile=managed_runtime_profile,
             session_id=prepared_spawn.session_id,
             run_id=run_id,
             agent_run_id=run_id,
@@ -841,6 +892,14 @@ async def spawn_agent_impl(
             reasoning_required=reasoning.reasoning_required,
             reasoning_status=reasoning.status,
             reasoning_message=reasoning.message,
+            auto_approve=(
+                managed_runtime_profile.auto_approve
+                if managed_runtime_profile is not None
+                else True
+            ),
+            provider_args=(
+                managed_runtime_profile.provider_args if managed_runtime_profile is not None else ()
+            ),
             sandbox_config=effective_sandbox_config,
             extra_env={
                 **(endpoint_resolution.child_env or {}),
@@ -927,6 +986,7 @@ async def spawn_agent_impl(
                     run_id=run_id,
                     subscriber_session_id=parent_session_id,
                     db=db,
+                    strict=managed_runtime_profile is not None,
                 )
             except Exception:
                 logger.warning(

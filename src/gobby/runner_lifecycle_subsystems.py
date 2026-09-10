@@ -352,6 +352,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         return
 
     try:
+        from gobby.app_context import get_app_context
         from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
             resume_interrupted_pipelines,
         )
@@ -359,6 +360,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
         discovery_manager = LocalPipelineExecutionManager(runner.database, project_id=None)
+        services = get_app_context()
         after_project_id: str | None = None
         failed_projects = 0
         while True:
@@ -398,6 +400,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
                             *args,
                             **kwargs,
                         ),
+                        ask_service_resolver=(services.get_ask_service if services else None),
                     )
                     if resumed_ids:
                         logger.info(

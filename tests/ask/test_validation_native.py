@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from uuid import UUID
@@ -19,7 +18,7 @@ from gobby.ask.claims import (
     QuestionPart,
     SourceCitation,
 )
-from gobby.ask.contracts import AskRequest, EvidenceReference
+from gobby.ask.contracts import AskRequest
 from gobby.ask.evidence import EvidenceAdmission
 from gobby.ask.snapshots import AskSnapshotManager
 from gobby.ask.storage import AskRunStorage
@@ -82,6 +81,11 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         ),
         repo,
     )
+    storage.bind_execution_context(
+        record.run_id,
+        project_root=repo,
+        caller_session_id=session.id,
+    )
     artifacts = AskArtifactStore(tmp_path / "state", project_id, record.run_id)
     runtime_root = tmp_path / "managed-runtimes"
     credentials = ManagedCredentialManager(
@@ -121,7 +125,6 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         run_storage=storage,
         snapshot_executable=gcode_bin,
         credential_manager=credentials,
-        session_id=session_id,
     )
     snapshot = await manager.prepare_async(
         run_id=record.run_id,
@@ -145,12 +148,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         )
         metadata_response = await admission.query("read", {"kind": "commit_metadata"})
 
-        execution = storage.manager.get_execution(record.run_id)
-        assert execution is not None
-        outputs = json.loads(execution.outputs_json or "{}")
-        references = tuple(
-            EvidenceReference.model_validate(value) for value in outputs["ask"]["evidence"]
-        )
+        references = tuple(storage.evidence_references(record.run_id))
         responses = (source_response, metadata_response)
         assert len(references) == len(responses) == 2
         assert len({reference.invocation_id for reference in references}) == 2

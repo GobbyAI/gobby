@@ -200,6 +200,24 @@ def init_servers(runner: GobbyRunner) -> None:
         tool_proxy_getter=tool_proxy_getter,
     )
 
+    from gobby.ask.composition import build_ask_service
+    from gobby.ask.runtime_validation import load_ask_runtime_validation_artifacts
+    from gobby.paths import get_gobby_home
+
+    validation_manifest = get_gobby_home() / "ask" / "runtime-validation" / "manifest.json"
+    try:
+        runtime_validation_artifacts = load_ask_runtime_validation_artifacts(validation_manifest)
+    except (OSError, ValueError) as error:
+        logger.warning("Native Ask is unavailable: %s", error)
+    else:
+        services.ask_service_factory = lambda project_id: build_ask_service(
+            services,
+            project_id,
+            runtime_validation_artifacts=runtime_validation_artifacts,
+        )
+        if runner.project_id:
+            services.ask_service = services.get_ask_service(runner.project_id)
+
     set_app_context(services)
     if runner.cron_scheduler and getattr(runner.cron_scheduler, "executor", None):
         runner.cron_scheduler.executor.services = services

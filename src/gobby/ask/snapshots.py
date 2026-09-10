@@ -217,9 +217,8 @@ class AskSnapshotManager:
         index_preparer: IndexPreparer | None = None,
         index_releaser: IndexReleaser | None = None,
         credential_manager: ManagedCredentialManager | None = None,
-        session_id: UUID | None = None,
     ) -> None:
-        if index_preparer is None and (credential_manager is None or session_id is None):
+        if index_preparer is None and credential_manager is None:
             raise ValueError("Ask snapshots require an injected or managed index preparer")
         executable = snapshot_executable or resolve_native_bin("gcode")
         if executable is None:
@@ -230,7 +229,6 @@ class AskSnapshotManager:
         self.index_preparer = index_preparer
         self.index_releaser = index_releaser
         self.credential_manager = credential_manager
-        self.session_id = session_id
 
     def prepare(
         self,
@@ -405,7 +403,7 @@ class AskSnapshotManager:
 
         runtime: SnapshotIndexRuntime | None = None
         try:
-            runtime = await self._prepare_index(source_root, deadline_at)
+            runtime = await self._prepare_index(record.run_id, source_root, deadline_at)
             lifecycle_pointer = await self._publish_lifecycle(
                 record=record,
                 generation=current.generation + 1,
@@ -493,7 +491,11 @@ class AskSnapshotManager:
                 source_root=source_root,
                 deadline_at=record.binding.deadline_at,
             )
-            runtime = await self._prepare_index(source_root, record.binding.deadline_at)
+            runtime = await self._prepare_index(
+                record.run_id,
+                source_root,
+                record.binding.deadline_at,
+            )
             lifecycle_pointer = await self._publish_lifecycle(
                 record=record,
                 generation=generation,
@@ -584,9 +586,7 @@ class AskSnapshotManager:
                     branch_name=None,
                     worktree_path=str(source_root),
                     base_branch=record.binding.commit_oid,
-                    agent_session_id=(
-                        str(self.session_id) if self.session_id is not None else None
-                    ),
+                    agent_session_id=str(self._caller_session_id(record.run_id)),
                     workspace_role="ask_snapshot",
                 )
             return worktree.id
@@ -724,7 +724,10 @@ class AskSnapshotManager:
         return identity_pointer, identity
 
     async def _prepare_index(
-        self, source_root: Path, deadline_at: datetime
+        self,
+        run_id: str,
+        source_root: Path,
+        deadline_at: datetime,
     ) -> SnapshotIndexRuntime:
         remaining = _remaining_seconds(deadline_at)
         if self.index_preparer is not None:
@@ -732,11 +735,13 @@ class AskSnapshotManager:
                 runtime = await self.index_preparer(source_root, deadline_at)
             _remaining_seconds(deadline_at)
             return runtime
-        if self.credential_manager is None or self.session_id is None:
+        if self.credential_manager is None:
             raise RuntimeError("managed Ask snapshot index services are unavailable")
+        caller_session_id = self._caller_session_id(run_id)
         issue_task = asyncio.create_task(
             asyncio.to_thread(
                 self._issue_index_credential,
+                caller_session_id,
                 source_root,
                 deadline_at,
                 remaining,
@@ -765,7 +770,7 @@ class AskSnapshotManager:
                 "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
                 "GOBBY_MACHINE_ID": require_machine_id(),
                 "GOBBY_PROJECT_ID": str(issued.project_id),
-                "GOBBY_SESSION_ID": str(self.session_id),
+                "GOBBY_SESSION_ID": str(caller_session_id),
             }
             prepare_task = asyncio.create_task(
                 ensure_isolation_code_index(
@@ -802,21 +807,30 @@ class AskSnapshotManager:
 
     def _issue_index_credential(
         self,
+        caller_session_id: UUID,
         source_root: Path,
         deadline_at: datetime,
         timeout_seconds: float,
     ) -> Any:
         assert self.credential_manager is not None
-        assert self.session_id is not None
         with database_operation_deadline(
             timeout_seconds=timeout_seconds,
             operation_timeout_seconds=timeout_seconds,
         ):
             return self.credential_manager.issue_tool_request(
-                session_id=self.session_id,
+                session_id=caller_session_id,
                 requested_project_path=str(source_root),
                 expires_at=deadline_at,
             )
+
+    def _caller_session_id(self, run_id: str) -> UUID:
+        caller = self.run_storage.execution_inputs(run_id).get("caller_session_id")
+        if not isinstance(caller, str) or not caller:
+            raise RuntimeError("Ask original caller session is not bound")
+        try:
+            return UUID(caller)
+        except ValueError as error:
+            raise RuntimeError("Ask original caller session is invalid") from error
 
     def _record_for_artifacts(self, run_id: str, artifacts: AskArtifactStore) -> AskRunRecord:
         record = self.run_storage.get(run_id)

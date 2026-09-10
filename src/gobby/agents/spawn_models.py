@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.terminals import TerminalConfig
@@ -36,6 +37,50 @@ def resolve_terminal_backend(
     raise ValueError(f"invalid terminal_backend: {requested}")
 
 
+class ManagedRuntimeProfile(Protocol):
+    """Internal launch restrictions supplied by a durable managed workflow."""
+
+    @property
+    def provider(self) -> str: ...
+
+    @property
+    def provider_args(self) -> tuple[str, ...]: ...
+
+    @property
+    def auto_approve(self) -> bool: ...
+
+    @property
+    def sandbox_config(self) -> SandboxConfig: ...
+
+    @property
+    def scratch_root(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
+
+    def validate_selection(
+        self,
+        *,
+        provider: str,
+        model: str | None,
+        reasoning_effort: str | None,
+        api_base: str | None,
+    ) -> None: ...
+
+    def validate_launch(
+        self,
+        *,
+        backend: str,
+        enforced: bool,
+        provider_executable: str | None,
+        runtime_version: str | None,
+        policy_schema_version: int | None,
+        policy_hash: str | None,
+        policy_path: str | None,
+        environment: Mapping[str, str],
+    ) -> None: ...
+
+
 @dataclass
 class SpawnRequest:
     """Request for spawning an agent."""
@@ -48,6 +93,7 @@ class SpawnRequest:
     parent_session_id: str
     project_id: str
     _: KW_ONLY
+    managed_runtime_profile: ManagedRuntimeProfile | None = None
     project_path: str | None = None
     agent_run_id: str | None = None
     workflow: str | None = None
@@ -74,6 +120,8 @@ class SpawnRequest:
     reasoning_required: bool = False
     reasoning_status: str = "not_requested"
     reasoning_message: str | None = None
+    auto_approve: bool = True
+    provider_args: tuple[str, ...] = ()
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
     sandbox_env: dict[str, str] | None = None
