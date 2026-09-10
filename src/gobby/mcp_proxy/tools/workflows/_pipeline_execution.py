@@ -122,6 +122,13 @@ class PipelineExecutor(Protocol):
     async def reject(self, token: str, rejected_by: str | None = None) -> PipelineExecution: ...
 
 
+class AskDaemonRecoveryService(Protocol):
+    async def recover_daemon_execution(self, run_id: str, *, project_id: str) -> bool: ...
+
+
+AskServiceResolver = Callable[[str], AskDaemonRecoveryService | None]
+
+
 def _register_background_task(execution_id: str, task: asyncio.Task[None]) -> None:
     _background_tasks.add(task)
     _background_tasks_by_execution[execution_id] = task
@@ -615,6 +622,7 @@ async def resume_interrupted_pipelines(
     project_id: str | None = None,
     *,
     run_db: RunDb | None = None,
+    ask_service_resolver: AskServiceResolver | None = None,
 ) -> list[str]:
     """Resume pipelines that were running when the daemon last stopped.
 
@@ -636,7 +644,7 @@ async def resume_interrupted_pipelines(
     """
     from gobby.workflows.pipeline_state import ExecutionStatus
 
-    running_executions: list[Any] = []
+    recoverable_executions: list[Any] = []
     offset = 0
     page_size = 100
     while True:
@@ -647,28 +655,66 @@ async def resume_interrupted_pipelines(
             limit=page_size,
             offset=offset,
         )
-        running_executions.extend(running)
+        recoverable_executions.extend(running)
         offset += len(running)
         if len(running) < page_size:
             break
 
-    resumed: list[str] = []
-    for execution in running_executions:
-        try:
-            if execution.pipeline_name == "native-ask":
-                from gobby.ask.pipeline import parse_ask_pipeline
+    if ask_service_resolver is not None:
+        offset = 0
+        while True:
+            pending = await _run_sync_db(
+                run_db,
+                execution_manager.list_executions,
+                status=ExecutionStatus.PENDING,
+                limit=page_size,
+                offset=offset,
+            )
+            recoverable_executions.extend(
+                execution for execution in pending if execution.pipeline_name == "native-ask"
+            )
+            offset += len(pending)
+            if len(pending) < page_size:
+                break
 
-                definition = execution.definition_json
-                if isinstance(definition, str):
-                    definition = json.loads(definition)
-                if not isinstance(definition, dict):
-                    raise ValueError("native Ask execution has no persisted definition")
-                pipeline = parse_ask_pipeline(definition)
-            else:
-                pipeline = await loader.load_pipeline(
-                    execution.pipeline_name,
-                    project_path=execution.project_id,
+    resumed: list[str] = []
+    for execution in recoverable_executions:
+        if execution.pipeline_name == "native-ask":
+            if ask_service_resolver is None:
+                logger.warning(
+                    "Cannot recover native Ask execution %s without AskService",
+                    execution.id,
                 )
+                continue
+            ask_service = ask_service_resolver(execution.project_id)
+            if ask_service is None:
+                logger.warning(
+                    "Cannot recover native Ask execution %s for project %s: service unavailable",
+                    execution.id,
+                    execution.project_id,
+                )
+                continue
+            try:
+                claimed = await ask_service.recover_daemon_execution(
+                    execution.id,
+                    project_id=execution.project_id,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Cannot recover native Ask execution %s: %s",
+                    execution.id,
+                    error,
+                )
+                continue
+            if claimed:
+                resumed.append(execution.id)
+                logger.info("Recovered native Ask execution %s", execution.id)
+            continue
+        try:
+            pipeline = await loader.load_pipeline(
+                execution.pipeline_name,
+                project_path=execution.project_id,
+            )
         except Exception as e:
             logger.warning(
                 "Cannot load pipeline '%s' for execution %s — will be interrupted: %s",

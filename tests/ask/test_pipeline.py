@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,14 +17,15 @@ from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.claims import AnswerDraft, ReviewClaimVerdict, ReviewerResult, canonical_hash
 from gobby.ask.contracts import AskRequest, AskRunRecord, ProfileSnapshot
 from gobby.ask.evidence_runtime import PreparedAskSnapshot
-from gobby.ask.pipeline import ASK_PIPELINE_STEPS, parse_ask_pipeline
 from gobby.ask.permissions import AskAgentStage, AskRuntimeProfile
+from gobby.ask.pipeline import ASK_PIPELINE_STEPS, parse_ask_pipeline
 from gobby.ask.storage import AskRunStorage
 from gobby.ask.validation import EvidenceManifest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.utils.session_context import reset_current_agent_run_id, set_current_agent_run_id
 from gobby.workflows.pipeline_executor import PipelineExecutor
+from gobby.workflows.pipeline_state import ExecutionStatus
 from gobby.workflows.templates import TemplateEngine
 from tests.ask.test_validation import _valid_case
 
@@ -514,3 +517,123 @@ async def test_native_investigation_review_and_single_repair(
     assert published_evidence["records"][-1]["invocation_id"] == (
         f"invocation-{len(admission.queries)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_publication_cannot_expose_completed_answer(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ask import publication as publication_module
+    from gobby.ask import stage_runtime as stage_runtime_module
+    from gobby.ask.service import AskService
+    from gobby.ask.stages import AskStageStore
+
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    pipeline_path = (
+        Path(__file__).parents[2] / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+    )
+    pipeline = parse_ask_pipeline(yaml.safe_load(pipeline_path.read_text()))
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=pipeline.model_dump(mode="json"),
+    )
+    events: list[str] = []
+    snapshots = _SnapshotManager(project_id, tmp_path)
+    admissions: list[_EvidenceAdmission] = []
+
+    def evidence_factory(
+        record: AskRunRecord,
+        _snapshot: PreparedAskSnapshot,
+        _artifacts: AskArtifactStore,
+    ) -> _EvidenceAdmission:
+        _draft, evidence, _blobs, _review = _valid_case(
+            run_id=record.run_id,
+            project_id=project_id,
+        )
+        admission = _EvidenceAdmission(evidence)
+        admissions.append(admission)
+        return admission
+
+    agents = _NativeAgents(events)
+    permissions = _PermissionStore(events, project_id)
+    proxy = _AskToolProxy()
+    executor = PipelineExecutor(
+        db=temp_db,
+        execution_manager=manager,
+        llm_service=object(),
+        template_engine=TemplateEngine(),
+        tool_proxy_getter=lambda: proxy,
+    )
+    service = AskService(
+        storage=storage,
+        stages=AskStageStore(manager),
+        snapshot_manager=snapshots,
+        agents=agents,
+        permissions=permissions,
+        pipeline_executor=executor,
+        state_root=tmp_path / "state",
+        evidence_factory=evidence_factory,
+        evidence_manifest_factory=lambda _record, _snapshot, _artifacts: admissions[-1].manifest(),
+    )
+    proxy.service = service
+    agents.service = service
+    write_started = threading.Event()
+    release_write = threading.Event()
+    producer_finished = threading.Event()
+    original_write = publication_module._write_file
+    original_publish = stage_runtime_module.publish_answer
+
+    def stalled_write(path: Path, payload: bytes) -> None:
+        if not write_started.is_set():
+            write_started.set()
+            assert release_write.wait(timeout=10)
+        original_write(path, payload)
+
+    def tracked_publish(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return original_publish(*args, **kwargs)
+        finally:
+            producer_finished.set()
+
+    monkeypatch.setattr(publication_module, "_write_file", stalled_write)
+    monkeypatch.setattr(stage_runtime_module, "publish_answer", tracked_publish)
+    started = await service.start(
+        AskRequest(
+            question="What does alpha return?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        project_root=tmp_path,
+        caller_session_id="caller-session",
+    )
+    assert await asyncio.to_thread(write_started.wait, 10)
+    producer = service._tasks[started.run_id]
+
+    cancel_task = asyncio.create_task(
+        service.cancel(
+            started.run_id,
+            project_id=project_id,
+            caller_session_id="caller-session",
+        )
+    )
+    await asyncio.sleep(0)
+    cancelled_execution = manager.get_execution(started.run_id)
+    assert cancelled_execution is not None
+    assert cancelled_execution.status is ExecutionStatus.CANCELLED
+    release_write.set()
+    result = await asyncio.wait_for(cancel_task, timeout=10)
+
+    assert result.status == ExecutionStatus.CANCELLED.value
+    assert producer.done()
+    assert producer_finished.is_set()
+    assert service.stage_runtime.resources == {}
+    with pytest.raises(ValueError, match="no completed publication"):
+        service.publication_root(started.run_id, project_id=project_id)
+    assert not (tmp_path / "state" / project_id / started.run_id / "publication").exists()

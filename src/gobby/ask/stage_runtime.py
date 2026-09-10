@@ -27,7 +27,7 @@ from gobby.ask.evidence_runtime import (
 )
 from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime
 from gobby.ask.publication import PublicationError, publish_answer
-from gobby.ask.stages import AskAttemptCheckpoint, AskStage, AskStageStore
+from gobby.ask.stages import AskAttemptCheckpoint, AskOrchestrationState, AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
 from gobby.ask.validation import (
     ClaimValidationReport,
@@ -48,6 +48,16 @@ RepairTimeRemains = Callable[[datetime], bool]
 class _RunResources:
     snapshot: PreparedAskSnapshot
     artifacts: AskArtifactStore
+
+
+async def _owned_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        with contextlib.suppress(BaseException):
+            await asyncio.shield(task)
+        raise
 
 
 class AskStageRuntime:
@@ -253,10 +263,17 @@ class AskStageRuntime:
             codes = ", ".join(item.code for item in review.diagnostics)
             raise PublicationError(f"mandatory Ask review failed identity validation: {codes}")
 
-        def check_deadline() -> None:
+        def check_publication_authority() -> None:
             self.remaining_seconds(record.binding.deadline_at)
+            execution = self.storage.manager.get_execution(record.run_id)
+            if execution is None or execution.project_id != record.binding.project_id:
+                raise PublicationError("Ask publication execution identity changed")
+            if execution.status not in {ExecutionStatus.PENDING, ExecutionStatus.RUNNING}:
+                raise PublicationError(
+                    f"Ask publication is not authorized from {execution.status.value}"
+                )
 
-        publication = await asyncio.to_thread(
+        publication = await _owned_thread(
             publish_answer,
             resources.artifacts,
             draft,
@@ -271,7 +288,7 @@ class AskStageRuntime:
             },
             tool_identities=state.tool_identities,
             attempt_history=[item.model_dump(mode="json") for item in state.attempts],
-            deadline_check=check_deadline,
+            deadline_check=check_publication_authority,
         )
         publication_body = {
             "root": str(publication.root),
@@ -621,7 +638,7 @@ class AskStageRuntime:
             storage=self.storage,
         )
 
-    def _state(self, run_id: str) -> Any:
+    def _state(self, run_id: str) -> AskOrchestrationState:
         state = self.stages.get(run_id)
         if state is None:
             raise RuntimeError(f"Ask orchestration state not found: {run_id}")

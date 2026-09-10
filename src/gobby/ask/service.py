@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from gobby.ask.agents import AskAgentRuntime
 from gobby.ask.artifacts import AskArtifactStore
@@ -86,6 +87,7 @@ class AskService:
         self.state_root = state_root
         self.fault_injector = fault_injector
         self.now = now or (lambda: datetime.now(UTC))
+        self._restart_owner_id = str(uuid4())
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self.stage_runtime = AskStageRuntime(
             storage=storage,
@@ -170,6 +172,25 @@ class AskService:
         )
         self._ensure_task(record, pipeline, inputs, original_caller)
         return await asyncio.to_thread(self._result, record)
+
+    async def recover_daemon_execution(self, run_id: str, *, project_id: str) -> bool:
+        """Adopt one native Ask run left pending or running by a prior daemon."""
+        record = self._record(run_id, project_id)
+        inputs = await asyncio.to_thread(self.storage.execution_inputs, run_id)
+        original_caller = inputs.get("caller_session_id")
+        if not isinstance(original_caller, str) or not original_caller:
+            raise RuntimeError("Ask execution context has no immutable caller session")
+        pipeline = self._pipeline(run_id)
+        claimed = await asyncio.to_thread(
+            self.storage.claim_restart,
+            run_id,
+            project_id=project_id,
+            owner_id=self._restart_owner_id,
+        )
+        if not claimed:
+            return False
+        self._ensure_task(record, pipeline, inputs, original_caller)
+        return True
 
     async def cancel(
         self,

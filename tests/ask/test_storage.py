@@ -7,8 +7,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.ask.contracts import AskRequest, EvidenceReference, ProfileSnapshot, RetrievalMode
+from gobby.ask.pipeline import parse_ask_pipeline
+from gobby.ask.stages import AskStage, AskStageStore
 from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -24,6 +27,51 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
         definition_updated_at="2026-09-08T12:00:00+00:00",
         effective={"name": identifier, "provider": "codex", "model": "gpt-test"},
     )
+
+
+def test_orchestration_checkpoints_do_not_write_executor_step_outputs(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    pipeline_path = (
+        Path(__file__).parents[2] / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+    )
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=parse_ask_pipeline(yaml.safe_load(pipeline_path.read_text())).model_dump(
+            mode="json"
+        ),
+    )
+    record = storage.start(
+        AskRequest(
+            question="Who owns declared pipeline step output?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        tmp_path,
+    )
+    stages = AskStageStore(manager)
+
+    stages.initialize(record)
+    stages.checkpoint(
+        record.run_id,
+        stage=AskStage.SEED_QUERIES,
+        boundary_id="seed:complete",
+    )
+
+    step_rows = manager.get_steps_for_execution(record.run_id)
+    assert step_rows == []
+    execution = manager.get_execution(record.run_id)
+    assert execution is not None
+    inputs = json.loads(execution.inputs_json or "{}")
+    assert inputs["ask"]["runtime"]["orchestration"]["run_id"] == record.run_id
+    assert stages.step_output(record.run_id, "seed")["run_id"] == record.run_id
 
 
 def test_pinned_idempotent_run_persistence(

@@ -26,6 +26,7 @@ from gobby.ask.contracts import (
 from gobby.storage.hub.operation_deadline import database_operation_deadline
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.agent_resolver import resolve_agent_with_row
+from gobby.workflows.pipeline_state import ExecutionStatus
 
 
 def _canonical_json(value: object) -> str:
@@ -277,6 +278,55 @@ class AskRunStorage:
             if document.get(key) != context.get(key):
                 raise RuntimeError("Ask executor inputs differ from immutable context")
         return document
+
+    def claim_restart(self, run_id: str, *, project_id: str, owner_id: str) -> bool:
+        """Claim one pending/running native Ask row for this daemon instance."""
+        with self.manager.db.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT status, inputs_json, project_id FROM pipeline_executions
+                WHERE id = %s AND project_id = %s AND pipeline_name = %s
+                FOR UPDATE
+                """,
+                (run_id, project_id, self.pipeline_name),
+            ).fetchone()
+            if row is None or (
+                self.manager.project_id is not None
+                and str(row["project_id"]) != self.manager.project_id
+            ):
+                raise ValueError(f"Ask run not found: {run_id}")
+            status = ExecutionStatus(str(row["status"]))
+            if status not in {ExecutionStatus.PENDING, ExecutionStatus.RUNNING}:
+                raise ValueError(f"Ask run cannot be recovered from {status.value}")
+            document = self._decode_document(row["inputs_json"])
+            ask_inputs = self._narrow_ask(document)
+            context = ask_inputs.get("execution_context")
+            if not isinstance(context, dict):
+                raise RuntimeError("Ask execution context is not bound")
+            for key in ("run_id", "project_id", "project_root", "caller_session_id"):
+                if document.get(key) != context.get(key):
+                    raise RuntimeError("Ask executor inputs differ from immutable context")
+            runtime = self._runtime(ask_inputs)
+            existing = runtime.get("restart_claim")
+            if existing is not None and not isinstance(existing, dict):
+                raise RuntimeError("Ask restart claim is invalid")
+            if isinstance(existing, dict) and existing.get("owner_id") == owner_id:
+                return False
+            runtime["restart_claim"] = {
+                "owner_id": owner_id,
+                "execution_status": status.value,
+                "claimed_at": datetime.now(UTC).isoformat(),
+            }
+            ask_inputs["runtime"] = runtime
+            document["ask"] = ask_inputs
+            connection.execute(
+                """
+                UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (_canonical_json(document), run_id),
+            )
+        return True
 
     def get(self, run_id: str) -> AskRunRecord | None:
         execution = self.manager.get_execution(run_id)
