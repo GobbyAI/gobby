@@ -107,6 +107,8 @@ class AskStepCheckpoint(BaseModel):
 
     schema_version: int = 1
     run_id: str
+    status: str
+    current_stage: AskStage
     answer_outcome: str | None = None
     typed_error: AskTypedError | None = None
     attempts: tuple[AskAttemptCheckpoint, ...] = ()
@@ -515,6 +517,8 @@ class AskStageStore:
             step_id = self._step_for_state(state)
             checkpoint = AskStepCheckpoint(
                 run_id=state.run_id,
+                status=state.status,
+                current_stage=state.current_stage,
                 answer_outcome=state.answer_outcome,
                 typed_error=state.typed_error,
                 attempts=state.attempts,

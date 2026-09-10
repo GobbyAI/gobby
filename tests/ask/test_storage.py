@@ -8,10 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from gobby.ask.contracts import AskRequest, ProfileSnapshot, RetrievalMode
+from gobby.ask.contracts import AskRequest, EvidenceReference, ProfileSnapshot, RetrievalMode
 from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.workflows.pipeline_state import ExecutionStatus
 
 pytestmark = pytest.mark.unit
 
@@ -198,3 +199,82 @@ def test_start_captures_deadline_before_resolution(
 
     assert events == ["admitted", "commit", "investigator", "reviewer"]
     assert record.binding.deadline_at == datetime(2026, 9, 8, 12, 10, tzinfo=UTC)
+
+
+def test_runtime_metadata_survives_executor_outputs_and_concurrent_evidence(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+    )
+    record = storage.start(
+        AskRequest(
+            question="Does executor output replacement erase Ask runtime state?",
+            project_id=project_id,
+            investigator_profile="investigator",
+            reviewer_profile="reviewer",
+        ),
+        tmp_path,
+    )
+    inputs = storage.bind_execution_context(
+        record.run_id,
+        project_root=tmp_path,
+        caller_session_id="caller-session",
+    )
+    assert inputs["run_id"] == record.run_id
+    assert storage.execution_inputs(record.run_id) == inputs
+
+    lifecycle = {
+        "kind": "snapshot-lifecycle",
+        "project_id": project_id,
+        "run_id": record.run_id,
+        "sha256": "f" * 64,
+    }
+    storage.publish_snapshot_generation(
+        record.run_id,
+        generation=1,
+        lifecycle_artifact=lifecycle,
+        expected_previous_generation=None,
+        deadline_at=record.binding.deadline_at,
+    )
+
+    def append(index: int) -> None:
+        storage.append_evidence_reference(
+            record.run_id,
+            EvidenceReference(
+                invocation_id=f"invocation-{index}",
+                operation="read",
+                status="succeeded",
+                invocation_artifact={"kind": "invocation", "index": index},
+                result_artifact={"kind": "result", "index": index},
+                request_hash=f"{index:064x}",
+                response_hash=f"{index + 10:064x}",
+                snapshot_inventory_digest="c" * 64,
+            ),
+            deadline_at=record.binding.deadline_at,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(append, (1, 2)))
+
+    manager.update_execution_status(
+        execution_id=record.run_id,
+        status=ExecutionStatus.COMPLETED,
+        outputs_json=json.dumps({"result": {"status": "completed"}}),
+    )
+
+    generation = storage.get_snapshot_generation(record.run_id)
+    assert generation is not None and generation.lifecycle_artifact == lifecycle
+    assert {item.invocation_id for item in storage.evidence_references(record.run_id)} == {
+        "invocation-1",
+        "invocation-2",
+    }
+    execution = manager.get_execution(record.run_id)
+    assert execution is not None
+    assert json.loads(execution.outputs_json or "{}") == {"result": {"status": "completed"}}

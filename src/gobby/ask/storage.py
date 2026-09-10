@@ -202,6 +202,7 @@ class AskRunStorage:
                     "binding": binding.model_dump(mode="json"),
                     "investigator": investigator.model_dump(mode="json"),
                     "reviewer": reviewer.model_dump(mode="json"),
+                    "runtime": {},
                 }
                 execution = self.manager.create_execution(
                     pipeline_name=self.pipeline_name,
@@ -218,6 +219,64 @@ class AskRunStorage:
                     investigator=investigator,
                     reviewer=reviewer,
                 )
+
+    def bind_execution_context(
+        self,
+        run_id: str,
+        *,
+        project_root: Path,
+        caller_session_id: str,
+    ) -> dict[str, Any]:
+        """Bind the executor inputs that must survive detached restart recovery."""
+        root = str(project_root.resolve())
+        with self.manager.db.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT inputs_json, project_id FROM pipeline_executions
+                WHERE id = %s AND pipeline_name = %s
+                FOR UPDATE
+                """,
+                (run_id, self.pipeline_name),
+            ).fetchone()
+            if row is None or (
+                self.manager.project_id is not None
+                and str(row["project_id"]) != self.manager.project_id
+            ):
+                raise ValueError(f"Ask run not found: {run_id}")
+            document = self._decode_document(row["inputs_json"])
+            ask_inputs = self._narrow_ask(document)
+            context = {
+                "run_id": run_id,
+                "project_id": str(row["project_id"]),
+                "project_root": root,
+                "caller_session_id": caller_session_id,
+            }
+            existing = ask_inputs.get("execution_context")
+            if existing is not None and existing != context:
+                raise ValueError("Ask execution context is immutable")
+            ask_inputs["execution_context"] = context
+            document.update(context)
+            document["ask"] = ask_inputs
+            connection.execute(
+                "UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW() WHERE id = %s",
+                (_canonical_json(document), run_id),
+            )
+        return document
+
+    def execution_inputs(self, run_id: str) -> dict[str, Any]:
+        """Return the complete persisted inputs supplied to PipelineExecutor."""
+        execution = self.manager.get_execution(run_id)
+        if execution is None:
+            raise ValueError(f"Ask run not found: {run_id}")
+        document = self._decode_document(execution.inputs_json)
+        ask_inputs = self._narrow_ask(document)
+        context = ask_inputs.get("execution_context")
+        if not isinstance(context, dict):
+            raise RuntimeError("Ask execution context is not bound")
+        for key in ("run_id", "project_id", "project_root", "caller_session_id"):
+            if document.get(key) != context.get(key):
+                raise RuntimeError("Ask executor inputs differ from immutable context")
+        return document
 
     def get(self, run_id: str) -> AskRunRecord | None:
         execution = self.manager.get_execution(run_id)
@@ -302,7 +361,7 @@ class AskRunStorage:
         ):
             row = connection.execute(
                 """
-                SELECT inputs_json, outputs_json, project_id
+                SELECT inputs_json, project_id
                 FROM pipeline_executions
                 WHERE id = %s AND pipeline_name = %s
                 FOR UPDATE
@@ -318,14 +377,10 @@ class AskRunStorage:
                 lifecycle_artifact.get("run_id") != run_id
             ):
                 raise ValueError("Ask lifecycle artifact does not belong to this run")
-            self._decode_inputs(row["inputs_json"])
-            outputs = json.loads(row["outputs_json"] or "{}")
-            if not isinstance(outputs, dict):
-                raise RuntimeError(f"invalid pipeline outputs for Ask run {run_id}")
-            ask_output = outputs.setdefault("ask", {})
-            if not isinstance(ask_output, dict):
-                raise RuntimeError(f"invalid Ask outputs for run {run_id}")
-            current_body = ask_output.get("snapshot")
+            document = self._decode_document(row["inputs_json"])
+            ask_inputs = self._narrow_ask(document)
+            runtime = self._runtime(ask_inputs)
+            current_body = runtime.get("snapshot")
             current = (
                 SnapshotGeneration.model_validate(current_body)
                 if current_body is not None
@@ -337,10 +392,12 @@ class AskRunStorage:
             expected_generation = 1 if current_generation is None else current_generation + 1
             if generation != expected_generation:
                 raise ValueError("Ask snapshot lifecycle generation must advance exactly once")
-            ask_output["snapshot"] = candidate.model_dump(mode="json")
+            runtime["snapshot"] = candidate.model_dump(mode="json")
+            ask_inputs["runtime"] = runtime
+            document["ask"] = ask_inputs
             connection.execute(
-                "UPDATE pipeline_executions SET outputs_json = %s, updated_at = NOW() WHERE id = %s",
-                (_canonical_json(outputs), run_id),
+                "UPDATE pipeline_executions SET inputs_json = %s, updated_at = NOW() WHERE id = %s",
+                (_canonical_json(document), run_id),
             )
         return candidate
 
@@ -348,13 +405,11 @@ class AskRunStorage:
         execution = self.manager.get_execution(run_id)
         if execution is None:
             return None
-        outputs = json.loads(execution.outputs_json or "{}")
-        if not isinstance(outputs, dict):
-            raise RuntimeError(f"invalid pipeline outputs for Ask run {run_id}")
-        ask_output = outputs.get("ask")
-        if not isinstance(ask_output, dict) or ask_output.get("snapshot") is None:
+        document = self._decode_document(execution.inputs_json)
+        runtime = self._runtime(self._narrow_ask(document))
+        if runtime.get("snapshot") is None:
             return None
-        return SnapshotGeneration.model_validate(ask_output["snapshot"])
+        return SnapshotGeneration.model_validate(runtime["snapshot"])
 
     def append_evidence_reference(
         self,
@@ -377,7 +432,7 @@ class AskRunStorage:
             ):
                 row = connection.execute(
                     """
-                    SELECT outputs_json, project_id FROM pipeline_executions
+                    SELECT inputs_json, project_id FROM pipeline_executions
                     WHERE id = %s AND pipeline_name = %s
                     FOR UPDATE
                     """,
@@ -388,13 +443,10 @@ class AskRunStorage:
                     and str(row["project_id"]) != self.manager.project_id
                 ):
                     raise ValueError(f"Ask run not found: {run_id}")
-                outputs = json.loads(row["outputs_json"] or "{}")
-                if not isinstance(outputs, dict):
-                    raise RuntimeError(f"invalid pipeline outputs for Ask run {run_id}")
-                ask_output = outputs.setdefault("ask", {})
-                if not isinstance(ask_output, dict):
-                    raise RuntimeError(f"invalid Ask outputs for run {run_id}")
-                evidence = ask_output.setdefault("evidence", [])
+                document = self._decode_document(row["inputs_json"])
+                ask_inputs = self._narrow_ask(document)
+                runtime = self._runtime(ask_inputs)
+                evidence = runtime.setdefault("evidence", [])
                 if not isinstance(evidence, list):
                     raise RuntimeError(f"invalid Ask evidence checkpoint for run {run_id}")
                 body = reference.model_dump(mode="json")
@@ -402,16 +454,29 @@ class AskRunStorage:
                     item.get("invocation_id") == reference.invocation_id for item in evidence
                 ):
                     evidence.append(body)
+                    ask_inputs["runtime"] = runtime
+                    document["ask"] = ask_inputs
                     connection.execute(
                         """
                         UPDATE pipeline_executions
-                        SET outputs_json = %s, updated_at = NOW()
+                        SET inputs_json = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
-                        (_canonical_json(outputs), run_id),
+                        (_canonical_json(document), run_id),
                     )
         except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable) as error:
             raise TimeoutError("Ask evidence checkpoint deadline exceeded") from error
+
+    def evidence_references(self, run_id: str) -> list[EvidenceReference]:
+        execution = self.manager.get_execution(run_id)
+        if execution is None:
+            return []
+        document = self._decode_document(execution.inputs_json)
+        runtime = self._runtime(self._narrow_ask(document))
+        raw = runtime.get("evidence", [])
+        if not isinstance(raw, list):
+            raise RuntimeError("invalid persisted Ask evidence references")
+        return [EvidenceReference.model_validate(item) for item in raw]
 
     def _resolve_commit(
         self, project_root: Path, commit_ref: str, *, timeout: float
@@ -471,14 +536,28 @@ class AskRunStorage:
 
     @classmethod
     def _decode_inputs(cls, inputs_json: str | None) -> dict[str, Any]:
-        document = json.loads(inputs_json or "{}")
+        document = cls._decode_document(inputs_json)
         return cls._narrow_ask(document)
+
+    @staticmethod
+    def _decode_document(inputs_json: str | None) -> dict[str, Any]:
+        document = json.loads(inputs_json or "{}")
+        if not isinstance(document, dict):
+            raise RuntimeError("pipeline execution inputs are invalid")
+        return document
 
     @staticmethod
     def _narrow_ask(document: object) -> dict[str, Any]:
         if not isinstance(document, dict) or not isinstance(document.get("ask"), dict):
             raise RuntimeError("pipeline execution does not contain an Ask start checkpoint")
         return dict(document["ask"])
+
+    @staticmethod
+    def _runtime(ask_inputs: dict[str, Any]) -> dict[str, Any]:
+        runtime = ask_inputs.get("runtime", {})
+        if not isinstance(runtime, dict):
+            raise RuntimeError("Ask runtime metadata is invalid")
+        return dict(runtime)
 
     @staticmethod
     def _record_from_inputs(run_id: str, inputs: dict[str, Any]) -> AskRunRecord:

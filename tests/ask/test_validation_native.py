@@ -145,12 +145,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         )
         metadata_response = await admission.query("read", {"kind": "commit_metadata"})
 
-        execution = storage.manager.get_execution(record.run_id)
-        assert execution is not None
-        outputs = json.loads(execution.outputs_json or "{}")
-        references = tuple(
-            EvidenceReference.model_validate(value) for value in outputs["ask"]["evidence"]
-        )
+        references = tuple(storage.evidence_references(record.run_id))
         responses = (source_response, metadata_response)
         assert len(references) == len(responses) == 2
         assert len({reference.invocation_id for reference in references}) == 2

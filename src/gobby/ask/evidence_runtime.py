@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -243,14 +242,7 @@ class AskEvidenceRuntime:
 
 
 def evidence_references(storage: AskRunStorage, run_id: str) -> list[EvidenceReference]:
-    execution = storage.manager.get_execution(run_id)
-    if execution is None:
-        return []
-    outputs = json.loads(execution.outputs_json or "{}")
-    raw = outputs.get("ask", {}).get("evidence", []) if isinstance(outputs, dict) else []
-    if not isinstance(raw, list):
-        raise RuntimeError("invalid persisted Ask evidence references")
-    return [EvidenceReference.model_validate(item) for item in raw]
+    return storage.evidence_references(run_id)
 
 
 def build_evidence_manifest(

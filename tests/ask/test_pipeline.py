@@ -92,9 +92,7 @@ class _SnapshotManager:
             },
         )
 
-    async def recover_async(
-        self, *, run_id: str, artifacts: AskArtifactStore
-    ) -> _PreparedSnapshot:
+    async def recover_async(self, *, run_id: str, artifacts: AskArtifactStore) -> _PreparedSnapshot:
         del artifacts
         evidence = self.by_run[run_id]
         return _PreparedSnapshot(
@@ -348,7 +346,7 @@ async def test_native_investigation_review_and_single_repair(
     tmp_path: Path,
 ) -> None:
     try:
-        from gobby.ask.service import AskService
+        from gobby.ask.service import AskFaultInjected, AskService
         from gobby.ask.stages import AskStageStore
     except ModuleNotFoundError:
         raise NotImplementedError("native Ask orchestration is not implemented") from None
@@ -356,8 +354,7 @@ async def test_native_investigation_review_and_single_repair(
     project_id = str(sample_project["id"])
     manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
     pipeline_path = (
-        Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+        Path(__file__).parents[2] / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
     )
     pipeline = parse_ask_pipeline(yaml.safe_load(pipeline_path.read_text()))
     storage = AskRunStorage(
@@ -393,6 +390,14 @@ async def test_native_investigation_review_and_single_repair(
     agents = _NativeAgents(events)
     permissions = _PermissionStore(events, project_id)
     proxy = _AskToolProxy()
+    injected_boundaries = {"investigator:0:submitted", "publish"}
+
+    def inject_fault(boundary_id: str) -> None:
+        fault_key = "publish" if boundary_id.startswith("publish:") else boundary_id
+        if fault_key in injected_boundaries:
+            injected_boundaries.remove(fault_key)
+            raise AskFaultInjected(boundary_id)
+
     executor = PipelineExecutor(
         db=temp_db,
         execution_manager=manager,
@@ -410,6 +415,7 @@ async def test_native_investigation_review_and_single_repair(
         state_root=tmp_path / "state",
         evidence_factory=evidence_factory,
         evidence_manifest_factory=manifest_factory,
+        fault_injector=inject_fault,
     )
     proxy.service = service
     agents.service = service
@@ -424,6 +430,34 @@ async def test_native_investigation_review_and_single_repair(
         request,
         project_root=tmp_path,
         caller_session_id="caller-session",
+    )
+    interrupted = await service.wait(started.run_id, project_id=project_id, timeout=10)
+    assert interrupted.status == "failed"
+    assert agents.launches == ["investigator-0-1"]
+    before_resume = manager.get_steps_for_execution(started.run_id)
+    preserved_outputs = {
+        step.step_id: step.output_json for step in before_resume if step.status.value == "completed"
+    }
+
+    await service.resume(
+        started.run_id,
+        project_id=project_id,
+        caller_session_id="resume-operator",
+    )
+    publication_interrupted = await service.wait(
+        started.run_id,
+        project_id=project_id,
+        timeout=10,
+    )
+    assert publication_interrupted.status == "failed"
+    assert publication_interrupted.artifact_manifest is not None
+    publication_root = Path(publication_interrupted.artifact_manifest["root"])
+    manifest_before_resume = (publication_root / "manifest.json").read_bytes()
+
+    await service.resume(
+        started.run_id,
+        project_id=project_id,
+        caller_session_id="second-resume-operator",
     )
     result = await service.wait(started.run_id, project_id=project_id, timeout=10)
 
@@ -469,11 +503,13 @@ async def test_native_investigation_review_and_single_repair(
     steps = manager.get_steps_for_execution(result.run_id)
     assert tuple(item.step_id for item in steps) == tuple(ASK_PIPELINE_STEPS)
     assert all(item.status.value == "completed" for item in steps)
+    assert {
+        step.step_id: step.output_json for step in steps if step.step_id in preserved_outputs
+    } == preserved_outputs
 
     publication_root = Path(result.artifact_manifest["root"])
-    published_evidence = json.loads(
-        (publication_root / "evidence-manifest.json").read_text()
-    )
+    assert (publication_root / "manifest.json").read_bytes() == manifest_before_resume
+    published_evidence = json.loads((publication_root / "evidence-manifest.json").read_text())
     assert len(published_evidence["records"]) == len(admission.queries)
     assert published_evidence["records"][-1]["invocation_id"] == (
         f"invocation-{len(admission.queries)}"

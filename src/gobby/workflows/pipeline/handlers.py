@@ -52,7 +52,12 @@ async def execute_mcp_step(
         project_ref_is_fallback=True,
         db=(session_manager.db if session_manager else None),
     )
-    effective_session_id = tokens.resolved_session_id
+    # Lightweight executors without a SessionManager cannot canonicalize the
+    # already-bound caller ID. Production executors still fail closed when a
+    # configured manager cannot resolve the supplied reference.
+    effective_session_id = (
+        tokens.resolved_session_id if session_manager is not None else pipeline_session_id
+    )
     try:
         result = await tool_proxy.call_tool(
             mcp_config.server,

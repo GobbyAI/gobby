@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
+import yaml
 
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
+from gobby.ask.pipeline import parse_ask_pipeline
+from gobby.ask.stages import AskStageStore
 from gobby.ask.storage import AskRunStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.workflows.pipeline_models import PipelineDefinition
+from gobby.workflows.pipeline_state import PipelineExecution
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 pytestmark = pytest.mark.unit
 
@@ -21,6 +29,273 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
         definition_updated_at="2026-09-09T12:00:00+00:00",
         effective={"name": identifier, "provider": "claude", "model": "claude-test"},
     )
+
+
+def _pipeline_snapshot() -> dict[str, Any]:
+    path = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+    return parse_ask_pipeline(yaml.safe_load(path.read_text())).model_dump(mode="json")
+
+
+class _DelayedPipelineExecutor:
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def execute(
+        self,
+        pipeline: PipelineDefinition,
+        inputs: dict[str, Any],
+        project_id: str,
+        execution_id: str | None = None,
+        session_id: str | None = None,
+    ) -> PipelineExecution:
+        del pipeline, inputs, project_id, execution_id, session_id
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise RuntimeError("stalled pipeline escaped the Ask deadline")
+
+
+class _NoopPermissions:
+    def revoke_for_run(self, ask_run_id: str, *, reason: str) -> int:
+        del ask_run_id, reason
+        return 0
+
+
+class _NoopAgents:
+    def status(self, agent_run_id: str) -> str | None:
+        del agent_run_id
+        return None
+
+    async def cancel(self, agent_run_id: str) -> None:
+        del agent_run_id
+
+
+def test_failed_resume_claim_is_atomic_and_preserves_stage_outputs(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    from gobby.ask.recovery import AskRecoveryController
+    from gobby.ask.stages import AskStage, AskStageStore
+
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    record = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+    ).start(
+        AskRequest(
+            question="Which checkpoints survive recovery?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        tmp_path,
+    )
+    stages = AskStageStore(manager)
+    stages.initialize(record)
+    stages.checkpoint(
+        record.run_id,
+        stage=AskStage.INVESTIGATOR,
+        boundary_id="investigator:0:interrupted",
+    )
+    prepare, investigate = manager.get_steps_for_execution(record.run_id)
+    manager.update_step_execution(prepare.id, status=StepStatus.COMPLETED)
+    manager.update_step_execution(
+        investigate.id,
+        status=StepStatus.FAILED,
+        error="simulated process boundary",
+    )
+    manager.update_execution_status(record.run_id, ExecutionStatus.FAILED)
+    outputs_before = {step.step_id: step.output_json for step in (prepare, investigate)}
+
+    class Permissions:
+        def revoke_for_run(self, ask_run_id: str, *, reason: str) -> int:
+            raise AssertionError(f"resume revoked {ask_run_id}: {reason}")
+
+    class Agents:
+        def status(self, agent_run_id: str) -> str | None:
+            return None
+
+        async def cancel(self, agent_run_id: str) -> None:
+            raise AssertionError(f"resume cancelled {agent_run_id}")
+
+    controller = AskRecoveryController(
+        manager=manager,
+        stages=stages,
+        permissions=Permissions(),
+        agents=Agents(),
+    )
+    first = controller.inspect(record.run_id, project_id=project_id)
+    stale = controller.inspect(record.run_id, project_id=project_id)
+    claimed = controller.claim_resume(
+        record.run_id,
+        project_id=project_id,
+        caller_session_id="resume-operator",
+        decision=first,
+    )
+
+    assert claimed.status == ExecutionStatus.PENDING.value
+    execution = manager.get_execution(record.run_id)
+    assert execution is not None
+    assert execution.status is ExecutionStatus.PENDING
+    resumed_steps = manager.get_steps_for_execution(record.run_id)
+    assert [step.status for step in resumed_steps] == [StepStatus.COMPLETED, StepStatus.PENDING]
+    assert {step.step_id: step.output_json for step in resumed_steps} == outputs_before
+    with pytest.raises(ValueError, match="already being resumed"):
+        controller.claim_resume(
+            record.run_id,
+            project_id=project_id,
+            caller_session_id="other-operator",
+            decision=stale,
+        )
+
+    manager.update_execution_status(record.run_id, ExecutionStatus.INTERRUPTED)
+    recovered = controller.inspect(record.run_id, project_id=project_id)
+    controller.claim_resume(
+        record.run_id,
+        project_id=project_id,
+        caller_session_id="resume-operator",
+        decision=recovered,
+    )
+    reclaimed_execution = manager.get_execution(record.run_id)
+    assert reclaimed_execution is not None
+    assert reclaimed_execution.status is ExecutionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_pipeline_executor_is_cancelled_at_the_immutable_deadline(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    from gobby.ask.service import AskService
+
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=_pipeline_snapshot(),
+    )
+    executor = _DelayedPipelineExecutor()
+    service = AskService(
+        storage=storage,
+        stages=AskStageStore(manager),
+        snapshot_manager=cast(Any, object()),
+        agents=cast(Any, _NoopAgents()),
+        permissions=cast(Any, _NoopPermissions()),
+        pipeline_executor=executor,
+        state_root=tmp_path / "state",
+    )
+
+    started = await service.start(
+        AskRequest(
+            question="Does the executor honor the absolute deadline?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+            timeout_seconds=0.05,
+        ),
+        project_root=tmp_path,
+        caller_session_id="caller-session",
+    )
+    result = await service.wait(started.run_id, project_id=project_id, timeout=1)
+
+    assert result.status == ExecutionStatus.FAILED.value
+    assert result.typed_error is not None
+    assert result.typed_error["code"] == "deadline_exceeded"
+    assert executor.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_resume_validates_immutable_context_and_definition_before_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    from gobby.ask.service import AskService
+
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=_pipeline_snapshot(),
+    )
+    record = storage.start(
+        AskRequest(
+            question="Can malformed recovery state reserve the run?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        tmp_path,
+    )
+    stages = AskStageStore(manager)
+    stages.initialize(record)
+    original_inputs = storage.bind_execution_context(
+        record.run_id,
+        project_root=tmp_path,
+        caller_session_id="original-caller",
+    )
+    first_step = manager.get_steps_for_execution(record.run_id)[0]
+    manager.update_step_execution(first_step.id, status=StepStatus.FAILED)
+    manager.update_execution_status(record.run_id, ExecutionStatus.FAILED)
+    service = AskService(
+        storage=storage,
+        stages=stages,
+        snapshot_manager=cast(Any, object()),
+        agents=cast(Any, _NoopAgents()),
+        permissions=cast(Any, _NoopPermissions()),
+        pipeline_executor=_DelayedPipelineExecutor(),
+        state_root=tmp_path / "state",
+    )
+
+    malformed_inputs = json.loads(json.dumps(original_inputs))
+    malformed_inputs["caller_session_id"] = ""
+    ask_inputs = cast(dict[str, Any], malformed_inputs["ask"])
+    execution_context = cast(dict[str, Any], ask_inputs["execution_context"])
+    execution_context["caller_session_id"] = ""
+    with temp_db.transaction() as connection:
+        connection.execute(
+            "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+            (json.dumps(malformed_inputs), record.run_id),
+        )
+
+    with pytest.raises(RuntimeError, match="immutable caller session"):
+        await service.resume(
+            record.run_id,
+            project_id=project_id,
+            caller_session_id="resume-operator",
+        )
+    after_context_failure = manager.get_execution(record.run_id)
+    assert after_context_failure is not None
+    assert after_context_failure.status is ExecutionStatus.FAILED
+
+    with temp_db.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE pipeline_executions
+            SET inputs_json = %s, definition_json = %s
+            WHERE id = %s
+            """,
+            (json.dumps(original_inputs), json.dumps({"name": "native-ask"}), record.run_id),
+        )
+    with pytest.raises(ValueError):
+        await service.resume(
+            record.run_id,
+            project_id=project_id,
+            caller_session_id="resume-operator",
+        )
+    after_definition_failure = manager.get_execution(record.run_id)
+    assert after_definition_failure is not None
+    assert after_definition_failure.status is ExecutionStatus.FAILED
 
 
 @pytest.mark.asyncio

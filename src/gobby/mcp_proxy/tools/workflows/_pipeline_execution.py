@@ -655,10 +655,20 @@ async def resume_interrupted_pipelines(
     resumed: list[str] = []
     for execution in running_executions:
         try:
-            pipeline = await loader.load_pipeline(
-                execution.pipeline_name,
-                project_path=execution.project_id,
-            )
+            if execution.pipeline_name == "native-ask":
+                from gobby.ask.pipeline import parse_ask_pipeline
+
+                definition = execution.definition_json
+                if isinstance(definition, str):
+                    definition = json.loads(definition)
+                if not isinstance(definition, dict):
+                    raise ValueError("native Ask execution has no persisted definition")
+                pipeline = parse_ask_pipeline(definition)
+            else:
+                pipeline = await loader.load_pipeline(
+                    execution.pipeline_name,
+                    project_path=execution.project_id,
+                )
         except Exception as e:
             logger.warning(
                 "Cannot load pipeline '%s' for execution %s — will be interrupted: %s",

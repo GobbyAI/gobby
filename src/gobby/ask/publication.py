@@ -8,7 +8,7 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -366,8 +366,15 @@ def publish_answer(
     profiles: Mapping[str, Any],
     tool_identities: Sequence[str],
     attempt_history: Sequence[Mapping[str, Any]],
+    deadline_check: Callable[[], None] | None = None,
 ) -> PublishedAnswer:
     """Atomically publish the reviewed subset of one immutable draft version."""
+
+    def check_deadline() -> None:
+        if deadline_check is not None:
+            deadline_check()
+
+    check_deadline()
     if (
         store.run_id != draft.run_id
         or store.project_id != evidence.snapshot_binding.project_id
@@ -442,6 +449,7 @@ def publish_answer(
     manifest_bytes = canonical_json(manifest)
     target = store.run_root / "publication"
     if target.exists():
+        check_deadline()
         return _existing_publication(target, manifest_bytes)
 
     temporary = Path(tempfile.mkdtemp(prefix=".publication-", suffix=".tmp", dir=store.run_root))
@@ -450,9 +458,12 @@ def publish_answer(
         (temporary / "evidence").mkdir(mode=0o700)
         for relative, payload in files.items():
             _write_file(temporary / relative, payload)
+            check_deadline()
         _write_file(temporary / "manifest.json", manifest_bytes)
+        check_deadline()
         _fsync_directory(temporary / "evidence")
         _fsync_directory(temporary)
+        check_deadline()
         try:
             os.rename(temporary, target)
         except OSError as error:
