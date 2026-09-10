@@ -32,6 +32,16 @@ def test_parse_porcelain_v1_z_preserves_literal_and_rename_paths() -> None:
     ]
 
 
+def test_parse_porcelain_v1_z_accepts_empty_status() -> None:
+    assert parse_porcelain_v1_z("") == ()
+
+
+@pytest.mark.parametrize("output", ["\0", "\0\0", " M tracked.py\0\0", " M tracked.py"])
+def test_parse_porcelain_v1_z_rejects_empty_or_unterminated_records(output: str) -> None:
+    with pytest.raises(ValueError, match="invalid porcelain-v1 status output"):
+        parse_porcelain_v1_z(output)
+
+
 def _write_fake_git(tmp_path: Path) -> None:
     executable = tmp_path / "git"
     executable.write_text(

@@ -1,32 +1,6 @@
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
-  require-clean-tree-before-status:
-    description: "Block status transitions when working tree has uncommitted changes"
-    event: before_tool
-    enabled: true
-    priority: 31
-    when: >
-      variables.get('require_commit_before_status') and
-      tool_input.get('reason', '') not in ['already_implemented', 'obsolete', 'duplicate', 'wont_fix', 'out_of_repo'] and
-      has_target_task_dirty_files
-    effects:
-      - type: block
-        mcp_tools:
-          - "gobby-tasks:close_task"
-          - "gobby-tasks:de_escalate_task"
-          - "gobby-tasks-ops:submit_for_review"
-          - "gobby-tasks-ops:approve_review"
-          - "gobby-tasks-ops:reject_review"
-        reason: |
-          Run `git add <files>` then `git commit -m "[{{ project.name }}-#N] description"` —
-          uncommitted changes must be committed before a status change.
-          Gobby auto-detects the commit; pass commit_sha to close_task() if needed.
-          If the reported dirt is foreign-attributed after its owning session committed or
-          abandoned the work, ask that owner to call
-          `release_task_paths(task_id="#N", paths=["path/to/file"])` on gobby-tasks.
-          Only the owning session can release attribution, and dirty paths are refused.
-
   require-commit-before-status:
     description: "Block status transitions when no commit is linked to the task"
     event: before_tool

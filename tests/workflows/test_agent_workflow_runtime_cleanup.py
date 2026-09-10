@@ -36,8 +36,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_mode", ["none", "before_commit", "after_commit_admission"])
 async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
     temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    failure_mode: str,
 ) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
@@ -49,8 +52,23 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
         settled.set()
         return True
 
+    sessions = SessionManager(temp_db)
+    child = sessions.register(
+        external_id="durable-workflow-child",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    runs = LocalAgentRunManager(temp_db)
+    run = runs.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="complete workflow",
+    )
+    runs.start(run.id)
     cleanup = AgentCleanupHandler(
-        agent_run_manager=MagicMock(),
+        agent_run_manager=runs,
         db=temp_db,
         get_session_manager=lambda: None,
         get_session_coordinator=lambda: None,
@@ -64,26 +82,54 @@ async def test_workflow_completion_admits_cleanup_without_waiting_for_it(
         master_fds={},
     )
     runner = MagicMock()
-    runner.run_storage.get_by_session.return_value = SimpleNamespace(
-        id="workflow-slow-cleanup", child_session_id="child", terminal_reason=None, task_id=None
-    )
+    runner.run_storage = runs
+    runner.get_run_id_by_session.return_value = run.id
+    runner.get_run.side_effect = runs.get
     runner.agent_lifecycle_monitor = cleanup
     engine = RuleEngine(db=temp_db, runner=runner)
+    complete_run = runs.complete
+    first_commit = True
+
+    def commit(*args: Any, **kwargs: Any) -> Any:
+        nonlocal first_commit
+        first = first_commit
+        first_commit = False
+        if first and failure_mode == "before_commit":
+            raise RuntimeError("injected completion persistence failure")
+        completed = complete_run(*args, **kwargs)
+        if first and failure_mode == "after_commit_admission":
+            terminal_delivery.close_terminal_delivery_admission()
+        return completed
+
     with (
-        patch.object(cleanup, "_terminalize_successful_run_unshielded", side_effect=slow_cleanup),
+        patch.object(runs, "complete", side_effect=commit),
+        patch.object(cleanup, "post_terminal_cleanup", side_effect=slow_cleanup),
         patch("gobby.workflows.engine.enforcement.cleanup_agent_runtime_state") as clear_runtime,
         patch(
             "gobby.workflows.engine.enforcement.build_workflow_completion_notification",
             return_value=({"success": True}, "Complete"),
         ),
     ):
-        completion = asyncio.create_task(engine._complete_agent_workflow_run("child", "test", {}))
+        if failure_mode != "none":
+            with pytest.raises(RuntimeError):
+                await engine._complete_agent_workflow_run(child.id, "test", {})
+            assert not started.is_set()
+            clear_runtime.assert_not_called()
+            stored_before_retry = runs.get(run.id)
+            assert stored_before_retry is not None
+            assert stored_before_retry.status == (
+                "running" if failure_mode == "before_commit" else "success"
+            )
+            terminal_delivery.reopen_terminal_delivery_admission()
+        completion = asyncio.create_task(engine._complete_agent_workflow_run(child.id, "test", {}))
         try:
             await asyncio.wait_for(started.wait(), timeout=2)
             done, _ = await asyncio.wait({completion}, timeout=0.1)
             assert completion in done, "Workflow evaluation waited for terminal cleanup"
             assert not settled.is_set()
-            clear_runtime.assert_not_called()
+            stored = runs.get(run.id)
+            assert stored is not None
+            assert stored.status == "success"
         finally:
             release.set()
             await completion
@@ -106,6 +152,61 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
+
+
+@pytest.mark.asyncio
+async def test_persisted_exit_step_retries_failed_completion(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+    from gobby.workflows.definitions import WorkflowStep
+    from gobby.workflows.step_instances import build_step_instance
+
+    child = SessionManager(temp_db).register(
+        external_id="retry-exit-step",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    instance_manager = AgentStepInstanceManager(temp_db)
+    instance_manager.save(
+        build_step_instance(
+            AgentDefinitionBody(
+                name="retry-exit",
+                prompts={"persona": "Test", "agent": "Test"},
+                surfaces=["spawn"],
+                step_workflow=AgentStepWorkflowBody(
+                    steps=[WorkflowStep(name="terminate")],
+                    exit_condition="current_step == 'terminate'",
+                ),
+            ),
+            session_id=child.id,
+            current_step="terminate",
+            step_workflow_id=None,
+        )
+    )
+    engine = RuleEngine(db=temp_db, runner=MagicMock())
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        source=SessionSource.CODEX,
+        data={},
+        session_id=child.id,
+        timestamp=datetime.now(UTC),
+    )
+    variables: dict[str, Any] = {"step_workflow_complete": False}
+    with patch.object(
+        engine,
+        "_complete_agent_workflow_run",
+        side_effect=[RuntimeError("retry completion"), None],
+    ) as complete:
+        with pytest.raises(RuntimeError, match="retry completion"):
+            await engine._process_step_after_tool(event, child.id, variables)
+        assert variables["step_workflow_complete"] is False
+        persisted = instance_manager.get_for_session(child.id)
+        assert persisted is not None and persisted.current_step == "terminate"
+        await engine._process_step_after_tool(event, child.id, variables)
+        assert variables["step_workflow_complete"] is True
+        assert complete.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -209,7 +310,7 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
         terminal_reason="daemon_stop",
         child_session_id=CHILD_SESSION_ID,
     )
-    runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock()
+    runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock()
     engine = RuleEngine(db=temp_db, runner=runner)
 
     with patch(
@@ -219,7 +320,7 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
     ) as complete:
         await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "tech-writer-steps", {})
 
-    runner.agent_lifecycle_monitor.terminalize_successful_run.assert_not_awaited()
+    runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
     complete.assert_not_awaited()
     active = instance_manager.get_for_session(CHILD_SESSION_ID)
     assert active is not None

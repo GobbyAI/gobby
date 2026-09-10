@@ -164,9 +164,9 @@ async def shielded_terminal_delivery[T](
     return owned.result()
 
 
-async def submit_terminal_delivery(
-    run_id: str, operation: Callable[[], Coroutine[Any, Any, Any]]
-) -> None:
+async def submit_terminal_delivery[T](
+    run_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+) -> Future[T]:
     """Acknowledge tracked delivery admission without waiting for terminal cleanup.
 
     Workflow evaluation may run on another loop. Admit on the daemon loop so
@@ -174,12 +174,18 @@ async def submit_terminal_delivery(
     """
     loop = _terminal_delivery_loop or asyncio.get_running_loop()
     admitted: Future[None] = Future()
+    result: Future[T] = Future()
     context = detached_database_operation_context()
 
-    def settled(task: asyncio.Task[Any]) -> None:
+    def settled(task: asyncio.Task[T]) -> None:
         _in_flight_terminal_deliveries.pop(task, None)
-        if not task.cancelled() and (error := task.exception()) is not None:
+        if task.cancelled():
+            result.cancel()
+        elif (error := task.exception()) is not None:
+            result.set_exception(error)
             logger.error("Submitted terminal delivery failed for agent %s", run_id, exc_info=error)
+        else:
+            result.set_result(task.result())
 
     def admit() -> None:
         if not _terminal_delivery_admission_open:
@@ -204,7 +210,23 @@ async def submit_terminal_delivery(
         admit()
     else:
         loop.call_soon_threadsafe(admit)
-    await asyncio.shield(asyncio.wrap_future(admitted))
+    await _await_terminal_result(admitted)
+    return result
+
+
+async def _await_terminal_result[T](result: Future[T]) -> T:
+    wrapped = asyncio.wrap_future(result)
+    # The owned task logs failures even if cancellation removes its caller.
+    wrapped.add_done_callback(lambda future: None if future.cancelled() else future.exception())
+    return await asyncio.shield(wrapped)
+
+
+async def run_terminal_delivery[T](
+    run_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+) -> T:
+    """Await an owned operation without abandoning it when its caller is cancelled."""
+    result = await submit_terminal_delivery(run_id, operation)
+    return await _await_terminal_result(result)
 
 
 async def drain_shielded_terminal_deliveries() -> None:

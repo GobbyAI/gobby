@@ -43,7 +43,6 @@ REDIRECT_RULES = frozenset(
         "require-build-coordinator-for-gobby-build",
         "require-c-skill",
         "require-claimed-task-extra-skills",
-        "require-clean-tree-before-status",
         "require-code-index-skill",
         "require-commit-before-status",
         "require-cpp-skill",

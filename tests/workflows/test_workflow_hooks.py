@@ -346,7 +346,7 @@ class TestProjectPathResolution:
         assert all("baseline_dirty_files" not in payload for payload in persisted)
 
     @pytest.mark.asyncio
-    async def test_dirty_predicates_share_one_cached_snapshot(self) -> None:
+    async def test_close_task_skips_whole_checkout_dirty_snapshot(self) -> None:
         handler, mock_engine = _handler_with_variables(
             {
                 "baseline_dirty_files": [],
@@ -368,18 +368,14 @@ class TestProjectPathResolution:
             patch.object(handler, "_resolve_project_path", return_value="/repo"),
             patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty,
         ):
-            mock_dirty.return_value = DirtyFiles({"tracked.py"}, set())
             response = await handler._evaluate_rules(event)
 
             eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
-            assert bool(eval_context["has_dirty_files"])
-            assert bool(eval_context["has_target_task_dirty_files"])
+            assert not bool(eval_context["has_dirty_files"])
+            assert not bool(eval_context["has_target_task_dirty_files"])
 
         assert response.decision == "allow"
-        mock_dirty.assert_called_once_with(
-            "/repo",
-            timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
-        )
+        mock_dirty.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_dirty_files_uses_event_cwd_for_worktree(self, tmp_path: Path) -> None:

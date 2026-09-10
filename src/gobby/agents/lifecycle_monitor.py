@@ -25,7 +25,6 @@ from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.run_completion import closed_task_completion_result
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
@@ -33,7 +32,6 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
-from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.machine_id import require_machine_id
 
@@ -341,6 +339,19 @@ class AgentLifecycleMonitor:
             message=message,
             completion_result=completion_result,
             terminal_reason=terminal_reason,
+        )
+
+    async def complete_workflow_run(
+        self,
+        run_id: str,
+        *,
+        notify_result: dict[str, Any],
+        message: str,
+        terminal_reason: AgentRunTerminalReason | None = None,
+    ) -> bool:
+        """Await durable completion and admit resource teardown for the workflow."""
+        return await self._cleanup_handler.complete_workflow_run(
+            run_id, notify_result=notify_result, message=message, terminal_reason=terminal_reason
         )
 
     async def start(self) -> None:
@@ -759,80 +770,10 @@ class AgentLifecycleMonitor:
         return True
 
     async def check_completed_task_agents(self) -> int:
-        """Complete active task-bound runs whose authoritative task is closed."""
-        task_manager = getattr(self, "_task_manager", None)
-        if task_manager is None:
-            return 0
-
+        """Reconcile closed-task runs through the lifecycle policy owner."""
         runs = await self._run_db(self._get_active_terminal_runs)
-        handled = 0
-        for run in runs:
-            if run.task_id is None:
-                continue
-            try:
-                task = await self._run_db(task_manager.get_task, run.task_id)
-            except Exception as e:
-                logger.warning(
-                    "Bound task lookup failed for active agent run %s task_id=%s: %s",
-                    run.id,
-                    run.task_id,
-                    e,
-                )
-                continue
-            if not is_task_closed(task):
-                continue
-
-            if await self._cooperative_close_handoff_pending(run):
-                logger.debug(
-                    "Deferring closed-task completion for agent %s until its "
-                    "cooperative close-review handoff or stagnation fallback",
-                    run.id,
-                )
-                continue
-
-            task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
-            completed = await self.terminalize_successful_run(
-                run.id,
-                notify_result={
-                    "status": "success",
-                    "run_id": run.id,
-                    "task_id": run.task_id,
-                },
-                message=f"Agent {run.id} completed bound task {task_ref}",
-                completion_result=closed_task_completion_result(task, run.result),
-                terminal_reason="task_completed",
-            )
-            if completed:
-                handled += 1
-                logger.info(
-                    "Completed active agent run %s after bound task %s closed",
-                    run.id,
-                    task_ref,
-                )
-
-        return handled
-
-    async def _cooperative_close_handoff_pending(self, run: AgentRun) -> bool:
-        """Keep a close-review caller alive while it can cooperatively report."""
-        if run.task_id is None or run.child_session_id is None:
-            return False
-
-        from gobby.autonomous.progress_tracker import ProgressTracker
-        from gobby.storage.task_close_reviews import TaskCloseReviewStore
-
-        review = await self._run_db(
-            TaskCloseReviewStore(self._db).get_latest_agentic_for_task_caller,
-            task_id=run.task_id,
-            caller_session_id=run.child_session_id,
-        )
-        if review is None or (not review.active and review.status != "closed"):
-            return False
-        if review.active or review.delivered_at is None:
-            return True
-
-        return not await self._run_db(
-            ProgressTracker(self._db).is_stagnant,
-            run.child_session_id,
+        return await self._reconciliation.check_completed_task_agents(
+            runs, self._task_manager, self.terminalize_successful_run
         )
 
     @staticmethod

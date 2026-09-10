@@ -94,6 +94,33 @@ async def test_submitted_delivery_rejects_closed_admission() -> None:
 
 
 @pytest.mark.asyncio
+async def test_waiting_caller_cancellation_preserves_owned_operation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def operation() -> None:
+        started.set()
+        await release.wait()
+        raise RuntimeError("failure after caller cancellation")
+
+    caller = asyncio.create_task(
+        terminal_delivery.run_terminal_delivery("cancelled-caller", operation)
+    )
+    await started.wait()
+    caller.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+    finally:
+        release.set()
+        await terminal_delivery.drain_shielded_terminal_deliveries()
+    assert "Submitted terminal delivery failed for agent cancelled-caller" in caplog.text
+    assert "failure after caller cancellation" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_submitted_delivery_reports_background_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
