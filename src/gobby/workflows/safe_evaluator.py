@@ -499,6 +499,8 @@ def build_condition_helpers(
     Returns:
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
+    from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
+
     from .condition_helpers import (
         all_tasks_have_label,
         first_tdd_code_path,
@@ -543,6 +545,7 @@ def build_condition_helpers(
             paths, _get_variables(ctx).get("turn_written_paths")
         ),
         "shell_command_invokes_gcode": shell_command_invokes_gcode,
+        "blocks_direct_provider_launch": blocks_direct_provider_launch,
         "task_commit_project_path_allowlist_violation": (
             task_commit_project_path_allowlist_violation
         ),

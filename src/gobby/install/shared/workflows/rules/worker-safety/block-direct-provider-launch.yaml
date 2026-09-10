@@ -1,0 +1,17 @@
+tags: [default, worker-safety, enforcement, gobby]
+
+rules:
+  block-direct-provider-launch:
+    description: Block direct provider launches in all observed shell calls.
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: blocks_direct_provider_launch(event.data.get('tool_name'), tool_input)
+    effects:
+      - type: block
+        reason: >-
+          Direct provider launches bypass Gobby-managed sandbox policy, tracking,
+          and lifecycle controls. Use gobby-agents:spawn_agent; for external workspace
+          writes supply extra_write_paths and a nonblank write_paths_reason.
+          Only literal help/version and supported authentication-status commands
+          are allowed here. There is no per-command or session-variable bypass.
