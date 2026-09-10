@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import time
 from pathlib import Path
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -19,6 +22,7 @@ from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from tests.ask import native_probe_harness as harness
@@ -60,9 +64,86 @@ def _profile(identifier: str, _timeout: float) -> ProfileSnapshot:
 
 
 def _branch_gcode() -> Path:
-    executable = Path(__file__).parents[2] / "target" / "debug" / "gcode"
+    native_bin_dir = os.environ.get("GOBBY_NATIVE_BIN_DIR")
+    executable = (
+        Path(native_bin_dir) / "gcode"
+        if native_bin_dir
+        else Path(__file__).parents[2] / "target" / "debug" / "gcode"
+    )
     assert executable.is_file(), "build the branch-local gcode binary before integration"
-    return executable
+    return executable.resolve(strict=True)
+
+
+@pytest.mark.parametrize("failure_kind", ["timeout", "nonzero"])
+def test_private_parent_index_records_snapshot_failure_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    evidence_path = tmp_path / "parent-index-bootstrap.json"
+    gcode_bin = tmp_path / "gcode"
+    gcode_bin.write_bytes(b"private gcode fixture")
+    gcode_bin.chmod(0o700)
+    real_run = subprocess.run
+
+    def fail_snapshot(
+        command: list[str],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if command[0] == str(gcode_bin) and "evidence" in command:
+            if failure_kind == "timeout":
+                raise subprocess.TimeoutExpired(
+                    cmd=command,
+                    timeout=1.0,
+                    output=b"partial stdout",
+                    stderr=b"partial stderr",
+                )
+            return subprocess.CompletedProcess(
+                command,
+                17,
+                stdout=b"partial stdout",
+                stderr=b"partial stderr",
+            )
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_snapshot)
+
+    expected_error = subprocess.TimeoutExpired if failure_kind == "timeout" else RuntimeError
+    with pytest.raises(expected_error):
+        harness._provision_private_parent_index(
+            project_root=repo,
+            manager=object(),
+            database=object(),
+            session_id=UUID("00000000-0000-0000-0000-000000000001"),
+            project_id="00000000-0000-0000-0000-000000000002",
+            machine_id="00000000-0000-0000-0000-000000000003",
+            runtime_root=tmp_path / "private-parent-index",
+            gcode_bin=gcode_bin,
+            source_commit="0" * 40,
+            deadline_monotonic=time.monotonic() + 10,
+            database_scope="gobby_test_timeout_receipt",
+            evidence_path=evidence_path,
+        )
+
+    evidence = json.loads(evidence_path.read_bytes())
+    assert evidence["status"] == "failed"
+    assert evidence["gcode"] == {
+        "path": str(gcode_bin),
+        "sha256": hashlib.sha256(b"private gcode fixture").hexdigest(),
+    }
+    receipt = next(
+        command for command in evidence["commands"] if command["name"] == "snapshot_materialize"
+    )
+    assert receipt["argv"][0] == str(gcode_bin)
+    assert receipt["returncode"] == (None if failure_kind == "timeout" else 17)
+    assert receipt["stdout_sha256"] == hashlib.sha256(b"partial stdout").hexdigest()
+    assert receipt["stderr_sha256"] == hashlib.sha256(b"partial stderr").hexdigest()
+    assert receipt["error"]["error_type"] == (
+        "TimeoutExpired" if failure_kind == "timeout" else "SubprocessExitError"
+    )
 
 
 @pytest.mark.asyncio
@@ -193,8 +274,46 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     assert bootstrap["status"] == "completed"
     assert bootstrap["source_commit"] == historical_merge
     assert bootstrap["database_scope"] == database_scope
-    assert all(command["returncode"] == 0 for command in bootstrap["commands"])
+    gcode_identity = cast(dict[str, object], bootstrap["gcode"])
+    assert gcode_identity["path"] == str(gcode_bin)
+    with gcode_bin.open("rb") as stream:
+        assert gcode_identity["sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
+    assert bootstrap["credential_project_id"] == project_id
+    assert bootstrap["credential_project_path"] == str(repo.resolve())
+    assert bootstrap["checkout_root_before"] == str(repo.resolve())
+    assert bootstrap["checkout_root_during_index"] == bootstrap["seed_root"]
+    assert bootstrap["checkout_root_after"] == str(repo.resolve())
+    assert bootstrap["indexed_root"] == bootstrap["seed_root"]
+    indexed_file_count = bootstrap["indexed_file_count"]
+    assert isinstance(indexed_file_count, int)
+    assert indexed_file_count > 0
+    assert bootstrap["credential_revoked"] is True
+    commands = cast(list[dict[str, object]], bootstrap["commands"])
+    assert [command["name"] for command in commands] == [
+        "source_status_before",
+        "snapshot_materialize",
+        "status_before",
+        "index",
+        "status_after",
+        "source_status_after",
+    ]
+    assert all(command["returncode"] == 0 for command in commands)
     assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
+    restored_checkout = LocalProjectCheckoutManager(temp_db).get(
+        isolated.machine_id,
+        project_id,
+    )
+    assert restored_checkout is not None
+    assert Path(restored_checkout.root_path).resolve() == repo.resolve()
+    indexed_parent = temp_db.fetchone(
+        """SELECT root_path FROM code_indexed_project_states
+        WHERE machine_id = %s AND project_id = %s""",
+        (isolated.machine_id, project_id),
+    )
+    assert indexed_parent is not None
+    seed_root = bootstrap["seed_root"]
+    assert isinstance(seed_root, str)
+    assert Path(indexed_parent["root_path"]).resolve() == Path(seed_root)
     manager = AskSnapshotManager(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,

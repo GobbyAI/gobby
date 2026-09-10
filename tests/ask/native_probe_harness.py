@@ -728,17 +728,25 @@ def _provision_private_parent_index(
 ) -> dict[str, object]:
     """Seed the owned probe schema from the exact commit used by Ask."""
     from gobby.agents.code_index import _prepare_gcode_runtime
-    from gobby.ask.snapshots import _native_snapshot
+    from gobby.ask.snapshots import _safe_process_env
 
-    if not database_scope.startswith("gobby_test_") or not database_scope.replace(
-        "_", ""
-    ).isalnum():
+    if (
+        not database_scope.startswith("gobby_test_")
+        or not database_scope.replace("_", "").isalnum()
+    ):
         raise ValueError("private parent index requires an owned test schema")
     source_root = project_root.resolve(strict=True)
     owned_root = runtime_root.resolve()
+    gcode_bin = gcode_bin.resolve(strict=True)
+    if not gcode_bin.is_file() or not os.access(gcode_bin, os.X_OK):
+        raise ValueError("private parent index requires an executable gcode binary")
+    with gcode_bin.open("rb") as stream:
+        gcode_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     if owned_root.is_relative_to(source_root):
         raise ValueError("private parent index runtime must be outside the source checkout")
-    if len(source_commit) != 40 or any(character not in "0123456789abcdef" for character in source_commit):
+    if len(source_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in source_commit
+    ):
         raise ValueError("private parent index requires a full lowercase commit OID")
 
     remaining_at_start = _remaining_seconds(deadline_monotonic)
@@ -760,6 +768,7 @@ def _provision_private_parent_index(
         "source_root": str(source_root),
         "source_commit": source_commit,
         "seed_root": str(seed_root),
+        "gcode": {"path": str(gcode_bin), "sha256": gcode_sha256},
         "started_at": started_at.isoformat(),
         "deadline_budget_seconds": remaining_at_start,
         "commands": commands,
@@ -769,84 +778,166 @@ def _provision_private_parent_index(
     source_status_before: str | None = None
     checkout_rebound = False
 
-    def run_command(name: str, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    def output_hash(value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            encoded = value
+        elif isinstance(value, str):
+            encoded = value.encode()
+        else:
+            encoded = repr(value).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    def failure_receipt(
+        *,
+        name: str,
+        command: list[str],
+        cwd: Path,
+        started: float,
+        error: BaseException,
+        returncode: int | None,
+        stdout: object = None,
+        stderr: object = None,
+    ) -> dict[str, object]:
+        return {
+            "name": name,
+            "argv": list(command),
+            "cwd": str(cwd),
+            "returncode": returncode,
+            "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            "stdout_sha256": output_hash(stdout),
+            "stderr_sha256": output_hash(stderr),
+            "error": {
+                "error_type": type(error).__name__,
+                "message_sha256": hashlib.sha256(str(error).encode()).hexdigest(),
+            },
+        }
+
+    def run_command(
+        name: str,
+        command: list[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
         command_started = time.monotonic()
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            env=command_env,
-            check=False,
-            capture_output=True,
-            timeout=_remaining_seconds(deadline_monotonic),
-        )
-        commands.append(
-            {
-                "name": name,
-                "argv": command,
-                "cwd": str(cwd),
-                "returncode": completed.returncode,
-                "duration_ms": round((time.monotonic() - command_started) * 1000, 3),
-                "stdout_sha256": hashlib.sha256(completed.stdout).hexdigest(),
-                "stderr_sha256": hashlib.sha256(completed.stderr).hexdigest(),
-            }
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=command_env if env is None else env,
+                check=False,
+                capture_output=True,
+                timeout=_remaining_seconds(deadline_monotonic),
+            )
+        except subprocess.TimeoutExpired as error:
+            commands.append(
+                failure_receipt(
+                    name=name,
+                    command=command,
+                    cwd=cwd,
+                    started=command_started,
+                    error=error,
+                    returncode=None,
+                    stdout=error.stdout,
+                    stderr=error.stderr,
+                )
+            )
+            raise
+        except OSError as error:
+            commands.append(
+                failure_receipt(
+                    name=name,
+                    command=command,
+                    cwd=cwd,
+                    started=command_started,
+                    error=error,
+                    returncode=None,
+                )
+            )
+            raise
+        receipt: dict[str, object] = {
+            "name": name,
+            "argv": list(command),
+            "cwd": str(cwd),
+            "returncode": completed.returncode,
+            "duration_ms": round((time.monotonic() - command_started) * 1000, 3),
+            "stdout_sha256": hashlib.sha256(completed.stdout).hexdigest(),
+            "stderr_sha256": hashlib.sha256(completed.stderr).hexdigest(),
+        }
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).decode(errors="replace").strip()
+            receipt["error"] = {
+                "error_type": "SubprocessExitError",
+                "message_sha256": hashlib.sha256(detail.encode()).hexdigest(),
+            }
+            commands.append(receipt)
             raise RuntimeError(
                 f"private parent index {name} failed: {completed.returncode}:{detail[:500]}"
             )
+        commands.append(receipt)
         return completed
 
-    def source_status() -> str:
-        result = subprocess.run(
+    def source_status(name: str) -> str:
+        result = run_command(
+            name,
             ["git", "status", "--porcelain=v1", "--untracked-files=all"],
             cwd=source_root,
-            check=True,
-            capture_output=True,
-            timeout=_remaining_seconds(deadline_monotonic),
         )
         return hashlib.sha256(result.stdout).hexdigest()
 
     command_env = dict(os.environ)
     try:
-        source_status_before = source_status()
-        materialize_started = time.monotonic()
-        binding, inventory = _native_snapshot(
-            gcode_bin,
-            source_root,
-            project_id=project_id,
-            commit_oid=source_commit,
-            action="materialize",
-            target_root=seed_root,
-            timeout=_remaining_seconds(deadline_monotonic),
+        source_status_before = source_status("source_status_before")
+        snapshot_request = {
+            "action": "materialize",
+            "commit_oid": source_commit,
+            "project_id": project_id,
+            "schema_version": 1,
+            "target_root": str(seed_root),
+        }
+        snapshot_request_json = json.dumps(
+            snapshot_request,
+            sort_keys=True,
+            separators=(",", ":"),
         )
-        commands.append(
-            {
-                "name": "snapshot_materialize",
-                "argv": [
-                    str(gcode_bin),
-                    "evidence",
-                    "--snapshot-json",
-                    "<canonical-request>",
-                ],
-                "cwd": str(source_root),
-                "returncode": 0,
-                "duration_ms": round((time.monotonic() - materialize_started) * 1000, 3),
-                "request_sha256": hashlib.sha256(
-                    json.dumps(
-                        {
-                            "action": "materialize",
-                            "commit_oid": source_commit,
-                            "project_id": project_id,
-                            "schema_version": 1,
-                            "target_root": str(seed_root),
-                        },
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode()
-                ).hexdigest(),
-            }
-        )
+        snapshot_command = [
+            str(gcode_bin),
+            "--quiet",
+            "--format",
+            "json",
+            "--project",
+            str(source_root),
+            "evidence",
+            "--snapshot-json",
+            snapshot_request_json,
+        ]
+        try:
+            materialized = run_command(
+                "snapshot_materialize",
+                snapshot_command,
+                cwd=source_root,
+                env=_safe_process_env(),
+            )
+        finally:
+            if commands and commands[-1].get("name") == "snapshot_materialize":
+                commands[-1]["request_sha256"] = hashlib.sha256(
+                    snapshot_request_json.encode()
+                ).hexdigest()
+        response = json.loads(materialized.stdout)
+        if not isinstance(response, dict) or response.get("schema_version") != 1:
+            raise RuntimeError("private parent snapshot returned an unsupported contract")
+        binding = response.get("binding")
+        inventory = response.get("inventory")
+        if not isinstance(binding, dict) or not isinstance(inventory, dict):
+            raise RuntimeError("private parent snapshot omitted binding or inventory")
+        if binding.get("project_id") != project_id or binding.get("commit_oid") != source_commit:
+            raise RuntimeError("private parent snapshot identity changed")
+        if inventory.get("complete") is not True or (
+            inventory.get("digest") != binding.get("inventory_digest")
+        ):
+            raise RuntimeError("private parent snapshot inventory is incomplete or mismatched")
         source_project_json = source_root / ".gobby" / "project.json"
         project_metadata = json.loads(source_project_json.read_bytes())
         if not isinstance(project_metadata, dict) or project_metadata.get("id") != project_id:
@@ -862,8 +953,19 @@ def _provision_private_parent_index(
             expires_at=datetime.now(UTC)
             + timedelta(seconds=_remaining_seconds(deadline_monotonic)),
         )
-        if str(issued.project_id) != project_id or Path(issued.project_path).resolve() != source_root:
+        if (
+            str(issued.project_id) != project_id
+            or Path(issued.project_path).resolve() != source_root
+        ):
             raise RuntimeError("private parent index credential resolved a different project")
+        evidence.update(
+            {
+                "credential_project_id": str(issued.project_id),
+                "credential_project_path": str(Path(issued.project_path).resolve()),
+                "credential_generation": issued.credential.credential_generation,
+                "managed_execution_id": str(issued.credential.managed_execution_id),
+            }
+        )
         indexed = database.fetchone(
             """SELECT COUNT(*) AS count FROM code_indexed_file_states
             WHERE machine_id = %s AND project_id = %s""",
@@ -877,10 +979,12 @@ def _provision_private_parent_index(
         checkout = checkout_manager.get(machine_id, project_id)
         if checkout is None or Path(checkout.root_path).resolve() != source_root:
             raise RuntimeError("private parent index source checkout binding changed")
-        checkout_manager.rebind(machine_id, project_id, str(seed_root))
+        rebound = checkout_manager.rebind(machine_id, project_id, str(seed_root))
         checkout_rebound = True
+        if Path(rebound.root_path).resolve() != seed_root:
+            raise RuntimeError("private parent index checkout rebind was not durable")
         evidence["checkout_root_before"] = str(source_root)
-        evidence["checkout_root_during_index"] = str(seed_root)
+        evidence["checkout_root_during_index"] = str(Path(rebound.root_path).resolve())
         identity_env = {
             "GOBBY_AGENT_RUN_ID": str(issued.credential.managed_execution_id),
             "GOBBY_MACHINE_ID": machine_id,
@@ -899,7 +1003,6 @@ def _provision_private_parent_index(
         )
         command_env.update(runtime.env)
         command_env.update(identity_env)
-        evidence["managed_execution_id"] = identity_env["GOBBY_AGENT_RUN_ID"]
         status_command = [
             str(gcode_bin),
             "status",
@@ -920,21 +1023,31 @@ def _provision_private_parent_index(
         status_body = json.loads(final_status.stdout)
         if not isinstance(status_body, dict) or status_body.get("id") != project_id:
             raise RuntimeError("private parent index status reported a different project")
-        source_status_after = source_status()
+        indexed_project = database.fetchone(
+            """SELECT root_path, total_files FROM code_indexed_project_states
+            WHERE machine_id = %s AND project_id = %s""",
+            (machine_id, project_id),
+        )
+        if indexed_project is None or Path(indexed_project["root_path"]).resolve() != seed_root:
+            raise RuntimeError("private parent index did not persist the canonical seed root")
+        source_status_after = source_status("source_status_after")
         evidence.update(
             {
-                "status": "completed",
                 "tree_oid": binding["tree_oid"],
                 "inventory_digest": binding["inventory_digest"],
                 "inventory_entry_count": len(inventory["entries"]),
+                "indexed_root": str(Path(indexed_project["root_path"]).resolve()),
+                "indexed_file_count": int(indexed_project["total_files"]),
                 "source_status_before": source_status_before,
                 "source_status_after": source_status_after,
             }
         )
         if source_status_before != source_status_after:
             raise RuntimeError("private parent indexing mutated the source checkout")
+        evidence["status"] = "completed"
     except BaseException as error:
         primary_error = error
+        evidence["status"] = "failed"
         evidence["error"] = {"error_type": type(error).__name__, "message": str(error)}
     finally:
         if checkout_rebound:
@@ -1295,9 +1408,7 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
                 project_id=arguments.project_id,
                 machine_id=runner.machine_id,
                 runtime_root=arguments.control_dir.parent / "private-parent-index",
-                gcode_bin=(Path(os.environ["GOBBY_NATIVE_BIN_DIR"]) / "gcode").resolve(
-                    strict=True
-                ),
+                gcode_bin=(Path(os.environ["GOBBY_NATIVE_BIN_DIR"]) / "gcode").resolve(strict=True),
                 source_commit=arguments.source_commit,
                 deadline_monotonic=deadline_monotonic,
                 database_scope=database_scope,
