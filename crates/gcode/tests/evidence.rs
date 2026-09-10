@@ -79,6 +79,10 @@ fn snapshot_cli_returns_native_canonical_inventory_without_services() -> anyhow:
             &serde_json::to_string(&request)?,
         ])
         .env_remove("DATABASE_URL")
+        // Read-only inspection must not require a writable ambient temp directory.
+        .env("TMPDIR", repo.join("unavailable-temp"))
+        .env("TMP", repo.join("unavailable-temp"))
+        .env("TEMP", repo.join("unavailable-temp"))
         .output()?;
     anyhow::ensure!(
         output.status.success(),

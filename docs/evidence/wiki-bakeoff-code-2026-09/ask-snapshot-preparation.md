@@ -73,3 +73,30 @@ remain in `/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-ask-ma
 Both temporary materialized trees were removed after verification; `cleanup.json`
 records their matching file counts and byte totals. Original probe attempts remain
 separate failed evidence and were not overwritten by these measurements.
+
+## Managed sandbox correction
+
+The first batched binary above failed inside the managed SRT sandbox when Ask's
+sanitized subprocess environment omitted a writable temporary directory. Capturing
+Git stderr in an anonymous temporary file had added a filesystem requirement to
+read-only snapshot inspection. The old per-blob binary passed the same isolated
+topology regression; the batched binary returned `Operation not permitted`.
+
+A CLI regression with `TMPDIR`, `TMP`, and `TEMP` pointing to a nonexistent directory
+reproduced the dependency as `cat-file --batch failed: No such file or directory`.
+The correction drains piped stderr concurrently, retains at most 4,096 diagnostic
+bytes, and discards the remainder. Both success and failure paths reap the child
+and join the reader. It adds no filesystem or sandbox grant.
+
+The 14 focused evidence tests pass with the correction, including the unavailable
+temporary-directory case and a wrapper that emits 2 MiB of stderr before serving
+each batch. Clippy and the test-quality audit pass. The corrected private debug
+binary SHA-256 is
+`5e0ae71ef4288bf25437f9965870b5e7b2f0acb6b3215ffa8d69f24f0f9fa831`.
+The timings above remain measurements of the first batched binary. Inside the
+actual managed SRT worker, the corrected binary passed
+`tests/ask/test_native_integration.py::test_real_managed_snapshot_queries_branch_native_gcode`
+in 12.30 seconds. The regression exercises private parent indexing, normal overlay
+admission, exact committed evidence queries, credential rotation, and recovery.
+This validates the corrected snapshot/index path; provider-agent security proof
+and the complete cohort remain separate acceptance work.

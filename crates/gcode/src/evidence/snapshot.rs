@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead as _, BufReader, Read as _, Seek as _, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -783,17 +783,15 @@ fn git(repo_root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>>
 struct BlobBatch {
     child: std::process::Child,
     output: BufReader<std::process::ChildStdout>,
-    errors: std::fs::File,
+    errors: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
 }
 
 impl BlobBatch {
     fn new(repo_root: &Path) -> Result<Self> {
-        let errors = tempfile::tempfile().map_err(batch_io_error)?;
         let mut child = git_command(repo_root, &["cat-file", "--batch"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // A file keeps stderr from blocking the request/response pipes.
-            .stderr(errors.try_clone().map_err(batch_io_error)?)
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(batch_io_error)?;
         let Some(output) = child.stdout.take() else {
@@ -801,11 +799,30 @@ impl BlobBatch {
             let _ = child.wait();
             return Err(batch_error("missing batch stdout"));
         };
-        Ok(Self {
+        let mut batch = Self {
             child,
             output: BufReader::new(output),
-            errors,
-        })
+            errors: None,
+        };
+        let mut errors = batch
+            .child
+            .stderr
+            .take()
+            .ok_or_else(|| batch_error("missing batch stderr"))?;
+        // Drain concurrently without requiring ambient filesystem write access.
+        // Retain a bounded diagnostic prefix, then discard the remainder.
+        batch.errors = Some(
+            std::thread::Builder::new()
+                .name("git-blob-stderr".into())
+                .spawn(move || {
+                    let mut detail = Vec::new();
+                    (&mut errors).take(4096).read_to_end(&mut detail)?;
+                    std::io::copy(&mut errors, &mut std::io::sink())?;
+                    Ok(detail)
+                })
+                .map_err(batch_io_error)?,
+        );
+        Ok(batch)
     }
 
     fn read(&mut self, oid: &str) -> Result<Vec<u8>> {
@@ -853,14 +870,18 @@ impl BlobBatch {
             return Err(batch_error("unexpected trailing Git blob batch response"));
         }
         let status = self.child.wait().map_err(batch_io_error)?;
+        let detail = self
+            .errors
+            .take()
+            .ok_or_else(|| batch_error("missing batch stderr reader"))?
+            .join()
+            .map_err(|_| batch_error("batch stderr reader panicked"))?
+            .map_err(batch_io_error)?;
         if !status.success() {
-            self.errors.rewind().map_err(batch_io_error)?;
-            let mut detail = String::new();
-            (&mut self.errors)
-                .take(4096)
-                .read_to_string(&mut detail)
-                .map_err(batch_io_error)?;
-            return Err(batch_error(&format!("{status}: {detail}")));
+            return Err(batch_error(&format!(
+                "{status}: {}",
+                String::from_utf8_lossy(&detail)
+            )));
         }
         Ok(())
     }
@@ -871,6 +892,9 @@ impl Drop for BlobBatch {
         // Reap the process on parser, integrity, and filesystem failures too.
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(errors) = self.errors.take() {
+            let _ = errors.join();
+        }
     }
 }
 

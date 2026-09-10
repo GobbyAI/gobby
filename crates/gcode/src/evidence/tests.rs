@@ -101,7 +101,10 @@ fn snapshot_blob_reads_use_bounded_git_processes() -> anyhow::Result<()> {
     std::fs::write(
         &wrapper_path,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexec {} \"$@\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n\
+             case \"$*\" in *'cat-file --batch'*) \
+             dd if=/dev/zero bs=65536 count=32 >&2 2>/dev/null;; esac\n\
+             exec {} \"$@\"\n",
             quote(&log.to_string_lossy()),
             quote(&real_git),
         ),
