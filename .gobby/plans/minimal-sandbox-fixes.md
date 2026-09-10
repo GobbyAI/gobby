@@ -19,7 +19,10 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Commit alias repair 4b5262b8b4, restart at 21:37 UTC and pass 20 live hook cases.
 - [x] Repair no-isolation spawn replacing an explicit worktree with the main checkout; focused regression reproduced the defect, all 8 project-scope tests now pass.
 - [x] Update stale spawn-failure reason and batch grant-summary expectations found by broader focused checks.
-- [ ] Commit workspace repair and repeat affected live checks after restart.
+- [x] Commit workspace repair 323753556f; restart22:02 UTC; both narrowed and no-grant children pass all checks.
+- [x] Implement readiness gating for startup terminal monitors after real missing-terminal run c132c69d falsely completed and emitted subscriber warnings; 39 focused tests pass.
+- [x] Update stale eligible-session status assertion found by lifecycle tests.
+- [ ] Finish startup wiring/recovery validation, commit readiness repair, restart, and repeat native resume.
 - [x] Materialize and validate this plan (base validation passed).
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
 - [x] Repair baseline provider tests that outlive their launch mocks (11 pass).
@@ -50,6 +53,11 @@ Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py::*` — scope-reason: assemble request context and resume metadata
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: expose MCP and batch grant inputs
 - `src/gobby/servers/routes/agent_spawn.py::*` — scope-reason: expose HTTP and batch grant inputs and results
+- `src/gobby/agents/tmux/pane_monitor.py::*` — scope-reason: defer terminal death classification until startup recovery completes
+- `src/gobby/sessions/liveness_monitor.py::*` — scope-reason: preserve parked sessions during startup recovery
+- `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: wire existing startup readiness into terminal monitors
+- `tests/sessions/test_liveness_monitor.py::*` — scope-reason: align eligible terminal-owner status expectation
+- `tests/test_terminal_startup_readiness.py::*` — scope-reason: verify monitors wait for startup reconciliation
 - `src/gobby/agents/resume_executor.py::*` — scope-reason: revalidate grants before resume allocation
 - `src/gobby/mcp_proxy/tools/agents_payloads.py::*` — scope-reason: expose recorded external grants in run inspection
 - `src/gobby/agents/sandbox_policy.py::*` — scope-reason: constrain zsh heredoc temporary files to the current run

@@ -286,6 +286,7 @@ def create_lifespan(
                     session_manager=app.state.hook_manager._session_manager,
                     attention_manager=server.services.attention_manager,
                     registry=runtime_registry,
+                    startup_ready=lambda: server.services.startup_ready,
                 )
                 set_tmux_pane_monitor(monitor)
                 await monitor.start()
@@ -305,6 +306,7 @@ def create_lifespan(
                 message_processor_resolver=lambda: server.message_processor,
                 tmux_config=config.tmux if config else None,
                 terminal_manager=getattr(server.services, "terminal_manager", None),
+                startup_ready=lambda: server.services.startup_ready,
             )
             app.state.liveness_monitor = liveness_monitor
             app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)
