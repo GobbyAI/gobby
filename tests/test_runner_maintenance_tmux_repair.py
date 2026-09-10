@@ -217,7 +217,19 @@ async def test_repair_loop_enforces_only_paned_sessions() -> None:
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
     assert session_manager.calls == [
-        (["active", "paused", "awaiting_handoff", "expired", "deleted"], 200)
+        (
+            [
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+                "expired",
+                "deleted",
+            ],
+            200,
+        )
     ]
     assert owner.await_args_list == [call(paned)]
     enforce.assert_awaited_once_with(paned)
@@ -264,7 +276,19 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
     assert session_manager.calls == [
-        (["active", "paused", "awaiting_handoff", "expired", "deleted"], 200)
+        (
+            [
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+                "expired",
+                "deleted",
+            ],
+            200,
+        )
     ]
     assert enforce.await_args_list == [call(grok), call(other)]
 
@@ -435,7 +459,13 @@ async def test_repair_loop_cleans_missing_socket_once_without_per_pane_calls(
         patch("gobby.runner_maintenance.isolation.resolve_tmux_repair_owner", owner),
         caplog.at_level("INFO", logger="gobby.runner_maintenance"),
     ):
-        await tmux_window_name_repair_loop(manager, lambda: True)
+        ready = False
+        await tmux_window_name_repair_loop(manager, lambda: True, startup_ready=lambda: ready)
+        assert manager.socket_expirations == []
+        assert manager.pane_expirations == []
+        missing.assert_not_awaited()
+        ready = True
+        await tmux_window_name_repair_loop(manager, lambda: True, startup_ready=lambda: ready)
 
     assert manager.socket_expirations == [
         ("machine-a", "tmux_socket_path:/private/tmp/tmux-501/gobby")
@@ -501,7 +531,19 @@ async def test_repair_loop_uses_configured_session_list_limit() -> None:
     )
 
     assert session_manager.calls == [
-        (["active", "paused", "awaiting_handoff", "expired", "deleted"], 50)
+        (
+            [
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+                "expired",
+                "deleted",
+            ],
+            50,
+        )
     ]
 
 
@@ -517,7 +559,19 @@ async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
     )
 
     assert session_manager.calls == [
-        (["active", "paused", "awaiting_handoff", "expired", "deleted"], 1)
+        (
+            [
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+                "expired",
+                "deleted",
+            ],
+            1,
+        )
     ]
 
 
@@ -571,6 +625,18 @@ async def test_repair_loop_survives_list_failure(caplog: pytest.LogCaptureFixtur
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
     assert session_manager.calls == [
-        (["active", "paused", "awaiting_handoff", "expired", "deleted"], 200)
+        (
+            [
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+                "expired",
+                "deleted",
+            ],
+            200,
+        )
     ]
     assert "tmux window repair: failed to list sessions: db down" in caplog.text

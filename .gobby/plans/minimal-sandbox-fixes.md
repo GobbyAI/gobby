@@ -22,7 +22,10 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Commit workspace repair 323753556f; restart22:02 UTC; both narrowed and no-grant children pass all checks.
 - [x] Implement readiness gating for startup terminal monitors after real missing-terminal run c132c69d falsely completed and emitted subscriber warnings; 39 focused tests pass.
 - [x] Update stale eligible-session status assertion found by lifecycle tests.
-- [ ] Finish startup wiring/recovery validation, commit readiness repair, restart, and repeat native resume.
+- [x] Commit readiness repair f9e41419b0 after 203 focused tests and clean audits; restart and repeat 20 live hook checks.
+- [ ] Gate tmux maintenance on startup readiness: run b0fe2983 parked correctly, but maintenance expired its session before resume preflight. Verify, commit, restart, and repeat native resume.
+- [x] Align five stale tmux maintenance test status lists with existing interrupted/input/approval states.
+- [ ] Resolve shared editable-environment interference with owner #12261; daemon startup recovered after main uv invocation restored main imports.
 - [x] Materialize and validate this plan (base validation passed).
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
 - [x] Repair baseline provider tests that outlive their launch mocks (11 pass).
@@ -56,6 +59,9 @@ Targets:
 - `src/gobby/agents/tmux/pane_monitor.py::*` — scope-reason: defer terminal death classification until startup recovery completes
 - `src/gobby/sessions/liveness_monitor.py::*` — scope-reason: preserve parked sessions during startup recovery
 - `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: wire existing startup readiness into terminal monitors
+- `src/gobby/runner_maintenance/isolation.py::*` — scope-reason: defer missing-terminal expiration until restart recovery finishes
+- `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: wire startup readiness into tmux maintenance
+- `tests/test_runner_maintenance_tmux_repair.py::*` — scope-reason: verify missing sockets survive startup recovery
 - `tests/sessions/test_liveness_monitor.py::*` — scope-reason: align eligible terminal-owner status expectation
 - `tests/test_terminal_startup_readiness.py::*` — scope-reason: verify monitors wait for startup reconciliation
 - `src/gobby/agents/resume_executor.py::*` — scope-reason: revalidate grants before resume allocation

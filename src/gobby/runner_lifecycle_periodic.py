@@ -337,6 +337,7 @@ def start_periodic_tasks(
         loops["tmux_window_name_repair_loop"](
             getattr(runner, "session_manager", None),
             lambda: runner._shutdown_requested,
+            startup_ready=lambda: runner.http_server.services.startup_ready,
         ),
         name="tmux-window-repair",
     )
