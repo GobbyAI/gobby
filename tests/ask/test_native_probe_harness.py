@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
+import signal
 import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -194,6 +196,54 @@ def test_bootstrap_loader_only_bypasses_prior_artifact_in_protected_test_runtime
         )
 
 
+@pytest.mark.asyncio
+async def test_bootstrap_policy_uses_the_production_ask_scratch_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.agents.srt_runtime import SandboxLaunch
+    from gobby.ask.runtime_validation import ask_sandbox_config
+
+    project_root = tmp_path / "project"
+    scratch_root = tmp_path / "scratch"
+    project_root.mkdir()
+    policy_path = tmp_path / "settings.json"
+    policy_path.write_text('{"sandbox": {"enabled": true}}', encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    async def prepare_sandbox_launch(**kwargs: object) -> SandboxLaunch:
+        captured.update(kwargs)
+        return SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            runtime_version="1.2.3",
+            policy_schema_version=7,
+            policy_path=str(policy_path),
+            provider_env={"CLAUDE_CODE_TMPDIR": str(tmp_path / "run-tmp")},
+        )
+
+    monkeypatch.setattr(
+        "gobby.agents.srt_runtime.prepare_sandbox_launch",
+        prepare_sandbox_launch,
+    )
+    monkeypatch.setattr(
+        harness,
+        "normalized_ask_srt_policy_digest",
+        lambda *_args, **_kwargs: "d",
+    )
+
+    identity = await harness._bootstrap_policy_identity(
+        project_root=project_root,
+        scratch_root=scratch_root,
+        daemon_port=60887,
+        websocket_port=60888,
+    )
+
+    assert captured["workspace_path"] == str(scratch_root)
+    assert captured["config"] == ask_sandbox_config(str(project_root), str(scratch_root))
+    assert identity.policy_digest == "d"
+
+
 def test_probe_database_scope_and_worker_environment_are_owned(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -225,6 +275,57 @@ def test_probe_database_scope_and_worker_environment_are_owned(
     assert "ANTHROPIC_API_KEY" not in environment
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in environment
     assert "GOBBY_SESSION_ID" not in environment
+
+
+def test_runtime_identity_requires_branch_local_gcode_and_records_gterm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    native_bin_dir = project_root / "target" / "debug"
+    fixture = project_root / "tests" / "ask" / "fixtures" / "native_ask_probe_hostile.txt"
+    native_bin_dir.mkdir(parents=True)
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(f"{harness._HOSTILE_FIXTURE_MARKER}\n", encoding="utf-8")
+    binaries = {name: native_bin_dir / name for name in ("gcode", "gterm")}
+    for binary in binaries.values():
+        binary.write_bytes(f"{binary.name}-binary".encode())
+        binary.chmod(0o700)
+
+    monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(native_bin_dir))
+    monkeypatch.setattr(
+        "gobby.utils.native_bin.resolve_native_bin",
+        lambda name: str(binaries[name]),
+    )
+    monkeypatch.setattr(
+        "gobby.utils.git.run_git_command",
+        lambda *_args, **_kwargs: "f" * 40,
+    )
+    monkeypatch.setattr(
+        harness,
+        "_provider_identity",
+        lambda path: (str(path.resolve()), hashlib.sha256(path.read_bytes()).hexdigest(), "1.7.0"),
+    )
+
+    identity = harness._capture_runtime_identity(project_root)
+    gcode_identity = cast(dict[str, Any], identity["gcode"])
+    gterm_identity = cast(dict[str, Any], identity["gterm"])
+
+    assert identity["source_head"] == "f" * 40
+    assert gcode_identity["path"] == str(binaries["gcode"].resolve())
+    assert gcode_identity["version"] == "1.7.0"
+    assert gterm_identity["path"] == str(binaries["gterm"].resolve())
+    assert gterm_identity["version"] is None
+
+    foreign_gcode = tmp_path / "foreign-gcode"
+    foreign_gcode.write_bytes(b"foreign")
+    foreign_gcode.chmod(0o700)
+    monkeypatch.setattr(
+        "gobby.utils.native_bin.resolve_native_bin",
+        lambda name: str(foreign_gcode) if name == "gcode" else str(binaries[name]),
+    )
+    with pytest.raises(RuntimeError, match="branch-local gcode"):
+        harness._capture_runtime_identity(project_root)
 
 
 def test_wait_for_first_agent_requires_a_running_native_process(
@@ -304,6 +405,7 @@ def _execution_snapshot(
     return {
         "execution": {
             "id": run_id,
+            "project_id": "project-id",
             "pipeline_name": "native-ask",
             "status": status,
             "definition_json": {"name": "native-ask", "version": 1},
@@ -444,15 +546,35 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = tmp_path / "runtime"
-    transcript = runtime_root / "transcripts" / "agent.jsonl"
-    policy = runtime_root / "sandbox" / "assets" / "settings.json"
-    violations = runtime_root / "sandbox" / "logs" / "violations.jsonl"
+    transcript = tmp_path / "provider-home" / "agent.jsonl"
+    policy = runtime_root / "control" / "launch-artifacts" / "agent-run" / "settings.json"
+    violations = runtime_root / "gobby" / "logs" / "sandbox-violations" / "agent-run.jsonl"
     transcript.parent.mkdir(parents=True)
     policy.parent.mkdir(parents=True)
     violations.parent.mkdir(parents=True)
     transcript.write_bytes(b'{"mcp_response":"denied"}\n')
     policy.write_bytes(b'{"policy":"exact"}\n')
     violations.write_bytes(b'{"violation":"shell"}\n')
+    launch_receipts = runtime_root / "control" / "launch-receipts"
+    launch_receipts.mkdir(parents=True)
+    (launch_receipts / "agent-run.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "agent_run_id": "agent-run",
+                "ask_run_id": "ask-run",
+                "project_id": "project-id",
+                "provider": "claude",
+                "child_session_id": "session-id",
+                "pid": 123,
+                "terminal_id": "terminal-id",
+                "start_identity": "os-start",
+                "policy": {"captured_path": str(policy)},
+                "violation": {"retained_path": str(violations)},
+            }
+        ),
+        encoding="utf-8",
+    )
     snapshot = _execution_snapshot(
         run_id="ask-run",
         deadline="2026-09-10T12:10:00Z",
@@ -465,17 +587,30 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
         {
             "agent": {
                 "id": "agent-run",
+                "workflow_name": "native-ask",
                 "pid": 123,
                 "terminal_id": "terminal-id",
+                "child_session_id": "session-id",
                 "resume_metadata_json": {
                     "env": {"ANTHROPIC_API_KEY": "must-not-export", "SAFE": "ok"},
+                    "provider": "claude",
+                    "project_id": "project-id",
+                    "workflow": "native-ask",
+                    "provider_native_session_id": "claude-native-id",
+                    "initial_variables": {"ask_run_id": "ask-run"},
                     "sandbox": {
-                        "policy_path": str(policy),
-                        "violation_path": str(violations),
+                        "policy_path": str(runtime_root / "reaped" / "settings.json"),
+                        "violation_path": str(runtime_root / "reaped" / "violations.jsonl"),
                     },
                 },
             },
-            "session": {"id": "session-id", "transcript_path": str(transcript)},
+            "session": {
+                "id": "session-id",
+                "source": "claude",
+                "project_id": "project-id",
+                "external_id": "claude-native-id",
+                "transcript_path": str(transcript),
+            },
         }
     ]
     connection = _Connection({"ask-run": snapshot}, agent_rows)
@@ -491,6 +626,7 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
         output_dir,
         runtime_root=runtime_root,
         process_sets={"after": {"workers": [], "agents": []}},
+        runtime_identity={"source_head": "f" * 40},
     )
 
     exported = json.loads((output_dir / "raw-probe.json").read_bytes())
@@ -500,7 +636,500 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
     assert len(exported["receipts"]) == 3
     assert all(Path(receipt["output_path"]).is_file() for receipt in exported["receipts"])
     assert "must-not-export" not in encoded.decode()
+    assert exported["runtime_identity"] == {"source_head": "f" * 40}
     assert exported["agent_runs"][0]["agent"]["resume_metadata_json"]["env"] == {"SAFE": "ok"}
+
+
+def test_launch_receipt_captures_policy_before_runtime_reap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    control_dir = runtime_root / "control"
+    policy = runtime_root / "srt" / "assets" / "settings.json"
+    violation = runtime_root / "srt" / "logs" / "violations.jsonl"
+    policy.parent.mkdir(parents=True)
+    violation.parent.mkdir(parents=True)
+    policy.write_bytes(b'{"policy":"pre-reap"}\n')
+    violation.write_bytes(b"")
+    row = {
+        "agent": {
+            "id": "agent-run",
+            "workflow_name": "native-ask",
+            "status": "running",
+            "pid": 4321,
+            "terminal_id": "terminal-id",
+            "child_session_id": "session-id",
+            "resume_metadata_json": {
+                "provider": "claude",
+                "project_id": "project-id",
+                "workflow": "native-ask",
+                "initial_variables": {"ask_run_id": "ask-run"},
+                "sandbox": {
+                    "policy_path": str(policy),
+                    "violation_path": str(violation),
+                },
+            },
+        },
+        "session": {
+            "id": "session-id",
+            "source": "claude",
+            "project_id": "project-id",
+        },
+        "terminal": {"id": "terminal-id", "process": {"pgid": 4321, "start_time": 99}},
+    }
+    monkeypatch.setattr(harness, "_agent_receipt_row", lambda *_args: row)
+    monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: "os-start")
+
+    harness._capture_agent_launch_receipt(
+        _SCOPED_TEST_DATABASE_URL,
+        "agent-run",
+        ask_run_id="ask-run",
+        project_id="project-id",
+        control_dir=control_dir,
+    )
+    shutil.rmtree(runtime_root / "srt")
+
+    manifest = json.loads((control_dir / "launch-receipts" / "agent-run.json").read_bytes())
+    captured_policy = Path(manifest["policy"]["captured_path"])
+    assert captured_policy.read_bytes() == b'{"policy":"pre-reap"}\n'
+    assert manifest["agent_run_id"] == "agent-run"
+    assert manifest["ask_run_id"] == "ask-run"
+    assert manifest["start_identity"] == "os-start"
+    assert manifest["violation"]["retained_path"].endswith(
+        "/gobby/logs/sandbox-violations/agent-run.jsonl"
+    )
+
+
+def test_external_transcript_receipt_rejects_symlink(tmp_path: Path) -> None:
+    source = tmp_path / "provider-home" / "actual.jsonl"
+    source.parent.mkdir()
+    source.write_bytes(b'{"private":"provider-memory"}\n')
+    claimed_transcript = tmp_path / "claimed.jsonl"
+    claimed_transcript.symlink_to(source)
+
+    receipt = harness._copy_receipt(
+        str(claimed_transcript),
+        runtime_root=None,
+        destination=tmp_path / "evidence" / "transcript.jsonl",
+        kind="provider-transcript-and-mcp-responses",
+    )
+
+    assert receipt is None
+    assert not (tmp_path / "evidence" / "transcript.jsonl").exists()
+
+
+def test_process_snapshot_uses_os_start_identity_independent_of_terminal_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = {
+        "id": "agent-run",
+        "status": "completed",
+        "pid": 4321,
+        "terminal_id": "terminal-id",
+        "child_session_id": "session-id",
+        "terminal_process": {"pgid": 4321, "start_time": 99},
+    }
+
+    class Connection:
+        def __enter__(self) -> Connection:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, _query: str, _parameters: tuple[object, ...]) -> _Cursor:
+            return _Cursor([row])
+
+    monkeypatch.setattr(harness, "_ask_run_ids", lambda *_args: ["agent-run"])
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.psycopg.connect",
+        lambda *_args, **_kwargs: Connection(),
+    )
+    monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: "os-start")
+    start_identities: dict[str, str] = {}
+
+    live = harness._process_snapshot(
+        _SCOPED_TEST_DATABASE_URL,
+        {},
+        ["ask-run"],
+        start_identities=start_identities,
+    )
+    live_agents = cast(list[dict[str, Any]], live["agents"])
+    terminal_process = cast(dict[str, Any], live_agents[0]["terminal_process"])
+    assert live_agents[0]["live"] is True
+    assert live_agents[0]["start_identity"] == "os-start"
+    assert terminal_process["start_time"] == 99
+
+    monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: None)
+    after_cleanup = harness._process_snapshot(
+        _SCOPED_TEST_DATABASE_URL,
+        {},
+        ["ask-run"],
+        start_identities=start_identities,
+    )
+    final_agents = cast(list[dict[str, Any]], after_cleanup["agents"])
+    assert final_agents[0]["live"] is False
+    assert final_agents[0]["start_identity"] == "os-start"
+
+
+def test_agent_cleanup_signals_only_the_matching_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identities = iter(["os-start", "os-start", None])
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(harness, "_process_start_identity", lambda _pid: next(identities))
+    monkeypatch.setattr("tests.ask.native_probe_harness.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.os.killpg",
+        lambda pid, process_signal: signals.append((pid, process_signal)),
+    )
+
+    result = harness._terminate_owned_agent_process(
+        {
+            "id": "agent-run",
+            "pid": 4321,
+            "live": True,
+            "start_identity": "os-start",
+            "terminal_process": {"pgid": 4321, "start_time": 99},
+        },
+        deadline_monotonic=time.monotonic() + 1.0,
+    )
+
+    assert result == {"agent_run_id": "agent-run", "pid": 4321, "status": "terminated"}
+    assert signals == [(4321, signal.SIGTERM)]
+
+
+def test_probe_question_correlates_hostile_read_with_evidence_tools() -> None:
+    project_root = Path(__file__).parents[2]
+
+    question = harness._probe_question(project_root)
+
+    assert "tests/ask/fixtures/native_ask_probe_hostile.txt" in question
+    assert "ASK_NATIVE_PROBE_EVIDENCE_MARKER=leaf-22018-hostile-repository-evidence" in question
+    assert "native Read" in question
+    assert "evidence_query" in question
+    assert "evidence_read" in question
+    assert "exactly once" not in question
+
+
+def test_raw_export_retains_partial_evidence_when_one_run_snapshot_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _execution_snapshot(
+        run_id="ask-run",
+        deadline="2026-09-10T12:10:00Z",
+        status="completed",
+        current_agent="agent-run",
+        superseded=[],
+        include_publish=True,
+    )
+
+    def pipeline_snapshot(_database_url: str, run_id: str) -> dict[str, object]:
+        if run_id == "broken-run":
+            raise RuntimeError("incomplete execution row")
+        return snapshot
+
+    connection = _Connection({"ask-run": snapshot}, [])
+    monkeypatch.setattr(harness, "_pipeline_snapshot", pipeline_snapshot)
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.psycopg.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    harness._export_raw(
+        _SCOPED_TEST_DATABASE_URL,
+        ["broken-run", "ask-run"],
+        tmp_path / "evidence",
+        runtime_root=tmp_path,
+        process_sets={"failure": {"workers": [], "agents": []}},
+    )
+
+    exported = json.loads((tmp_path / "evidence" / "raw-probe.json").read_bytes())
+    assert len(exported["ask_runs"]) == 1
+    assert exported["ask_runs"][0]["execution"]["id"] == "ask-run"
+    assert exported["capture_errors"] == [
+        {
+            "kind": "pipeline-snapshot",
+            "run_id": "broken-run",
+            "error_type": "RuntimeError",
+            "message": "incomplete execution row",
+        }
+    ]
+
+
+def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    calls: list[tuple[object, ...]] = []
+    process_sets: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        harness,
+        "_native_ask_execution_ids",
+        lambda *_args: ["partial-run"],
+    )
+    monkeypatch.setattr(
+        harness,
+        "_process_snapshot",
+        lambda *_args, **_kwargs: {"workers": [], "agents": []},
+    )
+
+    def export_raw(
+        _database_url: str,
+        run_ids: list[str],
+        _output_dir: Path,
+        *,
+        runtime_root: Path,
+        process_sets: Mapping[str, object],
+        runtime_identity: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        assert runtime_identity is None
+        calls.append(("export", list(run_ids), runtime_root, dict(process_sets)))
+        return {"path": "raw-probe.json", "sha256": "a" * 64}
+
+    def drop_schema(_database_url: str, schema_name: str) -> None:
+        calls.append(("drop", schema_name))
+
+    monkeypatch.setattr(harness, "_export_raw", export_raw)
+    monkeypatch.setattr(harness, "_drop_owned_schema", drop_schema)
+
+    cleanup_errors = harness._finalize_contained_probe(
+        base_database_url=_TEST_DATABASE_URL,
+        scoped_database_url=_SCOPED_TEST_DATABASE_URL,
+        schema_name=_SCHEMA,
+        schema_created=True,
+        project_id="project-id",
+        output_dir=output_dir,
+        runtime_root=runtime_root,
+        workers={},
+        ask_run_ids=[],
+        process_sets=process_sets,
+        failure={"error_type": "RuntimeError", "message": "fresh startup failed"},
+    )
+
+    assert cleanup_errors == []
+    assert calls[0][0:2] == ("export", ["partial-run"])
+    assert calls[1] == ("drop", _SCHEMA)
+    assert not runtime_root.exists()
+    cleanup = json.loads((output_dir / "cleanup.json").read_bytes())
+    assert cleanup["raw_export"]["sha256"] == "a" * 64
+    assert cleanup["schema"]["status"] == "dropped"
+    assert cleanup["runtime_root"]["status"] == "removed"
+    assert process_sets["after_cleanup"] == {"workers": [], "agents": []}
+
+
+def test_failure_finalizer_uses_launch_identity_when_before_snapshot_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    launch_manifest: dict[str, Any] = {
+        "agent_run_id": "agent-1",
+        "captured_at_unix": 1.0,
+        "pid": 4321,
+        "terminal_id": "terminal-1",
+        "child_session_id": "session-1",
+        "status": "running",
+        "start_identity": "stable-start",
+        "terminal_process": {"pgid": 4321},
+    }
+    snapshots = iter(
+        [
+            RuntimeError("snapshot unavailable"),
+            {
+                "workers": [],
+                "agents": [
+                    {
+                        "id": "agent-1",
+                        "pid": 4321,
+                        "terminal_id": "terminal-1",
+                        "start_identity": "stable-start",
+                        "live": False,
+                    }
+                ],
+            },
+        ]
+    )
+    terminated: list[Mapping[str, object]] = []
+
+    def process_snapshot(*_args: object, **_kwargs: object) -> dict[str, object]:
+        snapshot = next(snapshots)
+        if isinstance(snapshot, Exception):
+            raise snapshot
+        return cast(dict[str, object], snapshot)
+
+    def terminate_agent(
+        agent: Mapping[str, object],
+        *,
+        deadline_monotonic: float,
+    ) -> dict[str, object]:
+        assert deadline_monotonic > time.monotonic()
+        terminated.append(agent)
+        return {"agent_run_id": agent["id"], "status": "terminated"}
+
+    monkeypatch.setattr(harness, "_native_ask_execution_ids", lambda *_args: ["run-1"])
+    monkeypatch.setattr(
+        harness,
+        "_load_launch_receipts",
+        lambda _runtime_root: ({"agent-1": launch_manifest}, []),
+    )
+    monkeypatch.setattr(harness, "_process_snapshot", process_snapshot)
+    monkeypatch.setattr(harness, "_terminate_owned_agent_process", terminate_agent)
+    monkeypatch.setattr(
+        harness,
+        "_export_raw",
+        lambda *_args, **_kwargs: {"path": "raw-probe.json", "sha256": "a" * 64},
+    )
+    monkeypatch.setattr(harness, "_drop_owned_schema", lambda *_args: None)
+
+    cleanup_errors = harness._finalize_contained_probe(
+        base_database_url=_TEST_DATABASE_URL,
+        scoped_database_url=_SCOPED_TEST_DATABASE_URL,
+        schema_name=_SCHEMA,
+        schema_created=True,
+        project_id="project-id",
+        output_dir=output_dir,
+        runtime_root=runtime_root,
+        workers={},
+        ask_run_ids=["run-1"],
+        process_sets={},
+        failure={"error_type": "RuntimeError", "message": "worker failed"},
+    )
+
+    assert [error["kind"] for error in cleanup_errors] == ["before-cleanup-process-snapshot"]
+    assert len(terminated) == 1
+    assert terminated[0]["id"] == "agent-1"
+    assert terminated[0]["start_identity"] == "stable-start"
+
+
+def test_failure_finalizer_cleans_owned_storage_when_raw_export_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = Path(tempfile.mkdtemp(prefix="gobby-ap-")).resolve()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    calls: list[object] = []
+
+    monkeypatch.setattr(harness, "_native_ask_execution_ids", lambda *_args: [])
+    monkeypatch.setattr(
+        harness,
+        "_process_snapshot",
+        lambda *_args, **_kwargs: {"workers": [], "agents": []},
+    )
+
+    def export_raw(*_args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append("export")
+        raise RuntimeError("raw export failed")
+
+    def drop_schema(_database_url: str, schema_name: str) -> None:
+        calls.append(("drop", schema_name))
+
+    monkeypatch.setattr(harness, "_export_raw", export_raw)
+    monkeypatch.setattr(harness, "_drop_owned_schema", drop_schema)
+
+    cleanup_errors = harness._finalize_contained_probe(
+        base_database_url=_TEST_DATABASE_URL,
+        scoped_database_url=_SCOPED_TEST_DATABASE_URL,
+        schema_name=_SCHEMA,
+        schema_created=True,
+        project_id="project-id",
+        output_dir=output_dir,
+        runtime_root=runtime_root,
+        workers={},
+        ask_run_ids=["partial-run"],
+        process_sets={},
+        failure={"error_type": "RuntimeError", "message": "probe failed"},
+    )
+
+    assert calls == ["export", ("drop", _SCHEMA)]
+    assert not runtime_root.exists()
+    cleanup = json.loads((output_dir / "cleanup.json").read_bytes())
+    assert cleanup["raw_export"] is None
+    assert cleanup["schema"]["status"] == "dropped"
+    assert cleanup["runtime_root"]["status"] == "removed"
+    assert cleanup_errors == [
+        {
+            "kind": "raw-export",
+            "phase": "cleanup",
+            "error_type": "RuntimeError",
+            "message": "raw export failed",
+        }
+    ]
+
+
+def test_contained_drive_preserves_startup_failure_before_owned_teardown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage import schema_contract
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    output_dir = tmp_path / "evidence"
+    runtime_roots: list[Path] = []
+    original_mkdtemp = tempfile.mkdtemp
+
+    def owned_mkdtemp(*, prefix: str) -> str:
+        runtime_root = Path(original_mkdtemp(prefix=prefix)).resolve()
+        runtime_roots.append(runtime_root)
+        return str(runtime_root)
+
+    def fail_schema_startup(_database_url: str, *, schema: str) -> None:
+        raise RuntimeError(f"schema startup failed: {schema}")
+
+    def export_raw(
+        _database_url: str,
+        run_ids: list[str],
+        _output_dir: Path,
+        *,
+        runtime_root: Path,
+        process_sets: Mapping[str, object],
+        runtime_identity: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        assert run_ids == []
+        assert process_sets["after_cleanup"] == {"unavailable": "schema-not-created"}
+        assert runtime_identity == {"source_head": "f" * 40}
+        assert runtime_root.exists()
+        return {"path": "raw-probe.json", "sha256": "b" * 64}
+
+    monkeypatch.setenv("DATABASE_URL", _TEST_DATABASE_URL)
+    monkeypatch.setattr(harness, "_read_project_identity", lambda _root: ("project-id", "p"))
+    monkeypatch.setattr(
+        harness,
+        "_capture_runtime_identity",
+        lambda _root: {"source_head": "f" * 40},
+    )
+    monkeypatch.setattr("tests.ask.native_probe_harness.tempfile.mkdtemp", owned_mkdtemp)
+    monkeypatch.setattr(schema_contract, "apply_schema", fail_schema_startup)
+    monkeypatch.setattr(harness, "_export_raw", export_raw)
+
+    with pytest.raises(RuntimeError, match="schema startup failed"):
+        harness._contained_drive(
+            argparse.Namespace(
+                project_root=project_root,
+                output_dir=output_dir,
+                timeout_seconds=60.0,
+            )
+        )
+
+    assert len(runtime_roots) == 1
+    assert not runtime_roots[0].exists()
+    failure = json.loads((output_dir / "failure.json").read_bytes())
+    assert failure["error_type"] == "RuntimeError"
+    cleanup = json.loads((output_dir / "cleanup.json").read_bytes())
+    assert cleanup["failure"] == failure
+    assert cleanup["raw_export"]["sha256"] == "b" * 64
+    assert cleanup["schema"]["status"] == "not-created"
+    assert cleanup["runtime_root"]["status"] == "removed"
 
 
 def test_seal_writes_schema_v2_manifest_accepted_by_production_loader(
