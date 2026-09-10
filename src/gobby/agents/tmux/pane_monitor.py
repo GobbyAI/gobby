@@ -67,6 +67,7 @@ class TmuxPaneMonitor:
         stall_classifier: StallClassifier | None = None,
         *,
         registry: TerminalRuntimeRegistry,
+        startup_ready: Callable[[], bool] | None = None,
     ) -> None:
         self._callback = session_end_callback
         if config is None:
@@ -88,6 +89,7 @@ class TmuxPaneMonitor:
         # sees native rows as readily as tmux ones, and binding one runtime here
         # would snapshot a native pane through the tmux backend.
         self._registry = registry
+        self._startup_ready = startup_ready
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}
@@ -144,6 +146,9 @@ class TmuxPaneMonitor:
 
     async def _check_panes(self) -> None:
         """Core detection: cross-reference live tmux sessions with DB agent runs."""
+        # Restart recovery must classify missing terminals before normal death detection.
+        if self._startup_ready is not None and not self._startup_ready():
+            return
         from gobby.storage.agents import LocalAgentRunManager
 
         # 1. Prune expired entries from recently-ended set

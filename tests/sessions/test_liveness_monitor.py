@@ -671,7 +671,16 @@ class TestGetActiveTerminalSessions:
         assert records[0].parent_pid == 42
         query = storage.db.fetchall.call_args.args[0]
         assert "s.status = ANY(%s)" in query
-        assert storage.db.fetchall.call_args.args[1] == (["active", "paused", "awaiting_handoff"],)
+        assert storage.db.fetchall.call_args.args[1] == (
+            [
+                "active",
+                "paused",
+                "interrupted",
+                "awaiting_input",
+                "awaiting_approval",
+                "awaiting_handoff",
+            ],
+        )
 
     def test_skips_context_without_process_or_tmux_identity(self, storage: _Storage) -> None:
         storage.db.fetchall.return_value = [

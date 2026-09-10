@@ -53,6 +53,8 @@ async def tmux_window_name_repair_loop(
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 120,
     session_list_limit: int = 200,
+    *,
+    startup_ready: Callable[[], bool] | None = None,
 ) -> None:
     """Ensure active tmux-backed sessions have Gobby-named windows.
 
@@ -69,6 +71,9 @@ async def tmux_window_name_repair_loop(
     normalized_interval_seconds = _positive_int_or_default(interval_seconds, 120)
 
     async def _repair_once() -> None:
+        # Missing terminals belong to restart recovery until relaunch finishes.
+        if startup_ready is not None and not startup_ready():
+            return
         if session_manager is None:
             return
         try:

@@ -113,6 +113,7 @@ class SessionLivenessMonitor:
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         tmux_config: TmuxConfig | None = None,
         terminal_manager: Any | None = None,
+        startup_ready: Callable[[], bool] | None = None,
     ) -> None:
         self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
@@ -121,6 +122,7 @@ class SessionLivenessMonitor:
         self._poll_interval = poll_interval
         self._tmux_config = tmux_config
         self.terminal_manager = terminal_manager
+        self._startup_ready = startup_ready
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}
@@ -173,6 +175,9 @@ class SessionLivenessMonitor:
 
     async def _check_sessions(self) -> None:
         """Check active sessions for dead terminal owners."""
+        # A parked session may have no terminal while startup recovery resumes it.
+        if self._startup_ready is not None and not self._startup_ready():
+            return
         now = time.monotonic()
         expired = [
             sid for sid, ts in self._recently_handled.items() if now - ts > _RECENTLY_HANDLED_TTL
