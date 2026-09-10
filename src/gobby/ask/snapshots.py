@@ -788,6 +788,8 @@ class AskSnapshotManager:
                 with contextlib.suppress(BaseException):
                     await asyncio.shield(prepare_task)
                 raise
+            if not result.runtime_home:
+                raise RuntimeError("managed Ask snapshot runtime home is missing")
             executable = self.snapshot_executable
             _remaining_seconds(deadline_at)
         except BaseException:
@@ -800,7 +802,9 @@ class AskSnapshotManager:
             raise
         return SnapshotIndexRuntime(
             executable=Path(executable),
-            env={**identity_env, **result.env},
+            # Evidence invokes the native binary directly, bypassing the wrapper
+            # that normally selects this grant's local machine identity.
+            env={**identity_env, **result.env, "GOBBY_HOME": result.runtime_home},
             managed_execution_id=str(issued.credential.managed_execution_id),
             credential_generation=issued.credential.credential_generation,
         )

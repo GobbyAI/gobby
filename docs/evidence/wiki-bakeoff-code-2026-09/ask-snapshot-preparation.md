@@ -190,3 +190,37 @@ Cleanup reported `errors=[]`, complete raw export, private schema dropped,
 runtime removed, and worker/host absent. The parent verified that no probe or
 pinned `gcode` process remained. This failure remains an owned implementation
 finding; the native proof and all 14 cohort questions are still pending.
+
+## Attempt 10 identity correction
+
+The direct evidence process retained only `PATH`, `SYSTEMROOT`, and the prepared
+runtime environment. That environment carried the managed grant and
+`GOBBY_CODE_INDEX_RUNTIME_HOME`, but omitted `GOBBY_HOME`. The usual shell wrapper
+exports the latter; Ask bypasses that wrapper to invoke its pinned native binary.
+Consequently, gcore read the host machine identity instead of the contained one.
+
+The existing native integration fixture used the host machine ID in its temporary
+home, masking the fallback. Giving it a separate private home and distinct machine
+UUID reproduced the exact native error in 2.15 seconds. Snapshot preparation now
+requires the managed runtime home and includes it explicitly in the persisted
+evidence environment. It does not inherit an ambient home or weaken native grant
+validation. An additional real-native check changes the private on-disk identity
+and verifies rejection before restoring it and exercising recovery.
+
+Validation used the isolated test hub on port 60892, `GOBBY_TEST_PROTECT=1`,
+`UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv`, `PYTHONPATH=src`,
+`uv run --no-sync`, and the unchanged pinned `target/ask-probe-549db04` binaries:
+
+- `pytest tests/ask/test_native_integration.py::test_real_managed_snapshot_queries_branch_native_gcode -q --tb=short`:
+  RED with the exact grant/local-machine mismatch.
+- `pytest tests/ask/test_native_integration.py tests/ask/test_snapshots.py tests/ask/test_evidence.py -q --tb=short`:
+  16 passed in 17.61 seconds after the product fix.
+- `pytest tests/ask/test_native_integration.py -q --tb=short`:
+  3 passed in 4.51 seconds including the added real-native identity rejection,
+  fresh retrieval, recovered retrieval, and rejection of the stale runtime.
+- Focused Ruff lint/format and mypy passed. Test quality and test types audits
+  reported no issues; the suppression ratchet reported 218 baseline, zero new.
+
+This small regression establishes the identity correction. A new contained probe,
+provider security/resume acceptance, installed-service checks, and all 14 cohort
+answers remain required; attempt 10 is unchanged.

@@ -9,7 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -25,6 +25,7 @@ from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils import machine_id as machine_identity
 from tests.ask import native_probe_harness as harness
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -153,11 +154,21 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    host_machine_id = machine_identity.require_machine_id()
+    private_machine_id = str(uuid4())
+    assert private_machine_id != host_machine_id
+    private_home = tmp_path / "private-gobby-home"
+    private_home.mkdir()
+    harness._seed_contained_machine_identity(private_home, private_machine_id)
+    monkeypatch.setenv("GOBBY_HOME", str(private_home))
+    monkeypatch.setattr(machine_identity, "_cached_machine_id", None)
+    assert machine_identity.require_machine_id() == private_machine_id
     isolated = isolated_checkout_factory(
         temp_db,
         "ask-native-integration",
         root=tmp_path / "repository",
     )
+    assert isolated.machine_id == private_machine_id
     repo = Path(isolated.root_path)
     _git(repo, "init", "--quiet", "-b", "main")
     (repo / "src").mkdir()
@@ -383,6 +394,19 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     assert secret_entry["exclusion"] == "sensitive_content"
     assert not (snapshot.source_root / "src" / "public_config.rs").exists()
     assert "successful-secret" not in str(response)
+
+    # The home binding must preserve gcore's independent on-disk identity check.
+    harness._seed_contained_machine_identity(private_home, str(uuid4()))
+    try:
+        with pytest.raises(
+            EvidenceAdmissionError, match="grant machine does not match local machine"
+        ):
+            await admission.query(
+                "search",
+                {"lane": "literal", "query": "pinned_symbol", "paths": [], "limit": 100},
+            )
+    finally:
+        harness._seed_contained_machine_identity(private_home, private_machine_id)
 
     previous_execution = UUID(snapshot.runtime.managed_execution_id)
     recovered = await manager.recover_async(run_id=record.run_id, artifacts=artifacts)
