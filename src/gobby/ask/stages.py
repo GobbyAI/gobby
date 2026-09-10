@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from gobby.ask.contracts import AskRunRecord, AskRunResult, EvidenceReference
+from gobby.ask.contracts import (
+    AskBinding,
+    AskRunRecord,
+    AskRunResult,
+    EvidenceReference,
+    ProfileSnapshot,
+)
 from gobby.ask.permissions import AskAgentStage
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 
 class AskStage(StrEnum):
@@ -94,6 +100,53 @@ class AskOrchestrationState(BaseModel):
     boundaries: tuple[AskBoundaryEvent, ...] = ()
 
 
+class AskStepCheckpoint(BaseModel):
+    """Cumulative Ask checkpoint returned by one declared pipeline step."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: int = 1
+    run_id: str
+    answer_outcome: str | None = None
+    typed_error: AskTypedError | None = None
+    attempts: tuple[AskAttemptCheckpoint, ...] = ()
+    repair_count: int = Field(default=0, ge=0, le=1)
+    repair: bool | None = None
+    evidence_manifest_artifact: dict[str, Any] | None = None
+    evidence_manifest_hash: str | None = None
+    deterministic_validation_artifact: dict[str, Any] | None = None
+    review_validation_artifact: dict[str, Any] | None = None
+    publication: dict[str, Any] | None = None
+    boundaries: tuple[AskBoundaryEvent, ...] = ()
+
+
+_STEP_ORDER = (
+    "prepare",
+    "seed",
+    "investigate",
+    "validate_initial",
+    "review_initial",
+    "admit_repair",
+    "repair",
+    "validate_repair",
+    "review_repair",
+    "publish",
+)
+_STEP_INDEX = {step_id: index for index, step_id in enumerate(_STEP_ORDER)}
+_STEP_STAGES = {
+    "prepare": AskStage.BIND_PREPARE,
+    "seed": AskStage.SEED_QUERIES,
+    "investigate": AskStage.INVESTIGATOR,
+    "validate_initial": AskStage.VALIDATION,
+    "review_initial": AskStage.REVIEW,
+    "admit_repair": AskStage.REPAIR,
+    "repair": AskStage.REPAIR,
+    "validate_repair": AskStage.VALIDATION,
+    "review_repair": AskStage.REVIEW,
+    "publish": AskStage.PUBLISH,
+}
+
+
 _ASK_TOOL_IDENTITIES = (
     "gobby-ask:query_evidence",
     "gobby-ask:read_evidence",
@@ -116,7 +169,7 @@ def _json_object(raw: object, *, name: str) -> dict[str, Any]:
 
 
 class AskStageStore:
-    """Single writer for orchestration state nested in pipeline outputs."""
+    """Single writer for checkpoints owned by declared pipeline steps."""
 
     def __init__(
         self,
@@ -143,9 +196,7 @@ class AskStageStore:
                 deadline_at=record.binding.deadline_at,
                 profiles=profiles,
                 tool_identities=_ASK_TOOL_IDENTITIES,
-                boundaries=(
-                    self._event("bind:initialized", AskStage.BIND_PREPARE, {}),
-                ),
+                boundaries=(self._event("bind:initialized", AskStage.BIND_PREPARE, {}),),
             )
 
         return self._mutate(record.run_id, update)
@@ -154,11 +205,30 @@ class AskStageStore:
         execution = self.manager.get_execution(run_id)
         if execution is None:
             return None
-        outputs = _json_object(execution.outputs_json or "{}", name="pipeline outputs")
-        ask = outputs.get("ask")
-        if not isinstance(ask, dict) or ask.get("orchestration") is None:
-            return None
-        return AskOrchestrationState.model_validate(ask["orchestration"])
+        steps = self.manager.get_steps_for_execution(run_id)
+        rows: list[Mapping[str, Any]] = [
+            {
+                "step_id": item.step_id,
+                "status": item.status.value,
+                "output_json": item.output_json,
+            }
+            for item in steps
+        ]
+        return self._project(
+            run_id,
+            status=execution.status.value,
+            inputs_json=execution.inputs_json or "{}",
+            step_rows=rows,
+        )
+
+    def step_output(self, run_id: str, step_id: str) -> dict[str, Any]:
+        """Return the complete durable output for one declared Ask step."""
+        if step_id not in _STEP_INDEX:
+            raise ValueError(f"Unknown Ask pipeline step: {step_id}")
+        for item in self.manager.get_steps_for_execution(run_id):
+            if item.step_id == step_id and item.output_json:
+                return _json_object(item.output_json, name=f"Ask step {step_id} output")
+        raise ValueError(f"Ask step has no durable output: {step_id}")
 
     def reserve_attempt(
         self,
@@ -276,6 +346,17 @@ class AskStageStore:
                     continue
                 if item.agent_run_id != agent_run_id:
                     raise RuntimeError("Ask submission came from a superseded agent")
+                if item.submission_artifact is not None:
+                    if (
+                        item.status is not AskAttemptStatus.COMPLETED
+                        or item.submission_artifact != artifact
+                        or item.submission_hash != submission_hash
+                        or item.evidence_manifest_hash != evidence_manifest_hash
+                    ):
+                        raise RuntimeError("Ask attempt submission is immutable")
+                    selected = item
+                    items.append(item)
+                    continue
                 candidate = item.model_copy(
                     update={
                         "status": AskAttemptStatus.COMPLETED,
@@ -285,9 +366,7 @@ class AskStageStore:
                         "completed_at": self._now(),
                     }
                 )
-                if item.submission_artifact is not None and item != candidate:
-                    raise RuntimeError("Ask attempt submission is immutable")
-                selected = item if item.submission_artifact is not None else candidate
+                selected = candidate
                 items.append(selected)
             if selected is None:
                 raise RuntimeError("Ask submission has no current attempt")
@@ -322,9 +401,7 @@ class AskStageStore:
             return state.model_copy(
                 update={
                     "current_stage": stage,
-                    "boundaries": self._append_event(
-                        state, boundary_id, stage, details or {}
-                    ),
+                    "boundaries": self._append_event(state, boundary_id, stage, details or {}),
                     **updates,
                 }
             )
@@ -405,7 +482,7 @@ class AskStageStore:
         with self.manager.db.transaction() as connection:
             row = connection.execute(
                 """
-                SELECT project_id, outputs_json FROM pipeline_executions
+                SELECT project_id, status, inputs_json FROM pipeline_executions
                 WHERE id = %s AND pipeline_name = 'native-ask'
                 FOR UPDATE
                 """,
@@ -416,39 +493,159 @@ class AskStageStore:
                 and str(row["project_id"]) != self.manager.project_id
             ):
                 raise ValueError(f"Ask run not found: {run_id}")
-            outputs = _json_object(row["outputs_json"] or "{}", name="pipeline outputs")
-            ask = outputs.setdefault("ask", {})
-            if not isinstance(ask, dict):
-                raise RuntimeError("invalid persisted Ask outputs")
-            body = ask.get("orchestration")
-            current = AskOrchestrationState.model_validate(body) if body is not None else None
-            state = update(current)
-            ask["orchestration"] = state.model_dump(mode="json")
-            if pipeline_status is None:
+            step_rows = list(
                 connection.execute(
                     """
-                    UPDATE pipeline_executions
-                    SET outputs_json = %s, updated_at = NOW()
-                    WHERE id = %s
+                    SELECT id, step_id, status, output_json
+                    FROM step_executions
+                    WHERE execution_id = %s
+                    ORDER BY id
+                    FOR UPDATE
                     """,
-                    (_canonical_json(outputs), run_id),
-                )
-            else:
+                    (run_id,),
+                ).fetchall()
+            )
+            current = self._project(
+                run_id,
+                status=str(row["status"]),
+                inputs_json=str(row["inputs_json"] or "{}"),
+                step_rows=step_rows,
+            )
+            state = update(current)
+            step_id = self._step_for_state(state)
+            checkpoint = AskStepCheckpoint(
+                run_id=state.run_id,
+                answer_outcome=state.answer_outcome,
+                typed_error=state.typed_error,
+                attempts=state.attempts,
+                repair_count=state.repair_count,
+                repair=(state.repair_count == 1) if step_id == "admit_repair" else None,
+                evidence_manifest_artifact=state.evidence_manifest_artifact,
+                evidence_manifest_hash=state.evidence_manifest_hash,
+                deterministic_validation_artifact=state.deterministic_validation_artifact,
+                review_validation_artifact=state.review_validation_artifact,
+                publication=state.publication,
+                boundaries=state.boundaries,
+            )
+            selected = next(
+                (item for item in step_rows if str(item["step_id"]) == step_id),
+                None,
+            )
+            if selected is None:
+                selected = connection.execute(
+                    """
+                    INSERT INTO step_executions (execution_id, step_id, status)
+                    VALUES (%s, %s, %s)
+                    RETURNING id, step_id, status, output_json
+                    """,
+                    (run_id, step_id, StepStatus.PENDING.value),
+                ).fetchone()
+                if selected is None:
+                    raise RuntimeError(f"Ask step {step_id} was not created")
+            connection.execute(
+                "UPDATE step_executions SET output_json = %s WHERE id = %s",
+                (_canonical_json(checkpoint.model_dump(mode="json")), selected["id"]),
+            )
+            if pipeline_status is not None:
                 connection.execute(
                     """
-                    UPDATE pipeline_executions
-                    SET status = %s, outputs_json = %s,
+                    UPDATE pipeline_executions SET status = %s,
                         completed_at = NOW(), updated_at = NOW()
                     WHERE id = %s
                     """,
-                    (pipeline_status.value, _canonical_json(outputs), run_id),
+                    (pipeline_status.value, run_id),
                 )
         return state
 
+    def _project(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        inputs_json: str,
+        step_rows: list[Mapping[str, Any]],
+    ) -> AskOrchestrationState | None:
+        checkpoints: list[tuple[int, AskStepCheckpoint]] = []
+        for item in step_rows:
+            step_id = str(item["step_id"])
+            output_json = item.get("output_json")
+            if step_id not in _STEP_INDEX or not output_json:
+                continue
+            body = _json_object(output_json, name=f"Ask step {step_id} output")
+            checkpoints.append((_STEP_INDEX[step_id], AskStepCheckpoint.model_validate(body)))
+        if not checkpoints:
+            return None
+        checkpoints.sort(key=lambda item: item[0])
+        latest = checkpoints[-1][1]
+        if latest.run_id != run_id:
+            raise RuntimeError("Ask step checkpoint belongs to another run")
+
+        inputs = _json_object(inputs_json, name="pipeline inputs")
+        ask = inputs.get("ask")
+        if not isinstance(ask, dict):
+            raise RuntimeError("Ask pipeline inputs are missing")
+        binding = AskBinding.model_validate(ask.get("binding"))
+        investigator = ProfileSnapshot.model_validate(ask.get("investigator"))
+        reviewer = ProfileSnapshot.model_validate(ask.get("reviewer"))
+        current_stage = self._derive_stage(step_rows, latest)
+        return AskOrchestrationState(
+            run_id=run_id,
+            status=status,
+            current_stage=current_stage,
+            deadline_at=binding.deadline_at,
+            answer_outcome=latest.answer_outcome,
+            typed_error=latest.typed_error if status == ExecutionStatus.FAILED.value else None,
+            profiles={
+                "investigator": investigator.identifier,
+                "reviewer": reviewer.identifier,
+            },
+            tool_identities=_ASK_TOOL_IDENTITIES,
+            attempts=latest.attempts,
+            repair_count=latest.repair_count,
+            evidence_manifest_artifact=latest.evidence_manifest_artifact,
+            evidence_manifest_hash=latest.evidence_manifest_hash,
+            deterministic_validation_artifact=latest.deterministic_validation_artifact,
+            review_validation_artifact=latest.review_validation_artifact,
+            publication=latest.publication,
+            boundaries=latest.boundaries,
+        )
+
     @staticmethod
-    def _required(
-        state: AskOrchestrationState | None, run_id: str
-    ) -> AskOrchestrationState:
+    def _derive_stage(
+        step_rows: list[Mapping[str, Any]],
+        latest: AskStepCheckpoint,
+    ) -> AskStage:
+        running = [
+            str(item["step_id"])
+            for item in step_rows
+            if str(item["step_id"]) in _STEP_INDEX
+            and str(item["status"]) == StepStatus.RUNNING.value
+        ]
+        if running:
+            return _STEP_STAGES[max(running, key=_STEP_INDEX.__getitem__)]
+        if latest.boundaries:
+            return latest.boundaries[-1].stage
+        return AskStage.BIND_PREPARE
+
+    @staticmethod
+    def _step_for_state(state: AskOrchestrationState) -> str:
+        if state.current_stage is AskStage.BIND_PREPARE:
+            return "prepare"
+        if state.current_stage is AskStage.SEED_QUERIES:
+            return "seed"
+        if state.current_stage is AskStage.INVESTIGATOR:
+            return "investigate"
+        if state.current_stage is AskStage.VALIDATION:
+            return "validate_repair" if state.repair_count else "validate_initial"
+        if state.current_stage is AskStage.REVIEW:
+            return "review_repair" if state.repair_count else "review_initial"
+        if state.current_stage is AskStage.PUBLISH:
+            return "publish"
+        has_repair_attempt = any(item.stage is AskAgentStage.REPAIR for item in state.attempts)
+        return "repair" if has_repair_attempt else "admit_repair"
+
+    @staticmethod
+    def _required(state: AskOrchestrationState | None, run_id: str) -> AskOrchestrationState:
         if state is None:
             raise ValueError(f"Ask run has no orchestration state: {run_id}")
         return state

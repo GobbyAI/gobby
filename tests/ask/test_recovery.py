@@ -151,3 +151,61 @@ async def test_deadline_and_stage_boundary_recovery(
             project_id=project_id,
             now=expired_record.binding.deadline_at,
         )
+
+
+def test_identical_stage_submission_replay_is_idempotent(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    from gobby.ask.permissions import AskAgentStage
+    from gobby.ask.stages import AskStageStore
+
+    project_id = str(sample_project["id"])
+    manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+    )
+    record = storage.start(
+        AskRequest(
+            question="Can a completed submission be replayed safely?",
+            project_id=project_id,
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        tmp_path,
+    )
+    stages = AskStageStore(manager)
+    stages.initialize(record)
+    stages.reserve_attempt(
+        record.run_id,
+        stage=AskAgentStage.INVESTIGATOR,
+        attempt=0,
+        boundary_id="investigator:0:reserved",
+    )
+    stages.bind_agent(
+        record.run_id,
+        stage=AskAgentStage.INVESTIGATOR,
+        attempt=0,
+        agent_run_id="agent-original",
+        boundary_id="investigator:0:launched",
+    )
+    arguments = {
+        "stage": AskAgentStage.INVESTIGATOR,
+        "attempt": 0,
+        "agent_run_id": "agent-original",
+        "artifact": {"kind": "answer-draft", "sha256": "a" * 64},
+        "submission_hash": "b" * 64,
+        "evidence_manifest_hash": "c" * 64,
+        "boundary_id": "investigator:0:answer:" + "b" * 64,
+    }
+
+    first = stages.record_submission(record.run_id, **arguments)
+    replay = stages.record_submission(record.run_id, **arguments)
+
+    assert replay == first
+    state = stages.get(record.run_id)
+    assert state is not None
+    assert state.attempts == (first,)

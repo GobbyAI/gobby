@@ -397,6 +397,7 @@ def publish_answer(
     files: dict[str, bytes] = {
         "answer.json": canonical_json(answer),
         "answer.md": render_markdown(answer).encode(),
+        "evidence-manifest.json": canonical_json(evidence.model_dump(mode="json", by_alias=True)),
     }
     cited_ids = {
         citation["evidence_id"]

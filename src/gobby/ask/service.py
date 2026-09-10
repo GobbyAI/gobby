@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from gobby.ask.agents import AskAgentRuntime, AskAgentSpec
 from gobby.ask.artifacts import AskArtifactStore
@@ -18,10 +17,20 @@ from gobby.ask.contracts import (
     AskRequest,
     AskRunRecord,
     AskRunResult,
-    EvidenceReference,
 )
 from gobby.ask.evidence import EvidenceAdmission
-from gobby.ask.permissions import AskAgentStage, AskPermissionStore
+from gobby.ask.evidence_runtime import (
+    AskEvidenceRuntime,
+    AskEvidenceSession,
+    AskSnapshotManager,
+    EvidenceFactory,
+    EvidenceManifestFactory,
+    PreparedAskSnapshot,
+    build_evidence_manifest,
+    evidence_references,
+    pinned_blobs,
+)
+from gobby.ask.permissions import AskAgentStage, AskPermissionRuntime
 from gobby.ask.publication import PublicationError, publish_answer
 from gobby.ask.recovery import AskRecoveryController
 from gobby.ask.snapshots import SnapshotDriftError
@@ -37,7 +46,6 @@ from gobby.ask.storage import AskRunStorage
 from gobby.ask.validation import (
     ClaimValidationReport,
     EvidenceManifest,
-    RecordedEvidence,
     ReviewValidationReport,
     validate_claims,
     validate_review,
@@ -50,46 +58,15 @@ logger = logging.getLogger(__name__)
 _REVIEW_RESERVE_SECONDS = 60.0
 
 
-class _PreparedSnapshot(Protocol):
-    binding: dict[str, Any]
-    inventory: dict[str, Any]
-    source_root: Path
-
-
-class _SnapshotManager(Protocol):
-    async def prepare_async(
-        self,
-        *,
-        run_id: str,
-        repository_root: Path,
-        artifacts: AskArtifactStore,
-    ) -> _PreparedSnapshot: ...
-
-    async def recover_async(
-        self,
-        *,
-        run_id: str,
-        artifacts: AskArtifactStore,
-    ) -> _PreparedSnapshot: ...
-
-    def release(self, snapshot: _PreparedSnapshot, *, artifacts: AskArtifactStore) -> None: ...
-
-
-class _EvidenceSession(Protocol):
-    async def query(
-        self,
-        operation: str,
-        selector: Mapping[str, Any],
-        *,
-        continuation: str | None = None,
-    ) -> dict[str, Any]: ...
-
-
-EvidenceFactory = Callable[[AskRunRecord, _PreparedSnapshot, AskArtifactStore], _EvidenceSession]
-EvidenceManifestFactory = Callable[
-    [AskRunRecord, _PreparedSnapshot, AskArtifactStore], EvidenceManifest
-]
 FaultInjector = Callable[[str], None]
+
+
+class AskFaultInjected(RuntimeError):
+    """Signal a simulated process interruption after a durable boundary."""
+
+    def __init__(self, boundary_id: str) -> None:
+        super().__init__(f"Ask fault injected after {boundary_id}")
+        self.boundary_id = boundary_id
 
 
 class AskService:
@@ -100,9 +77,9 @@ class AskService:
         *,
         storage: AskRunStorage,
         stages: AskStageStore,
-        snapshot_manager: _SnapshotManager,
+        snapshot_manager: AskSnapshotManager,
         agents: AskAgentRuntime,
-        permissions: AskPermissionStore,
+        permissions: AskPermissionRuntime,
         state_root: Path | None,
         evidence_factory: EvidenceFactory | None = None,
         evidence_manifest_factory: EvidenceManifestFactory | None = None,
@@ -116,13 +93,23 @@ class AskService:
         self.permissions = permissions
         self.state_root = state_root
         self.evidence_factory = evidence_factory or self._default_evidence_factory
-        self.evidence_manifest_factory = (
-            evidence_manifest_factory or self._build_evidence_manifest
+        manifest_factory = evidence_manifest_factory or (
+            lambda record, snapshot, artifacts: build_evidence_manifest(
+                self.storage,
+                record,
+                snapshot,
+                artifacts,
+            )
         )
         self.fault_injector = fault_injector
         self.now = now or (lambda: datetime.now(UTC))
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._admissions: dict[str, _EvidenceSession] = {}
+        self.evidence = AskEvidenceRuntime(
+            stages=stages,
+            manifest_factory=manifest_factory,
+            remaining_seconds=self._remaining,
+            fault_injector=self._fault,
+        )
 
     async def start(
         self,
@@ -220,21 +207,19 @@ class AskService:
         )
         if principal.stage is AskAgentStage.REVIEWER:
             raise PermissionError("Ask reviewer cannot issue evidence queries")
-        admission = self._admissions.get(run_id)
-        if admission is None:
-            raise RuntimeError("Ask evidence runtime is not active")
-        return await admission.query(operation, selector, continuation=continuation)
+        return await self.evidence.query(
+            run_id=run_id,
+            stage=principal.stage,
+            attempt=principal.attempt,
+            agent_run_id=principal.agent_run_id,
+            operation=operation,
+            selector=selector,
+            continuation=continuation,
+        )
 
     async def read_evidence(self, *, run_id: str, evidence_id: str) -> dict[str, Any]:
         self._authorize_current("read_evidence", {"run_id": run_id})
-        record = self._record(run_id, self._project_id(run_id))
-        artifacts = self._artifacts(record)
-        state = self._required_state(run_id)
-        if state.evidence_manifest_artifact is None:
-            raise RuntimeError("Ask evidence manifest is not available")
-        evidence = EvidenceManifest.model_validate(
-            await asyncio.to_thread(artifacts.read_body, state.evidence_manifest_artifact)
-        )
+        evidence = await self.evidence.load_current(run_id)
         for recorded in evidence.records:
             for item in recorded.response.items:
                 if item.evidence_id == evidence_id:
@@ -261,27 +246,28 @@ class AskService:
             or answer.content_hash != draft_hash
         ):
             raise ValueError("Ask answer submission identity or hash mismatch")
-        state = self._required_state(run_id)
-        if state.evidence_manifest_hash != evidence_manifest_hash:
-            raise ValueError("Ask answer submission evidence hash is stale")
-        record = self._record(run_id, principal.project_id)
-        artifact = await asyncio.to_thread(
-            self._artifacts(record).write_body,
-            "answer-draft",
-            answer.model_dump(mode="json"),
-            timeout_seconds=self._remaining(state.deadline_at),
-        )
-        checkpoint = await asyncio.to_thread(
-            self.stages.record_submission,
-            run_id,
-            stage=principal.stage,
-            attempt=attempt,
-            agent_run_id=principal.agent_run_id,
-            artifact=artifact,
-            submission_hash=draft_hash,
-            evidence_manifest_hash=evidence_manifest_hash,
-            boundary_id=f"{principal.stage.value}:{attempt}:answer:{draft_hash}",
-        )
+        async with self.evidence.submission_guard(run_id):
+            state = self._required_state(run_id)
+            if state.evidence_manifest_hash != evidence_manifest_hash:
+                raise ValueError("Ask answer submission evidence hash is stale")
+            record = self._record(run_id, principal.project_id)
+            artifact = await asyncio.to_thread(
+                self._artifacts(record).write_body,
+                "answer-draft",
+                answer.model_dump(mode="json"),
+                timeout_seconds=self._remaining(state.deadline_at),
+            )
+            checkpoint = await asyncio.to_thread(
+                self.stages.record_submission,
+                run_id,
+                stage=principal.stage,
+                attempt=attempt,
+                agent_run_id=principal.agent_run_id,
+                artifact=artifact,
+                submission_hash=draft_hash,
+                evidence_manifest_hash=evidence_manifest_hash,
+                boundary_id=f"{principal.stage.value}:{attempt}:answer:{draft_hash}",
+            )
         return {"accepted": True, "submission_hash": checkpoint.submission_hash}
 
     async def submit_review(
@@ -309,27 +295,28 @@ class AskService:
             or actual_hash != review_hash
         ):
             raise ValueError("Ask review submission identity or hash mismatch")
-        state = self._required_state(run_id)
-        if state.evidence_manifest_hash != evidence_manifest_hash:
-            raise ValueError("Ask review submission evidence hash is stale")
-        record = self._record(run_id, principal.project_id)
-        artifact = await asyncio.to_thread(
-            self._artifacts(record).write_body,
-            "reviewer-result",
-            reviewer.model_dump(mode="json"),
-            timeout_seconds=self._remaining(state.deadline_at),
-        )
-        checkpoint = await asyncio.to_thread(
-            self.stages.record_submission,
-            run_id,
-            stage=AskAgentStage.REVIEWER,
-            attempt=attempt,
-            agent_run_id=principal.agent_run_id,
-            artifact=artifact,
-            submission_hash=review_hash,
-            evidence_manifest_hash=evidence_manifest_hash,
-            boundary_id=f"reviewer:{attempt}:review:{review_hash}",
-        )
+        async with self.evidence.submission_guard(run_id):
+            state = self._required_state(run_id)
+            if state.evidence_manifest_hash != evidence_manifest_hash:
+                raise ValueError("Ask review submission evidence hash is stale")
+            record = self._record(run_id, principal.project_id)
+            artifact = await asyncio.to_thread(
+                self._artifacts(record).write_body,
+                "reviewer-result",
+                reviewer.model_dump(mode="json"),
+                timeout_seconds=self._remaining(state.deadline_at),
+            )
+            checkpoint = await asyncio.to_thread(
+                self.stages.record_submission,
+                run_id,
+                stage=AskAgentStage.REVIEWER,
+                attempt=attempt,
+                agent_run_id=principal.agent_run_id,
+                artifact=artifact,
+                submission_hash=review_hash,
+                evidence_manifest_hash=evidence_manifest_hash,
+                boundary_id=f"reviewer:{attempt}:review:{review_hash}",
+            )
         return {"accepted": True, "submission_hash": checkpoint.submission_hash}
 
     def _ensure_task(
@@ -360,7 +347,7 @@ class AskService:
         project_root: Path,
         caller_session_id: str,
     ) -> None:
-        snapshot: _PreparedSnapshot | None = None
+        snapshot: PreparedAskSnapshot | None = None
         artifacts = self._artifacts(record)
         try:
             await asyncio.to_thread(
@@ -398,7 +385,7 @@ class AskService:
             self._fault("bind:snapshot-prepared")
 
             admission = self.evidence_factory(record, snapshot, artifacts)
-            self._admissions[record.run_id] = admission
+            self.evidence.activate(record, snapshot, artifacts, admission)
             state = self._required_state(record.run_id)
             if not self._has_boundary(state, "seed:complete"):
                 await self._seed(admission, record.request.question, record.binding.deadline_at)
@@ -409,29 +396,12 @@ class AskService:
                     boundary_id="seed:complete",
                 )
                 self._fault("seed:complete")
-            evidence = await asyncio.to_thread(
-                self.evidence_manifest_factory,
-                record,
-                snapshot,
-                artifacts,
-            )
-            evidence_pointer = await asyncio.to_thread(
-                artifacts.write_body,
-                "evidence-manifest",
-                evidence.model_dump(mode="json", by_alias=True),
-                timeout_seconds=self._remaining(record.binding.deadline_at),
-            )
-            await asyncio.to_thread(
-                self.stages.checkpoint,
+            evidence = await self.evidence.persist_manifest(
                 record.run_id,
                 stage=AskStage.SEED_QUERIES,
-                boundary_id=f"evidence:{evidence.content_hash}",
-                evidence_manifest_artifact=evidence_pointer,
-                evidence_manifest_hash=evidence.content_hash,
             )
-            self._fault(f"evidence:{evidence.content_hash}")
 
-            draft = await self._answer_attempt(
+            draft, evidence = await self._answer_attempt(
                 record,
                 snapshot,
                 artifacts,
@@ -463,7 +433,7 @@ class AskService:
                     repair_count=1,
                 )
                 self._fault("repair:admitted")
-                draft = await self._answer_attempt(
+                draft, evidence = await self._answer_attempt(
                     record,
                     snapshot,
                     artifacts,
@@ -472,9 +442,7 @@ class AskService:
                     attempt=1,
                     caller_session_id=caller_session_id,
                 )
-                deterministic = await self._validate(
-                    record, snapshot, artifacts, draft, evidence
-                )
+                deterministic = await self._validate(record, snapshot, artifacts, draft, evidence)
                 review = await self._review_attempt(
                     record,
                     snapshot,
@@ -488,9 +456,7 @@ class AskService:
 
             if review.diagnostics:
                 codes = ", ".join(item.code for item in review.diagnostics)
-                raise PublicationError(
-                    f"mandatory Ask review failed identity validation: {codes}"
-                )
+                raise PublicationError(f"mandatory Ask review failed identity validation: {codes}")
             publication = await asyncio.to_thread(
                 publish_answer,
                 artifacts,
@@ -530,7 +496,7 @@ class AskService:
                 publication=publication_body,
             )
             self._fault(f"publish:{publication.manifest_sha256}")
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, AskFaultInjected):
             raise
         except TimeoutError as error:
             await self._fail(record, AskErrorCode.DEADLINE_EXCEEDED, str(error))
@@ -541,7 +507,7 @@ class AskService:
         except Exception as error:
             await self._fail(record, AskErrorCode.AGENT_FAILED, str(error))
         finally:
-            self._admissions.pop(record.run_id, None)
+            self.evidence.deactivate(record.run_id)
             if snapshot is not None:
                 with contextlib.suppress(Exception):
                     await asyncio.to_thread(
@@ -553,14 +519,14 @@ class AskService:
     async def _answer_attempt(
         self,
         record: AskRunRecord,
-        snapshot: _PreparedSnapshot,
+        snapshot: PreparedAskSnapshot,
         artifacts: AskArtifactStore,
         evidence: EvidenceManifest,
         *,
         stage: AskAgentStage,
         attempt: int,
         caller_session_id: str,
-    ) -> AnswerDraft:
+    ) -> tuple[AnswerDraft, EvidenceManifest]:
         checkpoint = await self._run_agent(
             record,
             snapshot,
@@ -577,12 +543,18 @@ class AskService:
         draft = AnswerDraft.model_validate(body)
         if draft.content_hash != checkpoint.submission_hash:
             raise RuntimeError("Ask answer submission hash changed after checkpoint")
-        return draft
+        if checkpoint.evidence_manifest_hash is None:
+            raise RuntimeError("Ask answer submission omitted its evidence manifest hash")
+        accepted_evidence = await self.evidence.load_current(
+            record.run_id,
+            expected_hash=checkpoint.evidence_manifest_hash,
+        )
+        return draft, accepted_evidence
 
     async def _review_attempt(
         self,
         record: AskRunRecord,
-        snapshot: _PreparedSnapshot,
+        snapshot: PreparedAskSnapshot,
         artifacts: AskArtifactStore,
         draft: AnswerDraft,
         evidence: EvidenceManifest,
@@ -612,19 +584,23 @@ class AskService:
             report.model_dump(mode="json"),
             timeout_seconds=self._remaining(record.binding.deadline_at),
         )
+        boundary_id = (
+            f"review-validation:{attempt}:{canonical_hash(report.model_dump(mode='json'))}"
+        )
         await asyncio.to_thread(
             self.stages.checkpoint,
             record.run_id,
             stage=AskStage.REVIEW,
-            boundary_id=f"review-validation:{attempt}:{canonical_hash(report.model_dump(mode='json'))}",
+            boundary_id=boundary_id,
             review_validation_artifact=pointer,
         )
+        self._fault(boundary_id)
         return report
 
     async def _run_agent(
         self,
         record: AskRunRecord,
-        snapshot: _PreparedSnapshot,
+        snapshot: PreparedAskSnapshot,
         artifacts: AskArtifactStore,
         evidence: EvidenceManifest,
         *,
@@ -709,18 +685,19 @@ class AskService:
         checkpoint = self._attempt(record.run_id, stage, attempt)
         if status != "success" or checkpoint.submission_artifact is None:
             raise RuntimeError(f"Ask agent ended as {status} without a valid submission")
+        self._fault(f"{stage.value}:{attempt}:submitted")
         return checkpoint
 
     async def _validate(
         self,
         record: AskRunRecord,
-        snapshot: _PreparedSnapshot,
+        snapshot: PreparedAskSnapshot,
         artifacts: AskArtifactStore,
         draft: AnswerDraft,
         evidence: EvidenceManifest,
     ) -> ClaimValidationReport:
-        pinned_blobs = await asyncio.to_thread(self._pinned_blobs, snapshot, evidence)
-        report = validate_claims(draft, evidence, pinned_blobs=pinned_blobs)
+        source_blobs = await asyncio.to_thread(pinned_blobs, snapshot, evidence)
+        report = validate_claims(draft, evidence, pinned_blobs=source_blobs)
         pointer = await asyncio.to_thread(
             artifacts.write_body,
             "claim-validation",
@@ -740,7 +717,7 @@ class AskService:
 
     async def _seed(
         self,
-        admission: _EvidenceSession,
+        admission: AskEvidenceSession,
         question: str,
         deadline_at: datetime,
     ) -> None:
@@ -784,9 +761,9 @@ class AskService:
     def _default_evidence_factory(
         self,
         record: AskRunRecord,
-        snapshot: _PreparedSnapshot,
+        snapshot: PreparedAskSnapshot,
         artifacts: AskArtifactStore,
-    ) -> _EvidenceSession:
+    ) -> AskEvidenceSession:
         runtime = getattr(snapshot, "runtime", None)
         if runtime is None:
             raise RuntimeError("Ask snapshot omitted its managed index runtime")
@@ -798,57 +775,6 @@ class AskService:
             artifacts=artifacts,
             storage=self.storage,
         )
-
-    def _build_evidence_manifest(
-        self,
-        record: AskRunRecord,
-        snapshot: _PreparedSnapshot,
-        artifacts: AskArtifactStore,
-    ) -> EvidenceManifest:
-        records: list[RecordedEvidence] = []
-        for reference in self._evidence_references(record.run_id):
-            if reference.status != "succeeded" or reference.response_hash is None:
-                continue
-            result = artifacts.read_body(reference.result_artifact)
-            response = result.get("response")
-            if not isinstance(response, dict):
-                raise RuntimeError("successful Ask evidence artifact omitted its response")
-            records.append(
-                RecordedEvidence.model_validate(
-                    {
-                        "run_id": record.run_id,
-                        "invocation_id": reference.invocation_id,
-                        "snapshot_inventory_digest": reference.snapshot_inventory_digest,
-                        "request_hash": reference.request_hash,
-                        "response_hash": reference.response_hash,
-                        "response": response,
-                    }
-                )
-            )
-        return EvidenceManifest.model_validate(
-            {
-                "run_id": record.run_id,
-                "snapshot_binding": snapshot.binding,
-                "inventory": snapshot.inventory,
-                "records": records,
-            }
-        )
-
-    def _pinned_blobs(
-        self,
-        snapshot: _PreparedSnapshot,
-        evidence: EvidenceManifest,
-    ) -> dict[tuple[str, str], bytes]:
-        source_root = snapshot.source_root.resolve()
-        blobs: dict[tuple[str, str], bytes] = {}
-        for entry in evidence.inventory.entries:
-            if entry.kind != "file" or entry.blob_oid is None or entry.exclusion is not None:
-                continue
-            path = (source_root / entry.path).resolve()
-            if not path.is_relative_to(source_root):
-                raise SnapshotDriftError("Ask inventory path escaped the snapshot")
-            blobs[(entry.path, entry.blob_oid)] = path.read_bytes()
-        return blobs
 
     def _authorize_current(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
         agent_run_id = get_current_agent_run_id()
@@ -870,18 +796,8 @@ class AskService:
     def _result(self, record: AskRunRecord) -> AskRunResult:
         return self.stages.to_result(
             record,
-            evidence=tuple(self._evidence_references(record.run_id)),
+            evidence=tuple(evidence_references(self.storage, record.run_id)),
         )
-
-    def _evidence_references(self, run_id: str) -> list[EvidenceReference]:
-        execution = self.storage.manager.get_execution(run_id)
-        if execution is None:
-            return []
-        outputs = json.loads(execution.outputs_json or "{}")
-        raw = outputs.get("ask", {}).get("evidence", []) if isinstance(outputs, dict) else []
-        if not isinstance(raw, list):
-            raise RuntimeError("invalid persisted Ask evidence references")
-        return [EvidenceReference.model_validate(item) for item in raw]
 
     def _required_state(self, run_id: str) -> AskOrchestrationState:
         state = self.stages.get(run_id)
@@ -899,12 +815,6 @@ class AskService:
             if checkpoint.stage is stage and checkpoint.attempt == attempt:
                 return checkpoint
         raise RuntimeError("Ask attempt checkpoint disappeared")
-
-    def _project_id(self, run_id: str) -> str:
-        execution = self.storage.manager.get_execution(run_id)
-        if execution is None:
-            raise ValueError(f"Ask run not found: {run_id}")
-        return execution.project_id
 
     def _repository_root(self, run_id: str) -> Path:
         state = self._required_state(run_id)
@@ -961,7 +871,12 @@ class AskService:
 
     def _fault(self, boundary_id: str) -> None:
         if self.fault_injector is not None:
-            self.fault_injector(boundary_id)
+            try:
+                self.fault_injector(boundary_id)
+            except AskFaultInjected:
+                raise
+            except Exception as error:
+                raise AskFaultInjected(boundary_id) from error
 
 
-__all__ = ["AskService"]
+__all__ = ["AskFaultInjected", "AskService"]

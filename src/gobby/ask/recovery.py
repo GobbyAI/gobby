@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from gobby.ask.permissions import AskPermissionStore
 from gobby.ask.stages import (
     AskAttemptCheckpoint,
     AskAttemptStatus,
@@ -25,6 +24,10 @@ class AskAgentRecoveryRuntime(Protocol):
     def cancel(self, agent_run_id: str) -> Awaitable[None]: ...
 
 
+class AskPermissionRevoker(Protocol):
+    def revoke_for_run(self, ask_run_id: str, *, reason: str) -> int: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AskRecoveryDecision:
     state: AskOrchestrationState
@@ -40,7 +43,7 @@ class AskRecoveryController:
         *,
         manager: LocalPipelineExecutionManager,
         stages: AskStageStore,
-        permissions: AskPermissionStore,
+        permissions: AskPermissionRevoker,
         agents: AskAgentRecoveryRuntime,
     ) -> None:
         self.manager = manager

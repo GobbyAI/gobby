@@ -1,22 +1,33 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+import yaml
 
+from gobby.ask.agents import AskAgentSpec
+from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.claims import AnswerDraft, ReviewClaimVerdict, ReviewerResult, canonical_hash
-from gobby.ask.contracts import AskRequest, ProfileSnapshot
-from gobby.ask.permissions import AskAgentStage
+from gobby.ask.contracts import AskRequest, AskRunRecord, ProfileSnapshot
+from gobby.ask.evidence_runtime import PreparedAskSnapshot
+from gobby.ask.pipeline import ASK_PIPELINE_STEPS, parse_ask_pipeline
+from gobby.ask.permissions import AskAgentStage, AskRuntimeProfile
 from gobby.ask.storage import AskRunStorage
 from gobby.ask.validation import EvidenceManifest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.utils.session_context import reset_current_agent_run_id, set_current_agent_run_id
+from gobby.workflows.pipeline_executor import PipelineExecutor
+from gobby.workflows.templates import TemplateEngine
 from tests.ask.test_validation import _valid_case
+
+if TYPE_CHECKING:
+    from gobby.ask.service import AskService
 
 pytestmark = pytest.mark.unit
 
@@ -55,7 +66,7 @@ class _SnapshotManager:
         *,
         run_id: str,
         repository_root: Path,
-        artifacts: object,
+        artifacts: AskArtifactStore,
     ) -> _PreparedSnapshot:
         del repository_root, artifacts
         _draft, evidence, blobs, _review = _valid_case(run_id=run_id, project_id=self.project_id)
@@ -81,7 +92,9 @@ class _SnapshotManager:
             },
         )
 
-    async def recover_async(self, *, run_id: str, artifacts: object) -> _PreparedSnapshot:
+    async def recover_async(
+        self, *, run_id: str, artifacts: AskArtifactStore
+    ) -> _PreparedSnapshot:
         del artifacts
         evidence = self.by_run[run_id]
         return _PreparedSnapshot(
@@ -99,13 +112,25 @@ class _SnapshotManager:
             },
         )
 
-    def release(self, snapshot: _PreparedSnapshot, *, artifacts: object) -> None:
+    def release(self, snapshot: _PreparedSnapshot, *, artifacts: AskArtifactStore) -> None:
         del snapshot, artifacts
 
 
 class _EvidenceAdmission:
-    def __init__(self) -> None:
+    def __init__(self, evidence: EvidenceManifest) -> None:
+        self.evidence = evidence
         self.queries: list[tuple[str, Mapping[str, Any]]] = []
+
+    def manifest(self) -> EvidenceManifest:
+        record = self.evidence.records[0]
+        return self.evidence.model_copy(
+            update={
+                "records": tuple(
+                    record.model_copy(update={"invocation_id": f"invocation-{index}"})
+                    for index, _query in enumerate(self.queries, start=1)
+                )
+            }
+        )
 
     async def query(
         self,
@@ -116,7 +141,7 @@ class _EvidenceAdmission:
     ) -> dict[str, Any]:
         assert continuation is None
         self.queries.append((operation, selector))
-        return {"items": [], "complete": True}
+        return self.evidence.records[0].response.model_dump(mode="json", by_alias=True)
 
 
 class _PermissionStore:
@@ -156,9 +181,10 @@ class _PermissionStore:
     ) -> SimpleNamespace:
         principal = self.principals[agent_run_id]
         assert server_name == "gobby-ask"
-        assert tool_name in {"submit_answer", "submit_review"}
+        assert tool_name in {"query_evidence", "submit_answer", "submit_review"}
         assert arguments["run_id"] == principal.ask_run_id
-        assert arguments["attempt"] == principal.attempt
+        if "attempt" in arguments:
+            assert arguments["attempt"] == principal.attempt
         return principal
 
     def revoke_for_run(self, ask_run_id: str, *, reason: str) -> int:
@@ -173,13 +199,18 @@ class _NativeAgents:
         self.specs: dict[str, Any] = {}
         self.statuses: dict[str, str] = {}
         self.launches: list[str] = []
+        self.answer_evidence_hashes: list[str] = []
 
-    async def launch(self, spec: Any, bind_authority: Callable[[str, object], None]) -> str:
+    async def launch(
+        self,
+        spec: AskAgentSpec,
+        bind_authority: Callable[[str, AskRuntimeProfile], None],
+    ) -> str:
         run_id = f"{spec.stage.value}-{spec.attempt}-{len(self.launches) + 1}"
         self.launches.append(run_id)
         self.specs[run_id] = spec
         self.statuses[run_id] = "running"
-        bind_authority(run_id, object())
+        bind_authority(run_id, cast(AskRuntimeProfile, object()))
         self.events.append(f"launch:{run_id}")
         return run_id
 
@@ -198,12 +229,24 @@ class _NativeAgents:
             draft = AnswerDraft.model_validate(body)
             token = set_current_agent_run_id(agent_run_id)
             try:
+                query_result = await self.service.query_evidence(
+                    run_id=spec.run_id,
+                    operation="read",
+                    selector={
+                        "kind": "range",
+                        "path": "src/app.py",
+                        "start_line": 2,
+                        "end_line": 2,
+                    },
+                )
+                evidence_manifest_hash = str(query_result["evidence_manifest_hash"])
+                self.answer_evidence_hashes.append(evidence_manifest_hash)
                 await self.service.submit_answer(
                     run_id=spec.run_id,
                     attempt=spec.attempt,
                     draft=draft.model_dump(mode="json"),
                     draft_hash=draft.content_hash,
-                    evidence_manifest_hash=spec.evidence_manifest_hash,
+                    evidence_manifest_hash=evidence_manifest_hash,
                 )
             finally:
                 reset_current_agent_run_id(token)
@@ -248,6 +291,56 @@ class _NativeAgents:
         self.statuses[agent_run_id] = "cancelled"
 
 
+class _AskToolProxy:
+    def __init__(self) -> None:
+        self.service: AskService | None = None
+
+    async def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str | None,
+        enforce_workflow: bool,
+    ) -> dict[str, Any]:
+        assert server == "gobby-ask"
+        assert session_id == "caller-session"
+        assert enforce_workflow is False
+        if self.service is None:
+            raise RuntimeError("Ask service is not attached")
+        run_id = str(arguments["run_id"])
+        project_id = str(arguments["project_id"])
+        if tool == "prepare":
+            return await self.service.prepare(
+                run_id=run_id,
+                project_id=project_id,
+                project_root=Path(str(arguments["project_root"])),
+            )
+        if tool == "seed":
+            return await self.service.seed(run_id=run_id, project_id=project_id)
+        if tool == "spawn":
+            return await self.service.spawn(
+                run_id=run_id,
+                project_id=project_id,
+                stage=AskAgentStage(str(arguments["stage"])),
+                attempt=int(arguments["attempt"]),
+                caller_session_id=str(arguments["caller_session_id"]),
+            )
+        if tool == "validate":
+            return await self.service.validate(
+                run_id=run_id,
+                project_id=project_id,
+                stage=AskAgentStage(str(arguments["stage"])),
+                attempt=int(arguments["attempt"]),
+            )
+        if tool == "admit_repair":
+            return await self.service.admit_repair(run_id=run_id, project_id=project_id)
+        if tool == "publish":
+            return await self.service.publish(run_id=run_id, project_id=project_id)
+        raise ValueError(f"unexpected Ask pipeline tool: {tool}")
+
+
 @pytest.mark.asyncio
 async def test_native_investigation_review_and_single_repair(
     temp_db: HubDatabase,
@@ -262,28 +355,63 @@ async def test_native_investigation_review_and_single_repair(
 
     project_id = str(sample_project["id"])
     manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+    pipeline_path = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/pipelines/ask.yaml"
+    )
+    pipeline = parse_ask_pipeline(yaml.safe_load(pipeline_path.read_text()))
     storage = AskRunStorage(
         manager,
         profile_resolver=_profile,
         commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=pipeline.model_dump(mode="json"),
     )
     events: list[str] = []
     snapshots = _SnapshotManager(project_id, tmp_path)
-    admission = _EvidenceAdmission()
+    admissions: list[_EvidenceAdmission] = []
+
+    def evidence_factory(
+        record: AskRunRecord,
+        _snapshot: PreparedAskSnapshot,
+        _artifacts: AskArtifactStore,
+    ) -> _EvidenceAdmission:
+        _draft, evidence, _blobs, _review = _valid_case(
+            run_id=record.run_id,
+            project_id=project_id,
+        )
+        admission = _EvidenceAdmission(evidence)
+        admissions.append(admission)
+        return admission
+
+    def manifest_factory(
+        _record: AskRunRecord,
+        _snapshot: PreparedAskSnapshot,
+        _artifacts: AskArtifactStore,
+    ) -> EvidenceManifest:
+        return admissions[-1].manifest()
+
     agents = _NativeAgents(events)
     permissions = _PermissionStore(events, project_id)
+    proxy = _AskToolProxy()
+    executor = PipelineExecutor(
+        db=temp_db,
+        execution_manager=manager,
+        llm_service=object(),
+        template_engine=TemplateEngine(),
+        tool_proxy_getter=lambda: proxy,
+    )
     service = AskService(
         storage=storage,
         stages=AskStageStore(manager),
         snapshot_manager=snapshots,
         agents=agents,
         permissions=permissions,
+        pipeline_executor=executor,
         state_root=tmp_path / "state",
-        evidence_factory=lambda _record, _snapshot, _artifacts: admission,
-        evidence_manifest_factory=lambda record, _snapshot, _artifacts: snapshots.by_run[
-            record.run_id
-        ],
+        evidence_factory=evidence_factory,
+        evidence_manifest_factory=manifest_factory,
     )
+    proxy.service = service
     agents.service = service
     request = AskRequest(
         question="What does alpha return?",
@@ -315,12 +443,38 @@ async def test_native_investigation_review_and_single_repair(
     assert [agents.specs[run_id].attempt for run_id in agents.launches] == [0, 0, 1, 1]
     assert result.attempt_count == 4
     assert result.repair_count == 1
+    admission = admissions[-1]
     assert admission.queries
+    reviewer_specs = [
+        agents.specs[run_id]
+        for run_id in agents.launches
+        if agents.specs[run_id].stage is AskAgentStage.REVIEWER
+    ]
+    assert [spec.evidence_manifest_hash for spec in reviewer_specs] == (
+        agents.answer_evidence_hashes
+    )
     assert all("tool_chat" not in identity for identity in result.tool_identities)
     assert all("task" not in identity for identity in result.tool_identities)
 
     execution = manager.get_execution(result.run_id)
     assert execution is not None
+    assert execution.id == result.run_id
     assert execution.status.value == "completed"
-    assert execution.outputs_json is not None
-    assert execution.outputs_json.count('"publication"') == 1
+    execution_count = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM pipeline_executions WHERE id = %s",
+        (result.run_id,),
+    )
+    assert execution_count is not None
+    assert execution_count["count"] == 1
+    steps = manager.get_steps_for_execution(result.run_id)
+    assert tuple(item.step_id for item in steps) == tuple(ASK_PIPELINE_STEPS)
+    assert all(item.status.value == "completed" for item in steps)
+
+    publication_root = Path(result.artifact_manifest["root"])
+    published_evidence = json.loads(
+        (publication_root / "evidence-manifest.json").read_text()
+    )
+    assert len(published_evidence["records"]) == len(admission.queries)
+    assert published_evidence["records"][-1]["invocation_id"] == (
+        f"invocation-{len(admission.queries)}"
+    )

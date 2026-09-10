@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import psycopg
 
@@ -332,6 +332,40 @@ class AskPrincipal:
         if self.stage is AskAgentStage.REVIEWER:
             return _REVIEWER_TOOLS
         return _INVESTIGATOR_TOOLS
+
+
+class AskPermissionRuntime(Protocol):
+    """Narrow authority operations required by Ask orchestration."""
+
+    def activate(
+        self,
+        *,
+        ask_run_id: str,
+        stage: AskAgentStage,
+        attempt: int,
+        agent_run_id: str,
+        runtime_profile: AskRuntimeProfile,
+        scratch_root: Path,
+    ) -> object: ...
+
+    def replace_for_resume(
+        self,
+        *,
+        original_agent_run_id: str,
+        successor_agent_run_id: str,
+    ) -> object: ...
+
+    def authorize(
+        self,
+        agent_run_id: str,
+        server_name: str,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> AskPrincipal: ...
+
+    def revoke_for_run(self, ask_run_id: str, *, reason: str) -> int: ...
 
 
 class AskPermissionStore:
