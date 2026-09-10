@@ -673,6 +673,8 @@ async def test_contained_worker_rejects_default_host_config_before_runner_start(
         "DATABASE_URL",
         harness._scoped_database_url(_TEST_DATABASE_URL, postgres_schema),
     )
+    monkeypatch.setenv("GOBBY_HOME", str(control_dir.parent / "gobby"))
+    monkeypatch.setenv("GOBBY_MACHINE_ID", str(uuid.uuid4()))
     monkeypatch.setattr(
         "tests.ask.native_probe_harness.shutil.which",
         lambda _name: "/usr/bin/true",
