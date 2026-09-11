@@ -3,14 +3,13 @@
 //! Every roster row the daemon ships carries a `title` and, for tmux, the pane
 //! address the user already types (`%533`). These tests pin the naming ladder
 //! against a real daemon payload: title, then address, then a short id. The
-//! sidebar names a terminal on the agent row of its attention-roster entry.
+//! sidebar names a terminal on the sessions row of its attention-roster entry.
 
 mod mock_daemon;
 
 use gobby_client::daemon::{Daemon, LiveDaemon};
 use gobby_client::ui::chrome::{attention_label, Chrome, RowState};
-use gobby_client::ui::hit::SidebarSection;
-use gobby_client::ui::sidebar::agent_rows;
+use gobby_client::ui::sidebar::{session_rows, TERMINAL_ROW};
 use gobby_client::ui::sidebar_rows::SidebarRow;
 use gobby_client::Workspace;
 use mock_daemon::MockDaemon;
@@ -56,7 +55,7 @@ fn native_row(terminal_id: &str) -> Value {
     })
 }
 
-/// The attention-roster entry that lists `terminal_id` in the agents section.
+/// The attention-roster entry that lists `terminal_id` in the sessions section.
 fn entry(terminal_id: &str, backend: &str) -> Value {
     json!({
         "entry_id": format!("run:{terminal_id}"),
@@ -64,7 +63,7 @@ fn entry(terminal_id: &str, backend: &str) -> Value {
     })
 }
 
-/// Reconcile a roster and an attention roster, then report the agent rows
+/// Reconcile a roster and an attention roster, then report the sessions rows
 /// the chrome would draw from them and what it calls each attention entry.
 async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, Vec<String>) {
     let mock = MockDaemon::start("local-token").await;
@@ -97,8 +96,7 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
         .expect("roster reconcile");
 
     let chrome = Chrome::dark();
-    let mut drawn = agent_rows(&workspace, &chrome, SidebarSection::Sessions);
-    drawn.extend(agent_rows(&workspace, &chrome, SidebarSection::Agents));
+    let drawn = session_rows(&workspace, &chrome);
     let labels = attention
         .iter()
         .map(|entry| attention_label(&workspace, entry["entry_id"].as_str().expect("entry id")))
@@ -204,8 +202,9 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
 }
 
 /// An entry can still name a subject no roster row claims — a run in another
-/// project, or a session whose terminal has already gone. It gets no agent
-/// row, and the chrome calls it by a short id.
+/// project, or a session whose terminal has already gone. It gets no sessions
+/// row, and the chrome calls it by a short id. The roster terminal no entry
+/// names still lists, as a bare terminal under its own name.
 #[tokio::test]
 async fn an_attention_row_for_an_unknown_terminal_shortens_its_id() {
     let (rows, named) = sidebar(
@@ -214,9 +213,17 @@ async fn an_attention_row_for_an_unknown_terminal_shortens_its_id() {
     )
     .await;
 
+    let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [format!("{TERMINAL_ROW}{AGENT}").as_str()],
+        "the terminal-less entry drew a row: {rows:?}"
+    );
+    assert_eq!(rows[0].label, "gobby-codex-d0");
     assert!(
-        rows.is_empty(),
-        "a terminal-less entry drew a row: {rows:?}"
+        rows[0].tokens.iter().any(|token| token == "%533"),
+        "a bare terminal keeps its address as a token: {:?}",
+        rows[0].tokens
     );
     assert_eq!(named, ["910ed674"]);
 }

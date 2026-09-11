@@ -50,6 +50,7 @@ pub async fn focus_project(
     // refetch; the switch itself never waits on git status.
     workspace.request_focused_sessions();
     chrome.project_tabs.focus(project_id);
+    chrome.sidebar.expanded_project = Some(project_id.to_owned());
     sync_live_chrome(workspace, chrome);
     save_client_session(workspace, chrome)?;
     restore_focused(workspace, chrome).await

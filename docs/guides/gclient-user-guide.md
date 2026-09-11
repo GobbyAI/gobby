@@ -47,51 +47,73 @@ Logs go to `~/.gobby/logs/gclient.log`.
 ## Layout
 
 ```text
-┌ sidebar ──────┬ tab bar: 1  2  build Z  +  ─────────────────────┐
-│ machines      │ ┌ ▸ zsh ─────────────┐┌ claude ────────────────┐ │
-│ ● mbp   local │ │                    ││                        │ │
-│───────────────│ │   pane (focused)   ││   pane                 │ │
-│ projects      │ │                    ││                        │ │
-│ ● gobby    ▾  │ └────────────────────┘└────────────────────────┘ │
-│   0.5.0 ↑2    │                                                  │
-│   └─ fix-y    │                                                  │
-│  new   menu   │                                                  │
-│───────────────│                                                  │
-│ sessions      │                                                  │
-│ ○ zsh %3      │                                                  │
-│───────────────│                                                  │
-│ agents grouped│                                                  │
-│ ● claude #123 │                                                  │
-│   blocked     │                                                  │
-├───────────────┴──────────────────────────────────────────────────┤
+┌ sidebar ───────────┬ tab bar: 1  2  build Z  +  ─────────────────┐
+│ [Menu]         [+] │ ┌ ▸ zsh ──────────┐┌ claude ──────────────┐ │
+│ Machines           │ │  pane (focused) ││   pane               │ │
+│ ▶ mbp · local      │ │                 ││                      │ │
+│ └─ ○ studio        │ └─────────────────┘└──────────────────────┘ │
+│ Projects [working] │                                             │
+│ ▶ gobby (0.5.0 ↑2)▾│                                             │
+│   ├─ ○ fix-y · #12 │                                             │
+│ Sessions [project] │                                             │
+│ ⍾ #123: fix y      │                                             │
+│   codex · gpt-5    │                                             │
+│ ○ zsh %3           │                                             │
+│   tmux             │                                             │
+│                [«] │                                             │
+├────────────────────┴─────────────────────────────────────────────┤
 │ [● held] │ zsh %3 │ direct │ prefix ctrl+] │ message             │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Sidebar.** Four sections split by draggable rules.
+**Sidebar.** A menu band, three sections, and a footer band. Every clickable
+control is bracketed. Machines and Projects together never take more than the
+top half of the sidebar (each scrolls inside its cap); Sessions takes the rest.
 
-- *Machines* lists this machine (by host name) first, then every other machine
-  the daemon knows, each with the most urgent state of the terminals running
-  there. The rows are the machine filter for the two lists below: clicking a
-  remote machine shows that machine's terminals, clicking it again returns to
-  `local`; clicking the local row toggles `all`. The current filter is marked
-  on the row (`local` or `all`).
-- *Projects* lists each registered project as a card: a state dot, the name, a
-  second line with the branch and ahead/behind counts, and worktree rows indented
-  under the card. Cards with worktrees carry a `▸`/`▾` fold toggle at the right
-  edge. The footer has ` new` (register a project) and `menu` (the global menu).
-- *Sessions* lists the focused project's interactive terminals: the sessions
-  you drive yourself, with the same state labels as the agents.
-- *Agents* lists the focused project's autonomous runs (the sessions the web UI
-  labels agent-managed), each with a state label: `blocked` (an attention
-  prompt is waiting), `orphaned` (the terminal's host is gone; see *Orphaned
-  terminals*), `working`, `done` (new output since you last looked), or `idle`.
-  The header shows the sort order (`grouped` or `priority`), which orders both
-  lists.
+- *Menu band* (accent colour): `[Menu]` opens the global menu, `[+]` registers
+  a project.
+- *Machines* lists this machine (the hub, by host name) first, then every other
+  machine the daemon knows nested under it with `├─`/`└─`, each with the most
+  urgent state of the terminals running there. At most four rows show before
+  the list scrolls. The rows are the machine filter for the two sections below:
+  clicking a remote machine shows that machine's terminals, clicking it again
+  returns to `local`; clicking the hub row toggles `all`. The current filter is
+  marked on the row (`local` or `all`).
+- *Projects* lists registered projects as one-line cards:
+  `glyph name (branch ↑ahead ↓behind)` with a `▸`/`▾` fold mark at the right
+  edge. Only one project is expanded at a time: selecting a project expands it
+  and folds the others, and its worktrees appear under the card as
+  `├─ glyph branch · #task`. The band's control toggles `[working]` (projects
+  with a live session, run, or terminal on the current machine filter, plus the
+  focused one) and `[all]`.
+- *Sessions* lists sessions as two-line rows: `glyph #ref: title` over
+  `provider · model-effort · task ref or pane title · remote machine`. Bare
+  terminals with no session are listed by pane name with their backend. The
+  band's first control toggles `[project]` (the focused project only) and
+  `[all]` (every project, grouped under dim project rows); the second toggles
+  `[grouped]` (tab order, with agent runs nested under the session that spawned
+  them) and `[priority]` (flattened urgency order). The sort control appears
+  only when the sidebar is at least 31 columns wide; the default 26 shows the
+  scope control alone.
+- *Footer band*: `[«]` collapses the sidebar.
 
-Collapse the sidebar with `prefix+b` or the `«` toggle. Collapsed, it becomes a
-narrow rail: a dot per machine, then numbered dots for the projects, sessions,
-and agents.
+State glyphs, on machine, project, and session rows alike:
+
+| Glyph | State |
+| --- | --- |
+| `▶` | working |
+| `⍾` | needs you (an attention prompt is waiting; the row's first line also carries the words `needs you` when they fit beside the title) |
+| `◆` | unseen (new output since you last looked) |
+| `○` | idle |
+| `◌` | orphaned (the terminal's host is gone; see *Orphaned terminals*) |
+| `·` | unknown |
+
+Only needs-you rows carry a word. A font without U+237E shows a box in place of
+`⍾`; the words still identify the row.
+
+Collapse the sidebar with `prefix+b` or `[«]`. Collapsed, it becomes a narrow
+rail: a dot per machine, then numbered project cards, then numbered sessions,
+each list under a `─` rule, with `»` on the last row to expand.
 
 **Tab bar.** One row of tabs for the focused project; each project keeps its own
 tab set. Auto-named tabs show their index, renamed tabs their name, and a zoomed
@@ -198,7 +220,9 @@ and only work after you bind them; every action also appears in the help popup
 | *unset* | Focus project 1–9 | `switch_project` |
 | *unset* | Collapse or expand the project's worktrees | `toggle_group` |
 | *unset* | Cycle the machine filter (`local`, `all`, each machine) | `cycle_machine_filter` |
-| *unset* | Toggle grouped / priority agent order | `toggle_agent_sort` |
+| *unset* | Toggle `[working]` / `[all]` projects | `toggle_projects_filter` |
+| *unset* | Toggle `[project]` / `[all]` sessions | `toggle_sessions_scope` |
+| *unset* | Toggle `[grouped]` / `[priority]` session order | `toggle_agent_sort` |
 
 `up`, `down`, `h`, `j`, `k`, and `l` are direct chords: they act only when the
 client is already in navigate mode. In terminal mode every unprefixed key goes to
@@ -268,11 +292,12 @@ terminals keep running.
 
 ## Attention prompts and respond
 
-When an agent blocks on a question, its sidebar row turns `blocked`. Clicking
-the row focuses its terminal, where the question is already on screen; answer
-it there like any other input. `prefix+a` opens the respond dialog for the
-first actionable prompt among the focused project's agents, and *respond* in a
-blocked row's right-click menu opens it for that row. The dialog grows with the
+When an agent blocks on a question, its sidebar row shows `⍾` and the words
+`needs you`. Clicking the row focuses its terminal, where the question is
+already on screen; answer it there like any other input. `prefix+a` opens the
+respond dialog for the first actionable prompt among the focused project's
+agents, and *respond* in a needs-you row's right-click menu opens it for that
+row. The dialog grows with the
 terminal (64 to 120 columns), shows every line of the prompt up to twelve, and
 offers either its options or a free-text field:
 
@@ -335,7 +360,7 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
 | sidebar width | 26 | Columns; also set by dragging the sidebar edge |
 | right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
-| agent sort | `grouped` | `grouped` or `priority` order in the sessions and agents sections |
+| agent sort | `grouped` | `grouped` or `priority` order in the Sessions section |
 
 The file is optional and every key in it is optional; an unknown key is a
 startup error that names the line.
@@ -400,15 +425,20 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | `ctrl+click` a link | Open the URL with `open` on macOS, `xdg-open` elsewhere |
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
-| Wheel over the sidebar | Scroll that section |
+| Wheel over the sidebar | Scroll the section under the pointer |
 | Click a tab, the new-tab button, or the scroll arrows | Switch, open, or scroll tabs |
 | Drag a tab | Reorder tabs |
-| Click a project card / worktree row | Focus the project / open the worktree |
+| Click `[Menu]` / `[+]` on the menu band | Open the global menu / add a project |
+| Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
 | Drag a project card | Reorder projects |
-| Click a `▸`/`▾` toggle | Fold or unfold the card's worktrees |
-| Click an agent row | Focus its pane (a blocked row's question is already on screen) |
+| Click a `▸`/`▾` fold mark | Fold or unfold the card's worktrees |
+| Click `[working]` / `[all]` on the Projects band | Switch the projects filter |
+| Click `[project]` / `[all]` on the Sessions band | Switch the sessions scope |
+| Click `[grouped]` / `[priority]` on the Sessions band | Switch the session order |
+| Click a session row | Focus its pane (a needs-you row's question is already on screen) |
+| Click `[«]` on the footer band | Collapse the sidebar |
 | Click the control indicator | Take, release, or take back control |
-| Drag the sidebar edge, a section rule, or a split border | Resize |
+| Drag the sidebar edge or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |
 | Right-click | Context menu for the target (see below) |
 
@@ -421,12 +451,12 @@ to keep a gesture for the client instead.
 
 | Target | Items |
 | --- | --- |
-| Pane | rename pane, clear pane name, swap with focused pane, split right, split down, zoom / unzoom, take / release control, respond (when blocked), copy mode, send right-clicks to pane / use gclient menu, close pane |
+| Pane | rename pane, clear pane name, swap with focused pane, split right, split down, zoom / unzoom, take / release control, respond (when it needs you), copy mode, send right-clicks to pane / use gclient menu, close pane |
 | Tab | new tab, rename tab, close tab |
 | Project card | rename, close, new worktree, open worktree…, collapse / expand |
 | Worktree row | rename, close, delete worktree checkout… |
-| Agent row | focus, open in new tab, respond (when blocked), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
-| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
+| Session row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
+| Empty tab bar, empty sidebar, or `[Menu]` | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane
@@ -443,7 +473,7 @@ The client saves its layout as it changes and restores it on the next launch.
 | File | Contents |
 | --- | --- |
 | `~/.gobby/client/<project-id>/workspace.json` | That project's tabs, split layout, focused pane, and worktree tags |
-| `~/.gobby/client/session.json` | The focused project, sidebar width and collapse, section rules, machine filter, project order, and project labels |
+| `~/.gobby/client/session.json` | The focused project, sidebar width and collapse, the projects filter and sessions scope (`all_projects`, `all_sessions`), machine filter, project order, and project labels |
 | `~/.gobby/client/prefs.toml` | Settings, as above |
 
 On launch the client restores the focused project's tabs to the terminals that
@@ -481,14 +511,15 @@ Two kinds of terminal row outlive their usefulness, and the client can destroy
 both from one place:
 
 - A native terminal whose host epoch is gone (the daemon marks the row
-  `orphaned`). Its agent row shows `◌ orphaned` in the sidebar, and its context
-  menu offers `destroy orphaned terminal` in place of `close terminal`.
+  `orphaned`). Its session row carries the `◌` glyph in the sidebar (the glyph
+  alone marks it; no word is printed), and its context menu offers
+  `destroy orphaned terminal` in place of `close terminal`.
 - A tmux session on the default or gobby socket with no attached client, for
   example a Ghostty tab you closed. Gobby-owned agent sessions are always
   detached and are never listed.
 
 `destroy orphaned terminals…` on the global menu (right-click empty chrome, or
-the sidebar's `menu` button) fetches the current candidates from the daemon and
+the sidebar's `[Menu]` control) fetches the current candidates from the daemon and
 opens a checklist with every row checked. Each row shows the session name or
 title, the backend, the Gobby session that still owns it (or `no session`), and
 the time it was last seen. `j` / `k` or the arrows move, `space` toggles a row,

@@ -497,6 +497,14 @@ pub(super) async fn handle_live_action(
             chrome.prefs.agent_sort = chrome.prefs.agent_sort.toggled();
             persist_prefs(workspace.gobby_home(), chrome);
         }
+        Action::ToggleProjectsFilter => {
+            chrome.sidebar.all_projects = !chrome.sidebar.all_projects;
+            save_client_session(workspace, chrome)?;
+        }
+        Action::ToggleSessionsScope => {
+            chrome.sidebar.all_sessions = !chrome.sidebar.all_sessions;
+            save_client_session(workspace, chrome)?;
+        }
         // The router answers `Quit` before dispatch; `CustomCommand` is held
         // in the keymap table for the plugin-menu decision (#20201) and never
         // bound.

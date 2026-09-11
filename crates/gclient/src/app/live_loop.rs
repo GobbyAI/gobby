@@ -361,6 +361,7 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             _ = render_tick.tick() => {
+                chrome.ticker = chrome.ticker.wrapping_add(1);
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
                 if !chrome.sidebar.collapsed {
                     workspace.request_git_refresh_if_due();

@@ -7002,11 +7002,11 @@ fn project_dialog_keys_produce_daemon_requests() {
     assert!(chrome.dialog.is_none());
 }
 
-/// 5.3.2: the sidebar rows' menus reach the daemon. `new worktree` on the
-/// project card opens the dialog whose submit posts the worktree and opens a
-/// shell tab in it, `delete worktree checkout…` on the child row deletes the
-/// checkout, `open in new tab` on the agent row opens a tab holding its
-/// pane, `mark seen` posts the entry's attention id, and `close` on the card
+/// 5.3.2: the sidebar rows' menus reach the daemon. `open in new tab` on the
+/// agent row opens a tab holding its pane and `mark seen` posts the entry's
+/// attention id; `new worktree` on the project card opens the dialog whose
+/// submit posts the worktree and opens a shell tab in it, `delete worktree
+/// checkout…` on the child row deletes the checkout, and `close` on the card
 /// asks with the group text.
 #[tokio::test]
 async fn row_menus_dispatch_project_and_agent_actions() {
@@ -7095,9 +7095,12 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the card, its child row and the agent row.
+    // Where the loop draws the card, its child row and the agent row. A card
+    // folds by default, so the probe and the loop's chrome both expand it to
+    // list the worktree row.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
+    probe.sidebar.toggle_group("project-1");
     probe.compute_view(&workspace, area);
     let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
     let mut hits = None;
@@ -7126,6 +7129,7 @@ async fn row_menus_dispatch_project_and_agent_actions() {
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
+    chrome.sidebar.toggle_group("project-1");
     let (input_tx, input_rx) = mpsc::channel(256);
     let driver = async {
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
@@ -7140,6 +7144,18 @@ async fn row_menus_dispatch_project_and_agent_actions() {
             )
         };
         let key = |code| send_key(&input_tx, code, KeyModifiers::NONE);
+
+        // The agent row's `open in new tab`, then its `mark seen`. These go
+        // first: the sessions list sits right under the project rows, so
+        // the row keeps the probed position only while no worktree row has
+        // come or gone.
+        press(MouseButton::Right, agent_cell).await;
+        press(MouseButton::Left, item_cell(agent_cell, 1)).await;
+        settle_live_event().await;
+        press(MouseButton::Right, agent_cell).await;
+        press(MouseButton::Left, item_cell(agent_cell, 3)).await;
+        wait_for_http_requests(&mock, "POST", "/api/attention/run:a/seen", 1).await;
+        settle_live_event().await;
 
         // The card's `new worktree` opens the dialog; the branch typed there
         // posts the worktree and opens a shell tab in it.
@@ -7181,15 +7197,6 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         key(KeyCode::Enter).await;
         wait_for_http_requests(&mock, "DELETE", "/api/source-control/worktrees/wt-1", 1).await;
         wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
-        settle_live_event().await;
-
-        // The agent row's `open in new tab`, then its `mark seen`.
-        press(MouseButton::Right, agent_cell).await;
-        press(MouseButton::Left, item_cell(agent_cell, 1)).await;
-        settle_live_event().await;
-        press(MouseButton::Right, agent_cell).await;
-        press(MouseButton::Left, item_cell(agent_cell, 3)).await;
-        wait_for_http_requests(&mock, "POST", "/api/attention/run:a/seen", 1).await;
         settle_live_event().await;
 
         // The card's `close` asks with the group text.
@@ -7253,16 +7260,20 @@ async fn row_menus_dispatch_project_and_agent_actions() {
     assert_eq!(
         tabs.len(),
         2,
-        "the worktree shell tab and the agent's new tab: {:?}",
+        "the agent's new tab and the worktree shell tab: {:?}",
         shown_terminals(&workspace, &chrome)
     );
-    assert_eq!(tabs[0].worktree_id.as_deref(), Some("wt-2"));
     assert_eq!(
-        tabs[1].focused_pane(),
+        tabs[0].focused_pane(),
         Some(agent),
         "open in new tab holds the agent's pane"
     );
-    assert_eq!(chrome.tabs().active_tab, 1);
+    assert_eq!(tabs[1].worktree_id.as_deref(), Some("wt-2"));
+    assert_eq!(
+        chrome.tabs().active_tab,
+        1,
+        "the worktree shell tab opened last"
+    );
     assert_eq!(
         chrome.mode,
         Mode::ConfirmClose,

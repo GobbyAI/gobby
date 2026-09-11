@@ -178,12 +178,7 @@ pub fn apply_local_menu_action<D: Daemon>(
                 pane.right_click_passthrough = !pane.right_click_passthrough;
             }
         }
-        MenuAction::ToggleGroup(project_id) => {
-            let folded = &mut chrome.sidebar.collapsed_projects;
-            if !folded.remove(project_id) {
-                folded.insert(project_id.clone());
-            }
-        }
+        MenuAction::ToggleGroup(project_id) => chrome.sidebar.toggle_group(project_id),
         _ => return false,
     }
     true
@@ -273,7 +268,7 @@ fn project_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, project_id: &str) ->
         items.push(item("open worktree…", MenuAction::OpenWorktree(id())));
     }
     if !project.worktrees.is_empty() {
-        let folded = chrome.sidebar.collapsed_projects.contains(project_id);
+        let folded = !chrome.sidebar.is_expanded(project_id);
         items.push(item(
             if folded { "expand" } else { "collapse" },
             MenuAction::ToggleGroup(id()),
@@ -697,7 +692,7 @@ mod tests {
         };
         let git = || ContextMenuKind::Project("proj-git".to_string());
 
-        // The git project with a child, expanded then collapsed; the plain one.
+        // The git project with a child, folded then expanded; the plain one.
         let menu = build_menu(&ws, &chrome, git(), (2, 3));
         assert_eq!(
             labels(&menu),
@@ -706,7 +701,7 @@ mod tests {
                 "close",
                 "new worktree",
                 "open worktree…",
-                "collapse"
+                "expand"
             ]
         );
         assert_eq!(
@@ -733,7 +728,7 @@ mod tests {
         assert_eq!((menu.kind, menu.anchor), (git(), (2, 3)));
         chrome.sidebar.toggle_group("proj-git");
         let menu = build_menu(&ws, &chrome, git(), (2, 3));
-        assert_eq!(labels(&menu)[4], "expand");
+        assert_eq!(labels(&menu)[4], "collapse");
         let menu = build_menu(
             &ws,
             &chrome,

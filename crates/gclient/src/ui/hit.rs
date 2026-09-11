@@ -14,18 +14,16 @@ use ratatui::layout::{Direction, Position, Rect};
 pub enum SidebarSection {
     Machines,
     Projects,
-    /// Interactive sessions: every roster entry that is not an agent run.
+    /// Every roster entry: interactive sessions with their agent runs
+    /// nested under them, plus the bare terminals.
     Sessions,
-    /// Agent runs, the entries the web UI calls agent-managed.
-    Agents,
 }
 
 impl SidebarSection {
-    pub const ALL: [SidebarSection; 4] = [
+    pub const ALL: [SidebarSection; 3] = [
         SidebarSection::Machines,
         SidebarSection::Projects,
         SidebarSection::Sessions,
-        SidebarSection::Agents,
     ];
 
     /// Position from the top: the index into the per-section arrays.
@@ -33,13 +31,12 @@ impl SidebarSection {
         self as usize
     }
 
-    /// The header title, with herdr's leading blank.
+    /// The band title.
     pub fn title(self) -> &'static str {
         match self {
-            SidebarSection::Machines => " machines",
-            SidebarSection::Projects => " projects",
-            SidebarSection::Sessions => " sessions",
-            SidebarSection::Agents => " agents",
+            SidebarSection::Machines => "Machines",
+            SidebarSection::Projects => "Projects",
+            SidebarSection::Sessions => "Sessions",
         }
     }
 }
@@ -57,24 +54,25 @@ pub enum Hit {
     Project(String),
     /// Worktree row under a project card, by worktree id.
     Worktree(String),
-    /// Session or agent row, by entry id.
+    /// Session, agent run or bare terminal row, by entry id.
     Agent(String),
     /// Machine row, by machine id.
     Machine(String),
     /// The `▸`/`▾` cell at the right edge of a project card with worktrees.
     GroupToggle(String),
-    /// The ` new` footer button of the projects section.
+    /// The `[+]` control of the menu band.
     ProjectsNew,
-    /// The `menu` footer button of the projects section.
+    /// The `[Menu]` control of the menu band.
     ProjectsMenu,
-    /// The `grouped`/`priority` sort label of the agents section.
+    /// The `[working]`/`[all]` control of the projects band.
+    ProjectsFilter,
+    /// The `[project]`/`[all]` scope control of the sessions band.
+    SessionsScope,
+    /// The `[grouped]`/`[priority]` sort control of the sessions band.
     AgentSort,
     SidebarToggle,
     /// The `│` column between sidebar and content.
     SidebarDivider,
-    /// A `─` rule between two sections, as an index into
-    /// `ViewState::sidebar_section_divider_ys`.
-    SidebarSectionDivider(usize),
     SidebarEmpty,
     /// Scrollbar lane beside a sidebar list; `row` is the screen row.
     SidebarScrollbar {
@@ -202,13 +200,6 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     if view.sidebar_divider_x == Some(at.x) {
         return Hit::SidebarDivider;
     }
-    if let Some(index) = view
-        .sidebar_section_divider_ys
-        .iter()
-        .position(|rule| *rule == Some(at.y))
-    {
-        return Hit::SidebarSectionDivider(index);
-    }
     if view
         .sidebar_toggle_hit_area
         .is_some_and(|rect| rect.contains(at))
@@ -224,23 +215,18 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     if let Some((id, _)) = find_at(&view.group_toggle_hit_areas, at) {
         return Hit::GroupToggle(id.clone());
     }
-    if view
-        .projects_new_hit_area
-        .is_some_and(|rect| rect.contains(at))
+    let controls = [
+        (view.projects_new_hit_area, Hit::ProjectsNew),
+        (view.projects_menu_hit_area, Hit::ProjectsMenu),
+        (view.projects_filter_hit_area, Hit::ProjectsFilter),
+        (view.sessions_scope_hit_area, Hit::SessionsScope),
+        (view.agent_sort_hit_area, Hit::AgentSort),
+    ];
+    if let Some((_, hit)) = controls
+        .into_iter()
+        .find(|(rect, _)| rect.is_some_and(|rect| rect.contains(at)))
     {
-        return Hit::ProjectsNew;
-    }
-    if view
-        .projects_menu_hit_area
-        .is_some_and(|rect| rect.contains(at))
-    {
-        return Hit::ProjectsMenu;
-    }
-    if view
-        .agent_sort_hit_area
-        .is_some_and(|rect| rect.contains(at))
-    {
-        return Hit::AgentSort;
+        return hit;
     }
     if let Some((id, _)) = find_at(&view.worktree_hit_areas, at) {
         return Hit::Worktree(id.clone());
@@ -257,15 +243,14 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     Hit::SidebarEmpty
 }
 
-/// The section a sidebar row belongs to by the rules drawn above it: the
-/// one under the lowest rule at or above `row`, the machines above them all.
+/// The section a sidebar row belongs to: the one whose rect holds the row,
+/// else the last section starting above it (the footer band scrolls the
+/// sessions), the machines above them all (the menu band).
 pub fn sidebar_section_at(view: &ViewState, row: u16) -> SidebarSection {
-    view.sidebar_section_divider_ys
+    view.sidebar_section_rects
         .iter()
-        .rposition(|rule| rule.is_some_and(|rule| row >= rule))
-        .map_or(SidebarSection::Machines, |index| {
-            SidebarSection::ALL[index + 1]
-        })
+        .rposition(|rect| rect.height > 0 && rect.y <= row)
+        .map_or(SidebarSection::Machines, |index| SidebarSection::ALL[index])
 }
 
 /// Split divider under `at`: the divider column (or row) and, in gapped

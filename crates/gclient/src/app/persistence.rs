@@ -44,7 +44,8 @@ pub fn sidebar_snapshot(sidebar: &SidebarState) -> SidebarSnapshot {
     SidebarSnapshot {
         collapsed: sidebar.collapsed,
         width: sidebar.width,
-        section_splits: sidebar.section_splits,
+        all_projects: sidebar.all_projects,
+        all_sessions: sidebar.all_sessions,
         machine_filter: sidebar.machine_filter.clone(),
         project_order: sidebar.project_order.clone(),
         project_labels: sidebar.project_labels.clone(),
@@ -56,7 +57,8 @@ pub fn sidebar_snapshot(sidebar: &SidebarState) -> SidebarSnapshot {
 pub fn apply_sidebar_snapshot(sidebar: &mut SidebarState, saved: &SidebarSnapshot) {
     sidebar.collapsed = saved.collapsed;
     sidebar.width = saved.width.clamp(sidebar.min_width, sidebar.max_width);
-    sidebar.section_splits = saved.section_splits;
+    sidebar.all_projects = saved.all_projects;
+    sidebar.all_sessions = saved.all_sessions;
     sidebar.machine_filter = saved.machine_filter.clone();
     sidebar.project_order = saved.project_order.clone();
     sidebar.project_labels = saved.project_labels.clone();

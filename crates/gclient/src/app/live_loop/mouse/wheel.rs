@@ -3,7 +3,7 @@
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
 use crate::ui::hit::{sidebar_section_at, Hit, SidebarSection};
-use crate::ui::sidebar::{agent_section, section_metrics};
+use crate::ui::sidebar::section_metrics;
 use crate::ui::{Chrome, WorkspaceView};
 
 use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
@@ -75,13 +75,14 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::GroupToggle(_)
         | Hit::ProjectsNew
         | Hit::ProjectsMenu
+        | Hit::ProjectsFilter
         | Hit::Agent(_)
         | Hit::AgentSort
+        | Hit::SessionsScope
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarToggle
-        | Hit::SidebarDivider
-        | Hit::SidebarSectionDivider(_) => {
+        | Hit::SidebarDivider => {
             if chrome.sidebar.collapsed {
                 return MouseOutcome::Handled;
             }
@@ -91,9 +92,9 @@ pub(super) fn wheel<W: WorkspaceView>(
                 | Hit::Worktree(_)
                 | Hit::GroupToggle(_)
                 | Hit::ProjectsNew
-                | Hit::ProjectsMenu => SidebarSection::Projects,
-                Hit::Agent(entry_id) => agent_section(ws, &entry_id),
-                Hit::AgentSort => SidebarSection::Agents,
+                | Hit::ProjectsMenu
+                | Hit::ProjectsFilter => SidebarSection::Projects,
+                Hit::Agent(_) | Hit::AgentSort | Hit::SessionsScope => SidebarSection::Sessions,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => sidebar_section_at(&chrome.view, row),
             };

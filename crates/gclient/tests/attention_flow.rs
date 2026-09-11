@@ -9,7 +9,8 @@ use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::attention_label;
 use gobby_client::ui::dialogs::Dialog;
 use gobby_client::ui::hit::SidebarSection;
-use gobby_client::ui::sidebar::{expanded_sections, section_body_rect};
+use gobby_client::ui::sidebar::section_body_rect;
+use gobby_client::ui::sidebar_rows::{RowKind, SidebarRow};
 use gobby_client::ui::{render_workspace, Chrome, Mode};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -318,18 +319,23 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the two rows: the blocked session on the first
-    // body rows of the sessions section, the idle shell (an agent run) on
-    // the agents section's. Wide enough that the respond dialog leaves the
-    // sidebar uncovered.
+    // Where the loop draws the two rows: both in the sessions section, the
+    // blocked session on its first two-line row and the idle shell (an agent
+    // run under no session) on the row after it. Wide enough that the
+    // respond dialog leaves the sidebar uncovered.
     let area = Rect::new(0, 0, 120, 30);
     let mut probe = Chrome::dark();
     probe.compute_view(&workspace, area);
-    let sections = expanded_sections(probe.view.sidebar_rect, [None; 3]);
-    let body =
-        |section: SidebarSection| section_body_rect(section, sections[section.index()], false);
-    let (sessions, agents) = (body(SidebarSection::Sessions), body(SidebarSection::Agents));
-    let (column, blocked_row, idle_row) = (sessions.x + 1, sessions.y, agents.y);
+    let sessions = section_body_rect(
+        probe.view.sidebar_section_rects[SidebarSection::Sessions.index()],
+        false,
+    );
+    let row_height = SidebarRow {
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    }
+    .height();
+    let (column, blocked_row, idle_row) = (sessions.x + 1, sessions.y, sessions.y + row_height);
 
     let mut terminal =
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
@@ -410,7 +416,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         Some("No actionable attention prompt."),
         "an idle row asks for no prompt"
     );
-    assert_eq!(attention_label(&workspace, "session:sess-1"), "15 #12217");
+    assert_eq!(attention_label(&workspace, "session:sess-1"), "#12217: 15");
 
     terminal
         .draw(|frame| {
@@ -424,7 +430,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(screen.contains("15 #12217"), "rendered UI: {screen:?}");
+    assert!(screen.contains("#12217: 15"), "rendered UI: {screen:?}");
     assert!(screen.contains("zsh %16"), "rendered UI: {screen:?}");
     assert!(!screen.contains("sess-1"), "rendered UI: {screen:?}");
     mock.shutdown().await;

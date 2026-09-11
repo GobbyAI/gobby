@@ -219,6 +219,8 @@ pub(super) fn down<W: WorkspaceView>(
             MouseOutcome::Handled
         }
         Hit::AgentSort => MouseOutcome::Action(Action::ToggleAgentSort),
+        Hit::ProjectsFilter => MouseOutcome::Action(Action::ToggleProjectsFilter),
+        Hit::SessionsScope => MouseOutcome::Action(Action::ToggleSessionsScope),
         Hit::Agent(entry_id) => {
             // Another project's row focuses that project first: its panes
             // attach when the project's tab set is restored.
@@ -261,13 +263,6 @@ pub(super) fn down<W: WorkspaceView>(
             chrome
                 .sidebar
                 .set_width_from_column(sidebar_area, mouse.column);
-            MouseOutcome::Handled
-        }
-        Hit::SidebarSectionDivider(divider) if !chrome.sidebar.collapsed => {
-            chrome.gesture = Some(MouseGesture::SectionDrag { divider });
-            chrome
-                .sidebar
-                .set_split_from_row(sidebar_area, divider, mouse.row);
             MouseOutcome::Handled
         }
         Hit::SidebarScrollbar { section, row } => {
@@ -396,12 +391,6 @@ pub(super) fn drag<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
-        Some(MouseGesture::SectionDrag { divider }) => {
-            chrome
-                .sidebar
-                .set_split_from_row(sidebar_area, *divider, mouse.row);
-            MouseOutcome::Handled
-        }
         Some(MouseGesture::SidebarScrollbarDrag {
             section,
             grab_offset,
@@ -507,7 +496,6 @@ pub(super) fn up<W: WorkspaceView>(
         Some(
             MouseGesture::TabDrag { .. }
             | MouseGesture::ProjectDrag { .. }
-            | MouseGesture::SectionDrag { .. }
             | MouseGesture::SidebarScrollbarDrag { .. }
             | MouseGesture::SplitDrag { .. }
             | MouseGesture::ScrollbarDrag { .. },

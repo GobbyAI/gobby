@@ -19,7 +19,7 @@ use gobby_client::ui::scrollbar::{
     scrollbar_thumb, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
 use gobby_client::ui::settings::{SettingsRow, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH};
-use gobby_client::ui::sidebar::{collapsed_sections, expanded_sections, section_body_rect};
+use gobby_client::ui::sidebar::{collapsed_sections, section_body_rect};
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, render_toast_notification, toast_notification_rect,
     Toast, ToastKind,
@@ -673,6 +673,8 @@ parity_tests! {
             ws.select_project("proj-two");
             let mut chrome = chrome_for(&ws, "two");
             chrome.sidebar.collapsed = true;
+            // Neither project has a live entry: list them both.
+            chrome.sidebar.all_projects = true;
             chrome.sidebar.selected = 0;
             chrome.mode = Mode::Terminal;
 
@@ -690,7 +692,7 @@ parity_tests! {
 
         fn expanded_sidebar_workspace_rows_show_state_before_name_without_numbers() {
             // herdr's workspace carried a git checkout on `main`; gclient's
-            // project card shows the branch on its second line.
+            // one-line project card shows the branch in its parenthetical.
             let ws = with_projects(scripted(&["one"]));
             let mut chrome = chrome_for(&ws, "one");
             chrome.sidebar.selected = 0;
@@ -700,24 +702,23 @@ parity_tests! {
             let terminal = render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
 
             // herdr `workspace_card_areas[0]`: the first card sits below the
-            // projects header, left of the separator column.
+            // projects band, left of the separator column.
             let sidebar = chrome.view.sidebar_rect;
             let projects = SidebarSection::Projects;
-            let body = section_body_rect(
-                projects,
-                expanded_sections(sidebar, [None; 3])[projects.index()],
-                false,
-            );
+            let body =
+                section_body_rect(chrome.view.sidebar_section_rects[projects.index()], false);
             let card = Rect::new(sidebar.x, body.y, sidebar.width - 1, 1);
             let line1 = buffer_row_text(&terminal, card, card.y);
             let line2 = buffer_row_text(&terminal, card, card.y + 1);
 
             assert!(
-                line1.starts_with(&format!("{SELECTED_MARK}{IDLE_DOT} one")),
+                line1.starts_with(&format!("{SELECTED_MARK}{IDLE_DOT} one (main)")),
                 "{line1}"
             );
             assert!(!line1.contains("1 one"));
-            assert_eq!(line2, "   main");
+            // The card is one line: the sessions band follows it.
+            assert!(line2.starts_with(" Sessions"), "{line2}");
+            assert!(!line2.contains("main"));
         }
 
         fn tab_bar_dims_auto_named_tabs_and_emphasizes_custom_tabs() {
@@ -1213,13 +1214,16 @@ switch_project = "ctrl+1..9"
                     // project cards over agent rows (3.1), and again when the
                     // agents header gained its sort label over two-line rows
                     // (3.2), and again when the status line began naming the
-                    // prefix outside tmux, and again when the sidebar split
-                    // into machines, projects, sessions and agents: 4.1.3
-                    // requires a glyph change to fail here, so this digest
-                    // moves only alongside a deliberate render change.
+                    // prefix outside tmux, again when the sidebar split
+                    // into machines, projects, sessions and agents, and
+                    // again when the sidebar became bands over one-line
+                    // cards with the runs nested under their sessions and
+                    // the hub row took the pinned test host name (#22203):
+                    // 4.1.3 requires a glyph change to fail here, so this
+                    // digest moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "b9c1888d0dd85a9cc24b9ef35f929811e9b4e67fa987cbaf0cf559ce6037bf0b"
+                        "2225ad46d3645874e3301599ea97f362c526573b07ee3b8db21620c3660be874"
                     );
                 });
         }
@@ -1284,9 +1288,14 @@ fn rendered_hits_match_drawn_cells() {
         ws.open_terminal(&format!("t{n:02}"), "native", "epoch")
             .expect("open scripted terminal");
     }
-    // One project card per terminal: twenty cards overflow the section.
+    // One project card per terminal: twenty cards overflow the section once
+    // every project lists (only `term-alpha`'s is working).
     let ws = with_projects(ws);
     let mut chrome = chrome_for(&ws, "term-alpha");
+    chrome.sidebar.all_projects = true;
+    // Wide enough for the active row's whole title beside its needs-you
+    // word once the sessions scrollbar lane takes a column.
+    chrome.sidebar.width = 28;
     for n in 2..=12 {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
     }
@@ -1325,15 +1334,26 @@ fn rendered_hits_match_drawn_cells() {
         cell(&terminal, divider_x, view.sidebar_rect.y).symbol(),
         "│"
     );
-    for section_y in view.sidebar_section_divider_ys {
-        let section_y = section_y.expect("section rule");
-        assert_eq!(
-            cell(&terminal, view.sidebar_rect.x, section_y).symbol(),
-            "─"
+    // Each section opens with its titled band; the menu band sits above the
+    // first and the footer band's toggle below the last.
+    for section in SidebarSection::ALL {
+        let rect = view.sidebar_section_rects[section.index()];
+        assert!(rect.height > 0, "{section:?} drawn");
+        let band = Rect::new(rect.x, rect.y, rect.width, 1);
+        let text = hit_text(&terminal, band);
+        assert!(
+            text.starts_with(&format!(" {}", section.title())),
+            "{section:?} band at {band:?}: {text:?}"
         );
     }
+    let menu = view.projects_menu_hit_area.expect("menu control drawn");
+    assert_eq!(menu.y, view.sidebar_rect.y);
+    assert_eq!(hit_text(&terminal, menu), "[Menu]");
+    let new = view.projects_new_hit_area.expect("new control drawn");
+    assert_eq!(hit_text(&terminal, new), "[+]");
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
-    assert_eq!(cell(&terminal, toggle.x, toggle.y).symbol(), "«");
+    assert_eq!(toggle.y, view.sidebar_rect.bottom() - 1);
+    assert_eq!(hit_text(&terminal, toggle), "[«]");
     assert!(!view.project_hit_areas.is_empty());
     assert!(view.project_hit_areas.len() < 20, "projects overflow");
     for (id, rect) in &view.project_hit_areas {
@@ -1343,15 +1363,23 @@ fn rendered_hits_match_drawn_cells() {
     }
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
-    assert!(hit_text(&terminal, *rect).contains("term-alpha"));
-    let lane = view.sidebar_scrollbar_hit_areas[SidebarSection::Projects.index()]
-        .expect("projects scrollbar");
+    let text = hit_text(&terminal, *rect);
+    assert!(
+        text.contains("term-alpha"),
+        "agent row at {rect:?}: {text:?}"
+    );
+    // The cards and the twenty two-line sessions rows overflow their
+    // sections; the one machine row does not.
     assert_eq!(
-        view.sidebar_scrollbar_hit_areas[SidebarSection::Agents.index()],
+        view.sidebar_scrollbar_hit_areas[SidebarSection::Machines.index()],
         None
     );
-    for y in lane.y..lane.bottom() {
-        assert_eq!(cell(&terminal, lane.x, y).symbol(), "▕", "lane row {y}");
+    for section in [SidebarSection::Projects, SidebarSection::Sessions] {
+        let lane = view.sidebar_scrollbar_hit_areas[section.index()]
+            .unwrap_or_else(|| panic!("{section:?} scrollbar"));
+        for y in lane.y..lane.bottom() {
+            assert_eq!(cell(&terminal, lane.x, y).symbol(), "▕", "lane row {y}");
+        }
     }
 
     let indicator = view.control_indicator_hit_area.expect("control indicator");

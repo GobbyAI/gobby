@@ -63,6 +63,7 @@ fn split_live() -> (Workspace, Chrome) {
     ws.apply_scroll_applied(beta, 0, 50);
 
     let mut chrome = Chrome::dark();
+    chrome.sidebar.toggle_group("proj-alpha");
     chrome.open_pane(alpha, "alpha");
     chrome.open_pane(beta, "alpha");
     chrome.open_tab(alpha, "second");
@@ -105,17 +106,24 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, new_tab.x, new_tab.y), Hit::NewTab);
     assert_eq!(at(view, bar.right() - 1, bar.y), Hit::TabBarEmpty);
 
-    // Sidebar: divider column, section rules, toggle, rows, then bare cells.
+    // Sidebar: divider column, band controls, toggle, rows, then bare cells.
     let sidebar = view.sidebar_rect;
     let divider_x = view.sidebar_divider_x.expect("sidebar divider");
     assert_eq!(at(view, divider_x, sidebar.y), Hit::SidebarDivider);
-    for (divider, section_y) in view.sidebar_section_divider_ys.iter().enumerate() {
-        let section_y = section_y.expect("section rule");
+    for (section, rect) in SidebarSection::ALL.iter().zip(view.sidebar_section_rects) {
+        assert!(rect.height > 0, "{section:?} drawn");
         assert_eq!(
-            at(view, sidebar.x, section_y),
-            Hit::SidebarSectionDivider(divider)
+            at(view, rect.x, rect.y),
+            Hit::SidebarEmpty,
+            "{section:?} band"
         );
     }
+    let filter = view
+        .projects_filter_hit_area
+        .expect("projects filter drawn");
+    assert_eq!(at(view, filter.x, filter.y), Hit::ProjectsFilter);
+    let scope = view.sessions_scope_hit_area.expect("sessions scope drawn");
+    assert_eq!(at(view, scope.x, scope.y), Hit::SessionsScope);
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
     assert_eq!(at(view, toggle.x, toggle.y), Hit::SidebarToggle);
     let (id, rect) = view.machine_hit_areas.first().expect("machine row");
@@ -123,7 +131,6 @@ fn hit_test_covers_split_live_layout() {
     let (id, rect) = view.project_hit_areas.first().expect("project card");
     assert_eq!(id, "proj-alpha");
     assert_eq!(at(view, rect.x, rect.y), Hit::Project(id.clone()));
-    assert_eq!(at(view, rect.x, rect.y + 1), Hit::Project(id.clone()));
     let (id, rect) = view.group_toggle_hit_areas.first().expect("group toggle");
     assert_eq!(at(view, rect.x, rect.y), Hit::GroupToggle(id.clone()));
     let (id, rect) = view.worktree_hit_areas.first().expect("worktree row");
@@ -136,6 +143,7 @@ fn hit_test_covers_split_live_layout() {
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     assert_eq!(at(view, rect.x, rect.y), Hit::Agent(entry.clone()));
+    assert_eq!(at(view, rect.x, rect.y + 1), Hit::Agent(entry.clone()));
     assert_eq!(at(view, sidebar.x, sidebar.y), Hit::SidebarEmpty);
 
     // Panes: content offsets, the hidden gutter, the frame, the split, and the
@@ -203,7 +211,7 @@ fn sidebar_scrollbar_lane_hits_by_section() {
     rendered(&ws, &mut chrome);
     // One project card never overflows a 40-row sidebar, so no lane is drawn
     // and the cells beside the rows stay plain sidebar.
-    assert_eq!(chrome.view.sidebar_scrollbar_hit_areas, [None; 4]);
+    assert_eq!(chrome.view.sidebar_scrollbar_hit_areas, [None; 3]);
 
     // A lane the renderer reports maps to its section, row by row.
     let lane = Rect::new(24, 7, 1, 3);

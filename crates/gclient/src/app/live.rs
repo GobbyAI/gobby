@@ -216,8 +216,9 @@ impl Workspace<LiveDaemon> {
     }
 
     /// Fetch every sidebar row: projects, then status and worktrees for each
-    /// project checked out here, then the focused project's sessions and runs.
-    /// Reconcile and the dialogs wait on this; the render tick never does.
+    /// project checked out here, then the sessions and runs of every
+    /// checked-out project and the focused one. Reconcile and the dialogs
+    /// wait on this; the render tick never does.
     pub async fn fetch_sidebar_rows(&mut self) -> Result<(), DaemonError> {
         self.sidebar_rows.projects = self.daemon.projects().await?;
         self.sidebar_rows.statuses.clear();
@@ -244,8 +245,8 @@ impl Workspace<LiveDaemon> {
             .collect()
     }
 
-    /// Queue a refetch of the focused project's sessions and runs; the next
-    /// render tick starts it.
+    /// Queue a refetch of every checked-out project's sessions and runs (the
+    /// focused one included); the next render tick starts it.
     pub fn request_focused_sessions(&mut self) {
         self.pending_sidebar.sessions = true;
     }
@@ -273,7 +274,8 @@ impl Workspace<LiveDaemon> {
             projects: pending.projects,
             project_rows: pending.project_rows,
             checked_out: self.checked_out_projects(),
-            sessions: pending.sessions.then(|| self.project_id.clone()).flatten(),
+            sessions: pending.sessions,
+            focused: self.project_id.clone(),
             roster: pending.roster,
         };
         let daemon = self.daemon.clone();
@@ -302,7 +304,7 @@ impl Workspace<LiveDaemon> {
             self.sidebar_rows.worktrees.extend(worktrees);
             self.sidebar_rows.statuses.insert(project, status);
         }
-        if let Some((project, sessions, runs)) = fetch.sessions {
+        for (project, sessions, runs) in fetch.sessions {
             let stamp = stamps.sessions.entry(project.clone()).or_default();
             if SidebarStamps::accept(stamp, seq) {
                 self.sidebar_rows.sessions.insert(project.clone(), sessions);
@@ -618,7 +620,7 @@ pub struct SidebarFetch {
     seq: u64,
     projects: Option<Vec<ProjectRow>>,
     project_rows: Vec<(String, SourceStatus, Vec<WorktreeRow>)>,
-    sessions: Option<(String, Vec<SessionRow>, Vec<RunRow>)>,
+    sessions: Vec<(String, Vec<SessionRow>, Vec<RunRow>)>,
     roster: Option<RosterSnapshot>,
 }
 
@@ -637,8 +639,11 @@ struct SidebarRequest {
     /// The projects checked out here when the request was made; a refetched
     /// project list replaces it. A project with no checkout has no git rows.
     checked_out: Vec<String>,
-    /// The focused project whose sessions and runs are wanted.
-    sessions: Option<String>,
+    /// Whether the sessions and runs of every checked-out project (and the
+    /// focused one) are wanted: the roster's entries join their own
+    /// project, so the all-projects scope lists them where they belong.
+    sessions: bool,
+    focused: Option<String>,
     roster: bool,
 }
 
@@ -666,10 +671,16 @@ impl SidebarRequest {
             let worktrees = daemon.worktrees(&project).await?;
             fetch.project_rows.push((project, status, worktrees));
         }
-        if let Some(project) = self.sessions {
-            let sessions = daemon.sessions(&project).await?;
-            let runs = daemon.agent_runs(&project).await?;
-            fetch.sessions = Some((project, sessions, runs));
+        if self.sessions {
+            let mut projects = checked_out.clone();
+            if let Some(focused) = self.focused.filter(|focused| !projects.contains(focused)) {
+                projects.push(focused);
+            }
+            for project in projects {
+                let sessions = daemon.sessions(&project).await?;
+                let runs = daemon.agent_runs(&project).await?;
+                fetch.sessions.push((project, sessions, runs));
+            }
         }
         if self.roster {
             fetch.roster = Some(daemon.attention_roster().await?);

@@ -34,6 +34,8 @@ pub enum Action {
     ToggleGroup,
     CycleMachineFilter,
     ToggleAgentSort,
+    ToggleProjectsFilter,
+    ToggleSessionsScope,
     PreviousAttention,
     NextAttention,
     FocusAttention(u8),
@@ -166,7 +168,17 @@ pub const BINDINGS: &[BindingSpec] = &[
     ),
     spec(
         "toggle_agent_sort",
-        "Toggle grouped/priority agent order",
+        "Toggle grouped/priority session order",
+        &[],
+    ),
+    spec(
+        "toggle_projects_filter",
+        "List working projects or every project",
+        &[],
+    ),
+    spec(
+        "toggle_sessions_scope",
+        "List the focused project's sessions or every project's",
         &[],
     ),
     spec(
@@ -304,6 +316,8 @@ action_names! {
     "next_terminal" => NextTerminal, "previous_project" => PreviousProject,
     "next_project" => NextProject, "toggle_group" => ToggleGroup,
     "cycle_machine_filter" => CycleMachineFilter, "toggle_agent_sort" => ToggleAgentSort,
+    "toggle_projects_filter" => ToggleProjectsFilter,
+    "toggle_sessions_scope" => ToggleSessionsScope,
     "previous_attention" => PreviousAttention,
     "next_attention" => NextAttention, "new_tab" => NewTab, "rename_tab" => RenameTab,
     "previous_tab" => PreviousTab, "next_tab" => NextTab, "close_tab" => CloseTab,

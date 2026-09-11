@@ -65,6 +65,9 @@ pub struct SessionRow {
     pub git_branch: Option<String>,
     pub machine_id: Option<String>,
     pub agent_run_id: Option<String>,
+    pub model: Option<String>,
+    /// The session that spawned this one, for a child session of an agent run.
+    pub parent_session_id: Option<String>,
 }
 
 /// One entry of `/api/agents/runs?project_id=`.
@@ -80,6 +83,22 @@ pub struct RunRow {
     pub terminal_id: Option<String>,
     pub worktree_id: Option<String>,
     pub machine_id: Option<String>,
+    /// The session that spawned the run: the sidebar nests the run under it.
+    pub parent_session_id: Option<String>,
+    pub child_session_id: Option<String>,
+    pub effective_reasoning_effort: Option<String>,
+    pub requested_reasoning_effort: Option<String>,
+}
+
+impl RunRow {
+    /// The reasoning effort the run works at, the requested one until the
+    /// daemon resolved it.
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        self.effective_reasoning_effort
+            .as_deref()
+            .or(self.requested_reasoning_effort.as_deref())
+            .filter(|effort| !effort.is_empty())
+    }
 }
 
 /// Everything the sidebar model is built from besides the roster and panes.
