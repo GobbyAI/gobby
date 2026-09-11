@@ -116,6 +116,11 @@ fn snapshot_blob_reads_use_bounded_git_processes() -> anyhow::Result<()> {
     let actual = temp_env::with_var("PATH", Some(path), || -> anyhow::Result<Snapshot> {
         let snapshot = Snapshot::prepare(repository.path(), "batch-project", &commit_oid)?;
         snapshot.materialize(materialized.path())?;
+        let captured = snapshot.read_eligible_blobs()?;
+        assert_eq!(captured.len(), snapshot.eligible_entries().count());
+        assert_eq!(captured["large.txt"], large_content.as_bytes());
+        assert!(!captured.contains_key("binary.bin"));
+        assert!(!captured.contains_key("source-link"));
         Ok(snapshot)
     })?;
 
@@ -133,7 +138,7 @@ fn snapshot_blob_reads_use_bounded_git_processes() -> anyhow::Result<()> {
         .filter(|line| line.contains("cat-file blob ") || line.contains("cat-file --batch"))
         .count();
     assert_eq!(
-        blob_processes, 2,
+        blob_processes, 3,
         "snapshot blob processes must not grow with file count: {calls}"
     );
     Ok(())

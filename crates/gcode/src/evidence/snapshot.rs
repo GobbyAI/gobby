@@ -253,6 +253,21 @@ impl Snapshot {
         Ok(bytes)
     }
 
+    pub(crate) fn read_eligible_blobs(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+        let mut blobs = BlobBatch::new(&self.repo_root)?;
+        let mut captured = std::collections::BTreeMap::new();
+        for entry in self.eligible_entries() {
+            captured.insert(
+                entry.path.clone(),
+                self.read_verified_blob(entry, &mut blobs)?,
+            );
+        }
+        blobs.finish()?;
+        Ok(captured)
+    }
+
     fn read_verified_blob(&self, entry: &InventoryEntry, blobs: &mut BlobBatch) -> Result<Vec<u8>> {
         let path = &entry.path;
         if let Some(reason) = entry.exclusion {
