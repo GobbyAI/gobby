@@ -269,7 +269,7 @@ class DaemonGitService:
                 consume=consume,
             )
 
-        return await self._execute_worker(argv, timeout=timeout, worker=worker)
+        return await self._execute_worker(argv, cwd=resolved_cwd, timeout=timeout, worker=worker)
 
     async def status(
         self,
@@ -360,12 +360,13 @@ class DaemonGitService:
                 input_text=input_text,
             )
 
-        return await self._execute_worker(argv, timeout=timeout, worker=worker)
+        return await self._execute_worker(argv, cwd=cwd, timeout=timeout, worker=worker)
 
     async def _execute_worker(
         self,
         argv: tuple[str, ...],
         *,
+        cwd: str,
         timeout: float,
         worker: _GitWorker,
     ) -> GitResult:
@@ -388,6 +389,12 @@ class DaemonGitService:
             return await asyncio.wait_for(asyncio.shield(completion), timeout)
         except TimeoutError:
             diagnostic = control.diagnostic()
+            logger.warning(
+                "Git command timed out: cwd=%s timeout_seconds=%.3f %s",
+                cwd,
+                timeout,
+                diagnostic,
+            )
             consumer_active = control.kill()
             cancelled = False
             if consumer_active:
