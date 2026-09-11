@@ -1190,6 +1190,36 @@ fn incomplete_index_is_not_reported_as_empty_repository() -> anyhow::Result<()> 
 }
 
 #[test]
+#[serial_test::serial(evidence_git)]
+fn blank_snapshot_paths_need_no_index_rows() -> anyhow::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::create_dir(repo.join("src"))?;
+    std::fs::write(repo.join("src/lib.rs"), SOURCE)?;
+    std::fs::write(repo.join("empty.txt"), "")?;
+    std::fs::write(repo.join("whitespace.txt"), "\u{2003}\n")?;
+    git(repo, &["add", "."])?;
+    let commit_oid = commit(repo, "blank paths")?;
+    let snapshot = Snapshot::prepare(repo, "blank-project", &commit_oid)?;
+    let mut facts = FakeFacts::from_snapshot(&snapshot);
+    facts
+        .files
+        .retain(|file| !matches!(file.path.as_str(), "empty.txt" | "whitespace.txt"));
+    let library = EvidenceLibrary::new(snapshot.clone(), Arc::new(facts))?;
+
+    let response = library.query(request(
+        snapshot.binding(),
+        EvidenceOperation::Search {
+            search: search_selector(SearchLane::Literal, "missing"),
+        },
+    ))?;
+    assert_eq!(response.completeness, Completeness::CompleteEmpty);
+    assert!(response.items.is_empty());
+    Ok(())
+}
+
+#[test]
 fn snapshot_ignores_commit_and_blob_replacement_refs() -> anyhow::Result<()> {
     let temporary = tempfile::tempdir()?;
     let repo = temporary.path();

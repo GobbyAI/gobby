@@ -106,6 +106,83 @@ fn snapshot_cli_returns_native_canonical_inventory_without_services() -> anyhow:
     Ok(())
 }
 
+type LineRangeFixture = (&'static str, &'static [u8], Option<usize>);
+
+const LINE_RANGE_FIXTURES: [LineRangeFixture; 5] = [
+    ("fixtures/trailing.txt", b"line_probe trailing\n", Some(1)),
+    (
+        "fixtures/unterminated.txt",
+        b"line_probe unterminated",
+        Some(1),
+    ),
+    (
+        "fixtures/crlf.txt",
+        b"line_probe first\r\nsecond\r\n",
+        Some(2),
+    ),
+    ("fixtures/empty.txt", b"", None),
+    ("fixtures/whitespace.txt", b" \t\r\n\n", None),
+];
+
+#[cfg(gcode_postgres_tests)]
+const INITIAL_CHANGED_PATHS: [&str; 7] = [
+    ".gobby/project.json",
+    "fixtures/crlf.txt",
+    "fixtures/empty.txt",
+    "fixtures/trailing.txt",
+    "fixtures/unterminated.txt",
+    "fixtures/whitespace.txt",
+    "src/lib.rs",
+];
+
+#[test]
+fn indexed_content_chunk_ranges_match_blob_lines() {
+    for (path, content, expected_line_end) in LINE_RANGE_FIXTURES {
+        let chunks = gobby_code::index::chunker::chunk_file_content(
+            content,
+            path,
+            "line-semantics-project",
+            "fixture-hash",
+            Some("text"),
+        );
+        let ranges = chunks
+            .iter()
+            .map(|chunk| (chunk.line_start, chunk.line_end))
+            .collect::<Vec<_>>();
+        let expected = expected_line_end.map_or_else(Vec::new, |end| vec![(1, end)]);
+        assert_eq!(ranges, expected, "{path}");
+    }
+}
+
+#[test]
+fn indexed_content_chunk_ranges_preserve_blank_boundary_lines() {
+    let lines = (1..=101)
+        .map(|line| {
+            if line == 100 {
+                String::new()
+            } else {
+                format!("line {line}")
+            }
+        })
+        .collect::<Vec<_>>();
+    let source = format!("{}\n", lines.join("\n"));
+    let chunks = gobby_code::index::chunker::chunk_file_content(
+        source.as_bytes(),
+        "fixtures/boundary.txt",
+        "line-semantics-project",
+        "fixture-hash",
+        Some("text"),
+    );
+
+    let ranges = chunks
+        .iter()
+        .map(|chunk| (chunk.line_start, chunk.line_end))
+        .collect::<Vec<_>>();
+    assert_eq!(ranges, vec![(1, 100), (91, 101)]);
+    assert!(chunks[0].content.ends_with('\n'));
+    assert!(chunks[1].content.contains("line 99\n\nline 101"));
+}
+
 fn assert_error(output: &std::process::Output, code: &str) -> Value {
     assert_eq!(
         output.status.code(),
@@ -134,7 +211,6 @@ const SOURCE: &str = concat!(
     "pub fn alpha() { let evidence_token = \"needle\"; }\n",
     "pub fn beta() { let evidence_token = \"needle\"; }\n",
 );
-
 #[cfg(gcode_postgres_tests)]
 fn database_contract() -> anyhow::Result<()> {
     use gobby_code::evidence::{
@@ -156,13 +232,17 @@ fn database_contract() -> anyhow::Result<()> {
     let project = project_dir.path().canonicalize()?;
     std::fs::create_dir_all(project.join(".gobby"))?;
     std::fs::create_dir_all(project.join("src"))?;
+    std::fs::create_dir_all(project.join("fixtures"))?;
     std::fs::write(project.join(FILE_PATH), SOURCE)?;
+    for (path, content, _) in LINE_RANGE_FIXTURES {
+        std::fs::write(project.join(path), content)?;
+    }
     std::fs::write(
         project.join(".gobby/project.json"),
         serde_json::json!({"id": PROJECT_ID, "name": "evidence-cli-contract"}).to_string(),
     )?;
     git(&project, &["init", "--quiet", "-b", "main"])?;
-    git(&project, &["add", FILE_PATH])?;
+    git(&project, &["add", "."])?;
     let commit_oid = commit(&project, "initial evidence fixture")?;
     let snapshot = Snapshot::prepare(&project, PROJECT_ID, &commit_oid)?;
     assert_pure_preflight_rejections(snapshot.binding())?;
@@ -249,6 +329,41 @@ fn database_contract() -> anyhow::Result<()> {
     );
     assert!(source.evidence_id.starts_with("src:"));
 
+    let content_range_request = EvidenceRequest {
+        operation: EvidenceOperation::Search {
+            search: SearchSelector {
+                lane: SearchLane::Content,
+                query: "line_probe".to_string(),
+                paths: vec!["fixtures".to_string()],
+                language: None,
+                kind: None,
+                limit: DEFAULT_RESULT_LIMIT,
+                hybrid_identity: None,
+            },
+        },
+        ..range_request.clone()
+    };
+    let content_ranges = run_success(&project, &home, &connections, &content_range_request)?;
+    let sources = content_ranges
+        .items
+        .into_iter()
+        .map(|item| match item {
+            EvidenceItem::Source(source) => Ok((source.path.clone(), source)),
+            other => anyhow::bail!("expected source evidence, got {other:?}"),
+        })
+        .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
+    assert_eq!(sources.len(), 3);
+    for (path, content, expected_line_end) in LINE_RANGE_FIXTURES {
+        let Some(expected_line_end) = expected_line_end else {
+            assert!(!sources.contains_key(path));
+            continue;
+        };
+        let source = &sources[path];
+        assert_eq!(source.line_start, 1, "{path}");
+        assert_eq!(source.line_end, expected_line_end, "{path}");
+        assert_eq!(source.excerpt.as_bytes(), content, "{path}");
+    }
+
     let metadata_request = EvidenceRequest {
         operation: EvidenceOperation::Read {
             read: ReadSelector::CommitMetadata,
@@ -257,25 +372,36 @@ fn database_contract() -> anyhow::Result<()> {
     };
     let metadata = run_success(&project, &home, &connections, &metadata_request)?;
     assert_eq!(metadata.contract.lane, "read_commit_metadata");
-    assert_eq!(metadata.items.len(), 1);
-    let EvidenceItem::CommitMetadata(record) = &metadata.items[0] else {
-        panic!("metadata response must contain commit evidence");
-    };
-    assert_eq!(record.commit_oid, commit_oid);
-    assert_eq!(record.parent_oids, snapshot.binding().commit.parent_oids);
-    assert_eq!(record.changed_path_count, 1);
-    assert_eq!(
-        record
-            .changed_path
-            .as_ref()
-            .and_then(|change| change.new_path.as_deref()),
-        Some(FILE_PATH)
-    );
-    assert_eq!(
-        record.changed_paths_digest,
-        snapshot.binding().commit.changed_paths_digest
-    );
-    assert!(record.evidence_id.starts_with("commit:"));
+    let records = metadata
+        .items
+        .iter()
+        .map(|item| match item {
+            EvidenceItem::CommitMetadata(record) => record,
+            other => panic!("metadata response must contain commit evidence, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), INITIAL_CHANGED_PATHS.len());
+    let changed_paths = records
+        .iter()
+        .map(|record| {
+            record
+                .changed_path
+                .as_ref()
+                .and_then(|change| change.new_path.as_deref())
+                .expect("initial commit record has a new path")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(changed_paths, INITIAL_CHANGED_PATHS);
+    for record in records {
+        assert_eq!(record.commit_oid, commit_oid);
+        assert_eq!(record.parent_oids, snapshot.binding().commit.parent_oids);
+        assert_eq!(record.changed_path_count, INITIAL_CHANGED_PATHS.len());
+        assert_eq!(
+            record.changed_paths_digest,
+            snapshot.binding().commit.changed_paths_digest
+        );
+        assert!(record.evidence_id.starts_with("commit:"));
+    }
 
     let search_request = EvidenceRequest {
         operation: EvidenceOperation::Search {
