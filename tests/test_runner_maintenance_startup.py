@@ -64,7 +64,12 @@ async def test_metrics_cleanup_runs_before_24_hours_then_waits_for_normal_interv
     sleep = CancelAtInterval()
     work_times: list[float] = []
     manager = MagicMock()
-    manager.cleanup_old_metrics.side_effect = lambda: work_times.append(sleep.elapsed) or 0
+
+    def cleanup() -> int:
+        work_times.append(sleep.elapsed)
+        return 0
+
+    manager.cleanup_old_metrics.side_effect = cleanup
 
     await metrics_cleanup_loop(
         manager,
@@ -78,13 +83,16 @@ async def test_metrics_cleanup_runs_before_24_hours_then_waits_for_normal_interv
 
 
 def test_schema_sweep_delegates_to_gdaemon(monkeypatch: pytest.MonkeyPatch) -> None:
-    sweep = MagicMock()
+    calls: list[tuple[str, int]] = []
+
+    def sweep(database_url: str, *, age_hours: int) -> None:
+        calls.append((database_url, age_hours))
+
     monkeypatch.setattr(storage_hygiene, "sweep_test_schemas", sweep, raising=False)
 
-    result = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test", age_hours=12)
+    storage_hygiene.sweep_orphaned_test_schemas("postgresql://test", age_hours=12)
 
-    assert result is None
-    sweep.assert_called_once_with("postgresql://test", age_hours=12)
+    assert calls == [("postgresql://test", 12)]
 
 
 @pytest.mark.asyncio
@@ -266,9 +274,12 @@ async def test_metrics_archive_runs_before_24_hours_then_waits_for_normal_interv
     sleep = CancelAtInterval()
     work_times: list[float] = []
     event_store = MagicMock()
-    event_store.archive_old_events.side_effect = (
-        lambda **_kwargs: work_times.append(sleep.elapsed) or 0
-    )
+
+    def archive(**_kwargs: object) -> int:
+        work_times.append(sleep.elapsed)
+        return 0
+
+    event_store.archive_old_events.side_effect = archive
 
     await metrics_archive_loop(
         event_store,

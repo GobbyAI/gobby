@@ -22,7 +22,11 @@ from gobby.mcp_proxy.transports.http import (
     build_mcp_http_client,
 )
 from tests._timing import drain_asyncio_tasks, wait_forever
-from tests.mcp_proxy.transports._support import FakeClient, recording_transport
+from tests.mcp_proxy.transports._support import (
+    FakeClient,
+    assert_gobby_client_info,
+    recording_transport,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -60,8 +64,11 @@ class _ClientHarness:
         self.transport_calls.append((url, http_client))
         return recording_transport(self.lifecycle, enter_error=self.transport_enter_error)
 
-    def fake_client(self, transport: Any, *, mode: str = "auto") -> FakeClient:
+    def fake_client(
+        self, transport: Any, *, mode: str = "auto", client_info: Any = None
+    ) -> FakeClient:
         assert mode == "auto"
+        assert_gobby_client_info(client_info)
         client = FakeClient(transport, lifecycle=self.lifecycle, **self.client_kwargs)
         self.clients.append(client)
         return client
@@ -184,10 +191,12 @@ class TestHTTPConnectSuccess:
 
 class TestBuildMcpHttpClient:
     @pytest.mark.asyncio
-    async def test_applies_mcp_timeout_profile_and_redirects(self) -> None:
+    async def test_applies_mcp_timeout_profile_and_leaves_redirects_to_the_sdk(self) -> None:
         client = build_mcp_http_client({"X-Tenant": "t"})
         try:
-            assert client.follow_redirects is True
+            # The SDK sends every MCP request with follow_redirects=False and
+            # applies its own same-origin rule, so this must not claim otherwise.
+            assert client.follow_redirects is False
             assert client.headers["X-Tenant"] == "t"
             assert client.timeout == httpx2.Timeout(
                 MCP_HTTP_TIMEOUT_SECONDS, read=MCP_HTTP_READ_TIMEOUT_SECONDS

@@ -321,3 +321,27 @@ def test_attention_screen_updates_preserve_lifecycle_namespace(
     assert cleared.current is not None
     assert cleared.current.state is None
     assert set(cleared.current.payload) == {"turn_lifecycle"}
+
+
+@pytest.mark.parametrize("terminal_status", ["expired", "deleted"])
+@pytest.mark.parametrize("operation", ["resumed_work", "begin_turn"])
+def test_delayed_work_cannot_reactivate_terminal_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    terminal_status: str,
+    operation: str,
+) -> None:
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"])
+    lifecycle = TurnLifecycleReducer(sessions)
+    started = lifecycle.begin_turn(session_id, TurnEvidence(source="codex"))
+    sessions.update_status(session_id, terminal_status)
+
+    result = getattr(lifecycle, operation)(session_id, TurnEvidence(source="codex"))
+
+    assert result.applied is False
+    assert result.reason == "session_terminal"
+    assert result.lifecycle == started.lifecycle
+    stored = sessions.get(session_id)
+    assert stored is not None
+    assert stored.status == terminal_status

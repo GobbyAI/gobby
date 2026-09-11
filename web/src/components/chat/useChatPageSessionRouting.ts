@@ -36,7 +36,7 @@ function sessionToObservationMeta(
   session: GobbySession,
 ): SessionObservationMeta {
   return {
-    ref: session.seq_num != null ? `#${session.seq_num}` : null,
+    ref: session.ref ?? null,
     source: session.source,
     title: session.title ?? null,
     status: session.status,
@@ -68,9 +68,7 @@ export function useChatPageSessionRouting({
     (activeSession ? sessionToObservationMeta(activeSession) : null);
   const activeTitle = chat.sessionTitle ?? mainSessionMeta?.title ?? null;
   const effectiveSessionRef =
-    chat.sessionRef ??
-    mainSessionMeta?.ref ??
-    (activeSession?.seq_num != null ? `#${activeSession.seq_num}` : null);
+    chat.sessionRef ?? mainSessionMeta?.ref ?? activeSession?.ref ?? null;
 
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
   const onSendRef = useRef(chat.onSend);

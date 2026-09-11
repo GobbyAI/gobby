@@ -922,6 +922,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.message_count = 4
         mock_session.turn_count = 2
         mock_session.seq_num = 6273
+        mock_session.ref = "gobby#6273"
 
         task = MagicMock()
         task.seq_num = 15237
@@ -957,7 +958,7 @@ class TestSessionStartPreCreatedSession:
         ):
             response = handlers.handle_session_start(event)
 
-        assert response.system_message == "\nGobby Session ID: #6273 (sess-pre-123)"
+        assert response.system_message == "\nGobby Session ID: gobby#6273 (sess-pre-123)"
         assert response.context is not None
         assert "Claimed task refs: #15237" in response.context
         assert "## Role" not in response.context
@@ -1137,6 +1138,7 @@ class TestSessionStartNewSession:
             message_count=8,
             turn_count=3,
             seq_num=42,
+            ref="gobby#42",
         )
         resumed = SimpleNamespace(**vars(persisted))
         resumed.status = "active"

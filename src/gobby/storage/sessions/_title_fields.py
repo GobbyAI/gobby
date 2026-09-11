@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from gobby.storage.session_models import Session
@@ -29,6 +30,43 @@ class _TitleFieldHost(Protocol):
 
 
 class _TitleFieldMixin:
+    def normalize_automatic_title_refs(self: _TitleFieldHost) -> int:
+        """Refresh automatic prefixes without changing suffixes or provenance."""
+        rows = self.db.fetchall(
+            """
+            SELECT s.id, s.title, s.title_source, s.seq_num, s.project_id,
+                   p.name AS project_name
+            FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
+            WHERE s.title_source IN ('provisional', 'task') AND s.seq_num IS NOT NULL
+            """
+        )
+        changed = 0
+        for row in rows:
+            title = row["title"] or ""
+            project = str(row["project_name"] or "").strip() or str(row["project_id"])
+            prefix = re.match(r"^\([^)]*#\d+\):", title)
+            if prefix is None:
+                continue
+            normalized = f"({project}#{row['seq_num']}):" + title[prefix.end() :]
+            if normalized == title:
+                continue
+            with self.db.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE sessions SET title = %s, updated_at = %s
+                    WHERE id = %s AND title = %s AND title_source = %s
+                    """,
+                    (normalized, utc_now(), row["id"], title, row["title_source"]),
+                )
+                applied = bool(cursor.rowcount)
+            if applied:
+                changed += 1
+                updated = self.get(str(row["id"]))
+                if updated is not None:
+                    self._notify_session_change("session_updated", updated.id)
+                    self._run_title_change_side_effects(updated, updated.title or "")
+        return changed
+
     def update_title(
         self: _TitleFieldHost,
         session_id: str,

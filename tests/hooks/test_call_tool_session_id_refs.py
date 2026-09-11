@@ -41,9 +41,11 @@ def _prepare_manager_for_before_tool(manager: HookManager) -> None:
     manager._enricher.enrich = MagicMock()
 
 
+@pytest.mark.parametrize("session_ref", ["#3", "game-goblins#3", "literal-S#3"])
 def test_top_level_call_tool_session_ref_does_not_create_modified_input(
     manager_with_mocks: HookManager,
     make_before_tool_event: Callable[[dict], HookEvent],
+    session_ref: str,
 ) -> None:
     manager = manager_with_mocks
     _prepare_manager_for_before_tool(manager)
@@ -53,7 +55,7 @@ def test_top_level_call_tool_session_ref_does_not_create_modified_input(
             "server_name": "gobby-sessions",
             "tool_name": "get_session",
             "arguments": {},
-            "session_id": "#3",
+            "session_id": session_ref,
         }
     )
 

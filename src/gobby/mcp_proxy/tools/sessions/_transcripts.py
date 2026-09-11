@@ -38,7 +38,7 @@ def register_transcript_tools(
         """Restore a session transcript from archive to the filesystem.
 
         Args:
-            session_id: Session reference (#N, UUID, or prefix)
+            session_id: Session reference (<project>#N, local #N, UUID, or prefix)
             target_path: Optional override path. If None, restores to original transcript_path.
 
         Returns:
@@ -86,7 +86,7 @@ def register_transcript_tools(
         """Get transcript archive status for a session.
 
         Args:
-            session_id: Session reference (#N, UUID, or prefix)
+            session_id: Session reference (<project>#N, local #N, UUID, or prefix)
 
         Returns:
             Dict with exists flag and size stats if present.

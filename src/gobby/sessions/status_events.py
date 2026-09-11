@@ -21,6 +21,7 @@ class SessionStatusTransition:
     seq_num: int | None
     title: str | None
     source: str
+    session_ref: str | None = None
 
     @classmethod
     def from_session(
@@ -40,6 +41,7 @@ class SessionStatusTransition:
             seq_num=session.seq_num,
             title=session.title,
             source=session.source,
+            session_ref=session.ref,
         )
 
 

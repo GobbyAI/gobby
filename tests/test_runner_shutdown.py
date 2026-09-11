@@ -20,6 +20,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.runner import GobbyRunner
 from gobby.runner_pid_file import FailOpenPidOwnership
+from gobby.servers.http import HTTPServer
 from gobby.shutdown_intent import ShutdownIntent
 from tests.hooks._event_handler_helpers import make_event
 from tests.runner_helpers import create_base_patches
@@ -66,7 +67,9 @@ class TestGobbyRunnerShutdown:
     """Tests for shutdown handling in run method."""
 
     @pytest.mark.asyncio
-    async def test_run_waits_for_http_shutdown_before_reaping_children(self, mock_config) -> None:
+    async def test_run_waits_for_http_shutdown_before_reaping_children(
+        self, mock_config: MagicMock
+    ) -> None:
         """Child reaping should only happen after HTTP shutdown completes."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -113,10 +116,10 @@ class TestGobbyRunnerShutdown:
 
             mock_process.children.assert_called_once_with(recursive=True)
             assert http_shutdown_complete is True
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_http_server_shutdown_timeout(self, mock_config) -> None:
+    async def test_run_handles_http_server_shutdown_timeout(self, mock_config: MagicMock) -> None:
         """Test that run handles HTTP server shutdown timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -145,10 +148,12 @@ class TestGobbyRunnerShutdown:
                     )
 
             assert mock_server.should_exit is True
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_lifecycle_manager_shutdown_timeout(self, mock_config) -> None:
+    async def test_run_handles_lifecycle_manager_shutdown_timeout(
+        self, mock_config: MagicMock
+    ) -> None:
         """Test that run handles lifecycle manager shutdown timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -187,12 +192,12 @@ class TestGobbyRunnerShutdown:
                     )
 
             assert mock_lifecycle_manager.stop.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
     async def test_run_stops_lifecycle_manager_before_http_shutdown_completes(
         self,
-        mock_config,
+        mock_config: MagicMock,
     ) -> None:
         """Lifecycle cleanup should stop before we wait for HTTP lifespan shutdown."""
         mock_mcp_manager = AsyncMock()
@@ -255,8 +260,8 @@ class TestGobbyRunnerShutdown:
 
     @pytest.mark.asyncio
     async def test_run_waits_for_stop_hook_grace_before_http_shutdown(
-        self, mock_config, fast_stop_hook_grace_window
-    ):
+        self, mock_config: MagicMock, fast_stop_hook_grace_window: AsyncMock
+    ) -> None:
         """Shutdown should keep HTTP up for the Stop-hook grace window before exit."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -287,10 +292,12 @@ class TestGobbyRunnerShutdown:
                 assert mock_server.should_exit is False
 
             fast_stop_hook_grace_window.side_effect = note_grace_wait
-            runner.http_server._cleanup_pending_interactions = AsyncMock(
+            cast(MagicMock, runner.http_server)._cleanup_pending_interactions = AsyncMock(
                 side_effect=cleanup_pending
             )
-            runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
+            cast(
+                MagicMock, runner.http_server
+            )._terminate_streamable_http_sessions.side_effect = terminate_sessions
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = _ExitAwareServer()
@@ -308,13 +315,17 @@ class TestGobbyRunnerShutdown:
                     )
 
             fast_stop_hook_grace_window.assert_awaited_once()
-            runner.http_server._cleanup_pending_interactions.assert_awaited_once()
-            runner.http_server._terminate_streamable_http_sessions.assert_awaited_once()
+            cast(MagicMock, runner.http_server)._cleanup_pending_interactions.assert_awaited_once()
+            cast(
+                MagicMock, runner.http_server
+            )._terminate_streamable_http_sessions.assert_awaited_once()
             assert events[:3] == ["grace", "pending", "terminate"]
             assert events[-1] == "serve-exit"
 
     @pytest.mark.asyncio
-    async def test_run_handles_message_processor_shutdown_timeout(self, mock_config) -> None:
+    async def test_run_handles_message_processor_shutdown_timeout(
+        self, mock_config: MagicMock
+    ) -> None:
         """Test that run handles message processor shutdown timeout."""
         mock_config.message_tracking = MagicMock()
         mock_config.message_tracking.enabled = True
@@ -357,10 +368,10 @@ class TestGobbyRunnerShutdown:
                     )
 
             assert mock_message_processor.stop.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_mcp_disconnect_timeout(self, mock_config) -> None:
+    async def test_run_handles_mcp_disconnect_timeout(self, mock_config: MagicMock) -> None:
         """Test that run handles MCP disconnect timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -388,10 +399,10 @@ class TestGobbyRunnerShutdown:
                     )
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_starts_message_processor(self, mock_config) -> None:
+    async def test_run_starts_message_processor(self, mock_config: MagicMock) -> None:
         """Test that run starts the message processor when enabled."""
         mock_config.message_tracking = MagicMock()
         mock_config.message_tracking.enabled = True
@@ -456,7 +467,7 @@ class TestGobbyRunnerShutdown:
 
             runner = await GobbyRunner.create()
             mock_message_processor.start.assert_awaited_once()
-            runner.database.open_runtime_async_connection.assert_awaited_once()
+            cast(MagicMock, runner.database).open_runtime_async_connection.assert_awaited_once()
             assert runner.definition_revision_listener.listen_task is not None
             runner._shutdown_requested = True
 
@@ -471,7 +482,7 @@ class TestGobbyRunnerShutdown:
             assert runner._shutdown_requested is True
 
     @pytest.mark.asyncio
-    async def test_run_runs_startup_metrics_cleanup(self, mock_config) -> None:
+    async def test_run_runs_startup_metrics_cleanup(self, mock_config: MagicMock) -> None:
         """Test that run performs startup metrics cleanup."""
         mock_config.databases.qdrant.url = ""
         mock_config.databases.falkordb.password = None
@@ -491,7 +502,7 @@ class TestGobbyRunnerShutdown:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
-            runner.metrics_manager.cleanup_old_metrics = MagicMock(return_value=10)
+            cast(MagicMock, runner.metrics_manager).cleanup_old_metrics = MagicMock(return_value=10)
 
             async def stop_after_mcp_connect() -> None:
                 runner._shutdown_requested = True
@@ -506,12 +517,12 @@ class TestGobbyRunnerShutdown:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
-            runner.metrics_manager.cleanup_old_metrics.assert_called()
-            assert runner.metrics_manager.cleanup_old_metrics.call_count >= 1
+            cast(MagicMock, runner.metrics_manager).cleanup_old_metrics.assert_called()
+            assert cast(MagicMock, runner.metrics_manager).cleanup_old_metrics.call_count >= 1
             assert runner._shutdown_requested is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_startup_metrics_cleanup_error(self, mock_config) -> None:
+    async def test_run_handles_startup_metrics_cleanup_error(self, mock_config: MagicMock) -> None:
         """Test that run handles startup metrics cleanup errors."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -534,7 +545,9 @@ class TestGobbyRunnerShutdown:
                 runner._shutdown_requested = True
                 raise Exception("Cleanup failed")
 
-            runner.metrics_manager.cleanup_old_metrics = MagicMock(side_effect=fail_cleanup)
+            cast(MagicMock, runner.metrics_manager).cleanup_old_metrics = MagicMock(
+                side_effect=fail_cleanup
+            )
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -548,11 +561,11 @@ class TestGobbyRunnerShutdown:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
-            assert runner.metrics_manager.cleanup_old_metrics.call_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.metrics_manager).cleanup_old_metrics.call_count == 1
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_fatal_error_exits(self, mock_config) -> None:
+    async def test_run_fatal_error_exits(self, mock_config: MagicMock) -> None:
         """Test that run exits on fatal error."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -580,7 +593,9 @@ class TestGobbyRunnerShutdown:
             assert exc_info.value.code == 1
 
     @pytest.mark.asyncio
-    async def test_run_cancels_metrics_cleanup_task_on_shutdown(self, mock_config) -> None:
+    async def test_run_cancels_metrics_cleanup_task_on_shutdown(
+        self, mock_config: MagicMock
+    ) -> None:
         """Test that metrics cleanup task is cancelled on shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -610,14 +625,14 @@ class TestGobbyRunnerShutdown:
                 or runner._metrics_cleanup_task.done()
                 or runner._metrics_cleanup_task.cancelled()
             )
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
 
 class TestWebSocketServerShutdown:
     """Tests for WebSocket server shutdown handling."""
 
     @pytest.mark.asyncio
-    async def test_run_with_websocket_shutdown(self, mock_config_with_websocket) -> None:
+    async def test_run_with_websocket_shutdown(self, mock_config_with_websocket: MagicMock) -> None:
         """Test run properly shuts down WebSocket server."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -641,7 +656,8 @@ class TestWebSocketServerShutdown:
             runner = GobbyRunner()
             mock_ws_server.start = AsyncMock(side_effect=ws_start)
 
-            async def init_subsystems(runner_arg, _rebuild_vector_store) -> None:
+            async def init_subsystems(runner_arg: GobbyRunner, _rebuild_vector_store: bool) -> None:
+                assert runner_arg.websocket_server is not None
                 runner_arg._websocket_task = asyncio.create_task(
                     runner_arg.websocket_server.start()
                 )
@@ -662,10 +678,12 @@ class TestWebSocketServerShutdown:
 
             assert mock_ws_server.start.await_count == 1
             assert websocket_started.is_set()
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_websocket_shutdown_timeout(self, mock_config_with_websocket) -> None:
+    async def test_run_websocket_shutdown_timeout(
+        self, mock_config_with_websocket: MagicMock
+    ) -> None:
         """Test run handles WebSocket server shutdown timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -693,13 +711,14 @@ class TestWebSocketServerShutdown:
             runner = GobbyRunner()
             mock_ws_server.start = AsyncMock(side_effect=ws_start_hang)
 
-            async def init_subsystems(runner_arg, _rebuild_vector_store) -> None:
+            async def init_subsystems(runner_arg: GobbyRunner, _rebuild_vector_store: bool) -> None:
+                assert runner_arg.websocket_server is not None
                 runner_arg._websocket_task = asyncio.create_task(
                     runner_arg.websocket_server.start()
                 )
                 runner_arg._shutdown_requested = True
 
-            async def shutdown_websocket_server(runner_arg) -> None:
+            async def shutdown_websocket_server(runner_arg: GobbyRunner) -> None:
                 from gobby.runner_lifecycle_shutdown import _shutdown_websocket_server
 
                 await _shutdown_websocket_server(runner_arg, timeout=0.01)
@@ -724,14 +743,16 @@ class TestWebSocketServerShutdown:
 
             assert mock_ws_server.start.await_count == 1
             assert websocket_started.is_set()
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
 
 class TestMetricsCleanupTaskShutdown:
     """Tests for metrics cleanup task shutdown behavior."""
 
     @pytest.mark.asyncio
-    async def test_run_handles_metrics_cleanup_task_cancelled_error(self, mock_config) -> None:
+    async def test_run_handles_metrics_cleanup_task_cancelled_error(
+        self, mock_config: MagicMock
+    ) -> None:
         """Test run handles CancelledError from metrics cleanup task cancellation."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -765,14 +786,14 @@ class TestMetricsCleanupTaskShutdown:
                     await shutdown_task
 
             assert runner._metrics_cleanup_task is None or runner._metrics_cleanup_task.done()
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
 
 class TestGobbyRunnerShutdownExtended:
     """Tests for GobbyRunner shutdown behavior."""
 
     @pytest.mark.asyncio
-    async def test_run_calls_disconnect_on_shutdown(self, mock_config) -> None:
+    async def test_run_calls_disconnect_on_shutdown(self, mock_config: MagicMock) -> None:
         """Test that run always disconnects MCP on shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -799,10 +820,12 @@ class TestGobbyRunnerShutdownExtended:
 
             mock_mcp_manager.disconnect_all.assert_called_once()
             assert mock_mcp_manager.disconnect_all.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_shuts_down_telemetry_before_closing_database(self, mock_config) -> None:
+    async def test_run_shuts_down_telemetry_before_closing_database(
+        self, mock_config: MagicMock
+    ) -> None:
         """Telemetry flush should happen before the main daemon DB is closed."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -819,7 +842,7 @@ class TestGobbyRunnerShutdownExtended:
             runner = GobbyRunner()
             runner._shutdown_requested = True
             events: list[str] = []
-            runner.database.close.side_effect = lambda: events.append("database")
+            cast(MagicMock, runner.database).close.side_effect = lambda: events.append("database")
 
             with (
                 patch("uvicorn.Config"),
@@ -837,10 +860,10 @@ class TestGobbyRunnerShutdownExtended:
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert events == ["telemetry", "database"]
-            assert runner.database.close.call_count == 1
+            assert cast(MagicMock, runner.database).close.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_run_does_not_close_code_index_graph_client(self, mock_config) -> None:
+    async def test_run_does_not_close_code_index_graph_client(self, mock_config: MagicMock) -> None:
         """Code index graph projection is owned by gcode, not runner shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -860,7 +883,7 @@ class TestGobbyRunnerShutdownExtended:
             runner.code_indexer = SimpleNamespace(
                 close_graph_client=AsyncMock(side_effect=lambda: events.append("code_graph"))
             )
-            runner.database.close.side_effect = lambda: events.append("database")
+            cast(MagicMock, runner.database).close.side_effect = lambda: events.append("database")
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -872,7 +895,7 @@ class TestGobbyRunnerShutdownExtended:
 
             assert events == ["database"]
             runner.code_indexer.close_graph_client.assert_not_called()
-            assert runner.database.close.call_count == 1
+            assert cast(MagicMock, runner.database).close.call_count == 1
 
 
 class TestShutdownSessionStatusLifecycle:
@@ -929,8 +952,8 @@ class TestShutdownSessionStatusLifecycle:
             return None
 
         await runner_lifecycle_shutdown.shutdown_daemon_services(
-            runner,
-            server,
+            cast(GobbyRunner, runner),
+            cast("uvicorn.Server", server),
             asyncio.create_task(server_done()),
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
@@ -943,10 +966,10 @@ class TestShutdownSessionStatusLifecycle:
         assert events == ["telemetry", "database", "cleanup"]
         assert runner.http_server._hook_manager is hook_manager
         hook_manager.shutdown_async.assert_not_awaited()
-        runner.database.close.assert_called_once()
+        cast(MagicMock, runner.database).close.assert_called_once()
 
     async def test_http_stop_cannot_downgrade_restart_before_shutdown_capture(
-        self, tmp_path
+        self, tmp_path: Path
     ) -> None:
         from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
 
@@ -954,19 +977,21 @@ class TestShutdownSessionStatusLifecycle:
         runner._shutdown_requested = False
         runner._shutdown_intent = ShutdownIntent.STOP
         runner._drain_terminals_on_shutdown = False
-        runner.http_server = SimpleNamespace(services=None)
+        runner.http_server = cast(HTTPServer, SimpleNamespace(services=None))
         runner.database = SimpleNamespace(close=MagicMock())
         server = SimpleNamespace(_runner=runner)
 
         restart_requested = asyncio.Event()
 
         async def request_restart() -> None:
-            assert _request_runner_shutdown(server, ShutdownIntent.RESTART) is True
+            assert (
+                _request_runner_shutdown(cast(HTTPServer, server), ShutdownIntent.RESTART) is True
+            )
             restart_requested.set()
 
         async def request_http_stop() -> None:
             await restart_requested.wait()
-            assert _request_runner_shutdown(server, ShutdownIntent.STOP) is True
+            assert _request_runner_shutdown(cast(HTTPServer, server), ShutdownIntent.STOP) is True
 
         await asyncio.gather(request_restart(), request_http_stop())
 
@@ -995,7 +1020,7 @@ class TestShutdownSessionStatusLifecycle:
         ):
             await runner_lifecycle_shutdown.shutdown_daemon_services(
                 runner,
-                server,
+                cast("uvicorn.Server", server),
                 asyncio.create_task(server_done()),
                 1,
                 await_critical_stop_hook_grace_window=AsyncMock(),
@@ -1006,6 +1031,7 @@ class TestShutdownSessionStatusLifecycle:
             )
 
         assert runner._shutdown_intent is ShutdownIntent.RESTART
+        assert graceful_shutdown.await_args is not None
         assert graceful_shutdown.await_args.kwargs["shutdown_intent"] is ShutdownIntent.RESTART
 
     async def test_database_closes_after_session_writing_services_stop(self) -> None:
@@ -1066,8 +1092,8 @@ class TestShutdownSessionStatusLifecycle:
 
         await approval_timeout_started.wait()
         await runner_lifecycle_shutdown.shutdown_daemon_services(
-            runner,
-            server,
+            cast(GobbyRunner, runner),
+            cast("uvicorn.Server", server),
             asyncio.create_task(server_done()),
             1,
             await_critical_stop_hook_grace_window=AsyncMock(),
@@ -1105,7 +1131,7 @@ class TestFinalizerExpiryBackstop:
     """Expiry-branch state that drives main()'s forced-exit backstop."""
 
     @pytest.mark.asyncio
-    async def test_expiry_branch_sets_backstop_state(self, monkeypatch) -> None:
+    async def test_expiry_branch_sets_backstop_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(runner_lifecycle_shutdown, "_FINALIZER_SETTLE_SECONDS", 0.05)
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
@@ -1115,7 +1141,7 @@ class TestFinalizerExpiryBackstop:
         runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
         try:
             cancellation = await runner_lifecycle_shutdown._settle_finalizers_under_cancellation(
-                SimpleNamespace(db_executor=None),
+                cast(GobbyRunner, SimpleNamespace(db_executor=None)),
             )
             assert cancellation is None
             assert runner_lifecycle_shutdown.finalizer_expiry_backstop_required()
@@ -1123,8 +1149,10 @@ class TestFinalizerExpiryBackstop:
             runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
 
     @pytest.mark.asyncio
-    async def test_settled_finalizer_leaves_backstop_unset(self, monkeypatch) -> None:
-        async def _instant(runner) -> None:
+    async def test_settled_finalizer_leaves_backstop_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def _instant(runner: GobbyRunner) -> None:
             return None
 
         monkeypatch.setattr(
@@ -1132,7 +1160,7 @@ class TestFinalizerExpiryBackstop:
         )
         runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
         cancellation = await runner_lifecycle_shutdown._settle_finalizers_under_cancellation(
-            SimpleNamespace(db_executor=None),
+            cast(GobbyRunner, SimpleNamespace(db_executor=None)),
         )
         assert cancellation is None
         assert not runner_lifecycle_shutdown.finalizer_expiry_backstop_required()
@@ -1141,15 +1169,15 @@ class TestFinalizerExpiryBackstop:
 class TestForceExitBackstop:
     """main()'s expiry-branch os._exit backstop."""
 
-    def _arm(self, monkeypatch) -> list[int]:
-        from gobby import runner as runner_module
+    def _arm(self, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        import os
 
         exits: list[int] = []
-        monkeypatch.setattr(runner_module.os, "_exit", exits.append)
+        monkeypatch.setattr(os, "_exit", exits.append)
         monkeypatch.setattr("gobby.runner.logging.shutdown", lambda: None)
         return exits
 
-    def test_no_exit_when_backstop_unset(self, monkeypatch) -> None:
+    def test_no_exit_when_backstop_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from gobby import runner as runner_module
 
         exits = self._arm(monkeypatch)
@@ -1157,7 +1185,7 @@ class TestForceExitBackstop:
         runner_module._force_exit_after_expired_settlement()
         assert exits == []
 
-    def test_forces_exit_code_zero_on_clean_unwind(self, monkeypatch) -> None:
+    def test_forces_exit_code_zero_on_clean_unwind(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from gobby import runner as runner_module
 
         exits = self._arm(monkeypatch)
@@ -1165,7 +1193,9 @@ class TestForceExitBackstop:
         runner_module._force_exit_after_expired_settlement()
         assert exits == [0]
 
-    def test_forces_exit_with_systemexit_code_from_unwind(self, monkeypatch) -> None:
+    def test_forces_exit_with_systemexit_code_from_unwind(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from gobby import runner as runner_module
 
         exits = self._arm(monkeypatch)
@@ -1181,7 +1211,7 @@ class TestForceExitBackstop:
 class TestExpiryBackstopSubprocess:
     """Plan 1.4.19 subprocess shape: a wedged process still exits via the backstop."""
 
-    def test_backstop_forces_wedged_process_exit_with_pid_released(self, tmp_path) -> None:
+    def test_backstop_forces_wedged_process_exit_with_pid_released(self, tmp_path: Path) -> None:
         import subprocess
         import sys
         import textwrap

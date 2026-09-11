@@ -438,7 +438,7 @@ async def handle_continue_in_chat(
                 "source_session_id": source_session_id,
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
-                "ref": f"#{session.seq_num}" if session.seq_num is not None else None,
+                "ref": session.session_ref or session.db_session_id,
                 "title": continued_title,
                 "source": effective_provider,
                 "model": effective_model,

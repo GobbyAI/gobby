@@ -257,7 +257,7 @@ export function ResumeSessionModal({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {session.seq_num != null ? `#${session.seq_num}: ` : ""}
+                    {session.ref ? `${session.ref}: ` : ""}
                     {getSessionTitleText(session.title)}
                   </div>
                   <div

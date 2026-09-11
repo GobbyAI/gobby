@@ -649,7 +649,7 @@ class TestHookManagerBeforeAgent:
         assert session is not None
         # An automatic title carries the project-scoped session ref so it reads as
         # generated rather than human-authored (#21151).
-        assert session.title == f"(test-project-S#{session.seq_num}): Codex"
+        assert session.title == f"(test-project#{session.seq_num}): Codex"
         assert session.title_source == "provisional"
         assert session.terminal_context is not None
         for key, value in {**terminal_context, "cwd": str(temp_dir)}.items():

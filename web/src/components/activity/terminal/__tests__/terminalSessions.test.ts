@@ -11,7 +11,7 @@ import {
 function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
   return {
     id: "session-1",
-    ref: "#1",
+    ref: "gobby#1",
     external_id: "external-1",
     source: "codex",
     project_id: "project-1",
@@ -72,11 +72,13 @@ describe("terminal session helpers", () => {
     const userSession = makeGobbySession({
       id: "user-session",
       seq_num: 7,
+      ref: "other-project#7",
       title: "User shell",
     });
     const agentSession = makeGobbySession({
       id: "agent-session",
       seq_num: 8,
+      ref: "gobby#8",
       title: "Agent shell",
       agent_run_id: "run-8",
     });
@@ -102,7 +104,7 @@ describe("terminal session helpers", () => {
       {
         tmux: tmux[0],
         gobby: userSession,
-        label: "#7 User shell",
+        label: "other-project#7 User shell",
         provider: "codex",
         paneRef: "default:user-shell",
         backendLabel: "tmux",
@@ -124,7 +126,7 @@ describe("terminal session helpers", () => {
       {
         tmux: tmux[2],
         gobby: agentSession,
-        label: "#8 Agent shell",
+        label: "gobby#8 Agent shell",
         provider: "codex",
         paneRef: "gobby:agent-shell",
         backendLabel: "tmux",

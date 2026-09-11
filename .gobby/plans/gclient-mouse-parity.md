@@ -1080,3 +1080,7 @@ and the existing dialogs.
 
 | Section | Task |
 | --- | --- |
+
+Hold-label guidance: `needs-decision` records an unresolved decision;
+`needs-planning` records work needing a dedicated planning pass; `clean-window`
+records a blast-radius constraint. Historical task labels above are unchanged.

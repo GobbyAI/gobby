@@ -127,7 +127,7 @@ export function SessionsInteractionModalHost({
       entry={{
         id: modalEntry.id,
         label: modalEntry.label,
-        seqNum: modalEntry.seqNum,
+        sessionRef: modalEntry.sessionRef,
       }}
       fromSessionId={chatSessionId ?? undefined}
     />

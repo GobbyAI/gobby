@@ -2561,16 +2561,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/_event_handler_helpers.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 33,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 2,
-      "path": "tests/hooks/_event_handler_helpers.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/conftest.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 126,
@@ -3057,16 +3047,6 @@
       "message": "\"_dispatch_webhooks_async\" of \"HookManagerDispatchMixin\" does not return a value (it only ever returns None)",
       "occurrences": 2,
       "path": "tests/hooks/test_hooks_manager.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_inbox.py::::mypy:dict-item",
-      "issue_code": "mypy:dict-item",
-      "line": 435,
-      "message": "Unpacked dict entry 0 has incompatible type \"object\"; expected \"SupportsKeysAndGetItem[str, str]\"",
-      "occurrences": 1,
-      "path": "tests/hooks/test_inbox.py",
       "severity": "high",
       "test_name": ""
     },
@@ -3977,26 +3957,6 @@
       "message": "Item \"None\" of \"Any | _Call | None\" has no attribute \"args\"",
       "occurrences": 5,
       "path": "tests/mcp_proxy/tools/spawn_agent/test_error_handling.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/spawn_agent/test_execution.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 32,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 20,
-      "path": "tests/mcp_proxy/tools/spawn_agent/test_execution.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/spawn_agent/test_execution.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 221,
-      "message": "Item \"None\" of \"Any | _Call | None\" has no attribute \"args\"",
-      "occurrences": 2,
-      "path": "tests/mcp_proxy/tools/spawn_agent/test_execution.py",
       "severity": "high",
       "test_name": ""
     },
@@ -6517,26 +6477,6 @@
       "message": "Name \"voice_module.AICapabilityRegistry\" is not defined",
       "occurrences": 1,
       "path": "tests/servers/routes/test_voice_routes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_app_factory_ui_modes.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 77,
-      "message": "Argument 2 to \"_mount_vite_dev_ui\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 5,
-      "path": "tests/servers/test_app_factory_ui_modes.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_app_factory_ui_modes.py::::mypy:var-annotated",
-      "issue_code": "mypy:var-annotated",
-      "line": 97,
-      "message": "Need type annotation for \"proxy_routes\"",
-      "occurrences": 1,
-      "path": "tests/servers/test_app_factory_ui_modes.py",
       "severity": "high",
       "test_name": ""
     },
@@ -10101,16 +10041,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/test_runner_maintenance_startup.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 67,
-      "message": "\"append\" of \"list\" does not return a value (it only ever returns None)",
-      "occurrences": 3,
-      "path": "tests/test_runner_maintenance_startup.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/test_runner_model_metadata_refresh.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 221,
@@ -10127,66 +10057,6 @@
       "message": "Returning Any from function declared to return \"int\"",
       "occurrences": 1,
       "path": "tests/test_runner_model_metadata_refresh.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 929,
-      "message": "Argument 1 to \"shutdown_daemon_services\" has incompatible type \"SimpleNamespace\"; expected \"GobbyRunner\"",
-      "occurrences": 9,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:assignment",
-      "issue_code": "mypy:assignment",
-      "line": 953,
-      "message": "Incompatible types in assignment (expression has type \"SimpleNamespace\", variable has type \"HTTPServer\")",
-      "occurrences": 1,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 114,
-      "message": "\"Callable[[], None]\" has no attribute \"called\"",
-      "occurrences": 19,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 288,
-      "message": "Cannot assign to a method",
-      "occurrences": 3,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 67,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 30,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 1005,
-      "message": "Item \"None\" of \"_Call | None\" has no attribute \"kwargs\"",
-      "occurrences": 1,
-      "path": "tests/test_runner_shutdown.py",
       "severity": "high",
       "test_name": ""
     },

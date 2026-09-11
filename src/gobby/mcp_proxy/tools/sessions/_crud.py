@@ -33,7 +33,7 @@ def register_crud_tools(
 
     @registry.tool(
         name="get_session",
-        description="Get session details by ID. Accepts #N (project-scoped ref), UUID, or prefix. Use the session_id from your injected context.",
+        description="Get session details by ID. Accepts <project>#N, local #N, UUID, or prefix. Use the session_id from your injected context.",
     )
     def get_session(session_id: str) -> dict[str, Any]:
         """
@@ -43,7 +43,7 @@ def register_crud_tools(
         Look for 'Session Ref: #N' or 'session_id: xxx' in your system reminders.
 
         Args:
-            session_id: Session reference - supports #N (project-scoped), UUID, or prefix
+            session_id: Session reference - supports <project>#N, local #N, UUID, or prefix
 
         Returns:
             Session dict with all fields, or error if not found

@@ -1,6 +1,6 @@
 """Session reference resolution.
 
-Resolves session references (#N, <project>-S#N, N, UUID, prefix) to UUIDs.
+Resolves session references (#N, <project>#N, N, UUID, prefix) to UUIDs.
 Extracted from SessionManager.resolve_session_reference()
 as part of the Strangler Fig decomposition.
 """
@@ -12,13 +12,13 @@ import re
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.uuid_validation import parse_uuid_reference
 
-# '<project>-S#<seq>': project name or UUID, then that project's seq_num.
-_PROJECT_QUALIFIED_SEQ_NUM_RE = re.compile(r"^(?P<project>.+)-S#(?P<seq>\d+)$")
+# '<project>#<seq>': project name or UUID, then that project's seq_num.
+_PROJECT_QUALIFIED_SEQ_NUM_RE = re.compile(r"^(?P<project>[^#\s].*)#(?P<seq>[0-9]+)$")
 
 
 def is_project_qualified_session_ref(value: str | None) -> bool:
-    """Return whether a value uses the '<project>-S#N' cross-project session form."""
-    return isinstance(value, str) and _PROJECT_QUALIFIED_SEQ_NUM_RE.match(value) is not None
+    """Return whether a value uses the '<project>#N' cross-project session form."""
+    return isinstance(value, str) and _PROJECT_QUALIFIED_SEQ_NUM_RE.fullmatch(value) is not None
 
 
 def _resolve_project_id(db: HubDatabase, project_ref: str) -> str | None:
@@ -51,7 +51,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
 
     Supports:
     - #N: Project-scoped Sequence Number (e.g., #1) - requires project_id
-    - <project>-S#N: Sequence Number inside a named project (e.g., gobby-S#11265);
+    - <project>#N: Sequence Number inside a named project (e.g., gobby#11265);
       the project part is an active project name or UUID and ignores project_id
     - N: Integer string treated as #N (e.g., "1")
     - UUID: Full UUID — matches on sessions.id, then sessions.external_id
@@ -84,7 +84,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
     if not ref:
         raise ValueError("Empty session reference")
 
-    qualified = _PROJECT_QUALIFIED_SEQ_NUM_RE.match(ref)
+    qualified = _PROJECT_QUALIFIED_SEQ_NUM_RE.fullmatch(ref)
     if qualified is not None:
         project_ref = qualified.group("project")
         seq_num = int(qualified.group("seq"))
@@ -129,7 +129,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         if not row:
             raise ValueError(
                 f"Session #{seq_num} not found in project. #N refs are project-scoped; "
-                "address a session in another project as '<project>-S#N' "
+                "address a session in another project as '<project>#N' "
                 "(project name or UUID) or by its full session UUID."
             )
         return str(row["id"])

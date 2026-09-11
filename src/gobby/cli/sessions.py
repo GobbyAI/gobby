@@ -210,7 +210,7 @@ def list_sessions(
             else:
                 tokens_str = str(total_tokens)
 
-        seq_str = f"#{session.seq_num}" if session.seq_num else ""
+        seq_str = session.ref
         attention_str = _format_attention(attention_by_session.get(session.id))
         click.echo(
             f"{status_icon} {seq_str:<5} {session.id[:8]}  {session.source:<12} "

@@ -60,6 +60,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     provider: str = field(default="claude")
     db_session_id: str | None = field(default=None)
     seq_num: int | None = field(default=None)
+    session_ref: str | None = None
     project_id: str | None = field(default=None)
     project_path: str | None = field(default=None)
     message_index: int = field(default=0)
@@ -243,7 +244,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             # Inject working directory so the agent doesn't hallucinate paths
             system_prompt += f"\n\n## Environment\n- Working directory: {cwd}\n"
             if self.db_session_id:
-                session_ref = f"#{self.seq_num}" if self.seq_num else self.db_session_id
+                session_ref = self.session_ref or self.db_session_id
                 system_prompt += (
                     f"- Session ID: {session_ref} (use for session_id params in MCP tools)\n"
                 )

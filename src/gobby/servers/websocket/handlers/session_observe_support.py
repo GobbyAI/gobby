@@ -162,7 +162,6 @@ def _session_meta_payload(
     agent_run_id: str | None,
     context_window: int | None = None,
 ) -> dict[str, Any]:
-    seq_num = _as_int(getattr(session, "seq_num", None))
     live_chat_mode = (
         _variable_str(variables, "chat_mode")
         or _mode_from_level(variables.get("mode_level"))
@@ -189,7 +188,7 @@ def _session_meta_payload(
         "status": _as_str(getattr(session, "status", None)) or "unknown",
         "model": live_model,
         "reasoning_effort": live_reasoning_effort,
-        "ref": f"#{seq_num}" if seq_num is not None else None,
+        "ref": _as_str(getattr(session, "ref", None)) or _as_str(getattr(session, "id", None)),
         "chat_mode": live_chat_mode,
         "git_branch": _as_str(getattr(session, "git_branch", None)),
         "context_window": live_context_window,

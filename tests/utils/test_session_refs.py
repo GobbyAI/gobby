@@ -43,7 +43,7 @@ def test_resolves_single_hash_prefix() -> None:
 def test_resolves_project_qualified_ref() -> None:
     manager = Mock()
     manager.resolve_session_reference.return_value = "session-uuid"
-    container = {"session_id": "game-goblins-S#9"}
+    container = {"session_id": "game-goblins#9"}
 
     resolved = try_resolve_session_field(
         container,
@@ -54,7 +54,7 @@ def test_resolves_project_qualified_ref() -> None:
 
     assert resolved is True
     assert container["session_id"] == "session-uuid"
-    manager.resolve_session_reference.assert_called_once_with("game-goblins-S#9", "project-uuid")
+    manager.resolve_session_reference.assert_called_once_with("game-goblins#9", "project-uuid")
 
 
 def test_leaves_non_ref_strings_untouched() -> None:

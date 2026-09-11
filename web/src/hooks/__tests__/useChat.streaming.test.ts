@@ -358,13 +358,13 @@ describe("useChat streaming and event handling", () => {
     act(() => {
       ws.simulateMessage({
         type: "session_info",
-        session_ref: "#42",
+        session_ref: "other-project#42",
         current_branch: "feature/test",
         agent_name: "test-agent",
       });
     });
 
-    expect(result.current.sessionRef).toBe("#42");
+    expect(result.current.sessionRef).toBe("other-project#42");
     expect(result.current.currentBranch).toBe("feature/test");
     expect(result.current.activeAgent).toBe("test-agent");
   });
@@ -384,7 +384,7 @@ describe("useChat streaming and event handling", () => {
     act(() => {
       ws.simulateMessage({
         type: "session_info",
-        session_ref: "#43",
+        session_ref: "gobby#43",
         chat_mode: "bypass",
       });
     });

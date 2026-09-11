@@ -21,7 +21,11 @@ from mcp.types import JSONRPCRequest, JSONRPCResponse
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection, websocket_client
 from tests._timing import wait_for_async_condition
-from tests.mcp_proxy.transports._support import FakeClient, recording_transport
+from tests.mcp_proxy.transports._support import (
+    FakeClient,
+    assert_gobby_client_info,
+    recording_transport,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -57,7 +61,11 @@ class _ClientHarness:
         self.transport_calls.append((url, headers))
         return recording_transport(self.lifecycle, enter_error=self.transport_enter_error)
 
-    def fake_client(self, transport: Any) -> FakeClient:
+    def fake_client(
+        self, transport: Any, *, mode: str = "auto", client_info: Any = None
+    ) -> FakeClient:
+        assert mode == "auto"
+        assert_gobby_client_info(client_info)
         client = FakeClient(transport, lifecycle=self.lifecycle, **self.client_kwargs)
         self.clients.append(client)
         return client

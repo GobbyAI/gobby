@@ -268,7 +268,7 @@ class MailboxService:
 
         if normalized_target == "session":
             # Direct session targets are addressed unambiguously (full UUID or
-            # '<project>-S#N'), so delivery crosses project boundaries.
+            # '<project>#N'), so delivery crosses project boundaries.
             recipient_id = self._validate_direct_recipient(
                 from_session_id=from_session_id,
                 to_session_id=clean_target_id,

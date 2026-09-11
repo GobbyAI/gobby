@@ -575,7 +575,7 @@ def _resolved_feedback_disposition(
         if (
             is_task_closed(task)
             or get_claimed_session_id(task) is not None
-            or {"needs-decision", "clean-window"}.intersection(labels)
+            or {"needs-decision", "needs-planning", "clean-window"}.intersection(labels)
         ):
             return row.disposition, row.id, task_ref
     return None

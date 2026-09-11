@@ -73,7 +73,7 @@ FEEDBACK_OBSERVATION_INPUT_SCHEMA: dict[str, Any] = {
                 "spawned descendant session. 'escalated': include the active owner session "
                 "ref after "
                 "send_message. 'filed-task' is rung 3 only: include the #N task this session "
-                "created with needs-decision or clean-window and a description explaining why "
+                "created with needs-decision, needs-planning, or clean-window and a description explaining why "
                 "rungs 1 and 2 do not apply. Unlabeled or unclaimed filings and every other "
                 "defect disposition are shirked found work; the stop gate blocks and the nightly "
                 "digest flags them."

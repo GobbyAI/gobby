@@ -306,7 +306,7 @@ class GobbyDaemonTools:
                     TextContent(
                         type="text",
                         text=f"Error: session_id '{session_id}' not found. "
-                        "Use a valid session UUID or local #N reference.",
+                        "Use a session UUID, <project>#N, or local #N reference.",
                     )
                 ],
                 is_error=True,
@@ -550,7 +550,7 @@ class GobbyDaemonTools:
         session_id: Annotated[
             str,
             Field(
-                description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
+                description="Your Gobby Session ID (e.g. gobby#3439). Use the value from 'Gobby Session ID' in your system prompt."
             ),
         ],
         scope: Literal["session", "step"] = "session",
@@ -583,7 +583,7 @@ class GobbyDaemonTools:
         session_id: Annotated[
             str,
             Field(
-                description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
+                description="Your Gobby Session ID (e.g. gobby#3439). Use the value from 'Gobby Session ID' in your system prompt."
             ),
         ],
         scope: Literal["session", "step"] = "session",

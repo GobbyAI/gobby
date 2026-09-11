@@ -230,8 +230,9 @@ def resolve_clear_continuation(
     try:
         rows = db.fetchall(
             """
-            SELECT s.*, sv.variables AS session_variables
+            SELECT s.*, p.name AS project_name, sv.variables AS session_variables
               FROM sessions s
+              LEFT JOIN projects p ON p.id = s.project_id
               JOIN session_variables sv ON sv.session_id = s.id
              WHERE s.source = %s
                AND s.status <> 'deleted'
@@ -323,8 +324,9 @@ def _resolve_bound_unpulled_successor(
     try:
         rows = db.fetchall(
             """
-            SELECT child.*, parent_vars.variables AS parent_variables
+            SELECT child.*, p.name AS project_name, parent_vars.variables AS parent_variables
               FROM sessions child
+              LEFT JOIN projects p ON p.id = child.project_id
               JOIN session_variables child_vars ON child_vars.session_id = child.id
               JOIN sessions parent ON parent.id = child.parent_session_id
               JOIN session_variables parent_vars ON parent_vars.session_id = parent.id
@@ -373,7 +375,10 @@ def _resolve_bound_unpulled_successor(
         return None
     stale, attempt_id, parent_id = matches[0]
     try:
-        parent_row = db.fetchone("SELECT * FROM sessions WHERE id = %s", (parent_id,))
+        parent_row = db.fetchone(
+            "SELECT *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name FROM sessions WHERE id = %s",
+            (parent_id,),
+        )
     except Exception:
         logger.warning("Failed loading clear predecessor %s for takeover", parent_id, exc_info=True)
         return None
@@ -491,6 +496,7 @@ def resolve_clear_successor(db: HubDatabase, session_id: str) -> str | None:
                 """
                 SELECT s.status, sv.variables
                   FROM sessions s
+              LEFT JOIN projects p ON p.id = s.project_id
                   LEFT JOIN session_variables sv ON sv.session_id = s.id
                  WHERE s.id = %s
                 """,
@@ -632,7 +638,7 @@ def _commit_web_chat_clear_successor_rows(
     machine_id: str,
 ) -> Session:
     pred_row = conn.execute(
-        "SELECT * FROM sessions WHERE id = %s FOR UPDATE",
+        "SELECT *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name FROM sessions WHERE id = %s FOR UPDATE",
         (predecessor_id,),
     ).fetchone()
     if pred_row is None:
@@ -757,7 +763,7 @@ def _commit_web_chat_clear_successor_rows(
         (successor_id, predecessor_id),
     )
     succ_row = conn.execute(
-        "SELECT * FROM sessions WHERE id = %s",
+        "SELECT *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name FROM sessions WHERE id = %s",
         (successor_id,),
     ).fetchone()
     if succ_row is None:

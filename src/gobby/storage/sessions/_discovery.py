@@ -47,7 +47,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         rows = self.db.fetchall(
             """
             SELECT *
-            FROM sessions
+            FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE machine_id = %s
               AND session_type = 'terminal'
               AND terminal_context ->> 'tmux_pane' = %s
@@ -109,7 +109,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         """
         storage_project_id = project_id or PERSONAL_PROJECT_ID
         query = """
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE external_id = %s
               AND project_id = %s
               AND source = %s
@@ -148,7 +148,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         status_placeholders = ",".join("%s" for _ in LIVE_SESSION_STATUS_ORDER)
         row = self.db.fetchone(
             f"""
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE external_id = %s AND source = %s AND session_type = %s
               AND status IN ({status_placeholders})
             ORDER BY updated_at DESC
@@ -178,7 +178,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
             Most recently updated matching session, or None.
         """
         query = """
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE external_id = %s
               AND source = %s
         """
@@ -198,7 +198,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
     ) -> list[Session]:
         """Find all sessions sharing an external_id across sources."""
         query = """
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE external_id = %s
         """
         params: list[str | None] = [external_id]
@@ -227,7 +227,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
 
         rows = self.db.fetchall(
             """
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE project_id = %s
             AND status = %s
             AND terminal_context IS NOT NULL
@@ -271,7 +271,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         status_placeholders = ",".join("%s" for _ in LIVE_SESSION_STATUS_ORDER)
         rows = self.db.fetchall(
             f"""
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE project_id = %s
               AND session_type = %s
               AND status IN ({status_placeholders})

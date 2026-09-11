@@ -145,6 +145,7 @@ export function useWatchingSessionEntries({
               startedAt: agent.started_at,
               updatedAt: matchedSession.updated_at,
               seqNum: matchedSession.seq_num,
+              sessionRef: matchedSession.ref,
               inputTokens: matchedSession.usage_input_tokens ?? 0,
               outputTokens: matchedSession.usage_output_tokens ?? 0,
               totalTokens:
@@ -173,6 +174,7 @@ export function useWatchingSessionEntries({
         agentRunId: session.agent_run_id,
         updatedAt: session.updated_at,
         seqNum: session.seq_num,
+        sessionRef: session.ref,
         inputTokens: session.usage_input_tokens ?? 0,
         outputTokens: session.usage_output_tokens ?? 0,
         totalTokens:

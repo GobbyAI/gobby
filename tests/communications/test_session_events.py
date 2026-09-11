@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -57,6 +58,7 @@ def make_transition(
         seq_num=42,
         title="Index docs",
         source="codex",
+        session_ref="gobby#42",
     )
 
 
@@ -101,7 +103,7 @@ async def test_route_session_status_transition_preserves_scope_and_utc_event_id(
     assert router.calls == [
         {
             "event_type": "session.agent.paused",
-            "content": "#42 - Index docs - Paused",
+            "content": "gobby#42 - Index docs - Paused",
             "project_id": "22222222-2222-4222-8222-222222222222",
             "session_id": "11111111-1111-4111-8111-111111111111",
             "event_id": ("11111111-1111-4111-8111-111111111111:paused:2026-07-30T23:00:00+00:00"),
@@ -131,9 +133,12 @@ def test_format_session_status_message_uses_session_fallback_without_title() -> 
         seq_num=None,
         title=None,
         source=transition.source,
+        session_ref=None,
     )
 
-    assert format_session_status_message(transition) == "Session - Expired"
+    assert (
+        format_session_status_message(transition) == f"{transition.session_id} - Session - Expired"
+    )
 
 
 @pytest.mark.parametrize(
@@ -153,6 +158,22 @@ def test_format_session_status_message_does_not_duplicate_legacy_ref(
         seq_num=42,
         title=legacy_title,
         source=transition.source,
+        session_ref=transition.session_ref,
     )
 
-    assert format_session_status_message(transition) == "#42 - Codex - Paused"
+    assert format_session_status_message(transition) == "gobby#42 - Codex - Paused"
+
+
+def test_automatic_title_contains_reference_once() -> None:
+    transition = replace(
+        make_transition(agent_run_id=None, status="paused"),
+        title="(gobby#42): Task #123 - Description",
+    )
+    assert (
+        format_session_status_message(transition) == "(gobby#42): Task #123 - Description - Paused"
+    )
+
+
+def test_status_notification_uses_project_uuid_when_ref_unavailable() -> None:
+    transition = replace(make_transition(agent_run_id=None, status="paused"), session_ref=None)
+    assert format_session_status_message(transition).startswith(f"{transition.project_id}#42 - ")

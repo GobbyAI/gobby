@@ -459,7 +459,7 @@ class FoundWorkStopAnalyzer:
         refs: list[str] = []
         for row in rows:
             labels = _task_labels(row["labels"])
-            if {"needs-decision", "clean-window"}.intersection(labels):
+            if {"needs-decision", "needs-planning", "clean-window"}.intersection(labels):
                 continue
             if any(label.startswith("expansion-run:") for label in labels):
                 continue
@@ -487,7 +487,7 @@ class FoundWorkStopAnalyzer:
                 and isinstance(labels, Sequence)
                 and not isinstance(labels, str | bytes)
             ):
-                if {"needs-decision", "clean-window"} & set(labels):
+                if {"needs-decision", "needs-planning", "clean-window"} & set(labels):
                     return True
         return False
 

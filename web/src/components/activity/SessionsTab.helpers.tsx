@@ -26,6 +26,7 @@ export interface WatchingSessionEntry {
   startedAt?: string;
   updatedAt?: string;
   seqNum?: number | null;
+  sessionRef?: string | null;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;

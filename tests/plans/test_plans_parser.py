@@ -407,11 +407,11 @@ deferral:
     - A7.3"""
     repo_root = Path(__file__).resolve().parents[2]
     contract = (repo_root / "docs/contracts/plan-coverage.md").read_text(encoding="utf-8")
-    draft_skill = (repo_root / "src/gobby/install/shared/skills/plan-draft/SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    draft_grammar = (
+        repo_root / "src/gobby/install/shared/skills/plan-draft/references/plan-coverage-grammar.md"
+    ).read_text(encoding="utf-8")
     assert canonical_block in contract
-    assert canonical_block in draft_skill
+    assert canonical_block in draft_grammar
     plan = _write_plan(
         tmp_path,
         f"""> **Plan ID:** plan

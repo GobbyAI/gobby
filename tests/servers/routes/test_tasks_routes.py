@@ -209,7 +209,7 @@ class TestListTasks:
 
         def counting_fetchall(sql: str, params: tuple = ()):
             nonlocal owner_queries
-            if "SELECT id, seq_num, source FROM sessions WHERE id IN" in sql:
+            if "SELECT s.*, p.name AS project_name FROM sessions s" in sql:
                 owner_queries += 1
             return original_fetchall(sql, params)
 

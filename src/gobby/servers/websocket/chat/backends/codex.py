@@ -176,9 +176,7 @@ class CodexManagedChatSession(
             if self.system_prompt_override:
                 context_parts.append(self.system_prompt_override)
 
-            session_ref = (
-                f"#{self.seq_num}" if self.seq_num else (self.db_session_id or self.conversation_id)
-            )
+            session_ref = self.session_ref or self.db_session_id or self.conversation_id
             context_parts.append(
                 build_compaction_context(
                     session_ref=session_ref,

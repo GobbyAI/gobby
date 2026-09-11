@@ -28,7 +28,7 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Real native resume dcffee01 to 350a7c32 preserved session and exact grant after restart23:37:57 UTC.
 - [x] Preserve resumed claims from cancelled-original recovery: commit 316041f7bf; 161 focused tests and actual resumed writes passed.
 - [x] Repair two existing untyped task-recovery fixture signatures encountered by audit.
-- [ ] Resolve shared editable-environment interference with owner #12261; daemon startup recovered after main uv invocation restored main imports.
+- [x] Hand shared editable-environment interference to active owner #12261; owner repaired nested uv invocation in isolation, and this effort consistently used UV_NO_SYNC=1. Main startup is healthy.
 - [x] Materialize and validate this plan (base validation passed).
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
 - [x] Repair baseline provider tests that outlive their launch mocks (11 pass).
@@ -39,8 +39,9 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] File deeper security review #22103.
 - [x] Commit both fixes and coordinate integration and restart.
 - [x] Complete real managed runtime, delegation, resume and sandbox probes.
-- [ ] Repair ASGI chat shutdown ordering and missing standalone-listener cleanup, verify focused lifecycle tests, coordinate restart with browser repairs, and repeat affected live gate.
-- [ ] Record five continuous clean minutes after all smoke work completes.
+- [x] Repair ASGI chat shutdown ordering and missing standalone-listener cleanup, verify focused lifecycle tests, coordinate restart with browser repairs, and repeat affected live gate.
+- [x] Record five continuous clean minutes after all smoke work completes.
+- [x] Repair final audit findings: three quarantine import errors and 32 baseline test typing errors across four test files; no production runtime changes.
 - [ ] Close both tasks with linked commits after the combined live gate passes.
 
 Other sessions own terminal/gclient changes. Ask integration is on a separate
@@ -54,6 +55,8 @@ fresh safe restart checkpoint from #12261 and other affected sessions.
 `kind: deliverable`
 
 Targets:
+- `.gobby/test-types-baseline.json`
+- `tests/hooks/_event_handler_helpers.py::*` — scope-reason: type event payload dictionaries used by shutdown tests
 - `.gobby/python-suppressions-baseline.json`
 - `src/gobby/hooks/inbox.py::*` — scope-reason: bound replay barrier waits and extract quarantine retention
 - `src/gobby/hooks/quarantine_retention.py::*` — scope-reason: own diagnostic quarantine pruning and periodic retention
@@ -76,6 +79,7 @@ Targets:
 - `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: wire startup readiness into tmux maintenance
 - `src/gobby/runner_lifecycle_shutdown.py::*` — scope-reason: stop ASGI chat sessions before HTTP lifespan closes hook workers
 - `tests/test_asgi_chat_shutdown.py::*` — scope-reason: verify ASGI cleanup without a standalone listener and lifecycle ordering
+- `tests/test_runner_maintenance_startup.py::*` — scope-reason: type cleanup callbacks and verify schema-sweep delegation with a recording fake
 - `tests/test_runner_shutdown.py::*` — scope-reason: align shutdown fixtures with initialized drain state and empty HTTP connection sets
 - `src/gobby/agents/task_recovery.py::*` — scope-reason: preserve claims belonging to parked and resumed daemon-stop runs
 - `tests/agents/test_task_recovery.py::*` — scope-reason: verify repeated recovery preserves resumed task ownership and mutex
@@ -328,3 +332,101 @@ uv run pytest tests/hooks/test_inbox_barrier_deadline.py tests/hooks/test_inbox.
 production files. New test quality/type audits and suppression ratchet recorded
 in the session. Foreign session/storage edits appeared during validation;
 project restart coordination requested before loading those changes.
+
+
+## V5 Shutdown test typing cleanup (#22146)
+`kind: verification`
+
+The found-work stop directive requested immediate repair. Claiming #22146 was
+rejected because #22028 remains this session's open claim; changes therefore
+belong to #22028 until its smoke gate permits closure. #22146 will link the same
+repair commit and close after that ownership restriction clears.
+
+All 63 shutdown-test typing errors are repaired with annotated fixtures,
+explicit mock types, typed partial-stub boundaries, optional-value assertions,
+and direct os patching. The shared event helper's two missing dictionary type
+parameters surfaced by the direct mypy check are also repaired. No suppressions
+were added. The test-type baseline is reduced by the supported audit writer.
+Mypy on both test files reports zero errors; test-quality audit reports zero
+findings across 33 tests. Focused protected shutdown tests provide behavioral
+verification; exact final results and commands are retained in this session.
+
+
+## V6 Successful restart and final smoke workload
+`kind: verification`
+
+#22146 closed after validator51e385c7-cf20-4b62-978d-8d4189c41d00 passed;
+post-close memory review completed. Typing repair commit94c70aad05 has33 passing
+shutdown tests and zero type errors. Runtime repair367657abf5 has98 passing tests.
+
+After #22147 owner committed6a121725fc and sent explicit all-clear, coordinated
+UV_NO_SYNC=1 uv run gobby restart --wait --verbose succeeded on September11
+around01:26UTC. Old PID71202 stopped in7.4s; all subsystem initialization steps
+completed and service health passed in15.8s. Basic /api/health reports OK,
+degraded_services=[]; UI60889 returns200. Full sync/review verification released
+to waiting owners; broad workload and runtime edit hold remains through this gate.
+Installed rule2c26ef1c-810d-4e12-9859-4a719c31e4ce remains enabled.
+
+Live hook probe /tmp/gobby-grant-smoke-wECAsK/live_hook_probe.py passed20 cases
+01:27:36–01:29:25UTC:12 prohibited launch decisions denied,8 administrative,
+documentation, and ordinary-shell decisions allowed. No prohibited command ran.
+Fresh managed smoke31bcefdc-d43c-49cd-b946-993d8bc584db started01:30UTC in existing
+worktree842deb44-49ac-46bd-85e0-c7d5ea20c0f6, clean and fast-forwarded through
+6a121725fc. HTTP inspection exposes the exact requested/canonical grant and
+SRT enforced=true, policy0fed04711ec3ebabba1eeaf8c9ac9df31f2ecf40ec0e48c00b908dd8779ec788.
+Probe completion and subsequent300-second observation remain pending.
+
+Found-work attribution follow-up: #12384 provided a delayed edit/commit replay
+trace invalidating its in-flight #22141 review. No commit was unlinked. The
+owner received source anchors in state_manager.record_edited_files and
+observer_commits.release_clean_task_paths_after_commit. The owner acknowledged
+the handoff but will raise it with the user after its review; repair remains
+unresolved and was reported separately to the user.
+The alleged unacknowledgeable receipt loop was disproved: read-only live query
+for7f4d163c-a972-405a-8378-a3d7c4178e5f shows acknowledged generation4 at
+2026-09-11T00:59:42.037310Z. INFO redelivery at00:59:41 carried lost effects to a
+new envelope, as release_and_reprepare_for_session intends. The original ghook
+process need not survive. This historical recovery is separate from the new
+clean-log interval and does not conceal unexplained errors.
+
+
+Final V6 result: smoke31bcefdc completed successfully at01:32:27.386746UTC,
+with dirty_paths=[] and exact probe evidence in message
+d9877302-fc25-4d95-8a3a-b777243b3983. Both worktree and granted .vite-temp writes
+passed exclusive create/read/delete. Sibling, escaping symlink, ~/.ssh and
+~/.gobby denied with PermissionError errno1. Transcript archive exists at
+~/.gobby/session_transcripts/01a08e16-5f3f-7023-bbc5-483dbb9ce7da.jsonl.gz,
+compressed size50121 bytes. The managed worktree was merged through merge_worktree
+and deleted through delete_worktree with default non-force flags.
+
+Clean observation PASSED:2026-09-11T01:32:46.509811Z through
+2026-09-11T01:37:46.512753Z, elapsed300.005509166 seconds,23 log records,
+686522 appended bytes. All appended bytes retained with inode/offset/SHA256
+records in /tmp/gobby-grant-smoke-wECAsK/observation-013246/summary.json and
+its sibling capture files. No WARNING, WARN, ERROR, Exception, Traceback or
+structured warning/error-level records appeared. Earlier failed observation
+remains explicitly failed in V2. Full workload/runtime-source hold released
+project-wide after this passing interval; further restarts require coordination.
+
+Concurrent unrelated MCP upgrade9b60dcdcb3 was committed during the interval;
+its http transport file had been edited01:28:08UTC. It does not change the
+sandbox/grant/guard code. The clean interval describes the running daemon and
+captured bytes, not an assertion that every unrelated source edit was reloaded.
+Remaining delivery: final scoped checks after evidence edits, commit/link the
+plan evidence, confirm no active smoke worktree registration, then close both
+original tasks with their combined evidence and complete memory reviews.
+
+
+## V7 Final delivery checks
+`kind: verification`
+
+Final 478-test protected run passed after V6. The 27-file type audit then exposed
+three quarantine import errors from the extraction and 32 existing test typing
+errors. Repaired all in four test files, with accurate fixture/request types,
+optional run-ID narrowing, direct helper imports, and typed recording callbacks.
+No production runtime code changed. Scoped mypy reports zero errors; supported
+baseline reduction removes the repaired debt. The 79 affected tests passed;
+final quality and combined type audits follow the last evidence edit.
+
+list_worktrees confirmed no active smoke worktree842deb44 registration. The
+passing V6 live gate remains applicable to the unchanged production runtime.

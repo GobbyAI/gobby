@@ -109,6 +109,7 @@ class ManagedChatSessionBase:
     _backend: Any = field(default=None, repr=False)
     db_session_id: str | None = None
     seq_num: int | None = None
+    session_ref: str | None = None
     project_id: str | None = None
     project_path: str | None = None
     message_index: int = 0

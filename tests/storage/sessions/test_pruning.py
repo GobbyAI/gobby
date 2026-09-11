@@ -958,13 +958,13 @@ class TestSessionManagerPruning:
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 0
 
-    def test_get_pending_transcript_sessions_excludes_no_jsonl(
+    def test_get_pending_transcript_sessions_includes_missing_source_for_quarantine(
         self,
         session_manager: SessionManager,
         sample_project: dict,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test that get_pending_transcript_sessions excludes sessions without transcript_path."""
+        """Missing sources enter processing so deterministic failures can be quarantined."""
         session = session_manager.register(
             external_id="no-jsonl-session",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -979,4 +979,4 @@ class TestSessionManagerPruning:
             lambda: "20000000-0000-4000-8000-000000000001",
         )
         pending = session_manager.get_pending_transcript_sessions()
-        assert len(pending) == 0
+        assert [item.id for item in pending] == [session.id]

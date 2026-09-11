@@ -115,6 +115,7 @@ class Session:
     claimed_task_refs: list[int] = field(default_factory=list)
     created_task_refs: list[int] = field(default_factory=list)
     closed_task_refs: list[int] = field(default_factory=list)
+    project_name: str | None = None
 
     @staticmethod
     def _get_optional(row: Mapping[str, Any], key: str) -> Any | None:
@@ -135,6 +136,7 @@ class Session:
             machine_id=row["machine_id"],
             source=row["source"],
             project_id=row["project_id"],
+            project_name=cls._get_optional(row, "project_name"),
             title=row["title"],
             title_source=cls._get_optional(row, "title_source"),
             status=row["status"],
@@ -263,8 +265,11 @@ class Session:
 
     @property
     def ref(self) -> str:
-        """Short human-readable reference: #seq_num or first 8 chars of id."""
-        return f"#{self.seq_num}" if self.seq_num else self.id[:8]
+        """Unambiguous human-readable reference, independent of caller context."""
+        if self.seq_num is None:
+            return self.id
+        project = (self.project_name or "").strip() or self.project_id
+        return f"{project}#{self.seq_num}"
 
     @property
     def has_terminal_liveness(self) -> bool:

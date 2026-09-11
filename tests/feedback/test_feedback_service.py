@@ -256,14 +256,18 @@ async def test_invalid_observation_coverage_does_not_consume_or_file(
     assert {row.id for row in service.store.list_unreviewed(10)} == {first, second}
 
 
-async def test_launch_retry_preserves_attempt_and_files_once(temp_db: HubDatabase, session_id: str) -> None:
+async def test_launch_retry_preserves_attempt_and_files_once(
+    temp_db: HubDatabase, session_id: str
+) -> None:
     first = _insert_feedback(temp_db, session_id)
 
     class TransientReviewer(_FakeLLM):
         async def review(self, prompt: str, *, timeout_seconds: float) -> FeedbackReviewerResult:
             if not self.calls:
                 self.calls.append({"prompt": prompt, "timeout_seconds": timeout_seconds})
-                raise FeedbackReviewerLaunchError("temporary launch failure") from OSError("socket unavailable")
+                raise FeedbackReviewerLaunchError("temporary launch failure") from OSError(
+                    "socket unavailable"
+                )
             return await super().review(prompt, timeout_seconds=timeout_seconds)
 
     reviewer = TransientReviewer(response={"clusters": [_cluster([first], title="Fix transport")]})
@@ -284,7 +288,14 @@ async def test_partial_task_filing_keeps_only_failed_observations_retryable(
 ) -> None:
     first = _insert_feedback(temp_db, session_id)
     second = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=1))
-    reviewer = _FakeLLM(response={"clusters": [_cluster([first], title="First fix", theme="tmux launch"), _cluster([second], title="Second fix", theme="vector restore")]})
+    reviewer = _FakeLLM(
+        response={
+            "clusters": [
+                _cluster([first], title="First fix", theme="tmux launch"),
+                _cluster([second], title="Second fix", theme="vector restore"),
+            ]
+        }
+    )
     manager = _FakeTaskManager()
     create = manager.create_task
 
@@ -511,8 +522,9 @@ async def test_run_review_suppresses_proposal_with_fixed_disposition(
     assert "Suppressed Refix resolved behavior (#42)" in run.digest_md
 
 
+@pytest.mark.parametrize("label", ["needs-decision", "needs-planning", "clean-window"])
 async def test_run_review_suppresses_proposal_with_valid_filed_task_disposition(
-    temp_db: HubDatabase, session_id: str
+    temp_db: HubDatabase, session_id: str, label: str
 ) -> None:
     observation_id = _insert_feedback(
         temp_db,
@@ -520,7 +532,7 @@ async def test_run_review_suppresses_proposal_with_valid_filed_task_disposition(
         disposition="filed-task",
         evidence="Filed decision task #42",
     )
-    referenced_task = SimpleNamespace(labels=["needs-decision"], closed_at=None)
+    referenced_task = SimpleNamespace(labels=[label], closed_at=None)
     task_manager = _FakeTaskManager(tasks_by_ref={"#42": referenced_task})
     llm = _FakeLLM(
         response={"clusters": [_cluster([observation_id], title="Duplicate decision task")]}
@@ -1136,8 +1148,9 @@ async def test_digest_flags_shirked_found_work(temp_db: HubDatabase, session_id:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("label", ["needs-decision", "needs-planning", "clean-window"])
 async def test_digest_accepts_labeled_rung_three_filing(
-    temp_db: HubDatabase, session_id: str
+    temp_db: HubDatabase, session_id: str, label: str
 ) -> None:
     filed_obs = _insert_feedback(
         temp_db,
@@ -1151,7 +1164,7 @@ async def test_digest_accepts_labeled_rung_three_filing(
             "#21485": SimpleNamespace(
                 closed_at=None,
                 claimed_by_session_id=None,
-                labels=["needs-decision"],
+                labels=[label],
             )
         }
     )

@@ -154,7 +154,7 @@ def expire_stale_sessions(
                     AND {inactive_stale_sql}
                 )
             )
-            RETURNING *
+            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
             """,  # nosec B608 # cutoff expressions are selected by storage dialect.
             (
                 list(LIVE_SESSION_STATUS_ORDER),
@@ -203,7 +203,7 @@ def expire_orphaned_handoff_sessions(
             WHERE status = 'awaiting_handoff'
               AND source != %s
               AND {updated_stale_sql}
-            RETURNING *
+            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
             (SYSTEM_SESSION_SOURCE, timeout_minutes),
         ).fetchall()
@@ -338,7 +338,7 @@ def pause_inactive_active_sessions(
             WHERE status = 'active'
             AND source != %s
             AND {inactive_stale_sql}
-            RETURNING *
+            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
             (SYSTEM_SESSION_SOURCE, timeout_minutes),
         ).fetchall()
@@ -386,7 +386,7 @@ def expire_empty_sessions(
             AND source != %s
             AND COALESCE(message_count, 0) = 0
             AND {inactive_stale_sql}
-            RETURNING *
+            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
             (list(LIVE_SESSION_STATUS_ORDER), SYSTEM_SESSION_SOURCE, timeout_hours),
         ).fetchall()

@@ -344,7 +344,7 @@ def _conflicting_web_chat_session(
         row = manager.db.fetchone(
             """
             SELECT *
-              FROM sessions
+              FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
              WHERE external_id = %s
                AND machine_id = %s
                AND source = %s
@@ -359,7 +359,7 @@ def _conflicting_web_chat_session(
         row = manager.db.fetchone(
             """
             SELECT *
-              FROM sessions
+              FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
              WHERE external_id = %s
                AND machine_id = %s
                AND source = %s

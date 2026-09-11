@@ -10,11 +10,11 @@ describe("session title display", () => {
     expect(getSessionDisplayTitle({ title: "(gobby): S#9829" })).toBe("S#9829");
     expect(
       getSessionDisplayTitle({
-        title: "(gobby-S#11155): Task #42 - Implement structured handoffs",
+        title: "(gobby#11155): Task #42 - Implement structured handoffs",
       }),
     ).toBe("Task #42 - Implement structured handoffs");
     expect(
-      stripSessionTitlePrefix("(gobby-S#11155): Task #42 (second pass)"),
+      stripSessionTitlePrefix("(gobby#11155): Task #42 (second pass)"),
     ).toBe("Task #42 (second pass)");
   });
 

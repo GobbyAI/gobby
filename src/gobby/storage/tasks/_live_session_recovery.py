@@ -202,8 +202,7 @@ def _escalation_reason(
     paths: set[str] | None,
     indeterminate: bool,
 ) -> str:
-    seq_num = getattr(session, "seq_num", None)
-    session_ref = f"#{seq_num}" if seq_num else owner
+    session_ref = getattr(session, "ref", None) or owner
     path_text = ", ".join(sorted(paths or ())) or "(unavailable)"
     state = "indeterminate dirty state" if indeterminate else "uncommitted task-attributed changes"
     return (

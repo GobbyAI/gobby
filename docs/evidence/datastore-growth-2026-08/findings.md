@@ -140,3 +140,7 @@ daemon-launched gcode was refused effective AI config (#21038).
 - #21027 pgaudit retention (`needs-decision`).
 - #21028 loop_progress 7-day prune.
 - #21029 code-index content-version retention decision (`needs-decision`).
+
+Hold-label guidance: `needs-decision` records an unresolved decision;
+`needs-planning` records work needing a dedicated planning pass; `clean-window`
+records a blast-radius constraint. Historical task labels above are unchanged.

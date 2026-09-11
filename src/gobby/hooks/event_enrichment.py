@@ -90,7 +90,7 @@ class EventEnricher:
             platform_session_id: str = event.metadata["_platform_session_id"]
             response.metadata["session_id"] = platform_session_id
 
-            # Look up seq_num for session_ref (#N format)
+            # Read the canonical project-qualified session reference
             # Guard with try/except: during shutdown the DB may already be closed
             if self._session_manager:
                 try:
@@ -98,7 +98,7 @@ class EventEnricher:
                 except Exception:
                     session_obj = None
                 if session_obj and session_obj.seq_num:
-                    response.metadata["session_ref"] = f"#{session_obj.seq_num}"
+                    response.metadata["session_ref"] = session_obj.ref
 
             # Track first hook per session for token optimization
             # Adapters use this flag to inject full metadata only on first hook.
@@ -237,35 +237,15 @@ class EventEnricher:
     ) -> str:
         """Resolve a session ID to a human-readable sender label.
 
-        Returns 'Session #N: ' for a same-project sender, 'Session <project>-S#N: '
-        for a sender in another project (so the recipient can address it back),
-        a truncated UUID when the seq_num lookup fails, or '' with no sender.
+        Every sender uses its canonical project-qualified reference.
         """
         if not from_session:
             return ""
         if self._session_manager:
             try:
                 session_obj = self._session_manager.get(from_session)
-                if session_obj and session_obj.seq_num:
-                    sender_project_id = getattr(session_obj, "project_id", None)
-                    if (
-                        isinstance(sender_project_id, str)
-                        and isinstance(recipient_project_id, str)
-                        and sender_project_id != recipient_project_id
-                    ):
-                        project_ref = self._project_ref(sender_project_id)
-                        return f"Session {project_ref}-S#{session_obj.seq_num}: "
-                    return f"Session #{session_obj.seq_num}: "
+                if session_obj:
+                    return f"Session {session_obj.ref}: "
             except Exception:
                 pass
-        return f"Session {from_session[:8]}: "
-
-    def _project_ref(self, project_id: str) -> str:
-        """Return the project name for a '<project>-S#N' ref, else the project UUID."""
-        db = getattr(self._session_manager, "db", None)
-        if db is not None:
-            row = db.fetchone("SELECT name FROM projects WHERE id = %s", (project_id,))
-            name = row["name"] if row else None
-            if isinstance(name, str) and name:
-                return name
-        return project_id
+        return f"Session {from_session}: "

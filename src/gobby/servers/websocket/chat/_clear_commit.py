@@ -43,6 +43,7 @@ async def rebind_live_clear_successor(
     """Point the live wrapper at the successor row without starting a backend."""
     session.db_session_id = successor.id
     session.seq_num = successor.seq_num
+    session.session_ref = successor.ref
     session.message_index = 0
     wire_db_persist_callbacks(mixin, session)
     transport = getattr(session, "_chat_stream_transport", None)
@@ -53,7 +54,7 @@ async def rebind_live_clear_successor(
             session,
             session.conversation_id,
             transport,
-            session_ref=f"#{successor.seq_num}",
+            session_ref=successor.ref,
         )
     except Exception:
         logger.warning(

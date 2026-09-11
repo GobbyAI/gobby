@@ -93,11 +93,11 @@ class _TerminalMixin:
             rows = conn.execute(
                 f"""
                 SELECT *
-                FROM sessions
+                FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
                 WHERE machine_id IS NOT DISTINCT FROM %s
                   AND {_TMUX_SOCKET_IDENTITY_SQL} = %s
                   {pane_clause}
-                FOR UPDATE
+                FOR UPDATE OF sessions
                 """,
                 tuple(params),
             ).fetchall()
@@ -299,7 +299,7 @@ class _TerminalMixin:
         if project_id:
             rows = self.db.fetchall(
                 """
-                SELECT * FROM sessions
+                SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
                 WHERE created_at >= %s
                 AND project_id = %s
                 ORDER BY created_at DESC
@@ -309,7 +309,7 @@ class _TerminalMixin:
         else:
             rows = self.db.fetchall(
                 """
-                SELECT * FROM sessions
+                SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
                 WHERE created_at >= %s
                 ORDER BY created_at DESC
                 """,

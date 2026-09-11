@@ -75,6 +75,7 @@ class TestRegisterSession:
         mock_session = MagicMock()
         mock_session.id = "uuid-123"
         mock_session.seq_num = 42
+        mock_session.ref = "other-project#42"
         mock_session.external_id = "ext-abc"
         mock_session.status = "active"
         mock_session.source = "agent-sdk"
@@ -93,7 +94,7 @@ class TestRegisterSession:
         )
 
         assert result["session_id"] == "uuid-123"
-        assert result["session_ref"] == "#42"
+        assert result["session_ref"] == "other-project#42"
         assert result["external_id"] == "ext-abc"
         assert result["status"] == "active"
         assert result["source"] == "agent-sdk"
@@ -365,7 +366,7 @@ class TestRegisterSession:
         session_manager = MagicMock()
         ambient = MagicMock(
             id="uuid-ambient",
-            ref="#42",
+            ref="other-project#42",
             external_id="provider-stable-id",
             machine_id=None,
             source="codex",
@@ -373,7 +374,7 @@ class TestRegisterSession:
         )
         revived = MagicMock(
             id="uuid-ambient",
-            ref="#42",
+            ref="other-project#42",
             seq_num=42,
             external_id="provider-stable-id",
             status="active",
@@ -395,7 +396,7 @@ class TestRegisterSession:
             )
 
         assert result["session_id"] == ambient.id
-        assert result["session_ref"] == "#42"
+        assert result["session_ref"] == "other-project#42"
         assert result["status"] == "active"
         assert session_manager.register.call_args.kwargs["machine_id"] == (
             "21000000-0000-4000-8000-000000000001"
@@ -406,7 +407,7 @@ class TestRegisterSession:
         session_manager = MagicMock()
         ambient = MagicMock(
             id="uuid-ambient",
-            ref="#42",
+            ref="other-project#42",
             external_id="provider-stable-id",
             machine_id="21000000-0000-4000-8000-000000000001",
             source="codex",

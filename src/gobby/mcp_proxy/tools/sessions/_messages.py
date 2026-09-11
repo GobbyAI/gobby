@@ -41,7 +41,7 @@ def register_message_tools(
 
     @registry.tool(
         name="get_session_messages",
-        description="Get messages for a session. Returns rendered messages with content blocks. Accepts #N, N, UUID, or prefix for session_id.",
+        description="Get messages for a session. Returns rendered messages with content blocks. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     # Entry point for get_session_messages tool
     async def get_session_messages(
@@ -54,7 +54,7 @@ def register_message_tools(
         Get messages for a session.
 
         Args:
-            session_id: Session reference - supports #N, N (seq_num), UUID, or prefix
+            session_id: Session reference - supports <project>#N, local #N/N, UUID, or prefix
             limit: Max messages to return
             offset: Offset for pagination
             full_content: Unused. Content is always returned in full.
@@ -94,7 +94,7 @@ def register_message_tools(
 
     @registry.tool(
         name="search_session_messages",
-        description="Search rendered transcript messages by substring. Accepts #N, N, UUID, or prefix for session_id.",
+        description="Search rendered transcript messages by substring. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     async def search_session_messages(
         query: str,
@@ -110,7 +110,7 @@ def register_message_tools(
 
         Args:
             query: Search query
-            session_id: Optional session filter - supports #N, N (seq_num), UUID, or prefix
+            session_id: Optional session filter - supports <project>#N, local #N/N, UUID, or prefix
             project_id: Optional project filter for multi-session search
             status: Optional session status filter for multi-session search
             source: Optional CLI source filter for multi-session search

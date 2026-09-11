@@ -131,7 +131,9 @@ def test_claimed_task_owns_native_substeps_and_found_work() -> None:
     assert "add the finding to the claimed task's native tracker" in content
     assert "before closing that same Gobby task" in content
     assert "Create another Gobby task only when the user explicitly directs it" in content
-    assert "`needs-decision` or `clean-window`" in content
+    assert all(
+        label in content for label in ("`needs-decision`", "`needs-planning`", "`clean-window`")
+    )
     assert "parent coordinator" in content
     assert "failing command, diagnostics, paths," in content
     assert "Sweep the native tracker and current transcript for owned findings" in content

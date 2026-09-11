@@ -153,6 +153,7 @@ class TestMessageGrouping:
         session_manager = MagicMock()
         session_obj = MagicMock()
         session_obj.seq_num = 42
+        session_obj.ref = "gobby#42"
         session_manager.get.return_value = session_obj
 
         msg = _make_msg(content="Subtask done", message_type="message")
@@ -163,7 +164,7 @@ class TestMessageGrouping:
         enricher.enrich(event, response)
 
         assert "[Pending P2P messages from other sessions]:" in response.context
-        assert "Session #42: Subtask done" in response.context
+        assert "Session gobby#42: Subtask done" in response.context
 
     def test_web_chat_messages_labeled_separately(self) -> None:
         """Web chat messages should get their own header."""
@@ -339,6 +340,7 @@ class TestSenderResolution:
         session_manager = MagicMock()
         session_obj = MagicMock()
         session_obj.seq_num = 7
+        session_obj.ref = "gobby#7"
         session_manager.get.return_value = session_obj
 
         msg = _make_msg(content="msg", from_session="aaaa-bbbb")
@@ -348,14 +350,16 @@ class TestSenderResolution:
 
         enricher.enrich(event, response)
 
-        assert "Session #7:" in response.context
+        assert "Session gobby#7:" in response.context
 
     def test_sender_in_other_project_is_project_qualified(self) -> None:
-        """A sender from another project is labeled '<project>-S#N' so it can be addressed."""
+        """A sender from another project is labeled '<project>#N' so it can be addressed."""
         session_manager = MagicMock()
         session_obj = MagicMock()
         session_obj.seq_num = 9
+        session_obj.ref = "gobby#9"
         session_obj.project_id = "proj-goblins"
+        session_obj.ref = "game-goblins#9"
         session_manager.get.return_value = session_obj
         session_manager.db.fetchone.return_value = {"name": "game-goblins"}
 
@@ -368,16 +372,15 @@ class TestSenderResolution:
         enricher.enrich(event, response)
 
         assert response.context is not None
-        assert "Session game-goblins-S#9:" in response.context
-        session_manager.db.fetchone.assert_called_once_with(
-            "SELECT name FROM projects WHERE id = %s", ("proj-goblins",)
-        )
+        assert "Session game-goblins#9:" in response.context
+        session_manager.db.fetchone.assert_not_called()
 
-    def test_same_project_sender_keeps_local_label(self) -> None:
+    def test_same_project_sender_is_project_qualified(self) -> None:
         """A same-project sender keeps the short '#N' label."""
         session_manager = MagicMock()
         session_obj = MagicMock()
         session_obj.seq_num = 9
+        session_obj.ref = "gobby#9"
         session_obj.project_id = "proj-gobby"
         session_manager.get.return_value = session_obj
 
@@ -390,7 +393,7 @@ class TestSenderResolution:
         enricher.enrich(event, response)
 
         assert response.context is not None
-        assert "Session #9:" in response.context
+        assert "Session gobby#9:" in response.context
         session_manager.db.fetchone.assert_not_called()
 
     def test_sender_lookup_failure_falls_back(self) -> None:
@@ -405,7 +408,7 @@ class TestSenderResolution:
 
         enricher.enrich(event, response)
 
-        assert "Session abcd1234:" in response.context
+        assert "Session abcd1234-rest-of-uuid:" in response.context
 
     def test_sender_no_session_storage(self) -> None:
         """Without session storage, fall back to truncated UUID."""
@@ -416,7 +419,7 @@ class TestSenderResolution:
 
         enricher.enrich(event, response)
 
-        assert "Session deadbeef:" in response.context
+        assert "Session deadbeef-rest-of-uuid:" in response.context
 
     def test_sender_no_from_session(self) -> None:
         """Messages with no from_session should have no sender prefix."""

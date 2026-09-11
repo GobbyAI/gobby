@@ -52,11 +52,17 @@ def format_session_status_message(
 
 def _canonical_session_title(transition: SessionStatusTransition) -> str:
     title = transition.title.strip() if transition.title else "Session"
-    if transition.seq_num is None:
+    ref = transition.session_ref or (
+        f"{transition.project_id}#{transition.seq_num}"
+        if transition.seq_num is not None
+        else transition.session_id
+    )
+    if title.startswith(f"({ref}):"):
         return title
-    legacy_prefix = re.compile(rf"^#{transition.seq_num}(?:\s*[-–—:]\s*|\s+)")
-    title = legacy_prefix.sub("", title, count=1).strip() or "Session"
-    return f"#{transition.seq_num} - {title}"
+    if transition.seq_num is not None:
+        legacy_prefix = re.compile(rf"^#{transition.seq_num}(?:\s*[-–—:]\s*|\s+)")
+        title = legacy_prefix.sub("", title, count=1).strip() or "Session"
+    return f"{ref} - {title}"
 
 
 async def route_session_status_transition(

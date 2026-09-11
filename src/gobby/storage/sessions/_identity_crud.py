@@ -100,7 +100,10 @@ class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
         """Get session by ID."""
         if not is_session_uuid(session_id):
             return None
-        row = self.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session_id,))
+        row = self.db.fetchone(
+            "SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id) WHERE id = %s",
+            (session_id,),
+        )
         return Session.from_row(row) if row else None
 
     def resolve_session_reference(

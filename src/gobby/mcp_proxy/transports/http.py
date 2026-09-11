@@ -25,11 +25,17 @@ MCP_HTTP_READ_TIMEOUT_SECONDS = 300.0
 def build_mcp_http_client(
     headers: dict[str, str] | None, auth: httpx2.Auth | None = None
 ) -> httpx2.AsyncClient:
-    """Build the httpx2 client handed to the Streamable HTTP transport."""
+    """Build the httpx2 client handed to the Streamable HTTP transport.
+
+    Redirects are deliberately not configured here: the SDK sends every MCP
+    request with ``follow_redirects=False`` and applies its own same-origin,
+    same-method rule instead, so the client's setting is never consulted. This
+    client is only ever handed to that transport, so setting it would only
+    suggest a behavior that does not happen.
+    """
     return httpx2.AsyncClient(
         headers=headers,
         auth=auth,
-        follow_redirects=True,
         timeout=httpx2.Timeout(MCP_HTTP_TIMEOUT_SECONDS, read=MCP_HTTP_READ_TIMEOUT_SECONDS),
     )
 

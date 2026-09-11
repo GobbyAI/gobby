@@ -35,7 +35,7 @@ class _TranscriptMixin:
             params += after
         rows = self.db.fetchall(
             f"""
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE status = 'expired'
             AND transcript_processed = FALSE
             AND transcript_processing_failure_count < 3

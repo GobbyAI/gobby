@@ -368,7 +368,7 @@ def expire_parked_daemon_session(
             WHERE id = %s
               AND agent_run_id = %s
               AND status = ANY(%s)
-            RETURNING *
+            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
             """,
             (child_session_id, original_run_id, list(LIVE_SESSION_STATUS_ORDER)),
         ).fetchone()

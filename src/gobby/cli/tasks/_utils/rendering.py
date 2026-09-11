@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from wcwidth import wcswidth
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import serialize_task_state
 
@@ -107,7 +108,7 @@ def _build_rendered_row(
 ) -> _RenderedRow:
     """Resolve the display fields for a single task row.
 
-    ``session_ref_map`` is an optional pre-resolved ``owner_session_id -> '#N'``
+    ``session_ref_map`` is an optional pre-resolved ``owner_session_id -> 'project#N'``
     lookup produced by :func:`_resolve_session_refs`. When provided, the row's
     session column is populated from the map; otherwise it's left unresolved.
     """
@@ -143,8 +144,8 @@ def _build_rendered_row(
         if session_ref_map and owner_session_id in session_ref_map:
             session_ref = session_ref_map[owner_session_id]
         else:
-            # Fallback: first 8 chars of UUID prefixed so it's obvious it's not a seq_num
-            session_ref = owner_session_id[:8]
+            # Keep unresolved session identities unambiguous.
+            session_ref = owner_session_id
 
     # Closed tasks render dim alongside ancestors
     row_is_muted = is_muted or closed
@@ -209,20 +210,21 @@ def _get_term_width(default: int = 100) -> int:
 
 
 def _resolve_session_refs(session_ids: set[str], db: HubDatabase) -> dict[str, str]:
-    """Batch-resolve ``session_id`` UUIDs to their ``#seq_num`` refs.
+    """Batch-resolve ``session_id`` UUIDs to their canonical refs.
 
-    Returns a map ``{uuid: "#N"}``. Missing rows are omitted (callers fall back
-    to an 8-char UUID prefix).
+    Returns a map ``{uuid: "project#N"}``. Missing rows are omitted (callers fall back
+    to the full UUID).
     """
     if not session_ids:
         return {}
     try:
         placeholders = ",".join("%s" for _ in session_ids)
         rows = db.fetchall(
-            f"SELECT id, seq_num FROM sessions WHERE id IN ({placeholders})",
+            f"""SELECT s.*, p.name AS project_name FROM sessions s
+            LEFT JOIN projects p ON p.id = s.project_id WHERE s.id IN ({placeholders})""",
             tuple(session_ids),
         )
-        return {row["id"]: f"#{row['seq_num']}" for row in rows if row["seq_num"] is not None}
+        return {row["id"]: Session.from_row(row).ref for row in rows}
     except Exception as e:
         logger.debug("Failed to batch-resolve session refs: %s", e)
         return {}

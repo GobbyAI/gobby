@@ -101,6 +101,9 @@ def test_explicit_compact_activity_restores_canonical_row_and_deletes_empty_ghos
     assert resolution.success
     assert resolution.session is not None
     assert resolution.session.id == canonical_id
+    stored = manager.get(canonical_id)
+    assert stored is not None
+    assert resolution.session.ref == stored.ref
     assert resolution.session.status == "active"
     assert resolution.deleted_ghost_ids == (ghost_id,)
     assert manager.get(ghost_id) is None
@@ -238,6 +241,9 @@ def test_populated_historical_terminal_row_does_not_block_compact_reactivation(
     assert resolution.success
     assert resolution.session is not None
     assert resolution.session.id == canonical_id
+    stored = manager.get(canonical_id)
+    assert stored is not None
+    assert resolution.session.ref == stored.ref
     assert resolution.session.status == "active"
     historical = manager.get(historical_id)
     assert historical is not None
@@ -276,6 +282,9 @@ def test_ended_later_populated_sibling_does_not_block_compact_reactivation(
     assert resolution.success
     assert resolution.session is not None
     assert resolution.session.id == canonical_id
+    stored = manager.get(canonical_id)
+    assert stored is not None
+    assert resolution.session.ref == stored.ref
     assert resolution.session.status == "active"
     sibling = manager.get(sibling_id)
     assert sibling is not None
@@ -310,6 +319,9 @@ def test_compact_resolution_uses_marker_and_exact_terminal_process(
     assert not resolution.ambiguous
     assert resolution.session is not None
     assert resolution.session.id == canonical_id
+    stored = manager.get(canonical_id)
+    assert stored is not None
+    assert resolution.session.ref == stored.ref
 
 
 def test_ambiguous_marked_terminal_process_matches_return_no_session(
