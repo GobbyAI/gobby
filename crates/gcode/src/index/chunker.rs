@@ -24,7 +24,10 @@ pub fn chunk_file_content(
     language: Option<&str>,
 ) -> Vec<ContentChunk> {
     let text = String::from_utf8_lossy(source);
-    let lines: Vec<&str> = text.split('\n').collect();
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    if source.ends_with(b"\n") {
+        lines.pop();
+    }
     if lines.is_empty() {
         return Vec::new();
     }
