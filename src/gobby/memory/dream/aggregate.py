@@ -89,6 +89,8 @@ class _AggregateDreamHost(Protocol):
         self, sweep: _ScopeSweep, *, status: str, error: str | None = None
     ) -> dict[str, Any]: ...
 
+    def _write_scope_summary(self, run: dict[str, Any]) -> None: ...
+
 
 class _AggregateDreamRunner:
     """Run preview fan-out and fair mutating sweeps across every due scope."""
@@ -263,6 +265,55 @@ class _AggregateDreamRunner:
         completed = 0
         failed = 0
         remaining_scopes = 0
+        if run_id is not None:
+            previous = await asyncio.to_thread(self._host.store.get_run, run_id)
+            checkpoint = (previous or {}).get("checkpoint") or {}
+            for key, child_id in checkpoint.get("scope_runs", {}).items():
+                child = await asyncio.to_thread(self._host.store.get_run, child_id)
+                if child is None:
+                    continue
+                options = DreamRunOptions(**child["options"])
+                scope = (
+                    MemoryScope.global_only()
+                    if options.global_only
+                    else MemoryScope.project_only(str(options.project_id))
+                )
+                related = RelatedEvidenceSession()
+                orchestrator = await self._host._build_orchestrator(child_id, options, related)
+                restored_sweep = _ScopeSweep(
+                    scope,
+                    options,
+                    child_id,
+                    orchestrator,
+                    related,
+                    orchestrator.unit_size,
+                    orchestrator.totals.pages,
+                )
+                sweeps[key] = restored_sweep
+                order.append(key)
+                if child["status"] in {"completed", "failed"}:
+                    done.add(key)
+                    entries[key] = {
+                        "project_id": scope.project_id,
+                        "is_global": options.global_only,
+                        "run_id": child_id,
+                        "status": child["status"],
+                        "success": child["status"] == "completed",
+                        "error": child.get("error"),
+                        "mutations": (child.get("summary") or {}).get("mutations", 0),
+                        "decision_summary": child.get("summary") or {},
+                    }
+                    await related.aclose()
+                    completed += int(child["status"] == "completed")
+                    failed += int(child["status"] == "failed")
+                else:
+                    await asyncio.to_thread(
+                        self._host.store.update_run,
+                        child_id,
+                        status="started",
+                        error=None,
+                        completed_at=None,
+                    )
         try:
             stopping = False
             while not stopping:
@@ -304,6 +355,15 @@ class _AggregateDreamRunner:
                             continue
                         sweeps[key] = sweep
                         order.append(key)
+                        if run_id is not None:
+                            await self._persist_aggregate_checkpoint(
+                                run_id,
+                                sweeps=sweeps,
+                                passes=passes,
+                                remaining=remaining_scopes,
+                                stop_reason=None,
+                                dependency_failure=None,
+                            )
                     try:
                         outcome = await self._host._run_scope_unit(sweep)
                     except DreamDependencyError as exc:
@@ -477,6 +537,7 @@ class _AggregateDreamRunner:
             if persisted is not None:
                 summary = persisted.get("summary") or summary
                 mutations = int((summary or {}).get("mutations", mutations))
+                await asyncio.to_thread(self._host._write_scope_summary, persisted)
         except Exception:
             logger.warning(
                 "Failed to persist memory dream scope run %s", sweep.run_id, exc_info=True
@@ -520,7 +581,24 @@ class _AggregateDreamRunner:
         )
         try:
             await asyncio.to_thread(
-                self._host.store.update_run, run_id, checkpoint=checkpoint.to_dict()
+                self._host.store.update_run,
+                run_id,
+                checkpoint={
+                    **checkpoint.to_dict(),
+                    "scope_runs": {key: sweep.run_id for key, sweep in sweeps.items()},
+                },
+                summary={
+                    "scope_summaries": [
+                        {
+                            "scope": key,
+                            "run_id": sweep.run_id,
+                            "narrative": sweep.orchestrator.totals.narrative,
+                        }
+                        for key, sweep in sweeps.items()
+                    ],
+                    "mutations": checkpoint.mutations,
+                    "stop_reason": stop_reason,
+                },
             )
         except Exception:
             logger.warning(
@@ -552,7 +630,9 @@ class _AggregateDreamRunner:
             if not aggregate.get("success"):
                 status = "failed"
                 error = aggregate.get("error", "aggregate failed")
-            elif stop_reason in ("window_exhausted", "dependency_failure"):
+            elif stop_reason in ("window_exhausted", "dependency_failure") or aggregate.get(
+                "failed"
+            ):
                 status = "partial"
                 error = aggregate.get("dependency_failure")
             else:
@@ -571,6 +651,7 @@ class _AggregateDreamRunner:
                     "mutations": aggregate.get("mutations", 0),
                     "passes": aggregate.get("passes", 0),
                     "stop_reason": stop_reason,
+                    "scope_summaries": _scope_summaries(aggregate.get("runs", [])),
                     **_merge_decision_counts(aggregate.get("runs", [])),
                 },
                 error=error,
@@ -684,6 +765,21 @@ def _completed_mutation_count(result: object) -> int:
         )
         mutations = 0
     return mutations
+
+
+def _scope_summaries(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from gobby.memory.dream.planner import normalize_summary
+
+    return [
+        {
+            "scope": "global" if run.get("is_global") else run.get("project_id"),
+            "run_id": run.get("run_id"),
+            "status": run.get("status") or ("completed" if run.get("success") else "failed"),
+            "error": run.get("error"),
+            "narrative": normalize_summary((run.get("decision_summary") or {}).get("narrative")),
+        }
+        for run in runs
+    ]
 
 
 def _merge_decision_counts(runs: list[dict[str, Any]]) -> dict[str, Any]:

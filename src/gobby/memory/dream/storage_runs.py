@@ -70,7 +70,6 @@ class DreamAdmission:
 
 
 class _DreamRunHost(Protocol):
-    report_project_id: str | None
     db: HubDatabase
 
     def create_run(
@@ -233,17 +232,12 @@ class _DreamRunMixin:
             decisions = DreamDecisionStore(self.db)
             decisions.interrupt_pending(run_id)
             evidence_summary = decisions.summary(run_id)
-            if evidence_summary or self.report_project_id is not None:
+            if evidence_summary:
                 previous = self.get_run(run_id) or {}
                 fields["summary"] = {
                     **(previous.get("summary") or {}),
                     **(fields.get("summary") or {}),
                     **evidence_summary,
-                }
-            if self.report_project_id is not None:
-                fields["summary"] = {
-                    **(fields.get("summary") or {}),
-                    "report_project_id": self.report_project_id,
                 }
         fields["updated_at"] = _now()
         encoded = {
@@ -257,10 +251,6 @@ class _DreamRunMixin:
             f"UPDATE memory_dream_runs SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(encoded.values()) + (run_id,),
         )
-        if terminal and self.report_project_id is not None:
-            from gobby.reports.storage import queue_terminal_report
-
-            queue_terminal_report(self.db, "dream", run_id, self.report_project_id)
         return self.get_run(run_id)
 
     def get_run(

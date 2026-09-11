@@ -1459,7 +1459,7 @@ async def test_run_now_executes_in_empty_session_context(
     executor.register_handler("dispatch.tick", dispatch_tick_handler)
     job = cron_storage.create_job(
         project_id=sample_project["id"],
-        name="gobby:dispatcher",
+        name="test:context-isolation",
         schedule_type="interval",
         action_type="handler",
         action_config={"handler": "dispatch.tick"},

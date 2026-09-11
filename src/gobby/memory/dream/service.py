@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 from weakref import WeakKeyDictionary
 
@@ -34,6 +36,7 @@ from gobby.memory.dream.orchestrator import (
     WorkUnitOutcome,
     _positive_int,
 )
+from gobby.memory.dream.planner import normalize_summary
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.related import RelatedEvidenceSession
 from gobby.memory.dream.storage import MemoryDreamStore
@@ -324,7 +327,12 @@ class MemoryDreamService:
         *,
         admission_deadline: float | None = None,
     ) -> DreamSweepOrchestrator:
+        run = await asyncio.to_thread(self.store.get_run, run_id)
+        checkpoint = (run or {}).get("checkpoint") or {}
         run_started = datetime.now(UTC)
+        if checkpoint.get("totals") and run and run.get("created_at"):
+            # A resumed full sweep must keep its original cooldown fence.
+            run_started = datetime.fromisoformat(str(run["created_at"]))
         redream_hours = _positive_int(
             getattr(self.dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
             DEFAULT_REDREAM_AFTER_HOURS,
@@ -344,7 +352,7 @@ class MemoryDreamService:
             else (run_started - timedelta(hours=redream_hours)).isoformat()
         )
         digest = await self._build_truth_digest_async(options)
-        return DreamSweepOrchestrator(
+        orchestrator = DreamSweepOrchestrator(
             memory_manager=self.memory_manager,
             store=self.store,
             dream_config=self.dream_config,
@@ -358,9 +366,14 @@ class MemoryDreamService:
             related_session=related_session,
             admission_deadline=admission_deadline,
         )
+        orchestrator.totals = SweepTotals.restore(checkpoint.get("totals"))
+        orchestrator._planned = int(checkpoint.get("planned", 0))
+        orchestrator._applied_actions = int(checkpoint.get("actions", 0))
+        return orchestrator
 
     async def _execute_run_locked(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
         related_session = RelatedEvidenceSession()
+        run: dict[str, Any] | None = None
         try:
             # The admission window bounds every run regardless of trigger.
             deadline = asyncio.get_running_loop().time() + self._max_runtime_seconds()
@@ -428,6 +441,50 @@ class MemoryDreamService:
             return {"success": False, "run_id": run_id, "run": run, "error": str(exc)}
         finally:
             await related_session.aclose()
+            if run is not None:
+                await asyncio.to_thread(self._write_scope_summary, run)
+
+    def _write_scope_summary(self, run: dict[str, Any]) -> None:
+        """Save the reviewer's compact output in its owning project's checkout."""
+        from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+        project_id = run.get("project_id")
+        if not project_id or project_id == PERSONAL_PROJECT_ID:
+            return
+        summary = run.get("summary") or {}
+        try:
+            root = self._resolve_repo_path(str(project_id))
+            if root is None:
+                return
+            directory = Path(root) / ".gobby" / "dream"
+            directory.mkdir(parents=True, exist_ok=True)
+            output = directory / f"{run['id']}.md"
+            narrative = normalize_summary(summary.get("narrative")) or "No narrative recorded."
+            content = (
+                f"# Dream summary\n\nRun: {run['id']}\nProject: {project_id}\n"
+                f"Status: {run['status']}\nDry run: {bool(run.get('dry_run'))}\n\n"
+                f"## Review reasoning\n\n{narrative}\n\n## Recorded outcomes\n\n"
+                + ", ".join(
+                    f"{key}: {summary.get(key, 0)}"
+                    for key in ("mutations", "noops", "skipped", "errors")
+                )
+                + "\n"
+            )
+            if run.get("error"):
+                content += f"\nFailure: {str(run['error'])[:1000]}\n"
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=directory, delete=False
+            ) as draft:
+                draft.write(content)
+            temporary = Path(draft.name)
+            try:
+                temporary.replace(output)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            summary["summary_file_error"] = str(exc)
+            self.store.update_run(str(run["id"]), summary=summary)
+            logger.warning("Could not save Dream summary for project %s: %s", project_id, exc)
 
     async def _stream_sweep(self, orchestrator: DreamSweepOrchestrator) -> SweepTotals:
         """Execution seam for the mutating sweep; lock/cancel tests intercept it."""
@@ -437,11 +494,6 @@ class MemoryDreamService:
         run = await asyncio.to_thread(self.store.get_run, run_id)
         if run is None:
             return {"success": False, "error": f"Dream run not found: {run_id}"}
-        from gobby.reports.storage import ReportStore
-
-        run["publication"] = await asyncio.to_thread(
-            ReportStore(self.store.db).get, "dream", run_id, include_content=False
-        )
         return {"success": True, "run": run}
 
     async def revert(self, run_id: str) -> dict[str, Any]:

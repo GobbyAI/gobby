@@ -75,9 +75,19 @@ Each candidate includes `rationale` (the writer's own claim about why the memory
 
 ## Output
 
+Update this scope's previous narrative while examining this cohort's full evidence:
+
+{{ previous_summary | default('(first cohort)') }}
+
+Include a brief `summary` of at most 1,000 characters describing cumulative themes and
+decision reasoning across cohorts. Preserve relevant earlier themes. Describe proposed
+decisions, not claims of successful mutations or counts: the daemon records actual
+mutations, no-ops, skips, and errors separately after applying the actions.
+
 Return strict JSON only:
 
 {
+  "summary": "Propose removing completed-task residue while retaining durable preferences.",
   "actions": [
     {
       "action": "delete",

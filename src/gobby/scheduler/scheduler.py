@@ -28,7 +28,9 @@ from gobby.utils.project_context import (
 from gobby.utils.session_context import reset_session_context, set_session_context
 
 logger = logging.getLogger(__name__)
-CronRunRejectionCode = Literal["cron_job_already_running", "cron_max_concurrent_jobs"]
+CronRunRejectionCode = Literal[
+    "cron_job_already_running", "cron_max_concurrent_jobs", "cron_job_retired"
+]
 
 
 class CronRunRejected(RuntimeError):
@@ -488,6 +490,10 @@ class CronScheduler:
         job = await self._run_db(self.storage.get_job, job_id)
         if not job:
             return None
+        if is_removed_automation_job(job):
+            raise CronRunRejected(
+                "cron_job_retired", f"Cron job {job.name!r} targets retired automation"
+            )
 
         config = self._capture_config()
         await self._run_db(self._sweep_stale_running_runs, config)

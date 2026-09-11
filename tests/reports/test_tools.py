@@ -1,4 +1,4 @@
-"""Public evidence readers preserve paging and publication/source separation."""
+"""Source evidence remains available after synthesis publication retirement."""
 
 from datetime import UTC, datetime
 
@@ -6,12 +6,11 @@ import pytest
 
 from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow
 from gobby.mcp_proxy.tools.feedback import create_feedback_registry
-from gobby.mcp_proxy.tools.reports import create_reports_registry
 from gobby.memory.dream.decisions import DreamDecisionStore
 from gobby.memory.dream.models import DreamAction
+from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
-from tests.reports.test_publication import _content, _source
 
 pytestmark = pytest.mark.integration
 
@@ -74,56 +73,14 @@ async def test_feedback_readers_page_frozen_observations_and_actual_outcomes(
 async def test_dream_evidence_distinguishes_historical_from_exhausted_ledger(
     temp_db: HubDatabase,
 ) -> None:
-    registry = create_reports_registry(temp_db, project_id=PERSONAL_PROJECT_ID)
-    run_id = _source(temp_db, "dream")
-    historical = await registry.call(
-        "get_report_evidence",
-        {
-            "source_kind": "dream",
-            "run_id": run_id,
-            "offset": 100,
-        },
-    )
-    assert historical["historical_rationale_missing"] is True
-    assert historical["snapshots"] == []
+    store = MemoryDreamStore(temp_db)
+    run_id = store.create_run(project_id=PERSONAL_PROJECT_ID, dry_run=False, options={})
     ledger = DreamDecisionStore(temp_db)
+    historical = ledger.page(run_id, offset=100)
+    assert historical["historical_rationale_missing"] is True
     decision = ledger.stage(run_id, [DreamAction(action="keep", reason="retain")], [])[0]
     ledger.finish(decision, "noop", mutations=0)
-    exhausted = await registry.call(
-        "get_report_evidence",
-        {
-            "source_kind": "dream",
-            "run_id": run_id,
-            "offset": 100,
-        },
-    )
+    exhausted = ledger.page(run_id, offset=100)
     assert exhausted["historical_rationale_missing"] is False
     assert exhausted["decisions"] == [] and exhausted["next_offset"] is None
     assert "snapshots" not in exhausted
-
-
-async def test_report_tools_retain_draft_and_failure_on_explicit_retry(
-    temp_db: HubDatabase,
-) -> None:
-    registry = create_reports_registry(temp_db, project_id=PERSONAL_PROJECT_ID)
-    run_id = _source(temp_db, "feedback", "partial")
-    args = {"source_kind": "feedback", "run_id": run_id}
-    await registry.call("request_report", args)
-    from gobby.reports.storage import ReportStore
-
-    store = ReportStore(temp_db)
-    store.begin("feedback", run_id)
-    content = _content(run_id)
-    await registry.call("save_report_draft", {**args, "content": content})
-    await registry.call(
-        "record_report_failure", {**args, "phase": "publication", "error": "commit rejected"}
-    )
-    report = await registry.call("retry_report", args)
-    assert report["status"] == "pending"
-    draft = await registry.call("get_report", args)
-    assert draft["content"] == content
-    history = await registry.call("get_report_attempts", args)
-    assert len(history["attempts"]) == 1
-    assert history["attempts"][0]["error"] == "commit rejected"
-    source = FeedbackReviewStore(temp_db).get_run(run_id)
-    assert source is not None and source.status == "partial"

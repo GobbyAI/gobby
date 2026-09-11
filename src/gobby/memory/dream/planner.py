@@ -44,6 +44,7 @@ async def build_raw_plan(
     project_id: str | None,
     skip_consolidation: bool,
     truth_digest: str = "",
+    previous_summary: str = "",
 ) -> dict[str, Any]:
     """Build raw planner JSON from paged LLM output.
 
@@ -55,6 +56,7 @@ async def build_raw_plan(
     """
     planner_errors: list[str] = []
     actions: list[dict[str, Any]] = []
+    summary = normalize_summary(previous_summary)
 
     if llm_service is not None and candidates and not skip_consolidation:
         batch_size = _positive_int(
@@ -77,19 +79,26 @@ async def build_raw_plan(
         # Pages run serially: Dream may hold at most one of the host-wide
         # spawn-cold generation slots, leaving the rest for unrelated callers.
         for page in planner_pages:
-            page_actions, error = await _run_planner_page(
+            page_actions, page_summary, error = await _run_planner_page(
                 page=page,
                 dream_config=dream_config,
                 llm_service=llm_service,
                 db=db,
                 project_id=project_id,
                 truth_digest=truth_digest,
+                previous_summary=summary,
             )
             actions.extend(page_actions)
+            summary = normalize_summary(page_summary) or summary
             if error is not None:
                 planner_errors.append(error)
 
-    return {"actions": actions, "planner_errors": planner_errors}
+    return {"actions": actions, "planner_errors": planner_errors, "narrative": summary}
+
+
+def normalize_summary(value: Any) -> str:
+    """Ignore malformed optional prose without affecting maintenance actions."""
+    return value.strip()[:1000] if isinstance(value, str) else ""
 
 
 async def _run_planner_page(
@@ -100,10 +109,11 @@ async def _run_planner_page(
     db: HubDatabase,
     project_id: str | None,
     truth_digest: str = "",
-) -> tuple[list[dict[str, Any]], str | None]:
+    previous_summary: str = "",
+) -> tuple[list[dict[str, Any]], str, str | None]:
     """Plan one page of candidates, isolating expected planner failures.
 
-    Returns ``(actions, error)``; ``error`` is set when the page failed so the
+    Returns ``(actions, narrative, error)``; ``error`` is set when the page failed so the
     caller can record it without losing the other pages' actions.
     """
     try:
@@ -114,11 +124,16 @@ async def _run_planner_page(
             db=db,
             project_id=project_id,
             truth_digest=truth_digest,
+            previous_summary=previous_summary,
         )
     except _EXPECTED_PLANNER_ERRORS as exc:
         logger.warning("Memory dream planner unavailable: %s", exc)
-        return [], str(exc)
-    return _planner_response_actions(response, page, project_id), None
+        return [], "", str(exc)
+    return (
+        _planner_response_actions(response, page, project_id),
+        normalize_summary(response.get("summary")),
+        None,
+    )
 
 
 def _planner_response_actions(
@@ -207,6 +222,7 @@ async def _call_llm_planner(
     db: HubDatabase,
     project_id: str | None,
     truth_digest: str = "",
+    previous_summary: str = "",
 ) -> dict[str, Any]:
     loader = PromptLoader(db=db, project_id=project_id)
     prompt = loader.render(
@@ -214,6 +230,7 @@ async def _call_llm_planner(
         {
             "candidates": _render_candidates_json(candidates),
             "truth_digest": truth_digest or "(no current-truth digest available)",
+            "previous_summary": normalize_summary(previous_summary) or "(first cohort)",
             "min_action_confidence": getattr(
                 dream_config,
                 "min_action_confidence",

@@ -102,13 +102,6 @@ def _print_digest(run: Any) -> None:
     digest = run.get("digest_md") if isinstance(run, dict) else None
     click.echo()
     click.echo(str(digest) if digest else "(no digest recorded)")
-    publication = run.get("publication") if isinstance(run, dict) else None
-    if publication:
-        click.echo(f"Report publication: {publication['status']}")
-        if publication.get("commit_sha"):
-            click.echo(
-                f"{publication['report_path']} @ {publication['commit_sha']} ({publication['branch_name']})"
-            )
 
 
 def _request(
