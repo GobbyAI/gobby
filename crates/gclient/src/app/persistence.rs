@@ -82,14 +82,19 @@ impl<D: Daemon> Workspace<D> {
         self.gobby_home.as_deref()
     }
 
+    pub fn set_launch_dir(&mut self, dir: PathBuf) {
+        self.launch_dir = Some(dir);
+    }
+
     /// The snapshot `restore_project` read, which the live loop rebuilds the
     /// tab bar from; none when no Gobby home was set.
     pub fn saved_snapshot(&self) -> Option<&WorkspaceSnapshot> {
         self.saved_snapshot.as_ref()
     }
 
-    /// Where a new shell starts: the focused project's checkout root, or
-    /// nothing when the project is not checked out on this machine.
+    /// Where a new shell starts: the focused project's checkout root, else
+    /// the directory gclient was launched from (the personal project has
+    /// no checkout, and a project checked out elsewhere has none here).
     pub fn focused_checkout_path(&self) -> Option<String> {
         let project = self.project_id.as_deref()?;
         self.sidebar_rows
@@ -98,6 +103,11 @@ impl<D: Daemon> Workspace<D> {
             .find(|row| row.id == project)
             .and_then(|row| row.checkout.as_ref())
             .map(|checkout| checkout.root_path.clone())
+            .or_else(|| {
+                self.launch_dir
+                    .as_ref()
+                    .map(|dir| dir.display().to_string())
+            })
     }
 
     pub fn tab_order(&self) -> Vec<String> {

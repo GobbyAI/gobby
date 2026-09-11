@@ -22,6 +22,7 @@ impl Workspace<LiveDaemon> {
             pending_sidebar: PendingSidebar::default(),
             pending_attention: None,
             gobby_home: None,
+            launch_dir: None,
             frame_delivery: FrameDelivery::Auto,
             lifecycle: None,
             daemon_ready: false,

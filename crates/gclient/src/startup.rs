@@ -1,6 +1,7 @@
 //! Independent `gclient` startup: discover the daemon, probe health, then TUI.
 
 use crate::frame_source::FrameDelivery;
+use crate::persist::ClientSession;
 use crate::prefs::{load_prefs, prefs_path, PREFS_FILE};
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
 use crate::ui::keymap::{default_override_path, default_prefix, Keymap};
@@ -40,7 +41,12 @@ pub struct ProbeEnv {
 pub struct Ready {
     pub daemon_url: String,
     pub token: Option<String>,
-    pub project: String,
+    /// The project named by `--project` or found above the launch
+    /// directory; none when gclient starts outside every checkout.
+    pub project: Option<String>,
+    /// Where gclient was started: the shell of a project without a local
+    /// checkout starts here.
+    pub launch_dir: PathBuf,
     pub frame_delivery: FrameDelivery,
     pub host: Option<GtermHostState>,
     pub host_notice: Option<String>,
@@ -409,7 +415,17 @@ pub fn prepare_at(
         keymap,
         nested_tmux: env.nested_tmux,
         gobby_home: gobby_home.to_path_buf(),
+        launch_dir: current_dir.to_path_buf(),
     })
+}
+
+/// The project the workspace opens on: the resolved one, else the project
+/// the last run left focused, else the personal project (every daemon has
+/// it; its shells start in the launch directory).
+pub fn initial_project(resolved: Option<String>, session: Option<&ClientSession>) -> String {
+    resolved
+        .or_else(|| session.and_then(|session| session.focused_project.clone()))
+        .unwrap_or_else(|| gobby_core::project::PERSONAL_PROJECT_ID.to_string())
 }
 
 /// The keymap override file: `[keymap] path` from prefs when set (a relative
@@ -439,13 +455,16 @@ pub fn load_keymap(
     })
 }
 
+/// The project for this launch: an explicit `--project` must resolve; a
+/// checkout above `current_dir` is used when present, and a directory
+/// outside every checkout resolves to none (the client still starts).
 pub fn resolve_project_at(
     project: Option<&str>,
     current_dir: &Path,
-) -> Result<String, StartupError> {
+) -> Result<Option<String>, StartupError> {
     if let Some(project) = project {
         if uuid::Uuid::parse_str(project).is_ok() {
-            return Ok(project.to_string());
+            return Ok(Some(project.to_string()));
         }
         let root = Path::new(project);
         let root = if root.is_absolute() {
@@ -453,22 +472,23 @@ pub fn resolve_project_at(
         } else {
             current_dir.join(root)
         };
-        return gobby_core::project::read_project_id(&root).map_err(|err| StartupError::Project {
-            search_dir: current_dir.display().to_string(),
-            detail: format!("failed to read project id from {}: {err}", root.display()),
-        });
+        return gobby_core::project::read_project_id(&root)
+            .map(Some)
+            .map_err(|err| StartupError::Project {
+                search_dir: current_dir.display().to_string(),
+                detail: format!("failed to read project id from {}: {err}", root.display()),
+            });
     }
 
-    let root = gobby_core::project::find_project_root(current_dir).ok_or_else(|| {
-        StartupError::Project {
+    let Some(root) = gobby_core::project::find_project_root(current_dir) else {
+        return Ok(None);
+    };
+    gobby_core::project::read_project_id(&root)
+        .map(Some)
+        .map_err(|err| StartupError::Project {
             search_dir: current_dir.display().to_string(),
-            detail: "no project root was found".into(),
-        }
-    })?;
-    gobby_core::project::read_project_id(&root).map_err(|err| StartupError::Project {
-        search_dir: current_dir.display().to_string(),
-        detail: format!("failed to read project id from {}: {err}", root.display()),
-    })
+            detail: format!("failed to read project id from {}: {err}", root.display()),
+        })
 }
 
 fn degraded_host(host: Option<&GtermHostState>) -> StartupError {

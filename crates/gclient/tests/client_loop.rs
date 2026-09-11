@@ -32,7 +32,7 @@ use gobby_client::persist::{
     load_snapshot, save_snapshot, LayoutNode, SplitAxis, TabSnapshot, WorkspaceSnapshot,
 };
 use gobby_client::prefs::{prefs_path, save_prefs};
-use gobby_client::startup::Ready;
+use gobby_client::startup::{initial_project, Ready};
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
 use gobby_client::ui::chrome::{Mode, Tab};
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
@@ -325,7 +325,7 @@ fn live_entry_connects_before_running() {
         Ready {
             daemon_url: "not a URL".to_string(),
             token: Some("test-token".to_string()),
-            project: "project-1".to_string(),
+            project: Some("project-1".to_string()),
             frame_delivery: gobby_client::FrameDelivery::Auto,
             host: None,
             host_notice: None,
@@ -333,6 +333,7 @@ fn live_entry_connects_before_running() {
             keymap: Keymap::defaults(HERDR_PREFIX),
             nested_tmux: false,
             gobby_home: std::path::PathBuf::new(),
+            launch_dir: std::path::PathBuf::new(),
         },
         &mut TerminalGuard::recording().0,
     );
@@ -1096,6 +1097,84 @@ async fn closing_a_pane_spares_an_external_tmux_session() {
         "the external pane left the tab"
     );
     assert!(workspace.pane(mine).is_observe(), "its lease was released");
+    mock.shutdown().await;
+}
+
+/// A start outside every checkout with nothing saved opens on the personal
+/// project: its empty snapshot seeds one shell tab, spawned for that
+/// project in the directory gclient was launched from.
+#[tokio::test]
+async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [
+                {"terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "backend": "native", "state": "live"}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("gobby home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.set_launch_dir(std::path::PathBuf::from("/home/me/notes"));
+    let project = initial_project(None, None);
+    workspace
+        .restore_project(&project)
+        .expect("restore the empty personal snapshot");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let creates = websocket_requests(&mock, "terminal_create");
+    assert_eq!(creates.len(), 1, "exactly one shell is seeded");
+    assert_eq!(
+        creates[0].get("project_id"),
+        Some(&json!(gobby_core::project::PERSONAL_PROJECT_ID)),
+        "the shell belongs to the personal project"
+    );
+    assert_eq!(
+        creates[0].get("cwd"),
+        Some(&json!("/home/me/notes")),
+        "the shell starts where gclient was launched"
+    );
+    assert_eq!(chrome.tabs().tabs.len(), 1, "one shell tab");
     mock.shutdown().await;
 }
 
