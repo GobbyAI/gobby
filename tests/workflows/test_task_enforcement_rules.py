@@ -389,6 +389,9 @@ class TestRequireTaskBeforeCommit:
             variables={
                 "require_task_before_edit": True,
                 "task_claimed": task_claimed,
+                # The whole bundled ruleset runs here; the code-review commit
+                # gate is satisfied so the verdict belongs to the task gate.
+                "loaded_skills": ["code-review"],
             },
         )
 

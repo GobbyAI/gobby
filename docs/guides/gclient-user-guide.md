@@ -109,8 +109,8 @@ then press the second key.
 
 The client detects tmux by asking the tmux server for its identity, not by the
 `TMUX` variable alone, so a stale variable does not switch prefixes. Inside tmux
-the outer tmux keeps `ctrl+b`, and the status line shows `prefix ctrl+]` as a
-reminder. Override either default with a `prefix = "..."` line in the keymap file
+the outer tmux keeps `ctrl+b`. The status line always names the active prefix
+(`prefix ctrl+b`, or `prefix ctrl+]` inside tmux). Override either default with a `prefix = "..."` line in the keymap file
 (see [Customising the keymap](#customising-the-keymap)).
 
 Pressing the prefix twice sends a literal prefix chord to the focused terminal.
@@ -196,7 +196,7 @@ the focused terminal.
 | `prefix+?` | Keybinding help | `help` |
 | `prefix+s` | Settings | `settings` |
 | `prefix+shift+r` | Reload `prefs.toml` and the keymap file | `reload_config` |
-| `prefix+q` | Detach: releases control of the focused terminal | `detach` |
+| `prefix+q` | Release control of the focused terminal (same as `release_control`; it does not exit) | `detach` |
 | `prefix+shift+q` | Quit the client | `quit` |
 
 `prefix+m` is reserved for a future command menu. It does nothing today and
@@ -209,13 +209,18 @@ fresh shell for the same project. Worktree rows
 in the sidebar open a tab whose shell starts in that worktree, or reveal the tab
 that already shows it.
 
-**Closing kills the terminal.** `close_pane`, `close_terminal`, and `close tab`
-ask the daemon to kill the terminal process. The terminal is not backgrounded and
-does not reappear in the sidebar; use `release_control` or `detach` if you only
-want to stop typing into it. Closing a tab kills every pane in it. With
-`confirm close` on (the default), closing a tab first opens a dialog that names
-the tab and counts its panes; `y` or `enter` confirms, `n` or `esc` cancels. If
-the daemon refuses the kill, the pane stays.
+**Closing kills gobby's terminals, not yours.** `close_pane`, `close_terminal`,
+and `close tab` ask the daemon to kill a terminal gobby started. The terminal is
+not backgrounded and does not reappear in the sidebar; use `release_control` or
+`detach` if you only want to stop typing into it. A tmux session you started
+yourself (the sidebar lists it because the daemon found it, ownership
+`external`) is never killed by `close_pane` or `close tab`: the pane leaves the
+tab, its control lease is released, and the session stays in the sidebar to
+reopen later. Only `close_terminal` kills an external session. Closing a tab
+kills every gobby-owned pane in it. With `confirm close` on (the default),
+closing a tab first opens a dialog that names the tab and counts its panes; `y`
+or `enter` confirms, `n` or `esc` cancels. If the daemon refuses the kill, the
+pane stays.
 
 Renames apply locally: a tab name, a pane name, or a project label is yours and
 does not change the daemon's terminal title.
@@ -229,15 +234,17 @@ title.
 | Indicator | Meaning |
 | --- | --- |
 | `● held` | You hold the lease. Keys, pastes, and mouse reports go to the terminal. |
-| `○ observe` | You are watching. Input is not sent. |
+| `○ observe` | You are watching; the first keystroke takes control and is delivered once the lease is granted. |
 | `▲ take-back` | Someone else holds the lease. `prefix+shift+a` or the indicator asks for it back. |
-| `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. |
-| `◌ read-only` | A write's outcome is unknown after a disconnect. Take control again to continue. |
+| `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. Typing is refused until you take control again. |
+| `◌ read-only` | A write's outcome is unknown after a disconnect. Typing is refused; take control again to continue. |
 
 Focusing a pane takes control of it automatically, whether you focus it by
 keyboard, by click, or through the navigator. Typing into an observed pane also
 requests control first and delivers the pending keystrokes once the lease is
-granted. To look at a pane without taking it, `alt+click` it.
+granted; keys typed while that request is still pending are dropped, and the
+status line says `acquiring control`. To look at a pane without taking it,
+`alt+click` it.
 
 `prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
 take: the pane then shows `▲ take-back` and the reason lands in the status line.
@@ -246,11 +253,13 @@ terminals keep running.
 
 ## Attention prompts and respond
 
-When an agent blocks on a question, its sidebar row turns `blocked`. `prefix+a`
-opens the respond dialog for the first actionable prompt among the focused
-project's agents; clicking a blocked row, or choosing *respond* from its
-right-click menu, opens it for that row. The dialog shows the prompt and either
-its options or a free-text field:
+When an agent blocks on a question, its sidebar row turns `blocked`. Clicking
+the row focuses its terminal, where the question is already on screen; answer
+it there like any other input. `prefix+a` opens the respond dialog for the
+first actionable prompt among the focused project's agents, and *respond* in a
+blocked row's right-click menu opens it for that row. The dialog grows with the
+terminal (64 to 120 columns), shows every line of the prompt up to twelve, and
+offers either its options or a free-text field:
 
 - `up` / `down` pick an option, `enter` submits it.
 - With no options, type your answer, `backspace` edits, `enter` submits.
@@ -382,7 +391,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Click a project card / worktree row | Focus the project / open the worktree |
 | Drag a project card | Reorder projects |
 | Click a `▸`/`▾` toggle | Fold or unfold the card's worktrees |
-| Click an agent row | Focus its pane, or open the respond dialog when it is blocked |
+| Click an agent row | Focus its pane (a blocked row's question is already on screen) |
 | Click the control indicator | Take, release, or take back control |
 | Drag the sidebar edge, the section rule, or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |
@@ -402,7 +411,7 @@ to keep a gesture for the client instead.
 | Project card | rename, close, new worktree, open worktree…, collapse / expand |
 | Worktree row | rename, close, delete worktree checkout… |
 | Agent row | focus, open in new tab, respond (when blocked), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
-| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach |
+| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane

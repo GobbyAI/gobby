@@ -1216,12 +1216,13 @@ switch_project = "ctrl+1..9"
                     // naming its wait (2.3), again when the sidebar became
                     // project cards over agent rows (3.1), and again when the
                     // agents header gained its sort label over two-line rows
-                    // (3.2): 4.1.3 requires a glyph change to fail here, so
-                    // this digest moves only alongside a deliberate render
-                    // change.
+                    // (3.2), and again when the status line began naming the
+                    // prefix outside tmux: 4.1.3 requires a glyph change to
+                    // fail here, so this digest moves only alongside a
+                    // deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "c8f8ba66c0c2e11f2a093961b77e18f850ec46fca39edf5c99c75c94fcfb207a"
+                        "0149ac6b1f2d2d5f0bff10afd98f8b060f737b4539287b891d767f5815d7898d"
                     );
                 });
         }

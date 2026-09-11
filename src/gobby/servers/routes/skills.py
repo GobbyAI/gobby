@@ -670,7 +670,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(status_code=404, detail="Skill not found") from None
             purge = skill.deleted_at is not None
             result = (
-                server.skill_manager.hard_delete_skill(skill_id)
+                server.skill_manager.hard_delete(skill_id)
                 if purge
                 else server.skill_manager.delete_skill(skill_id)
             )

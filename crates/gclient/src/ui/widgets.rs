@@ -183,13 +183,16 @@ pub fn render_action_button(
     );
 }
 
+/// The wrapped description paragraph a modal draws under its header; callers
+/// that size a popup to the text measure this same paragraph.
+pub fn modal_description(text: &str, style: Style) -> Paragraph<'static> {
+    Paragraph::new(format!(" {text}"))
+        .style(style)
+        .wrap(Wrap { trim: false })
+}
+
 pub fn render_modal_description(frame: &mut Frame, area: Rect, text: &str, style: Style) {
-    frame.render_widget(
-        Paragraph::new(format!(" {text}"))
-            .style(style)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(modal_description(text, style), area);
 }
 
 pub fn modal_choice_rows(area: Rect, count: usize, row_height: u16) -> Vec<Rect> {

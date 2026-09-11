@@ -350,13 +350,12 @@ pub fn render_status_line<W: WorkspaceView>(
     if let Some(name) = mode_name(chrome.mode) {
         spans.push(Span::styled(format!(" │ {name}"), base.fg(p.accent)));
     }
-    if chrome.nested_tmux {
-        // The outer tmux owns ctrl+b, so say which chord is the prefix here.
-        spans.push(Span::styled(
-            format!(" │ prefix {}", chrome.keymap.prefix_label),
-            base.fg(p.subtext0),
-        ));
-    }
+    // The prefix is the way into every chord, quit included, so the status
+    // line always names it; under an outer tmux it is the shifted chord.
+    spans.push(Span::styled(
+        format!(" │ prefix {}", chrome.keymap.prefix_label),
+        base.fg(p.subtext0),
+    ));
     if !ws.daemon_ready() {
         spans.push(Span::styled(" │ daemon unreachable", base.fg(p.red)));
     }
@@ -436,11 +435,11 @@ mod tests {
         }
         assert!(!text.contains('!'));
         assert!(
-            !text.contains("prefix"),
-            "no prefix cue outside tmux: {text}"
+            text.contains("│ prefix ctrl+b"),
+            "status lacks the prefix cue: {text}"
         );
 
-        // Under an outer tmux the shifted prefix is named.
+        // Under an outer tmux the shifted prefix is named instead.
         chrome.nested_tmux = true;
         chrome.keymap = Keymap::defaults(default_prefix(true));
         terminal

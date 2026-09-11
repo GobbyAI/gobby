@@ -868,18 +868,18 @@ class TestDeleteSkill:
         assert response.json() == {"deleted": True, "purged": False, "id": "1"}
         skill_manager.get_skill.assert_called_once_with("1", include_deleted=True)
         skill_manager.delete_skill.assert_called_once_with("1")
-        skill_manager.hard_delete_skill.assert_not_called()
+        skill_manager.hard_delete.assert_not_called()
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_deleted", "1")
 
     def test_delete_soft_deleted_skill_purges(
         self, client: TestClient, skill_manager: MagicMock, websocket_server: MagicMock
     ) -> None:
         skill_manager.get_skill.return_value = MagicMock(deleted_at="2026-07-28T00:00:00+00:00")
-        skill_manager.hard_delete_skill.return_value = True
+        skill_manager.hard_delete.return_value = True
         response = client.delete("/api/skills/1")
         assert response.status_code == 200
         assert response.json() == {"deleted": True, "purged": True, "id": "1"}
-        skill_manager.hard_delete_skill.assert_called_once_with("1")
+        skill_manager.hard_delete.assert_called_once_with("1")
         skill_manager.delete_skill.assert_not_called()
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_deleted", "1")
 

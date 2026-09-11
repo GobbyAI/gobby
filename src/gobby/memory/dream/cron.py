@@ -56,7 +56,7 @@ class CronRegistrationProtocol(Protocol):
 
 
 def reconcile_interrupted_dream_runs(
-    memory_manager: MemoryDreamManagerProtocol, *, report_project_id: str | None = None
+    memory_manager: MemoryDreamManagerProtocol,
 ) -> list[str]:
     """Mark dream runs orphaned by a daemon restart as 'interrupted'.
 
@@ -66,7 +66,7 @@ def reconcile_interrupted_dream_runs(
     that orphans are cleaned up even after the feature is turned off. Returns the
     reconciled run IDs.
     """
-    store = MemoryDreamStore(memory_manager.db, report_project_id=report_project_id)
+    store = MemoryDreamStore(memory_manager.db)
     return store.mark_interrupted_runs()
 
 
@@ -82,7 +82,7 @@ def register_memory_dream_cron(
     if not dream_config.enabled:
         existing = cron_storage.get_job_by_name(MEMORY_DREAM_CRON_JOB_NAME)
         if existing and existing.enabled:
-            updated = cron_storage.update_job(existing.id, enabled=False, next_run_at=None)
+            updated = cron_storage.update_job(existing.id, enabled=False)
             if updated is None:
                 logger.warning(
                     "System cron job already disappeared during disable: %s",
@@ -118,8 +118,6 @@ def register_memory_dream_cron(
                 return f"memory dream skipped: active run {conflict.get('run_id')}"
             raise RuntimeError(str(started.get("error", "memory dream admission failed")))
         result = await service.execute_all_due_projects_run(str(started["run_id"]), dry_run=False)
-        if not result.get("success"):
-            raise RuntimeError("memory dream failed for all targets")
         aggregate = result.get("aggregate") or {}
         completed = int(aggregate.get("completed", 0))
         mutations = int(aggregate.get("mutations", 0))
@@ -130,7 +128,20 @@ def register_memory_dream_cron(
         # exhaustion, one WARNING for dependency failure) — report, don't warn.
         if stop_reason != "drained":
             tail += f", stopped: {stop_reason}"
-        return f"memory dream: {completed} target(s), {mutations} mutation(s) total{tail}"
+        summary = (result.get("run") or {}).get("summary") or {}
+        counts = ", ".join(
+            f"{int(aggregate.get(key, 0))} {key}" for key in ("noops", "skipped", "errors")
+        )
+        output = (
+            f"memory dream: {completed} target(s), {mutations} mutation(s) total{tail}; {counts}"
+        )
+        for scope in summary.get("scope_summaries", []):
+            output += f"\n{scope['scope']} ({scope['status']}): {scope['narrative'] or 'No narrative recorded.'}"
+            if scope.get("error"):
+                output += f" Error: {scope['error']}"
+        if not result.get("success"):
+            raise RuntimeError(output)
+        return output
 
     cron_executor.register_handler(MEMORY_DREAM_CRON_HANDLER, _handler)
     _ensure_system_job(cron_storage, dream_config, project_id)

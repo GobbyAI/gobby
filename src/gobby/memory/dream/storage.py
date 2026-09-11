@@ -17,6 +17,5 @@ class MemoryDreamStore(
 ):
     """Store memory dream runs and exact mutation snapshots."""
 
-    def __init__(self, db: HubDatabase, *, report_project_id: str | None = None) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
-        self.report_project_id = report_project_id

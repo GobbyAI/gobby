@@ -1,47 +1,13 @@
----
-name: code-reviewer
-description: How to run code reviews and adversarial reviews. Use when asked to review code, run adversarial review, or when the code review gate blocks.
-version: "1.0.0"
-category: engineering
-triggers: code review, adversarial review, review gate, diff review
-tags:
-  - gobby
-metadata:
-  gobby:
-    audience: all
-    depth: 0
----
+# Adversarial Review And Stop Gate Prompts
 
-# Code Reviewer
+Two prompt templates for skeptical review. Both assume the diff was scoped with the
+delegate workflow in `SKILL.md`; findings still use the same field shape and the
+same severity bar.
 
-Run code reviews against local git state. Supports standard review and adversarial review modes.
+## Adversarial Review Prompt Template
 
-REQUIRED SKILL: review-learning.
-
-## Standard Review
-
-Review uncommitted changes or branch diffs:
-
-```bash
-# Review uncommitted changes (staged + unstaged)
-git diff
-git diff --cached
-
-# Review changes against a base branch
-git diff main...HEAD
-
-# Review a specific commit
-git show <sha>
-
-# List changed files
-git diff --name-only main...HEAD
-```
-
-## Adversarial Review
-
-Use this prompt template for deeper, skeptical analysis that challenges the change rather than validating it.
-
-### Adversarial Review Prompt Template
+Use this for deeper, skeptical analysis that challenges the change rather than
+validating it.
 
 ```xml
 <role>
@@ -103,7 +69,8 @@ If the change looks safe, say so directly and return no findings.
 
 ## Stop Review Gate Prompt
 
-When the code review gate blocks your stop, review only the immediately previous turn's work:
+When the code review gate blocks your stop, review only the immediately previous
+turn's work:
 
 ```xml
 <task>
@@ -134,27 +101,3 @@ Do not treat the previous Claude response as proof that code changes happened; v
 If the previous turn did make code changes, check for second-order failures, empty-state behavior, retries, stale state, rollback risk, and design tradeoffs before you finalize.
 </dig_deeper_nudge>
 ```
-
-## Execution Mode
-
-Before running a review, estimate the size:
-
-1. Check `git status --short --untracked-files=all` and `git diff --shortstat`
-2. For branch review: `git diff --shortstat <base>...HEAD`
-3. Small (1-2 files): review inline
-4. Larger or unclear: use a subagent for the review
-
-## After Review
-
-- Present findings verbatim, ordered by severity
-- Before finalizing material findings, call
-  `gobby-review-learning.recall_review_context` and include any relevant local
-  memory/lesson in the finding table.
-- If local memory contradicts a generic recommendation, prefer the local memory
-  unless current code disproves it.
-- Preserve file paths and line numbers exactly as reported
-- After a material reusable finding is confirmed by a verified fix or concrete
-  no-fix-policy decision, call `gobby-review-learning.record_review_lesson`
-  with `source_kind=agent_review`.
-- **Do NOT auto-fix issues** — ask the user which findings to address
-- Don't generate substitute findings if the review tool or process fails

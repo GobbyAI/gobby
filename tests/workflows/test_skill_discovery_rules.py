@@ -104,6 +104,7 @@ SKILL_DISCOVERY_RULES = {
     "list-skill-hubs-once-per-session",
     "require-bash-skill",
     "require-c-skill",
+    "require-code-review-skill",
     "require-cpp-skill",
     "require-csharp-skill",
     "require-dart-skill",
@@ -131,7 +132,8 @@ LANGUAGE_SKILL_RULES = {
     rule_name
     for rule_name in SKILL_DISCOVERY_RULES
     if rule_name.startswith("require-")
-    and rule_name not in {"require-impeccable-skill", "require-plan-skill"}
+    and rule_name
+    not in {"require-code-review-skill", "require-impeccable-skill", "require-plan-skill"}
 }
 
 REPLACED_SKILL_RULES = {

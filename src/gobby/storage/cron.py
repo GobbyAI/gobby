@@ -23,7 +23,9 @@ from gobby.utils.datetime import parse_stored_datetime, resolve_local_timezone, 
 
 logger = logging.getLogger(__name__)
 
-REMOVED_AUTOMATION_JOB_NAMES = frozenset({"gobby:dispatcher", "gobby:pipeline-heartbeat"})
+REMOVED_AUTOMATION_JOB_NAMES = frozenset(
+    {"gobby:dispatcher", "gobby:pipeline-heartbeat", "synthesis-reports"}
+)
 CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
 # Per-project automation whose handlers were retired; rows are kept dormant
 # until their inventoried retirement; they must never list, dispatch, or re-enable.
@@ -684,7 +686,8 @@ class CronJobStorage(CronRunStorageMixin):
 
     def delete_removed_automation_jobs(self) -> int:
         """Delete stale bundled automation cron rows that no longer have executors."""
-        names = tuple(REMOVED_AUTOMATION_JOB_NAMES)
+        # Synthesis publication retains its cron history as well as its drafts.
+        names = tuple(REMOVED_AUTOMATION_JOB_NAMES - {"synthesis-reports"})
         if not names:
             return 0
         placeholders = ", ".join(["%s"] * len(names))

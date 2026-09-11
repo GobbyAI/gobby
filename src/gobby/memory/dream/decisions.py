@@ -97,7 +97,7 @@ class DreamDecisionStore:
                 if isinstance(item[key], str):
                     item[key] = json.loads(item[key])
             decisions.append(item)
-        return {
+        evidence = {
             "run_id": run_id,
             "decisions": decisions,
             "next_offset": offset + limit if len(rows) > limit else None,
@@ -107,6 +107,14 @@ class DreamDecisionStore:
             )
             is None,
         }
+        if evidence["historical_rationale_missing"]:
+            snapshots = self.db.fetchall(
+                "SELECT * FROM memory_dream_snapshots WHERE run_id = %s ORDER BY id LIMIT %s OFFSET %s",
+                (run_id, limit + 1, offset),
+            )
+            evidence["snapshots"] = [dict(row) for row in snapshots[:limit]]
+            evidence["next_offset"] = offset + limit if len(snapshots) > limit else None
+        return evidence
 
     def interrupt_pending(self, run_id: str) -> None:
         self.db.execute(

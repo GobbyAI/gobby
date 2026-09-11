@@ -12,7 +12,7 @@ use crate::startup::load_keymap;
 use crate::ui::chrome::attention_pane;
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
-use crate::ui::sidebar::{agent_blocked, attention_order, next_machine_filter};
+use crate::ui::sidebar::{attention_order, next_machine_filter};
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, project_rows, RowKind};
 use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
@@ -103,12 +103,6 @@ pub(super) async fn apply_live_mouse_outcome(
         MouseOutcome::Scroll { pane, rows } => {
             set_live_scroll_offset(workspace, pane, rows).await?;
         }
-        MouseOutcome::Attention { pane, entry_id } => {
-            if let Some(pane) = pane {
-                focus_live_pane(workspace, pane).await?;
-            }
-            open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
-        }
         MouseOutcome::Copy => {
             let mut output = std::io::stdout();
             copy_selection(workspace, chrome, &mut output)?;
@@ -162,7 +156,8 @@ pub(super) async fn apply_live_modal_outcome(
         ModalOutcome::Action(Action::Quit) => return Ok(true),
         ModalOutcome::Action(action) => handle_live_action(workspace, chrome, action).await?,
         ModalOutcome::Confirm(CloseTarget::Tab) => close_live_tab(workspace, chrome).await?,
-        ModalOutcome::Confirm(CloseTarget::Pane | CloseTarget::Terminal) => {
+        ModalOutcome::Confirm(CloseTarget::Pane) => close_live_pane(workspace, chrome).await?,
+        ModalOutcome::Confirm(CloseTarget::Terminal) => {
             if let Some(pane) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane).await?;
                 sync_live_chrome(workspace, chrome);
@@ -314,12 +309,13 @@ pub(super) async fn handle_live_action(
         }
         Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
         Action::NewProject => open_new_project_dialog(chrome),
-        Action::CloseTerminal | Action::ClosePane => {
+        Action::CloseTerminal => {
             if let Some(pane_id) = chrome.focused_pane() {
                 terminate_live_terminal(workspace, pane_id).await?;
                 sync_live_chrome(workspace, chrome);
             }
         }
+        Action::ClosePane => close_live_pane(workspace, chrome).await?,
         Action::CloseTab => {
             let Some((title, panes)) = chrome
                 .active_tab()
@@ -613,8 +609,29 @@ pub(super) fn open_live_rename(chrome: &mut Chrome, kind: RenameKind, value: Str
     chrome.mode = Mode::Rename;
 }
 
-/// Terminate every pane of the active tab; `sync_live_chrome` then drops
-/// the emptied tab.
+/// Close the focused pane: a gobby-owned terminal is killed and reaped;
+/// an external tmux session only leaves the tab (its lease released) and
+/// stays in the sidebar.
+pub(super) async fn close_live_pane(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+) -> Result<(), FrameError> {
+    let Some(pane_id) = chrome.focused_pane() else {
+        return Ok(());
+    };
+    if workspace.pane(pane_id).external {
+        release_live_control(workspace, pane_id).await?;
+        chrome.close_focused();
+        return Ok(());
+    }
+    terminate_live_terminal(workspace, pane_id).await?;
+    sync_live_chrome(workspace, chrome);
+    Ok(())
+}
+
+/// Close the active tab: its gobby-owned panes are terminated, its
+/// external tmux sessions only release their lease and stay in the
+/// sidebar, and the tab itself goes.
 pub(super) async fn close_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -624,7 +641,15 @@ pub(super) async fn close_live_tab(
         .map(|tab| tab.slots.values().copied().collect())
         .unwrap_or_default();
     for pane_id in panes {
-        terminate_live_terminal(workspace, pane_id).await?;
+        if workspace.pane(pane_id).external {
+            release_live_control(workspace, pane_id).await?;
+        } else {
+            terminate_live_terminal(workspace, pane_id).await?;
+        }
+    }
+    let set = chrome.tabs_mut();
+    if set.active_tab < set.tabs.len() {
+        set.tabs.remove(set.active_tab);
     }
     sync_live_chrome(workspace, chrome);
     Ok(())
@@ -663,11 +688,9 @@ async fn jump_live_attention(
     chrome: &mut Chrome,
     entry_id: &str,
 ) -> Result<(), FrameError> {
+    // The terminal already shows the question, so a jump only reveals it.
     if let Some(pane_id) = attention_pane(&*workspace, entry_id) {
         focus_live_shown_pane(workspace, chrome, pane_id).await?;
-    }
-    if agent_blocked(&*workspace, entry_id) {
-        open_response_dialog(workspace, chrome, Some(entry_id)).await?;
     }
     Ok(())
 }

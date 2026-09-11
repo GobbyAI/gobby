@@ -89,9 +89,13 @@ def test_impeccable_templates_sync_enabled(impeccable_db: HubDatabase) -> None:
     assert edit_command.command == ["node"]
     assert edit_command.skill == "impeccable"
     assert edit_command.script == "hook.mjs"
+    assert edit_command.timeout_seconds == 5.0
+    assert edit_command.background is False
     assert deep_command.command == ["node"]
     assert deep_command.skill == "impeccable"
     assert deep_command.script == "hook.mjs"
+    assert deep_command.timeout_seconds == 30.0
+    assert deep_command.background is True
     assert deep_definition.when == "variables.get('impeccable_ui_edited_this_turn', False)"
 
 
@@ -193,7 +197,7 @@ async def test_deep_detector_schedules_for_supported_sources(
 ) -> None:
     engine = RuleEngine(impeccable_db)
     variables: dict[str, object] = {}
-    with patch("gobby.workflows.engine.effects.create_background_task") as create_task:
+    with patch("gobby.workflows.engine.run_command_effects.create_background_task") as create_task:
         skipped = await engine.evaluate(
             _event(source, HookEventType.STOP),
             session_id=SESSION_ID,

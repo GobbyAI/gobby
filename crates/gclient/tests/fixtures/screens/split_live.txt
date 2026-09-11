@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*1 -/panel_bg*45 overlay0/panel_bg*1 accent/panel_bg*1 -/panel_bg*45 accent/panel_bg*1
 38 |                         │└─────────────────────────────────────────────┘└─────────────────────────────────────────────┘|
 38 : -/panel_bg*25 surface_dim/panel_bg*1 overlay0/panel_bg*47 accent/panel_bg*47
-39 |                        «│ [○ observe] │ term-beta │ proxy                                                              |
-39 : -/panel_bg*24 overlay0/panel_bg*1 surface_dim/panel_bg*1 subtext0/surface_dim+b*12 text/surface_dim*12 subtext0/surface_dim*8 -/surface_dim*62
+39 |                        «│ [○ observe] │ term-beta │ proxy │ prefix ctrl+b                                              |
+39 : -/panel_bg*24 overlay0/panel_bg*1 surface_dim/panel_bg*1 subtext0/surface_dim+b*12 text/surface_dim*12 subtext0/surface_dim*24 -/surface_dim*46

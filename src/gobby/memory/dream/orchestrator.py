@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from typing import Any
 
@@ -96,6 +96,20 @@ class SweepTotals:
     planner_errors: list[str] = field(default_factory=list)
     action_sample: list[dict[str, Any]] = field(default_factory=list)
     reconcile: dict[str, Any] | None = None
+    narrative: str = ""
+
+    @classmethod
+    def restore(cls, value: Any) -> SweepTotals:
+        totals = cls()
+        if isinstance(value, dict):
+            for item in fields(totals):
+                stored = value.get(item.name)
+                if isinstance(stored, type(getattr(totals, item.name))):
+                    setattr(totals, item.name, stored)
+        from gobby.memory.dream.planner import normalize_summary
+
+        totals.narrative = normalize_summary(totals.narrative)
+        return totals
 
     def add_page(
         self,
@@ -105,6 +119,9 @@ class SweepTotals:
         raw_plan_metadata: dict[str, Any],
     ) -> None:
         self.candidates_reviewed += candidate_count
+        from gobby.memory.dream.planner import normalize_summary
+
+        self.narrative = normalize_summary(raw_plan_metadata.get("narrative")) or self.narrative
         self.pages += 1
         self.mutations += int(page_summary.get("mutations", 0))
         self.snapshots += int(page_summary.get("snapshots", 0))
@@ -128,6 +145,7 @@ class SweepTotals:
     def to_summary(self) -> dict[str, Any]:
         summary: dict[str, Any] = {
             "dry_run": False,
+            "narrative": self.narrative,
             "actions": dict(self.action_counts),
             "mutations": self.mutations,
             "snapshots": self.snapshots,
@@ -446,6 +464,7 @@ class DreamSweepOrchestrator:
             project_id=self.options.project_id,
             skip_consolidation=self.options.skip_consolidation,
             truth_digest=self.truth_digest,
+            previous_summary=self.totals.narrative,
         )
         raw_plan_metadata = _decode_raw_plan_metadata(raw_plan)
         planner_errors = raw_plan_metadata.get("planner_errors") or []
@@ -493,7 +512,12 @@ class DreamSweepOrchestrator:
         )
 
     async def _persist_checkpoint(self, checkpoint: DreamCheckpoint) -> None:
-        await asyncio.to_thread(self.store.update_run, self.run_id, checkpoint=checkpoint.to_dict())
+        await asyncio.to_thread(
+            self.store.update_run,
+            self.run_id,
+            checkpoint={**checkpoint.to_dict(), "totals": asdict(self.totals)},
+            summary={**self.totals.to_summary(), "dry_run": self.options.dry_run},
+        )
 
     async def _reconcile(self, totals: SweepTotals) -> None:
         try:

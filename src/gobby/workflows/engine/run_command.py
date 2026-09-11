@@ -158,12 +158,16 @@ async def execute_run_command(
     """Run a command with capped concurrent output reads and deterministic cleanup."""
     started = time.perf_counter()
     subprocess_environment = os.environ.copy()
+    process: asyncio.subprocess.Process | None = None
+    tasks: list[asyncio.Task[object]] = []
+    byte_counts: dict[Literal["stdout", "stderr"], int] = {"stdout": 0, "stderr": 0}
     if environment:
         subprocess_environment.update(environment)
 
-    async def spawn() -> asyncio.subprocess.Process:
+    async def spawn() -> None:
+        nonlocal process
         spawn_command = command_factory() if command_factory is not None else command
-        return await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             *spawn_command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -173,46 +177,55 @@ async def execute_run_command(
         )
 
     try:
-        if spawn_guard is None:
-            process = await spawn()
-        else:
-            async with spawn_guard:
-                process = await spawn()
-    except (OSError, ValueError):
-        return _result(
-            "spawn_error",
-            started=started,
-            timeout_seconds=timeout_seconds,
-            background=background,
-        )
+        async with asyncio.timeout(timeout_seconds):
+            try:
+                if spawn_guard is None:
+                    await spawn()
+                else:
+                    async with spawn_guard:
+                        await spawn()
+            except (OSError, ValueError):
+                return _result(
+                    "spawn_error",
+                    started=started,
+                    timeout_seconds=timeout_seconds,
+                    background=background,
+                )
 
-    if process.stdin is None or process.stdout is None or process.stderr is None:
-        await _kill_and_reap(process, [])
-        return _result(
-            "spawn_error",
-            started=started,
-            timeout_seconds=timeout_seconds,
-            background=background,
-        )
+            if (
+                process is None
+                or process.stdin is None
+                or process.stdout is None
+                or process.stderr is None
+            ):
+                if process is not None:
+                    await _kill_and_reap(process, tasks)
+                return _result(
+                    "spawn_error",
+                    started=started,
+                    timeout_seconds=timeout_seconds,
+                    background=background,
+                )
 
-    byte_counts: dict[Literal["stdout", "stderr"], int] = {"stdout": 0, "stderr": 0}
-    stdout_task = asyncio.create_task(
-        _read_capped(process.stdout, STDOUT_LIMIT_BYTES, "stdout", byte_counts)
-    )
-    stderr_task = asyncio.create_task(
-        _read_capped(process.stderr, STDERR_LIMIT_BYTES, "stderr", byte_counts)
-    )
-    tasks: list[asyncio.Task[object]] = [
-        cast(asyncio.Task[object], asyncio.create_task(_write_stdin(process.stdin, stdin_payload))),
-        cast(asyncio.Task[object], stdout_task),
-        cast(asyncio.Task[object], stderr_task),
-        cast(asyncio.Task[object], asyncio.create_task(process.wait())),
-    ]
-
-    try:
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout_seconds)
+            stdout_task = asyncio.create_task(
+                _read_capped(process.stdout, STDOUT_LIMIT_BYTES, "stdout", byte_counts)
+            )
+            stderr_task = asyncio.create_task(
+                _read_capped(process.stderr, STDERR_LIMIT_BYTES, "stderr", byte_counts)
+            )
+            tasks = [
+                cast(
+                    asyncio.Task[object],
+                    asyncio.create_task(_write_stdin(process.stdin, stdin_payload)),
+                ),
+                cast(asyncio.Task[object], stdout_task),
+                cast(asyncio.Task[object], stderr_task),
+                cast(asyncio.Task[object], asyncio.create_task(process.wait())),
+            ]
+            await asyncio.gather(*tasks)
     except TimeoutError:
-        await _kill_and_reap(process, tasks)
+        if process is not None:
+            await _kill_and_reap(process, tasks)
         return _result(
             "timeout",
             started=started,
@@ -221,8 +234,13 @@ async def execute_run_command(
             stdout_bytes=byte_counts["stdout"],
             stderr_bytes=byte_counts["stderr"],
         )
+    except asyncio.CancelledError:
+        if process is not None:
+            await _kill_and_reap(process, tasks)
+        raise
     except _StreamOverflow as exc:
-        await _kill_and_reap(process, tasks)
+        if process is not None:
+            await _kill_and_reap(process, tasks)
         return _result(
             "output_limit",
             started=started,
@@ -233,7 +251,8 @@ async def execute_run_command(
             overflow_stream=exc.stream,
         )
     except (BrokenPipeError, ConnectionResetError, OSError):
-        await _kill_and_reap(process, tasks)
+        if process is not None:
+            await _kill_and_reap(process, tasks)
         return _result(
             "spawn_error",
             started=started,
@@ -243,7 +262,8 @@ async def execute_run_command(
             stderr_bytes=byte_counts["stderr"],
         )
     except Exception:
-        await _kill_and_reap(process, tasks)
+        if process is not None:
+            await _kill_and_reap(process, tasks)
         return _result(
             "spawn_error",
             started=started,

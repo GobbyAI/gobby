@@ -635,13 +635,13 @@ async fn route_live_input(
                     chrome.focused_pane(),
                     key_to_bytes_with_protocol(input.key, KeyboardProtocol::Legacy),
                 ) {
-                    send_live_input(workspace, pane_id, &bytes).await?;
+                    send_live_input(workspace, chrome, pane_id, &bytes).await?;
                 }
             }
         }
     } else if let Some(bytes) = text_bytes(event) {
         if let Some(pane_id) = chrome.focused_pane() {
-            send_live_input(workspace, pane_id, &bytes).await?;
+            send_live_input(workspace, chrome, pane_id, &bytes).await?;
         }
     }
     Ok(false)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -46,7 +46,6 @@ class FeedbackReviewRun:
     created_at: datetime
     completed_at: datetime | None
     observations: list[dict[str, Any]] = field(default_factory=list)
-    publication: dict[str, Any] = field(default_factory=dict)
 
 
 _ROW_COLUMNS = (
@@ -62,9 +61,8 @@ _RUN_COLUMNS = (
 class FeedbackReviewStore:
     """Hub-transaction storage for the session-feedback review loop."""
 
-    def __init__(self, db: HubDatabase, *, report_project_id: str | None = None) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
-        self.report_project_id = report_project_id
 
     def freeze_batch(self, limit: int, *, dry_run: bool) -> tuple[str, list[FeedbackRow]] | None:
         """Admit one review and freeze exactly its inputs before launching a reader."""
@@ -206,8 +204,6 @@ class FeedbackReviewStore:
         error: str | None = None,
     ) -> None:
         """Move a run to a terminal status with its outputs."""
-        if self.report_project_id is not None:
-            actions = {**(actions or {}), "report_project_id": self.report_project_id}
         self.db.execute(
             """
             UPDATE feedback_review_runs
@@ -217,10 +213,6 @@ class FeedbackReviewStore:
             """,
             (status, _json(findings), _json(actions), digest_md, error, _now(), run_id),
         )
-        if self.report_project_id is not None:
-            from gobby.reports.storage import queue_terminal_report
-
-            queue_terminal_report(self.db, "feedback", run_id, self.report_project_id)
 
     def mark_running_interrupted(self) -> int:
         """Finalize orphaned running runs as interrupted.
@@ -233,18 +225,10 @@ class FeedbackReviewStore:
             result = conn.execute(
                 """
                 UPDATE feedback_review_runs
-                SET status = 'interrupted', completed_at = %s,
-                    actions = COALESCE(actions, '{}'::jsonb) || %s::jsonb
+                SET status = 'interrupted', completed_at = %s
                 WHERE status = 'running'
                 """,
-                (
-                    _now(),
-                    json.dumps(
-                        {"report_project_id": self.report_project_id}
-                        if self.report_project_id
-                        else {}
-                    ),
-                ),
+                (_now(),),
             )
             return int(result.rowcount or 0)
 
@@ -268,19 +252,13 @@ class FeedbackReviewStore:
             f"SELECT {_RUN_COLUMNS} FROM feedback_review_runs WHERE id = %s",
             (run_id,),
         )
-        return self._with_publication(_run_from_row(row)) if row else None
+        return _run_from_row(row) if row else None
 
     def latest_run(self) -> FeedbackReviewRun | None:
         row = self.db.fetchone(
             f"SELECT {_RUN_COLUMNS} FROM feedback_review_runs ORDER BY created_at DESC LIMIT 1"
         )
-        return self._with_publication(_run_from_row(row)) if row else None
-
-    def _with_publication(self, run: FeedbackReviewRun) -> FeedbackReviewRun:
-        from gobby.reports.storage import ReportStore
-
-        publication = ReportStore(self.db).get("feedback", run.id, include_content=False)
-        return replace(run, publication=publication)
+        return _run_from_row(row) if row else None
 
 
 def _run_from_row(row: Any) -> FeedbackReviewRun:

@@ -5,6 +5,7 @@ from typing import Any
 DREAM_ACTIONS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "summary": {"type": "string"},
         "actions": {
             "type": "array",
             "items": {
@@ -27,7 +28,7 @@ DREAM_ACTIONS_SCHEMA: dict[str, Any] = {
                 "required": ["action", "memory_id", "reason", "confidence"],
                 "additionalProperties": False,
             },
-        }
+        },
     },
     "required": ["actions"],
     "additionalProperties": False,

@@ -100,12 +100,6 @@ pub enum MouseOutcome {
     /// Scroll `pane`'s viewport to `rows` above the live edge; the loop sends
     /// `SetScrollOffset` on the pane's frame source.
     Scroll { pane: PaneId, rows: u32 },
-    /// An attention row was clicked: focus `pane` when the entry maps to one,
-    /// then open the response dialog for `entry_id`.
-    Attention {
-        pane: Option<PaneId>,
-        entry_id: String,
-    },
     /// A project card was clicked: make it the focused project.
     FocusProject(String),
     /// A worktree row was clicked: focus its project and open a shell there,
