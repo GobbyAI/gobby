@@ -32,6 +32,7 @@ from gobby.hooks.inbox import (
     _quarantine_file,
     drain_hook_inbox_barrier,
     drain_hook_inbox_once,
+    get_hook_quarantine_dir,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.storage import workspace_machine_scope
@@ -394,7 +395,7 @@ def test_response_less_mark_preserves_existing_terminal_response(tmp_path: Path)
 async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_path: Path) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)
-    envelope = {
+    envelope: dict[str, Any] = {
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
@@ -445,7 +446,7 @@ async def test_drain_hook_inbox_skips_already_processed_envelope(
 ) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)
-    envelope = {
+    envelope: dict[str, Any] = {
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
@@ -601,7 +602,7 @@ async def test_drain_hook_inbox_keeps_failed_replay_files(
 ) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)
-    envelope = {
+    envelope: dict[str, Any] = {
         "schema_version": 1,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
@@ -826,7 +827,7 @@ def test_quarantine_prune_retains_inside_and_exact_boundary_deletes_outside(
     assert callable(prune)
     window = inbox.HOOK_QUARANTINE_RETENTION_WINDOW
     inbox_dir = tmp_path / "hooks" / "inbox"
-    quarantine = inbox.get_hook_quarantine_dir(inbox_dir)
+    quarantine = get_hook_quarantine_dir(inbox_dir)
     quarantine.mkdir(parents=True)
     now = 1_700_000_000.0
     cases = {
@@ -864,7 +865,7 @@ def test_quarantine_prune_recovers_orphan_payload_and_sidecar(tmp_path: Path) ->
     assert callable(prune)
     window = inbox.HOOK_QUARANTINE_RETENTION_WINDOW
     inbox_dir = tmp_path / "hooks" / "inbox"
-    quarantine = inbox.get_hook_quarantine_dir(inbox_dir)
+    quarantine = get_hook_quarantine_dir(inbox_dir)
     quarantine.mkdir(parents=True)
     now = 1_700_000_000.0
     stale = now - (window + 10.0)
@@ -1052,7 +1053,7 @@ def test_quarantine_prune_is_bounded(tmp_path: Path) -> None:
     prune = getattr(inbox, "prune_hook_quarantine", None)
     assert callable(prune)
     inbox_dir = tmp_path / "hooks" / "inbox"
-    quarantine = inbox.get_hook_quarantine_dir(inbox_dir)
+    quarantine = get_hook_quarantine_dir(inbox_dir)
     quarantine.mkdir(parents=True)
     for index in range(4):
         (quarantine / f"{index}.json").write_text("{}", encoding="utf-8")

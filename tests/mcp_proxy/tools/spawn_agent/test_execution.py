@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -13,10 +14,13 @@ import pytest
 
 from gobby.agents.isolation import IsolationContext
 from gobby.agents.session import ChildSessionManager
+from gobby.agents.spawn_models import SpawnRequest
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import AgentDefinitionBody
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
 pytestmark = pytest.mark.unit
@@ -47,7 +51,9 @@ def _alternate_local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _register_parent_session(temp_db, sample_project: dict[str, object], external_id: str) -> str:
+def _register_parent_session(
+    temp_db: HubDatabase, sample_project: dict[str, object], external_id: str
+) -> str:
     return SessionManager(temp_db).register_session(
         external_id=external_id,
         machine_id=require_machine_id(),
@@ -58,7 +64,7 @@ def _register_parent_session(temp_db, sample_project: dict[str, object], externa
 
 
 def _spawn_success(run_storage: LocalAgentRunManager, delay: float = 0.0) -> AsyncMock:
-    async def execute_spawn(request):
+    async def execute_spawn(request: SpawnRequest) -> SimpleNamespace:
         child_session_id = SessionManager(run_storage.db).register_session(
             external_id=request.session_id,
             machine_id=require_machine_id(),
@@ -172,7 +178,9 @@ class TestSpawnAgentIsolation:
     """Tests for spawn_agent isolation parameter."""
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_current_uses_current_handler(self, mock_runner, agent_body) -> None:
+    async def test_spawn_agent_current_uses_current_handler(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -226,7 +234,9 @@ class TestSpawnAgentIsolation:
             assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_worktree_creates_worktree(self, mock_runner, agent_body) -> None:
+    async def test_spawn_agent_worktree_creates_worktree(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         worktree_storage = MagicMock()
@@ -320,12 +330,13 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_spawn_executor.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/worktrees/branch", "claude")
+            assert mock_execute.await_args is not None
             assert mock_execute.await_args.args[0].code_index_preflight_mode == "best_effort"
             mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_codex_worktree_spawn_keeps_agent_sandbox_enabled(
-        self, mock_runner, build_agent_body
+        self, mock_runner: MagicMock, build_agent_body: Callable[..., AgentDefinitionBody]
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -392,6 +403,7 @@ class TestSpawnAgentIsolation:
 
         assert result["success"] is True
         mock_execute.assert_awaited_once()
+        assert mock_execute.await_args is not None
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.provider == "codex"
         assert spawn_request.worktree_id == "wt-codex"
@@ -399,7 +411,9 @@ class TestSpawnAgentIsolation:
         assert spawn_request.sandbox_config.enabled is True
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_clone_creates_clone(self, mock_runner, agent_body) -> None:
+    async def test_spawn_agent_clone_creates_clone(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         clone_storage = MagicMock()
@@ -503,10 +517,10 @@ class TestSpawnAgentConcurrencyGuards:
     @pytest.mark.asyncio
     async def test_concurrent_spawn_for_same_task_creates_one_run(
         self,
-        temp_db,
+        temp_db: HubDatabase,
         sample_git_project: dict[str, object],
-        mock_runner,
-        agent_body,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -586,11 +600,11 @@ class TestSpawnAgentConcurrencyGuards:
     @pytest.mark.asyncio
     async def test_spawn_agent_enforces_max_active_agents_cap(
         self,
-        temp_db,
+        temp_db: HubDatabase,
         sample_project: dict[str, object],
-        tmp_path,
-        mock_runner,
-        agent_body,
+        tmp_path: Path,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -670,7 +684,9 @@ class TestSpawnAgentPreRegistration:
     """Tests for agent registry pre-registration before execute_spawn."""
 
     @pytest.mark.asyncio
-    async def test_lease_attached_before_execute_spawn(self, mock_runner, agent_body) -> None:
+    async def test_lease_attached_before_execute_spawn(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         mock_runner.run_storage = MagicMock()
@@ -681,7 +697,8 @@ class TestSpawnAgentPreRegistration:
         lease.acquire.return_value = None
         lease.attach.side_effect = lambda run_id: order.append(("attach", run_id))
 
-        async def execute_spawn(request) -> SimpleNamespace:
+        async def execute_spawn(request: SpawnRequest) -> SimpleNamespace:
+            assert request.agent_run_id is not None
             order.append(("execute", request.agent_run_id))
             return SimpleNamespace(
                 success=True,
@@ -729,8 +746,8 @@ class TestSpawnAgentPreRegistration:
     @pytest.mark.asyncio
     async def test_spawn_returns_starting_before_boot_completes(
         self,
-        mock_runner,
-        agent_body,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -740,7 +757,7 @@ class TestSpawnAgentPreRegistration:
         boot_started = asyncio.Event()
         release_boot = asyncio.Event()
 
-        async def execute_spawn(request) -> SimpleNamespace:
+        async def execute_spawn(request: SpawnRequest) -> SimpleNamespace:
             boot_started.set()
             await release_boot.wait()
             return SimpleNamespace(
@@ -787,8 +804,8 @@ class TestSpawnAgentPreRegistration:
     @pytest.mark.asyncio
     async def test_parent_subscription_precedes_background_schedule(
         self,
-        mock_runner,
-        agent_body,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -838,7 +855,9 @@ class TestSpawnAgentPreRegistration:
         assert order == ["subscribe", "schedule"]
 
     @pytest.mark.asyncio
-    async def test_agent_db_record_created_during_spawn(self, mock_runner, agent_body):
+    async def test_agent_db_record_created_during_spawn(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         """Test that agent run DB record is created during spawn and updated after."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -890,7 +909,9 @@ class TestSpawnAgentPreRegistration:
             assert mock_runner.run_storage.update_child_session.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_agent_failed_on_spawn_failure(self, mock_runner, agent_body):
+    async def test_agent_failed_on_spawn_failure(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         """Test that agent run is marked as failed in DB on spawn failure."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -941,10 +962,10 @@ class TestSpawnAgentPreRegistration:
     @pytest.mark.asyncio
     async def test_spawn_exception_fails_run_and_cleans_child_session(
         self,
-        temp_db,
+        temp_db: HubDatabase,
         sample_git_project: dict[str, object],
-        mock_runner,
-        agent_body,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
         _alternate_local_machine_identity: None,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -972,7 +993,8 @@ class TestSpawnAgentPreRegistration:
         )
         captured: dict[str, str] = {}
 
-        async def execute_spawn(request) -> None:
+        async def execute_spawn(request: SpawnRequest) -> None:
+            assert request.agent_run_id is not None
             captured["run_id"] = request.agent_run_id
             captured["child_session_id"] = request.session_id
             raise RuntimeError("tmux spawn exploded")
@@ -1040,10 +1062,10 @@ class TestSpawnAgentPreRegistration:
     @pytest.mark.asyncio
     async def test_spawn_attach_failure_fails_run_and_cleans_child_session(
         self,
-        temp_db,
+        temp_db: HubDatabase,
         sample_git_project: dict[str, object],
-        mock_runner,
-        agent_body,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
         _alternate_local_machine_identity: None,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -1131,7 +1153,9 @@ class TestSpawnAgentPreRegistration:
         mock_handler.cleanup_environment.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_status_transitions_to_running_on_success(self, mock_runner, agent_body):
+    async def test_status_transitions_to_running_on_success(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         """On successful spawn, run_storage.start(run_id) is called immediately.
 
         Spawn-time transition is the authoritative pending->running flip, so
@@ -1196,8 +1220,8 @@ class TestSpawnAgentPreRegistration:
     @pytest.mark.asyncio
     async def test_skips_started_side_effects_when_start_transition_is_stale(
         self,
-        mock_runner,
-        agent_body,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 

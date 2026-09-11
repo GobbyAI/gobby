@@ -3,10 +3,11 @@
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pytest
-from fastapi import FastAPI, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 from starlette.routing import WebSocketRoute
@@ -14,15 +15,19 @@ from starlette.routing import WebSocketRoute
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers import app_factory
+from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.unit
 
 
-def _server(config: DaemonConfig) -> SimpleNamespace:
-    return SimpleNamespace(
-        services=SimpleNamespace(config=config),
-        startup_config=config,
-        bootstrap_config=BootstrapConfig(ui_port=config.ui.port),
+def _server(config: DaemonConfig) -> HTTPServer:
+    return cast(
+        HTTPServer,
+        SimpleNamespace(
+            services=SimpleNamespace(config=config),
+            startup_config=config,
+            bootstrap_config=BootstrapConfig(ui_port=config.ui.port),
+        ),
     )
 
 
@@ -94,7 +99,7 @@ def test_dev_ui_proxy_routes_are_hidden_from_openapi() -> None:
     app_factory._mount_vite_dev_ui(app, _server(config))
 
     expected_methods = {"DELETE", "GET", "HEAD", "PATCH", "POST", "PUT"}
-    proxy_routes = {
+    proxy_routes: dict[str, set[str]] = {
         getattr(route, "path", ""): getattr(route, "methods", set())
         for route in app.routes
         if getattr(route, "name", "") == "vite_proxy"
@@ -182,7 +187,9 @@ async def test_hmr_proxy_preserves_requested_websocket_subprotocol(
     monkeypatch.setattr(websockets, "connect", fake_connect)
 
     websocket = FakeWebSocket()
-    await app_factory._proxy_websocket(websocket, "ws://localhost:5173/__vite_hmr?token=hmr-token")
+    await app_factory._proxy_websocket(
+        cast(WebSocket, websocket), "ws://localhost:5173/__vite_hmr?token=hmr-token"
+    )
 
     assert connections == [
         ("ws://localhost:5173/__vite_hmr?token=hmr-token", ["vite-hmr", "extra"])
