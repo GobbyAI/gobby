@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import tarfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +28,7 @@ from ask_scoring import (
     build_answer_score,
     build_review_packet,
     citation_integrity,
+    render_report,
     score_packet,
     score_retrieval,
     scoring_contract,
@@ -130,7 +132,27 @@ def _profile(identifier: str, digest: str) -> dict[str, object]:
     return cast(dict[str, object], snapshot.model_dump(mode="json"))
 
 
-def _runtime_identity(gcode_bytes: bytes) -> dict[str, object]:
+def _receipt(path: Path, payload: object) -> dict[str, str]:
+    encoded = json.dumps(payload, sort_keys=True).encode()
+    path.write_bytes(encoded)
+    path.chmod(0o600)
+    return {"path": str(path.resolve()), "sha256": _sha256(encoded)}
+
+
+def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
+    gobby_home = root / "contained-gobby-home"
+    gobby_home.mkdir(mode=0o700)
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text("daemon_port: 61999\nbind_host: 127.0.0.1\n", encoding="utf-8")
+    bootstrap.chmod(0o600)
+    daemon_url = "http://127.0.0.1:61999"
+    database = {
+        "host": "127.0.0.1",
+        "port": 60892,
+        "name": "gobby_test",
+        "schema": "gobby_test_askcohort_unit",
+    }
+    service = {"identity": "ask-daemon-unit", "daemon_url": daemon_url}
     return {
         "schema_version": 1,
         "project_id": "project-frozen-ask",
@@ -144,6 +166,17 @@ def _runtime_identity(gcode_bytes: bytes) -> dict[str, object]:
             "reviewer": _profile("ask-reviewer", "2" * 64),
         },
         "tool_identities": list(EXPECTED_TOOL_IDENTITIES),
+        "isolation": {
+            "mode": "contained",
+            "daemon_url": daemon_url,
+            "gobby_home": str(gobby_home.resolve()),
+            "bootstrap": {
+                "path": str(bootstrap.resolve()),
+                "sha256": _sha256(bootstrap.read_bytes()),
+            },
+            "database": {**database, "receipt": _receipt(root / "database.json", database)},
+            "service": {**service, "receipt": _receipt(root / "service.json", service)},
+        },
         "execution_gates": {
             "#22018": {"status": "accepted", "evidence_sha256": "3" * 64},
             "#22019": {"status": "accepted", "evidence_sha256": "4" * 64},
@@ -212,18 +245,41 @@ def _prepare(tmp_path: Path) -> Path:
     gcode_bytes = b"fake-gcode-binary"
     gcode.write_bytes(gcode_bytes)
     identity = tmp_path / "runtime-identity.json"
-    identity.write_text(json.dumps(_runtime_identity(gcode_bytes)), encoding="utf-8")
+    identity.write_text(json.dumps(_runtime_identity(gcode_bytes, tmp_path)), encoding="utf-8")
     trees = {
         "0216f1e33f05962d49467d95fe84609041c6dba8": "7" * 40,
         "8b24ac26699aac8b24254a647aa70b208287b492": "8" * 40,
     }
 
-    def preflight(argv: tuple[str, ...], timeout: float) -> CommandResult:
+    def preflight(
+        argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
+    ) -> CommandResult:
         assert timeout > 0
+        assert environment["GOBBY_DAEMON_URL"] == "http://127.0.0.1:61999"
+        assert environment["GOBBY_HOME"] == str((tmp_path / "contained-gobby-home").resolve())
+        assert environment["GOBBY_TEST_PROTECT"] == "1"
+        assert "DATABASE_URL" not in environment
         if argv == (str(gcode.resolve()), "--version"):
             stdout = b"gcode 9.9.9\n"
         elif argv == (str(gcode.resolve()), "contract", "--format", "json"):
             stdout = json.dumps(_contract()).encode()
+        elif argv[-1] == "8b24ac26699aac8b24254a647aa70b208287b492^1":
+            stdout = b"0216f1e33f05962d49467d95fe84609041c6dba8\n"
+        elif "diff-tree" in argv:
+            stdout = "".join(
+                f"{status}\t{path}\n"
+                for status, path in [
+                    ("M", "config/replenishment.toml"),
+                    ("M", "docs/replenishment.md"),
+                    ("M", "src/game_goblins/platform/settings.py"),
+                    ("M", "src/game_goblins/replenishment/daily.py"),
+                    ("M", "src/game_goblins/replenishment/planner.py"),
+                    ("M", "src/game_goblins/replenishment/store_targets.py"),
+                    ("M", "tests/platform/test_settings.py"),
+                    ("M", "tests/replenishment/test_planning_store.py"),
+                    ("A", "tests/replenishment/test_store_targets.py"),
+                ]
+            ).encode()
         elif argv[-1].endswith("^{commit}"):
             stdout = f"{argv[-1][:-9]}\n".encode()
         elif argv[-1].endswith("^{tree}"):
@@ -269,6 +325,19 @@ def _failed_result(question_id: str, commit: str) -> dict[str, object]:
         "usage": None,
         "output": None,
     }
+
+
+def _completed_result(question_id: str, commit: str) -> dict[str, object]:
+    result = _failed_result(question_id, commit)
+    result.update(
+        {
+            "status": "completed",
+            "current_stage": "publish",
+            "answer_outcome": "unknown",
+            "typed_error": None,
+        }
+    )
+    return result
 
 
 def test_frozen_cohort_and_scoring_contract() -> None:
@@ -322,7 +391,21 @@ def test_prepare_freezes_cli_source_profiles_and_execution_gates(tmp_path: Path)
     assert cast(dict[str, object], manifest["gcode"])["contract_version"] == 10
     assert cast(dict[str, object], manifest["source"])["commits"] == {
         "0216f1e33f05962d49467d95fe84609041c6dba8": {"tree_oid": "7" * 40},
-        "8b24ac26699aac8b24254a647aa70b208287b492": {"tree_oid": "8" * 40},
+        "8b24ac26699aac8b24254a647aa70b208287b492": {
+            "tree_oid": "8" * 40,
+            "first_parent_oid": "0216f1e33f05962d49467d95fe84609041c6dba8",
+            "first_parent_changes": [
+                {"status": "M", "path": "config/replenishment.toml"},
+                {"status": "M", "path": "docs/replenishment.md"},
+                {"status": "M", "path": "src/game_goblins/platform/settings.py"},
+                {"status": "M", "path": "src/game_goblins/replenishment/daily.py"},
+                {"status": "M", "path": "src/game_goblins/replenishment/planner.py"},
+                {"status": "M", "path": "src/game_goblins/replenishment/store_targets.py"},
+                {"status": "M", "path": "tests/platform/test_settings.py"},
+                {"status": "M", "path": "tests/replenishment/test_planning_store.py"},
+                {"status": "A", "path": "tests/replenishment/test_store_targets.py"},
+            ],
+        },
     }
     runtime = cast(dict[str, object], manifest["runtime_identity"])
     profiles = cast(dict[str, dict[str, object]], runtime["profiles"])
@@ -331,6 +414,16 @@ def test_prepare_freezes_cli_source_profiles_and_execution_gates(tmp_path: Path)
     assert reviewer_effective["blocked_tools"]
     assert reviewer_effective["prompts"]
     assert reviewer_effective["step_workflow"]
+    isolation = cast(dict[str, object], runtime["isolation"])
+    assert isolation["mode"] == "contained"
+    assert isolation["daemon_url"] == "http://127.0.0.1:61999"
+    execution = cast(dict[str, object], manifest["execution"])
+    assert execution["environment"] == {
+        "GOBBY_DAEMON_URL": "http://127.0.0.1:61999",
+        "GOBBY_HOME": str((tmp_path / "contained-gobby-home").resolve()),
+        "GOBBY_TEST_PROTECT": "1",
+    }
+    assert isinstance(execution["environment_sha256"], str)
     assert manifest_path.with_suffix(".sha256").read_text(encoding="ascii").strip() == (
         _sha256(manifest_bytes)
     )
@@ -379,7 +472,7 @@ def test_prepare_refuses_unaccepted_final_prerequisite(tmp_path: Path) -> None:
     source_root.mkdir()
     gcode = tmp_path / "gcode"
     gcode.write_bytes(b"fake-gcode-binary")
-    identity_value = _runtime_identity(b"fake-gcode-binary")
+    identity_value = _runtime_identity(b"fake-gcode-binary", tmp_path)
     gates = cast(dict[str, dict[str, str]], identity_value["execution_gates"])
     gates["#22019"]["status"] = "pending"
     identity = tmp_path / "runtime-identity.json"
@@ -391,16 +484,84 @@ def test_prepare_refuses_unaccepted_final_prerequisite(tmp_path: Path) -> None:
             gcode_binary=gcode,
             project_root=source_root,
             output_root=tmp_path / "cohort",
-            command_runner=lambda _argv, _timeout: pytest.fail("must fail before commands"),
+            command_runner=lambda _argv, _timeout, _environment: pytest.fail(
+                "must fail before commands"
+            ),
         )
 
 
-def test_primary_runner_is_serial_exact_and_append_only(tmp_path: Path) -> None:
+def test_runtime_isolation_drift_is_recorded_before_primary_and_export(tmp_path: Path) -> None:
+    manifest_path = _prepare(tmp_path)
+    manifest = cast(dict[str, object], json.loads(manifest_path.read_bytes()))
+    runtime = cast(dict[str, object], manifest["runtime_identity"])
+    isolation = cast(dict[str, object], runtime["isolation"])
+    service = cast(dict[str, object], isolation["service"])
+    receipt = cast(dict[str, str], service["receipt"])
+    receipt_path = Path(receipt["path"])
+    receipt_bytes = receipt_path.read_bytes()
+    receipt_path.write_text('{"identity":"different-service"}', encoding="utf-8")
+
+    def never_run(
+        _argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        pytest.fail("isolation drift must fail before the primary process")
+
+    with pytest.raises(PreparationError, match="service receipt"):
+        run_primary(manifest_path, command_runner=never_run)
+
+    primary = manifest_path.parent / "attempts" / "Q01" / "primary"
+    assert not primary.exists()
+
+    receipt_path.write_bytes(receipt_bytes)
+    receipt_path.chmod(0o600)
+
+    def drift_after_primary(
+        argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        assert "--export" not in argv
+        receipt_path.write_text('{"identity":"different-service"}', encoding="utf-8")
+        return CommandResult(
+            exit_code=0,
+            stdout=json.dumps(
+                _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+            ).encode(),
+            stderr=b"",
+            wall_seconds=1.0,
+        )
+
+    with pytest.raises(PreparationError, match="service receipt"):
+        run_primary(manifest_path, command_runner=drift_after_primary)
+
+    before_export = cast(
+        dict[str, object], json.loads(primary.joinpath("outcome.json").read_bytes())
+    )
+    assert before_export["disposition"] == "contract_error"
+    assert cast(dict[str, str], before_export["error"])["stage"] == "export"
+
+
+def test_primary_runner_is_serial_exact_and_append_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://must-not-leak")
+    monkeypatch.setenv("GOBBY_PORT", "1")
+    monkeypatch.setenv("GOBBY_SESSION_ID", "must-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-leak")
     manifest_path = _prepare(tmp_path)
     calls: list[tuple[str, ...]] = []
 
-    def invoke(argv: tuple[str, ...], timeout: float) -> CommandResult:
+    def invoke(
+        argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
+    ) -> CommandResult:
         assert timeout == 630
+        assert environment["GOBBY_DAEMON_URL"] == "http://127.0.0.1:61999"
+        assert {
+            "DATABASE_URL",
+            "GOBBY_PORT",
+            "GOBBY_SESSION_ID",
+            "OPENAI_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+        }.isdisjoint(environment)
         calls.append(argv)
         question_id = f"Q{len(calls):02d}"
         commit = EXPECTED_QUESTIONS[len(calls) - 1][0]
@@ -453,7 +614,9 @@ def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Pat
     accepted_bytes = binary.read_bytes()
     calls: list[tuple[str, ...]] = []
 
-    def replace_after_first(argv: tuple[str, ...], timeout: float) -> CommandResult:
+    def replace_after_first(
+        argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
         assert timeout == 630
         calls.append(argv)
         binary.write_bytes(b"replaced-gcode-binary")
@@ -483,7 +646,9 @@ def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Pat
 
     resumed_calls: list[tuple[str, ...]] = []
 
-    def resume(argv: tuple[str, ...], timeout: float) -> CommandResult:
+    def resume(
+        argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
         resumed_calls.append(argv)
         question_index = len(resumed_calls) + 1
         question_id = f"Q{question_index + 1:02d}"
@@ -523,7 +688,9 @@ def test_supplement_rechecks_installed_binary_immediately_before_invocation(
         binary.write_bytes(b"replaced-gcode-binary")
         return "2026-09-10T13:00:00+00:00"
 
-    def unexpected_invocation(argv: tuple[str, ...], timeout: float) -> CommandResult:
+    def unexpected_invocation(
+        argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
         nonlocal invoked
         invoked = True
         raise AssertionError((argv, timeout))
@@ -557,7 +724,9 @@ def test_supplement_rechecks_installed_binary_immediately_before_invocation(
 def test_interruption_and_retry_are_separate_from_primary(tmp_path: Path) -> None:
     manifest_path = _prepare(tmp_path)
 
-    def interrupted(argv: tuple[str, ...], timeout: float) -> CommandResult:
+    def interrupted(
+        argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
         assert argv
         assert timeout == 630
         return CommandResult(
@@ -587,6 +756,97 @@ def test_interruption_and_retry_are_separate_from_primary(tmp_path: Path) -> Non
     assert primary.joinpath("attempt.json").read_bytes() == primary_attempt
     assert primary.joinpath("outcome.json").read_bytes() == primary_outcome
     assert (manifest_path.parent / "attempts" / "Q01" / "retry-001").is_dir()
+
+
+def test_export_oserror_is_typed_and_primary_is_not_replaced_on_resume(tmp_path: Path) -> None:
+    manifest_path = _prepare(tmp_path)
+
+    def export_failure(
+        argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        if "--export" in argv:
+            raise OSError("export transport unavailable")
+        if EXPECTED_QUESTIONS[0][1] in argv:
+            return CommandResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                ).encode(),
+                stderr=b"",
+                wall_seconds=1.0,
+            )
+        return CommandResult(
+            exit_code=None,
+            stdout=b"",
+            stderr=b"",
+            wall_seconds=0.1,
+            interruption="operator_interrupt",
+        )
+
+    run_primary(manifest_path, command_runner=export_failure)
+    primary = manifest_path.parent / "attempts" / "Q01" / "primary"
+    attempt_bytes = primary.joinpath("attempt.json").read_bytes()
+    outcome_bytes = primary.joinpath("outcome.json").read_bytes()
+    outcome = cast(dict[str, object], json.loads(outcome_bytes))
+    assert outcome["disposition"] == "export_error"
+    assert outcome["interruption"] is None
+    assert cast(dict[str, str], outcome["error"]) == {
+        "type": "OSError",
+        "message": "export transport unavailable",
+        "stage": "export",
+    }
+
+    resumed_calls: list[tuple[str, ...]] = []
+
+    def resume(
+        argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        resumed_calls.append(argv)
+        return CommandResult(
+            exit_code=None,
+            stdout=b"",
+            stderr=b"",
+            wall_seconds=0.1,
+            interruption="operator_interrupt",
+        )
+
+    run_primary(manifest_path, command_runner=resume)
+    assert EXPECTED_QUESTIONS[2][1] in resumed_calls[0]
+    assert primary.joinpath("attempt.json").read_bytes() == attempt_bytes
+    assert primary.joinpath("outcome.json").read_bytes() == outcome_bytes
+
+
+def test_keyboard_interrupt_during_export_is_persisted_and_stops_cohort(tmp_path: Path) -> None:
+    manifest_path = _prepare(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    def interrupt_export(
+        argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        calls.append(argv)
+        if "--export" in argv:
+            raise KeyboardInterrupt
+        return CommandResult(
+            exit_code=0,
+            stdout=json.dumps(
+                _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+            ).encode(),
+            stderr=b"",
+            wall_seconds=1.0,
+        )
+
+    accounting = run_primary(manifest_path, command_runner=interrupt_export)
+
+    assert len(accounting) == 1
+    assert len(calls) == 2
+    assert accounting[0]["disposition"] == "interrupted"
+    assert accounting[0]["interruption"] == "operator_interrupt"
+    assert accounting[0]["error"] == {
+        "type": "KeyboardInterrupt",
+        "message": "",
+        "stage": "export",
+    }
+    assert (manifest_path.parent / "attempts" / "Q01" / "primary" / "outcome.json").is_file()
 
 
 def test_retrieval_requires_gold_span_overlap_and_tracks_followups() -> None:
@@ -908,6 +1168,92 @@ def test_score_packet_blocks_partial_cohort_and_never_substitutes_supplements() 
     assert scored["supplements_excluded_from_primary_scoring"] is True
 
 
+def test_report_materializes_measurements_raw_hashes_and_missing_values() -> None:
+    report = render_report(
+        {
+            "retrieval_comparison": {
+                "conclusion": "improved",
+                "historical_supported_count": 6,
+                "new_before_supported_count": 5,
+                "new_after_supported_count": 7,
+                "lost_historical_hits": ["Q07"],
+                "gained_hits": ["Q02", "Q14"],
+                "delta_after_vs_historical": 1,
+            },
+            "answer_quality": {
+                "scored_question_count": 14,
+                "correct_question_count": 10,
+                "mean_gold_key_coverage": 0.8,
+                "mean_source_supported_claim_precision": 0.9,
+                "mean_citation_integrity": 0.95,
+            },
+            "runtime": {
+                "latency": {"observed_count": 14, "sum_seconds": 123.0},
+                "usage": {"observed_count": 14, "numeric_totals": {"input_tokens": 456}},
+            },
+            "questions": [
+                {
+                    "question_id": "Q14",
+                    "disposition": "completed",
+                    "retrieval": {
+                        "query_count": 3,
+                        "before": {
+                            "supported": False,
+                            "reciprocal_rank": 0.0,
+                            "gold_span_recall": 0.0,
+                            "query_completeness": [{"complete": True}],
+                        },
+                        "after": {
+                            "supported": True,
+                            "reciprocal_rank": 0.5,
+                            "gold_span_recall": 1.0,
+                            "query_completeness": [
+                                {"complete": True},
+                                {"complete": False},
+                                {"complete": True},
+                            ],
+                        },
+                    },
+                    "answer_score": {
+                        "answer_correct": False,
+                        "gold_key_coverage": 0.75,
+                        "source_supported_claim_precision": 0.5,
+                        "citation_integrity": 1.0,
+                        "exact_value_coverage": 0.5,
+                        "unsupported_statements": [
+                            {"claim_id": "c1", "statement": "unsupported claim"}
+                        ],
+                        "q14_changed_paths_exact": False,
+                        "exact_checks": {
+                            "case_sensitive": {
+                                "expected": "longer named prefix wins",
+                                "verified": False,
+                            },
+                            "changed_path_count": {"verified": True},
+                        },
+                    },
+                    "raw": {
+                        "attempt": {"path": "/evidence/Q14/attempt.json", "sha256": "a" * 64},
+                        "outcome": {"path": "/evidence/Q14/outcome.json", "sha256": "b" * 64},
+                    },
+                }
+            ],
+        }
+    )
+
+    assert "| Q14 | completed | 3 | False / 0.000" in report
+    assert "## Runtime and usage" in report
+    assert '"input_tokens":456' in report
+    assert "## Raw artifact inventory" in report
+    assert "/evidence/Q14/attempt.json" in report
+    assert "a" * 64 in report
+    assert "## Unsupported statements and missing exact values" in report
+    assert "unsupported claim" in report
+    assert "case_sensitive" in report
+    assert "longer named prefix wins" in report
+    assert "changed_paths" in report
+
+
 def test_review_packet_preserves_unrun_primary_accounting(tmp_path: Path) -> None:
     packet = build_review_packet(_prepare(tmp_path))
 
@@ -949,6 +1295,14 @@ def test_review_packet_verifies_completed_publication_bytes(tmp_path: Path) -> N
     assert q01["scorable"] is True
     assert q01["answer"]["run_id"] == "run-q01"
     assert q01["retrieval"]["after"]["supported"] is False
+    assert q01["raw"]["attempt"] == {
+        "path": str(attempt_dir / "attempt.json"),
+        "sha256": _sha256((attempt_dir / "attempt.json").read_bytes()),
+    }
+    assert q01["raw"]["outcome"] == {
+        "path": str(attempt_dir / "outcome.json"),
+        "sha256": _sha256((attempt_dir / "outcome.json").read_bytes()),
+    }
     assert q01["raw"]["publication"]["tar_sha256"] == export["tar_sha256"]
 
     Path(cast(str, export["tar_path"])).write_bytes(b"tampered")

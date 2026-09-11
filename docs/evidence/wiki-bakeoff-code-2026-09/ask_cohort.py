@@ -12,6 +12,7 @@ import json
 import os
 import re
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
+from urllib.parse import urlsplit
 
 BASE_COMMIT = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_COMMIT = "8b24ac26699aac8b24254a647aa70b208287b492"
@@ -52,6 +54,22 @@ REQUIRED_ASK_RESULT_KEYS = set(
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_OID = re.compile(r"^[0-9a-f]{40,64}$")
+_DATABASE_SCHEMA = re.compile(r"^gobby_test_[A-Za-z0-9_]+$")
+_PASSTHROUGH_ENVIRONMENT_KEYS = (
+    "COMSPEC",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "TZ",
+    "WINDIR",
+)
 
 QUESTIONS = (
     ("Q01", "What is the shared platform, and which systems remain standalone?", BASE_COMMIT),
@@ -96,7 +114,9 @@ class CommandResult:
 
 
 class CommandRunner(Protocol):
-    def __call__(self, argv: tuple[str, ...], timeout: float) -> CommandResult: ...
+    def __call__(
+        self, argv: tuple[str, ...], timeout: float, environment: Mapping[str, str], /
+    ) -> CommandResult: ...
 
 
 def _utc_now() -> str:
@@ -158,6 +178,140 @@ def _digest(value: object, *, name: str) -> str:
     return digest
 
 
+def _private_owned_path(value: object, *, name: str, directory: bool) -> Path:
+    raw = Path(_string(value, name=name))
+    if not raw.is_absolute():
+        raise PreparationError(f"{name} must be absolute")
+    try:
+        metadata = raw.lstat()
+        resolved = raw.resolve(strict=True)
+    except OSError as error:
+        raise PreparationError(f"{name} is unavailable: {error}") from error
+    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+    if raw != resolved or stat.S_ISLNK(metadata.st_mode) or not expected_type(metadata.st_mode):
+        raise PreparationError(
+            f"{name} must be an owned non-symlink {'directory' if directory else 'file'}"
+        )
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise PreparationError(f"{name} must be owner-only")
+    return resolved
+
+
+def _receipt_payload(value: object, *, name: str) -> tuple[dict[str, str], dict[str, Any]]:
+    receipt = _mapping(value, name=f"{name} receipt")
+    path = _private_owned_path(receipt.get("path"), name=f"{name} receipt path", directory=False)
+    expected = _digest(receipt.get("sha256"), name=f"{name} receipt")
+    try:
+        payload = path.read_bytes()
+    except OSError as error:
+        raise PreparationError(f"{name} receipt is unavailable: {error}") from error
+    if _sha256_bytes(payload) != expected:
+        raise PreparationError(f"{name} receipt hash changed")
+    try:
+        body = _mapping(json.loads(payload), name=f"{name} receipt body")
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PreparationError(f"{name} receipt must be JSON") from error
+    return {"path": str(path), "sha256": expected}, body
+
+
+def _runtime_isolation(value: object) -> dict[str, Any]:
+    isolation = _mapping(value, name="runtime isolation")
+    if isolation.get("mode") != "contained":
+        raise PreparationError("runtime isolation mode must be contained")
+    daemon_url = _string(isolation.get("daemon_url"), name="isolated daemon_url")
+    try:
+        endpoint = urlsplit(daemon_url)
+        port = endpoint.port
+    except ValueError as error:
+        raise PreparationError("isolated daemon_url is invalid") from error
+    if (
+        endpoint.scheme != "http"
+        or endpoint.hostname not in {"127.0.0.1", "::1"}
+        or port is None
+        or endpoint.username is not None
+        or endpoint.password is not None
+        or endpoint.path not in {"", "/"}
+        or endpoint.query
+        or endpoint.fragment
+    ):
+        raise PreparationError(
+            "isolated daemon_url must be an uncredentialed loopback HTTP endpoint"
+        )
+
+    gobby_home = _private_owned_path(
+        isolation.get("gobby_home"), name="isolated GOBBY_HOME", directory=True
+    )
+    if gobby_home == (Path.home() / ".gobby").resolve():
+        raise PreparationError("isolated GOBBY_HOME must not be the user's default Gobby home")
+    bootstrap = _mapping(isolation.get("bootstrap"), name="bootstrap identity")
+    bootstrap_path = _private_owned_path(
+        bootstrap.get("path"), name="bootstrap path", directory=False
+    )
+    if bootstrap_path != gobby_home / "bootstrap.yaml":
+        raise PreparationError("bootstrap path must be the contained GOBBY_HOME bootstrap")
+    bootstrap_hash = _digest(bootstrap.get("sha256"), name="bootstrap")
+    try:
+        observed_bootstrap_hash = _sha256_file(bootstrap_path)
+    except OSError as error:
+        raise PreparationError(f"bootstrap is unavailable: {error}") from error
+    if observed_bootstrap_hash != bootstrap_hash:
+        raise PreparationError("bootstrap hash changed")
+
+    database = _mapping(isolation.get("database"), name="database identity")
+    database_public = {
+        "host": _string(database.get("host"), name="database host"),
+        "port": database.get("port"),
+        "name": _string(database.get("name"), name="database name"),
+        "schema": _string(database.get("schema"), name="database schema"),
+    }
+    if (
+        database_public["host"] not in {"127.0.0.1", "::1"}
+        or not isinstance(database_public["port"], int)
+        or isinstance(database_public["port"], bool)
+        or not 1 <= database_public["port"] <= 65535
+        or not _DATABASE_SCHEMA.fullmatch(cast(str, database_public["schema"]))
+    ):
+        raise PreparationError("database identity must name a private loopback test schema")
+    database_receipt, database_body = _receipt_payload(database.get("receipt"), name="database")
+    if database_body != database_public:
+        raise PreparationError("database receipt does not match its public identity")
+
+    service = _mapping(isolation.get("service"), name="service identity")
+    service_public = {
+        "identity": _string(service.get("identity"), name="service identity"),
+        "daemon_url": _string(service.get("daemon_url"), name="service daemon_url"),
+    }
+    if service_public["daemon_url"] != daemon_url:
+        raise PreparationError("service receipt endpoint does not match isolated daemon_url")
+    service_receipt, service_body = _receipt_payload(service.get("receipt"), name="service")
+    if service_body != service_public:
+        raise PreparationError("service receipt does not match its public identity")
+    return {
+        "mode": "contained",
+        "daemon_url": daemon_url,
+        "gobby_home": str(gobby_home),
+        "bootstrap": {"path": str(bootstrap_path), "sha256": bootstrap_hash},
+        "database": {**database_public, "receipt": database_receipt},
+        "service": {**service_public, "receipt": service_receipt},
+    }
+
+
+def _sealed_environment(isolation: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "GOBBY_DAEMON_URL": cast(str, isolation["daemon_url"]),
+        "GOBBY_HOME": cast(str, isolation["gobby_home"]),
+        "GOBBY_TEST_PROTECT": "1",
+    }
+
+
+def _command_environment(isolation: Mapping[str, Any]) -> dict[str, str]:
+    environment = {
+        key: os.environ[key] for key in _PASSTHROUGH_ENVIRONMENT_KEYS if key in os.environ
+    }
+    environment.update(_sealed_environment(isolation))
+    return environment
+
+
 def _profile(value: object, *, role: str, identifier: str) -> dict[str, Any]:
     profile = _mapping(value, name=f"{role} profile")
     if profile.get("identifier") != identifier:
@@ -187,6 +341,7 @@ def validate_runtime_identity(value: object) -> dict[str, Any]:
     profiles = _mapping(identity.get("profiles"), name="profile identities")
     if identity.get("tool_identities") != list(EXPECTED_TOOL_IDENTITIES):
         raise PreparationError("runtime Ask tool identities do not match the accepted contract")
+    isolation = _runtime_isolation(identity.get("isolation"))
     gates = _mapping(identity.get("execution_gates"), name="execution gates")
     normalized_gates: dict[str, dict[str, str]] = {}
     for gate_name in REQUIRED_EXECUTION_GATES:
@@ -218,6 +373,7 @@ def validate_runtime_identity(value: object) -> dict[str, Any]:
             ),
         },
         "tool_identities": list(EXPECTED_TOOL_IDENTITIES),
+        "isolation": isolation,
         "execution_gates": normalized_gates,
     }
 
@@ -276,6 +432,22 @@ def _validate_cli_contract(value: object) -> dict[str, Any]:
     return contract
 
 
+def _parse_name_status(payload: bytes) -> list[dict[str, str]]:
+    try:
+        lines = payload.decode(errors="strict").splitlines()
+    except UnicodeDecodeError as error:
+        raise PreparationError("Q14 first-parent diff must be UTF-8") from error
+    changes: list[dict[str, str]] = []
+    for line in lines:
+        fields = line.split("\t")
+        if len(fields) != 2 or not re.fullmatch(r"[A-Z]", fields[0]) or not fields[1]:
+            raise PreparationError("Q14 first-parent diff contains unsupported name-status output")
+        changes.append({"status": fields[0], "path": fields[1]})
+    if not changes:
+        raise PreparationError("Q14 first-parent diff must not be empty")
+    return changes
+
+
 def prepare_cohort(
     *,
     runtime_identity_path: Path,
@@ -298,13 +470,15 @@ def prepare_cohort(
         raise PreparationError("cohort output must be outside the source project")
     identity_bytes = runtime_identity_path.read_bytes()
     identity = validate_runtime_identity(json.loads(identity_bytes))
+    environment = _command_environment(identity["isolation"])
     binary_hash = _sha256_file(binary)
     if binary_hash != identity["gcode"]["executable_sha256"]:
         raise PreparationError("gcode executable hash differs from installed CLI acceptance")
 
     observed_version = (
         _require_success(
-            runner((str(binary), "--version"), 30), operation="gcode version preflight"
+            runner((str(binary), "--version"), 30, environment),
+            operation="gcode version preflight",
         )
         .decode(errors="strict")
         .strip()
@@ -312,18 +486,19 @@ def prepare_cohort(
     if observed_version != identity["gcode"]["version"]:
         raise PreparationError("gcode version differs from installed CLI acceptance")
     contract_bytes = _require_success(
-        runner((str(binary), "contract", "--format", "json"), 30),
+        runner((str(binary), "contract", "--format", "json"), 30, environment),
         operation="gcode contract preflight",
     )
     contract = _validate_cli_contract(json.loads(contract_bytes))
 
-    commits: dict[str, dict[str, str]] = {}
+    commits: dict[str, dict[str, Any]] = {}
     for commit in (BASE_COMMIT, CHANGE_COMMIT):
         observed_commit = (
             _require_success(
                 runner(
                     ("git", "-C", str(source), "rev-parse", "--verify", f"{commit}^{{commit}}"),
                     30,
+                    environment,
                 ),
                 operation=f"source commit preflight {commit}",
             )
@@ -335,6 +510,7 @@ def prepare_cohort(
                 runner(
                     ("git", "-C", str(source), "rev-parse", "--verify", f"{commit}^{{tree}}"),
                     30,
+                    environment,
                 ),
                 operation=f"source tree preflight {commit}",
             )
@@ -343,7 +519,46 @@ def prepare_cohort(
         )
         if observed_commit != commit or not _GIT_OID.fullmatch(tree_oid):
             raise PreparationError(f"source identity mismatch for {commit}")
-        commits[commit] = {"tree_oid": tree_oid}
+        commit_identity: dict[str, Any] = {"tree_oid": tree_oid}
+        if commit == CHANGE_COMMIT:
+            first_parent = (
+                _require_success(
+                    runner(
+                        ("git", "-C", str(source), "rev-parse", "--verify", f"{commit}^1"),
+                        30,
+                        environment,
+                    ),
+                    operation="Q14 first-parent preflight",
+                )
+                .decode(errors="strict")
+                .strip()
+            )
+            if first_parent != BASE_COMMIT:
+                raise PreparationError("Q14 first parent does not match the frozen baseline")
+            changes = _parse_name_status(
+                _require_success(
+                    runner(
+                        (
+                            "git",
+                            "-C",
+                            str(source),
+                            "diff-tree",
+                            "--no-commit-id",
+                            "--name-status",
+                            "-r",
+                            f"{commit}^1",
+                            commit,
+                        ),
+                        30,
+                        environment,
+                    ),
+                    operation="Q14 first-parent diff preflight",
+                )
+            )
+            commit_identity.update(
+                {"first_parent_oid": first_parent, "first_parent_changes": changes}
+            )
+        commits[commit] = commit_identity
 
     destination.mkdir(parents=True, exist_ok=True)
     os.chmod(destination, 0o700)
@@ -373,6 +588,10 @@ def prepare_cohort(
             "retrieval_mode": "deterministic",
             "query_cap": None,
             "turn_cap": None,
+            "environment": _sealed_environment(identity["isolation"]),
+            "environment_sha256": _sha256_bytes(
+                _canonical_json(_sealed_environment(identity["isolation"]))
+            ),
         },
     }
     manifest_bytes = _canonical_json(manifest)
@@ -381,6 +600,19 @@ def prepare_cohort(
     _write_new(manifest_path, manifest_bytes)
     _write_new(manifest_path.with_suffix(".sha256"), f"{_sha256_bytes(manifest_bytes)}\n".encode())
     return manifest_path
+
+
+def _verified_execution_environment(manifest: Mapping[str, Any]) -> dict[str, str]:
+    runtime = _mapping(manifest.get("runtime_identity"), name="runtime identity")
+    isolation = _runtime_isolation(runtime.get("isolation"))
+    execution = _mapping(manifest.get("execution"), name="execution contract")
+    sealed = _sealed_environment(isolation)
+    if execution.get("environment") != sealed:
+        raise PreparationError("sealed execution environment changed")
+    expected = _digest(execution.get("environment_sha256"), name="sealed execution environment")
+    if _sha256_bytes(_canonical_json(sealed)) != expected:
+        raise PreparationError("sealed execution environment hash changed")
+    return _command_environment(isolation)
 
 
 def load_prepared_manifest(path: Path) -> dict[str, Any]:
@@ -398,6 +630,7 @@ def load_prepared_manifest(path: Path) -> dict[str, Any]:
     binary = Path(_string(gcode.get("path"), name="gcode path"))
     if _sha256_file(binary) != identity["gcode"]["executable_sha256"]:
         raise PreparationError("gcode executable changed after cohort preparation")
+    _verified_execution_environment(manifest)
     return manifest
 
 
@@ -617,21 +850,23 @@ def _execute_attempt(
     }
     _write_json_new(attempt_dir / "attempt.json", attempt)
     try:
+        environment = _verified_execution_environment(manifest)
         expected_binary_hash = manifest["gcode"]["executable_sha256"]
         if _sha256_file(Path(manifest["gcode"]["path"])) != expected_binary_hash:
             raise PreparationError("gcode executable hash differs from installed CLI acceptance")
-        command = command_runner(argv, CLIENT_TIMEOUT_SECONDS)
-    except BaseException as error:
+        command = command_runner(argv, CLIENT_TIMEOUT_SECONDS, environment)
+    except (Exception, KeyboardInterrupt) as error:
         contract_error = isinstance(error, CohortError)
+        interruption = "operator_interrupt" if isinstance(error, KeyboardInterrupt) else None
         outcome = {
             **attempt,
             "ended_at": now(),
             "disposition": "contract_error" if contract_error else "interrupted",
             "exit_code": None,
             "termination_signal": None,
-            "interruption": None if contract_error else type(error).__name__,
+            "interruption": interruption or (None if contract_error else type(error).__name__),
             "wall_seconds": "unknown",
-            "error": {"type": type(error).__name__, "message": str(error)},
+            "error": {"type": type(error).__name__, "message": str(error), "stage": "pre_invoke"},
             "result": None,
             "usage": "unknown",
             "export": None,
@@ -639,14 +874,30 @@ def _execute_attempt(
         _write_json_new(attempt_dir / "outcome.json", outcome)
         raise
 
-    _write_new(attempt_dir / "stdout.bin", command.stdout)
-    _write_new(attempt_dir / "stderr.bin", command.stderr)
     result: dict[str, Any] | None = None
     error_body: dict[str, str] | None = None
     disposition = "interrupted" if command.interruption else "invocation_error"
+    interruption = command.interruption
     export: dict[str, Any] | None = None
-    if command.interruption is None:
-        try:
+    fatal_error: PreparationError | None = None
+    stdout_artifact = {
+        "path": "stdout.bin",
+        "sha256": _sha256_bytes(command.stdout),
+        "persisted": False,
+    }
+    stderr_artifact = {
+        "path": "stderr.bin",
+        "sha256": _sha256_bytes(command.stderr),
+        "persisted": False,
+    }
+    stage = "primary_output"
+    try:
+        _write_new(attempt_dir / "stdout.bin", command.stdout)
+        stdout_artifact["persisted"] = True
+        _write_new(attempt_dir / "stderr.bin", command.stderr)
+        stderr_artifact["persisted"] = True
+        if command.interruption is None:
+            stage = "result_validation"
             result = _result_object(command.stdout)
             _validate_result(
                 result,
@@ -658,6 +909,8 @@ def _execute_attempt(
             if disposition == "completed":
                 if command.exit_code != 0:
                     raise AttemptError("completed Ask result returned a nonzero exit code")
+                stage = "export"
+                environment = _verified_execution_environment(manifest)
                 export_dir = attempt_dir / "export"
                 export_argv = (
                     str(manifest["gcode"]["path"]),
@@ -671,7 +924,7 @@ def _execute_attempt(
                     "--output",
                     str(export_dir),
                 )
-                export_result = command_runner(export_argv, 120)
+                export_result = command_runner(export_argv, 120, environment)
                 _write_new(attempt_dir / "export.stdout.bin", export_result.stdout)
                 _write_new(attempt_dir / "export.stderr.bin", export_result.stderr)
                 export_body = _result_object(
@@ -686,25 +939,35 @@ def _execute_attempt(
                     manifest=manifest,
                     question=question,
                 )
-        except (AttemptError, PreparationError) as error:
+    except (Exception, KeyboardInterrupt) as error:
+        if isinstance(error, KeyboardInterrupt):
+            disposition = "interrupted"
+            interruption = "operator_interrupt"
+        elif isinstance(error, CohortError):
             disposition = "contract_error"
-            error_body = {"type": type(error).__name__, "message": str(error)}
+            if isinstance(error, PreparationError):
+                fatal_error = error
+        else:
+            disposition = "export_error" if stage == "export" else "artifact_error"
+        error_body = {"type": type(error).__name__, "message": str(error), "stage": stage}
     outcome = {
         **attempt,
         "ended_at": now(),
         "disposition": disposition,
         "exit_code": command.exit_code,
         "termination_signal": command.termination_signal,
-        "interruption": command.interruption,
+        "interruption": interruption,
         "wall_seconds": command.wall_seconds,
-        "stdout": {"path": "stdout.bin", "sha256": _sha256_bytes(command.stdout)},
-        "stderr": {"path": "stderr.bin", "sha256": _sha256_bytes(command.stderr)},
+        "stdout": stdout_artifact,
+        "stderr": stderr_artifact,
         "error": error_body,
         "result": result,
         "usage": (result.get("usage") if result and result.get("usage") is not None else "unknown"),
         "export": export,
     }
     _write_json_new(attempt_dir / "outcome.json", outcome)
+    if fatal_error is not None:
+        raise fatal_error
     return outcome
 
 
@@ -864,7 +1127,9 @@ def _terminate_group(process: subprocess.Popen[bytes], termination: int) -> None
         pass
 
 
-def run_command(argv: tuple[str, ...], timeout: float) -> CommandResult:
+def run_command(
+    argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
+) -> CommandResult:
     """Run one owned process group with a bounded caller wait."""
     started = time.monotonic()
     process = subprocess.Popen(
@@ -873,6 +1138,7 @@ def run_command(argv: tuple[str, ...], timeout: float) -> CommandResult:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        env=dict(environment),
     )
     try:
         stdout, stderr = process.communicate(timeout=timeout)

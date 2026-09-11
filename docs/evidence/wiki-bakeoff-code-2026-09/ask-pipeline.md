@@ -11,6 +11,7 @@ provider launch, measurement, or success claim.
 | #22019 | Final accepted integration evidence and SHA-256 | UNRUN |
 | Normal-loader runtime admission | Accepted evidence and SHA-256 | UNRUN |
 | Installed CLI acceptance | Accepted evidence and SHA-256 | UNRUN |
+| Contained runtime isolation | Private home/bootstrap, loopback endpoint, private DB schema, service receipts | UNRUN |
 | `ask-investigator` profile snapshot | Definition metadata, full effective profile, and content hash | UNRUN |
 | `ask-reviewer` profile snapshot | Definition metadata, full effective profile, and content hash | UNRUN |
 | Installed `gcode` | Path, binary SHA-256, version, and CLI contract v10 | UNRUN |
@@ -20,22 +21,62 @@ The runtime receipt must name exactly these tool identities:
 `gobby-ask:submit_answer`, `gobby-ask:submit_review`, and
 `gobby-agents:end_agent_run`.
 
+## Contained runtime receipt
+
+The accepted runtime identity must include a non-secret `isolation` object. The
+contained supervisor creates the service and DB; the cohort runner does not create a
+second daemon framework. Paths must be absolute, owner-only, non-symlink artifacts.
+
+```json
+{
+  "mode": "contained",
+  "daemon_url": "http://127.0.0.1:REPLACE_PRIVATE_PORT",
+  "gobby_home": "/REPLACE/private-runtime/gobby",
+  "bootstrap": {"path": "/REPLACE/private-runtime/gobby/bootstrap.yaml", "sha256": "REPLACE"},
+  "database": {
+    "host": "127.0.0.1", "port": 60892, "name": "gobby_test",
+    "schema": "gobby_test_REPLACE_UNIQUE", "receipt": {"path": "/REPLACE/database.json", "sha256": "REPLACE"}
+  },
+  "service": {
+    "identity": "REPLACE_CONTAINED_SERVICE_ID", "daemon_url": "http://127.0.0.1:REPLACE_PRIVATE_PORT",
+    "receipt": {"path": "/REPLACE/service.json", "sha256": "REPLACE"}
+  }
+}
+```
+
+The database receipt JSON contains exactly `host`, `port`, `name`, and `schema`.
+The service receipt JSON contains exactly `identity` and `daemon_url`. No credentials
+or database URL enter the cohort manifest. Before preparation, every primary, and
+every export, the runner revalidates private ownership and all three receipt hashes.
+It supplies `GOBBY_DAEMON_URL`, `GOBBY_HOME`, and `GOBBY_TEST_PROTECT=1` explicitly
+to each subprocess. Only a small allowlist of non-secret OS process variables is
+inherited; ambient DB, daemon-port, session, task, provider-token, cloud-credential,
+and managed-execution variables are excluded.
+
 ## Prepared commands
 
 These commands are documentation only and have not been run. Replace the absolute
 placeholder paths only after all gates above are accepted.
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort.py prepare --runtime-identity /REPLACE/accepted-runtime-identity.json --gcode-bin /REPLACE/installed/gcode --project-root /REPLACE/game-goblins --output-root /REPLACE/ask-cohort-output
-UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort.py run-primary --manifest /REPLACE/ask-cohort-output/cohort-manifest.json
-UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_scoring.py review --manifest /REPLACE/ask-cohort-output/cohort-manifest.json --output /REPLACE/ask-cohort-output/review-packet.json
-UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_scoring.py score --packet /REPLACE/ask-cohort-output/review-packet.json --judgments /REPLACE/parent-reviewed-judgments.json --output-json /REPLACE/ask-cohort-output/scored.json --output-report /REPLACE/ask-cohort-output/report.md
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort.py prepare --runtime-identity /REPLACE/accepted-contained-runtime-identity.json --gcode-bin /REPLACE/installed/gcode --project-root /REPLACE/game-goblins --output-root /REPLACE/ask-cohort-output
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_cohort.py run-primary --manifest /REPLACE/ask-cohort-output/cohort-manifest.json
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_scoring.py review --manifest /REPLACE/ask-cohort-output/cohort-manifest.json --output /REPLACE/ask-cohort-output/review-packet.json
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync python docs/evidence/wiki-bakeoff-code-2026-09/ask_scoring.py score --packet /REPLACE/ask-cohort-output/review-packet.json --judgments /REPLACE/parent-reviewed-judgments.json --output-json /REPLACE/ask-cohort-output/scored.json --output-report /REPLACE/ask-cohort-output/report.md
 ```
 
 Primary runs are serial, deterministic-retrieval runs with a 600-second service
 deadline and a 630-second bounded client wait. A retry or hybrid diagnostic uses the
 separate `supplement` command, requires an operator reason, and never replaces the
 primary attempt in cohort scoring.
+
+Before `run-primary`, verify the manifest hash, contained receipts, source commit/tree
+identities, and Q14 first-parent name-status inventory. After it returns, freeze all
+Q01-Q14 primary outcomes and hashes before considering a supplement. Review and score
+once against those primaries; `report.md` materializes per-question retrieval and
+answer metrics, raw hashes, runtime/usage, unsupported statements, and missing exact
+values. Copy the reviewed result into this acceptance artifact without replacing any
+primary failure.
 
 ## Frozen cohort
 
@@ -57,7 +98,9 @@ primary attempt in cohort scoring.
 | Q14 | `8b24ac26699aac8b24254a647aa70b208287b492` | UNRUN | UNRUN | UNRUN | UNRUN |
 
 The runner embeds the exact original prompt string and the commit's resolved tree OID
-in each immutable primary attempt before launching `gcode ask`.
+in each immutable primary attempt before launching `gcode ask`. Preparation also
+seals Q14's first parent and complete first-parent `name-status` inventory without
+copying the external gold answer into prompts or the source corpus.
 
 ## Scoring contract
 
@@ -87,6 +130,12 @@ Every primary is authoritative as completed, failed, contract-error, interrupted
 UNRUN. Raw prompt, stdout, stderr, result, publication manifest, answer, evidence,
 source excerpts, hashes, wall time, and usage remain reviewable. Retry and hybrid
 artifacts are separately labelled.
+
+Errors after the primary process returns are also authoritative. Export failures are
+typed `export_error`; output-persistence failures are typed `artifact_error`; an
+operator interrupt during export is persisted as `interrupted/operator_interrupt`.
+Isolation drift is a typed contract error and stops further execution. A resumed run
+skips every existing primary attempt and never replaces it.
 
 The accepted installed-binary hash is rechecked immediately before every primary,
 retry, and hybrid invocation. A mismatch is recorded as an immutable contract-error

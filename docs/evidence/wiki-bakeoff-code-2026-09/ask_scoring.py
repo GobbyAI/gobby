@@ -13,6 +13,7 @@ from typing import Any, cast
 
 from ask_cohort import (
     QUESTIONS,
+    _sha256_file,
     _write_json_new,
     _write_new,
     aggregate_runtime,
@@ -755,8 +756,8 @@ def build_review_packet(manifest_path: Path) -> dict[str, Any]:
             "citation_integrity": None,
             "judgment_template": None,
             "raw": {
-                "attempt": str(attempt_dir / "attempt.json"),
-                "outcome": str(attempt_dir / "outcome.json"),
+                "attempt": _raw_artifact(attempt_dir / "attempt.json"),
+                "outcome": _raw_artifact(attempt_dir / "outcome.json"),
             },
         }
         if account.get("disposition") == "completed" and account.get("export") is not None:
@@ -792,6 +793,10 @@ def build_review_packet(manifest_path: Path) -> dict[str, Any]:
         "supplements": _supplement_inventory(manifest_path.parent),
         "note": "Only completed primary publications are scorable; supplements never substitute.",
     }
+
+
+def _raw_artifact(path: Path) -> dict[str, str | None]:
+    return {"path": str(path), "sha256": _sha256_file(path) if path.is_file() else None}
 
 
 def score_packet(packet: object, judgments: object) -> dict[str, Any]:
@@ -930,40 +935,137 @@ def score_packet(packet: object, judgments: object) -> dict[str, Any]:
     }
 
 
+def _report_metric(value: object) -> str:
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    return "unknown" if value is None else str(value)
+
+
+def _report_window(value: object) -> str:
+    window = _mapping(value, name="retrieval window")
+    return " / ".join(
+        (
+            str(window.get("supported", "unknown")),
+            _report_metric(window.get("reciprocal_rank")),
+            _report_metric(window.get("gold_span_recall")),
+        )
+    )
+
+
+def _report_completeness(value: object) -> str:
+    window = _mapping(value, name="retrieval window")
+    observations = _list(window.get("query_completeness", []), name="query completeness")
+    complete = sum(
+        1
+        for observation in observations
+        if isinstance(observation, dict) and observation.get("complete") is True
+    )
+    return f"{complete}/{len(observations)} complete"
+
+
 def render_report(result: object) -> str:
+    """Materialize the complete human-auditable cohort result from scored JSON."""
     scored = _mapping(result, name="scored result")
     comparison = _mapping(scored.get("retrieval_comparison"), name="retrieval comparison")
+    answer_quality = _mapping(scored.get("answer_quality"), name="answer quality")
+    rows = [
+        _mapping(row, name="scored question")
+        for row in _list(scored.get("questions"), name="scored questions")
+    ]
     lines = [
         "# Native Ask frozen-cohort report",
         "",
         f"Retrieval conclusion: **{comparison['conclusion']}**.",
         "Answer quality is reported separately; the historical 6/14 value is retrieval-only.",
         "",
-        "| Q | Primary | First query | After follow-ups | Answer correct |",
-        "|---|---|---:|---:|---:|",
+        "## Per-question retrieval and answer measurements",
+        "",
+        "Before/after cells are `supported / reciprocal rank / gold-span recall`.",
+        "",
+        "| Q | Primary | Queries | Before | After | Completeness | Answer | Gold | Source | Citation | Exact |",
+        "|---|---|---:|---|---|---|---|---:|---:|---:|---:|",
     ]
-    for raw_row in _list(scored.get("questions"), name="scored questions"):
-        row = _mapping(raw_row, name="scored question")
+    for row in rows:
         retrieval = row.get("retrieval")
         answer = row.get("answer_score")
-        before = after = correct = "UNSCORED"
+        values = ["UNSCORED"] * 9
         if isinstance(retrieval, dict) and isinstance(answer, dict):
-            before = str(_mapping(retrieval["before"], name="before")["supported"])
-            after = str(_mapping(retrieval["after"], name="after")["supported"])
-            correct = str(answer["answer_correct"])
+            before = _mapping(retrieval.get("before"), name="before retrieval")
+            after = _mapping(retrieval.get("after"), name="after retrieval")
+            values = [
+                str(retrieval.get("query_count", "unknown")),
+                _report_window(before),
+                _report_window(after),
+                _report_completeness(after),
+                str(answer.get("answer_correct", "unknown")),
+                _report_metric(answer.get("gold_key_coverage")),
+                _report_metric(answer.get("source_supported_claim_precision")),
+                _report_metric(answer.get("citation_integrity")),
+                _report_metric(answer.get("exact_value_coverage")),
+            ]
         lines.append(
-            f"| {row['question_id']} | {row['disposition']} | {before} | {after} | {correct} |"
+            f"| {row['question_id']} | {row['disposition']} | " + " | ".join(values) + " |"
         )
+
     lines.extend(
         [
             "",
+            "## Aggregate comparison",
+            "",
+            f"Historical supported: {comparison['historical_supported_count']}/14.",
+            f"New first-query supported: {comparison['new_before_supported_count']}/14.",
+            f"New after-follow-up supported: {comparison['new_after_supported_count']}/14.",
             f"Lost historical hits: {comparison['lost_historical_hits']}",
             f"Gained hits: {comparison['gained_hits']}",
             f"Delta after follow-ups vs historical: {comparison['delta_after_vs_historical']}",
             "",
-            "Raw attempt and publication paths/hashes remain in the scored JSON question rows.",
+            "Answer quality: "
+            f"{answer_quality['correct_question_count']}/{answer_quality['scored_question_count']} "
+            "correct; mean gold/source/citation = "
+            f"{_report_metric(answer_quality['mean_gold_key_coverage'])} / "
+            f"{_report_metric(answer_quality['mean_source_supported_claim_precision'])} / "
+            f"{_report_metric(answer_quality['mean_citation_integrity'])}.",
+            "",
+            "## Runtime and usage",
+            "",
+            f"`{json.dumps(scored.get('runtime'), sort_keys=True, separators=(',', ':'))}`",
+            "",
+            "## Raw artifact inventory",
+            "",
         ]
     )
+    for row in rows:
+        raw = row.get("raw")
+        lines.append(
+            f"- {row['question_id']}: `{json.dumps(raw, sort_keys=True, separators=(',', ':'))}`"
+        )
+
+    lines.extend(["", "## Unsupported statements and missing exact values", ""])
+    for row in rows:
+        answer = row.get("answer_score")
+        if not isinstance(answer, dict):
+            lines.append(f"- {row['question_id']}: UNSCORED ({row['disposition']})")
+            continue
+        unsupported = answer.get("unsupported_statements", [])
+        checks = _mapping(answer.get("exact_checks", {}), name="exact checks")
+        missing = [
+            name
+            for name, item in checks.items()
+            if not isinstance(item, dict) or item.get("verified") is not True
+        ]
+        exact_detail = ""
+        if checks:
+            exact_detail = "; exact_checks=" + json.dumps(
+                checks, sort_keys=True, separators=(",", ":")
+            )
+        if "q14_changed_paths_exact" in answer:
+            exact_detail += "; changed_paths_exact=" + str(answer.get("q14_changed_paths_exact"))
+        lines.append(
+            f"- {row['question_id']}: unsupported="
+            f"{json.dumps(unsupported, sort_keys=True, separators=(',', ':'))}; "
+            f"missing_exact={json.dumps(missing, separators=(',', ':'))}"
+            f"{exact_detail}"
+        )
     return "\n".join(lines) + "\n"
 
 
