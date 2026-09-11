@@ -451,3 +451,38 @@ The Ask pipeline, permission, and recovery Python selection also passed 44 tests
 in 10.19 seconds.
 After service recovery, the same combined Rust selection compiled in 8.38 seconds
 and passed all 217 selected tests in 2.196 seconds (873 unrelated tests skipped).
+
+## Contained attempt 12
+
+The release build completed in 58.93 seconds. Fresh immutable binaries were pinned
+under `target/ask-probe-b1a2b014`: gcode SHA-256
+`276167dbdbe0cd45a79d17076e040911b55ac8adc12017c0ef76a71c112b4384` and gterm SHA-256
+`a910dd61e2f379ac91362ef492c667fb69b7adf3b9cc95959839ad11d18b7326`.
+The 16 snapshot/native integration tests passed with that exact gcode binary in
+22.52 seconds. Source HEAD was clean at `b1a2b014f150c491ccaedee2fbece959889726da`,
+including all then-current main commits.
+
+Attempt 12 ran with its original 600-second controller deadline. Ask run
+`3e98fddf-996c-4a07-acba-8100c7e1b91f` completed prepare between
+`2026-09-11T05:33:27.392758Z` and `2026-09-11T05:39:09.988719Z` (342.596 seconds).
+Seed then failed with `stale_range`: the content search requested lines `1..8`
+for `tests/ask/fixtures/native_ask_probe_hostile.txt`, whose committed blob has
+seven lines. Seed supplies a content query, not a hard-coded fixture line range.
+The canonical producer/consumer range disagreement remains an owned correction;
+the fixture and stale-range rejection are preserved.
+
+No provider agents or launch receipts were created. Raw evidence is retained at
+`/tmp/gobby-ask-native-probe-12261-twelfth/raw-probe.json`, SHA-256
+`e9cfec430586a6b66241ef5885e87506113ac0caaa8753b53aa542b8e44523e8`.
+Cleanup reported `errors=[]`, complete raw export, private schema dropped, runtime
+removed, worker exited, and terminal host absent. A parent sample request raced
+the indexer's normal exit and produced no sample. Attempts 1–12 remain immutable;
+native security/resume proof, installed acceptance, and the all14 cohort remain open.
+
+An isolated #22018 correction worker is reproducing the line-range failure.
+A separate read-only reviewer is checking sealing/admission requirements and
+whether repeating full-repository preparation for the second native run can fit
+the unchanged controller budget. The recurrent MCP Git-status timeout also
+reappeared after macOS recovery while direct Git status took 0.04 seconds; its
+cause remains unresolved. No further full probe is scheduled before the required
+correction and independent review.
