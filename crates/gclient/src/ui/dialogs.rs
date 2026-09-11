@@ -4,9 +4,9 @@
 
 use crate::ui::chrome::Chrome;
 use crate::ui::widgets::{
-    action_button_row_rects, centered_popup_rect, modal_choice_rows, panel_contrast_fg,
-    render_action_button, render_modal_description, render_modal_header, render_modal_shell,
-    render_panel_shell, ActionButtonSpec,
+    action_button_row_rects, centered_popup_rect, modal_choice_rows, modal_description,
+    panel_contrast_fg, render_action_button, render_modal_description, render_modal_header,
+    render_modal_shell, render_panel_shell, ActionButtonSpec,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -21,10 +21,15 @@ const CONFIRM_CLOSE_POPUP_WIDTH: u16 = 64;
 const CONFIRM_CLOSE_POPUP_HEIGHT: u16 = 6;
 const RENAME_POPUP_WIDTH: u16 = 56;
 const RENAME_POPUP_HEIGHT: u16 = 7;
-const RESPOND_POPUP_WIDTH: u16 = 64;
-/// Respond rows besides the options: header, gap, prompt (2), gap, input,
-/// gap, buttons, plus the two border rows.
-const RESPOND_POPUP_BASE_HEIGHT: u16 = 10;
+/// The respond popup follows the terminal width between these bounds.
+const RESPOND_POPUP_MIN_WIDTH: u16 = 64;
+const RESPOND_POPUP_MAX_WIDTH: u16 = 120;
+/// Respond rows besides the prompt, options, and input: header, gap, gap,
+/// buttons, plus the two border rows.
+const RESPOND_POPUP_BASE_HEIGHT: u16 = 6;
+/// The prompt keeps at least two rows and shows up to twelve wrapped lines.
+const RESPOND_PROMPT_MIN_ROWS: u16 = 2;
+const RESPOND_PROMPT_MAX_ROWS: u16 = 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenameKind {
@@ -445,6 +450,48 @@ fn input_line(value: &str, cursor: usize) -> Line<'static> {
     ])
 }
 
+/// How the respond popup lays out inside `area`.
+struct RespondLayout {
+    width: u16,
+    height: u16,
+    prompt_rows: u16,
+    option_rows: u16,
+    /// One when the prompt takes free text, zero when it offers options: the
+    /// input row is dead with options, so it is not drawn.
+    input_rows: u16,
+}
+
+fn respond_layout(area: Rect, prompt: &str, options: &[String]) -> RespondLayout {
+    let available = area.width.saturating_sub(4);
+    // As wide as the terminal allows up to the cap, and no narrower than the
+    // minimum unless the terminal itself is.
+    let width = available
+        .min(RESPOND_POPUP_MAX_WIDTH)
+        .max(RESPOND_POPUP_MIN_WIDTH.min(available));
+    let inner_width = width.saturating_sub(2);
+    let prompt_rows = modal_description(prompt, Style::default())
+        .line_count(inner_width)
+        .min(u16::MAX as usize) as u16;
+    let prompt_rows = prompt_rows.clamp(RESPOND_PROMPT_MIN_ROWS, RESPOND_PROMPT_MAX_ROWS);
+    let option_rows = options.len().min(u16::MAX as usize) as u16;
+    let input_rows = u16::from(options.is_empty());
+    RespondLayout {
+        width,
+        height: RESPOND_POPUP_BASE_HEIGHT + prompt_rows + option_rows + 2 * input_rows,
+        prompt_rows,
+        option_rows,
+        input_rows,
+    }
+}
+
+/// The respond popup's `(width, height)` for `area`: the width follows the
+/// terminal between the bounds, the prompt gets every wrapped line up to its
+/// row cap, and the free-text input rows exist only without options.
+pub fn respond_popup_size(area: Rect, prompt: &str, options: &[String]) -> (u16, u16) {
+    let layout = respond_layout(area, prompt, options);
+    (layout.width, layout.height)
+}
+
 pub fn render_respond(
     frame: &mut Frame,
     area: Rect,
@@ -455,14 +502,8 @@ pub fn render_respond(
     text: &str,
 ) {
     let p = &chrome.palette;
-    let option_rows = options.len().min(u16::MAX as usize) as u16;
-    let Some(inner) = render_modal_shell(
-        frame,
-        area,
-        RESPOND_POPUP_WIDTH,
-        RESPOND_POPUP_BASE_HEIGHT + option_rows,
-        p,
-    ) else {
+    let layout = respond_layout(area, prompt, options);
+    let Some(inner) = render_modal_shell(frame, area, layout.width, layout.height, p) else {
         return;
     };
     if inner.height < 5 {
@@ -472,10 +513,10 @@ pub fn render_respond(
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(2),
-        Constraint::Length(option_rows),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(layout.prompt_rows),
+        Constraint::Length(layout.option_rows),
+        Constraint::Length(layout.input_rows),
+        Constraint::Length(layout.input_rows),
         Constraint::Min(0),
     ])
     .areas::<7>(inner);
@@ -483,7 +524,6 @@ pub fn render_respond(
     render_modal_header(frame, rows[0], "respond", p);
     render_modal_description(frame, rows[2], prompt, Style::default().fg(p.text));
 
-    let free_text = selected >= options.len();
     for (idx, (option, rect)) in options
         .iter()
         .zip(modal_choice_rows(rows[3], options.len(), 1))
@@ -505,24 +545,19 @@ pub fn render_respond(
         );
     }
 
-    let input_rect = rows[5];
-    frame.render_widget(Clear, input_rect);
-    let input = if free_text {
-        Line::from(vec![
+    if options.is_empty() {
+        let input_rect = rows[5];
+        frame.render_widget(Clear, input_rect);
+        let input = Line::from(vec![
             Span::styled(" > ", Style::default().fg(p.accent)),
             Span::raw(text.to_string()),
             Span::raw("█"),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(" > ", Style::default().fg(p.overlay1)),
-            Span::raw(text.to_string()),
-        ])
-    };
-    frame.render_widget(
-        Paragraph::new(input).style(Style::default().fg(p.text).bg(p.surface0)),
-        input_rect,
-    );
+        ]);
+        frame.render_widget(
+            Paragraph::new(input).style(Style::default().fg(p.text).bg(p.surface0)),
+            input_rect,
+        );
+    }
 
     let rects = action_button_row_rects(
         inner,

@@ -246,11 +246,13 @@ terminals keep running.
 
 ## Attention prompts and respond
 
-When an agent blocks on a question, its sidebar row turns `blocked`. `prefix+a`
-opens the respond dialog for the first actionable prompt among the focused
-project's agents; clicking a blocked row, or choosing *respond* from its
-right-click menu, opens it for that row. The dialog shows the prompt and either
-its options or a free-text field:
+When an agent blocks on a question, its sidebar row turns `blocked`. Clicking
+the row focuses its terminal, where the question is already on screen; answer
+it there like any other input. `prefix+a` opens the respond dialog for the
+first actionable prompt among the focused project's agents, and *respond* in a
+blocked row's right-click menu opens it for that row. The dialog grows with the
+terminal (64 to 120 columns), shows every line of the prompt up to twelve, and
+offers either its options or a free-text field:
 
 - `up` / `down` pick an option, `enter` submits it.
 - With no options, type your answer, `backspace` edits, `enter` submits.
@@ -382,7 +384,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Click a project card / worktree row | Focus the project / open the worktree |
 | Drag a project card | Reorder projects |
 | Click a `▸`/`▾` toggle | Fold or unfold the card's worktrees |
-| Click an agent row | Focus its pane, or open the respond dialog when it is blocked |
+| Click an agent row | Focus its pane (a blocked row's question is already on screen) |
 | Click the control indicator | Take, release, or take back control |
 | Drag the sidebar edge, the section rule, or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |

@@ -11,7 +11,7 @@ use crate::ui::pane_layout::metrics_for;
 use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
-use crate::ui::sidebar::{agent_blocked, section_metrics};
+use crate::ui::sidebar::section_metrics;
 use crate::ui::sidebar_rows::displayed_project_ids;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
@@ -228,8 +228,9 @@ pub(super) fn down<W: WorkspaceView>(
                     chrome.open_tab(pane, ws.pane(pane).display_name());
                 }
             }
+            // A blocked row only reveals its terminal, which already shows the
+            // question; `respond` stays on prefix+a and the row menu.
             match pane {
-                _ if agent_blocked(ws, &entry_id) => MouseOutcome::Attention { pane, entry_id },
                 Some(pane) => MouseOutcome::Focus {
                     pane,
                     observe_only: false,

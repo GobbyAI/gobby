@@ -7,7 +7,9 @@ use gobby_client::app::{
 };
 use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode};
-use gobby_client::ui::dialogs::{render_dialog, CloseScope, CloseTarget, Dialog, RenameKind};
+use gobby_client::ui::dialogs::{
+    render_dialog, respond_popup_size, CloseScope, CloseTarget, Dialog, RenameKind,
+};
 use gobby_client::ui::navigator::NavigatorState;
 use gobby_client::ui::widgets::{action_button_row_rects, centered_popup_rect, ActionButtonSpec};
 use gobby_client::ui::{render_workspace, Action};
@@ -235,6 +237,102 @@ fn confirm_close_buttons_take_clicks() {
         MouseOutcome::Confirm(CloseTarget::Tab),
         "close asks the loop to act, as Enter does"
     );
+}
+
+/// Draws the workspace with its respond dialog into `area` and returns the
+/// popup rect the renderer chose with the text of its rows.
+fn respond_popup_rows(ws: &Workspace, chrome: &mut Chrome, area: Rect) -> (Rect, Vec<String>) {
+    chrome.compute_view(ws, area);
+    let chrome: &Chrome = chrome;
+    let terminal = render(area.width, area.height, |frame| {
+        render_workspace(frame, ws, chrome);
+    });
+    let Some(Dialog::Respond {
+        prompt, options, ..
+    }) = &chrome.dialog
+    else {
+        panic!("respond dialog is open");
+    };
+    let (width, height) = respond_popup_size(area, prompt, options);
+    let popup = centered_popup_rect(area, width, height).expect("respond popup fits");
+    (popup, rect_rows(&terminal, popup))
+}
+
+fn respond_dialog(prompt_lines: usize, options: &[&str]) -> Dialog {
+    Dialog::Respond {
+        entry_id: "run:term-alpha".into(),
+        prompt: (1..=prompt_lines)
+            .map(|n| format!("line {n} of the question"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        options: options.iter().map(|option| option.to_string()).collect(),
+        selected: 0,
+        text: String::new(),
+    }
+}
+
+/// The respond popup sizes itself to the terminal and its prompt: the width
+/// follows the terminal between 64 and 120 columns, the prompt shows every
+/// wrapped line up to twelve, and the free-text input is drawn only when
+/// the prompt offers no options (it is dead otherwise).
+#[test]
+fn respond_dialog_fits_its_prompt() {
+    let ws = modal_workspace();
+    let alpha = ws.pane_for_terminal("term-alpha").expect("alpha pane");
+    let mut chrome = Chrome::new(theme());
+    chrome.open_tab(alpha, "");
+    chrome.mode = Mode::Respond;
+    chrome.dialog = Some(respond_dialog(6, &["Yes", "No", "Other"]));
+
+    let (popup, rows) = respond_popup_rows(&ws, &mut chrome, AREA);
+    assert_eq!(
+        (popup.width, popup.height),
+        (96, 15),
+        "100 columns leave 96"
+    );
+    assert!(rows[1].contains("respond"), "header: {:?}", rows[1]);
+    for (index, row) in rows[3..9].iter().enumerate() {
+        let line = format!("line {} of the question", index + 1);
+        assert!(row.contains(&line), "prompt row {index}: {row:?}");
+    }
+    assert!(
+        rows[9].contains("▸ Yes"),
+        "first option selected: {:?}",
+        rows[9]
+    );
+    assert!(rows[10].contains("No") && rows[11].contains("Other"));
+    assert!(
+        rows.iter().all(|row| !row.contains(" > ")),
+        "no dead input row with options: {rows:?}"
+    );
+    assert!(rows[popup.height as usize - 2].contains("send"));
+
+    let (narrow, _) = respond_popup_rows(&ws, &mut chrome, Rect::new(0, 0, 70, 30));
+    assert_eq!(
+        narrow.width, 66,
+        "a narrow terminal still gets its 4-column margin"
+    );
+    let (wide, _) = respond_popup_rows(&ws, &mut chrome, Rect::new(0, 0, 200, 40));
+    assert_eq!(wide.width, 120, "the width caps at 120 columns");
+
+    chrome.dialog = Some(respond_dialog(6, &[]));
+    let (popup, rows) = respond_popup_rows(&ws, &mut chrome, AREA);
+    assert_eq!(popup.height, 14, "no option rows, two input rows");
+    assert!(
+        rows[10].contains("> █"),
+        "the free-text input follows the prompt and a gap: {:?}",
+        rows[10]
+    );
+
+    chrome.dialog = Some(respond_dialog(20, &[]));
+    let (popup, rows) = respond_popup_rows(&ws, &mut chrome, AREA);
+    assert_eq!(popup.height, 20, "the prompt caps at twelve rows");
+    assert!(
+        rows[14].contains("line 12 of the question"),
+        "{:?}",
+        rows[14]
+    );
+    assert!(rows.iter().all(|row| !row.contains("line 13")));
 }
 
 /// Two roster terminals plus one blocked attention entry on the first.

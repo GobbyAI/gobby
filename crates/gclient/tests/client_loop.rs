@@ -4481,7 +4481,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         // OpenNotificationTarget: c, in the other tab.
         chord('o', KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 1).await;
-        // NextAttention (custom chord): b's prompt, back in the first tab.
+        // NextAttention (custom chord): b's terminal, back in the first tab.
         chord('f', KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", before_jumps + 2).await;
         settle_live_event().await;
@@ -4556,10 +4556,10 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "the notification target clears the toast"
     );
     assert_eq!(chrome.tabs().active_tab, 0);
-    assert_eq!(
-        chrome.mode,
-        gobby_client::ui::chrome::Mode::Respond,
-        "the attention jump opens the prompt"
+    assert!(
+        chrome.dialog.is_none(),
+        "the attention jump reveals the terminal and opens no prompt: {:?}",
+        chrome.dialog
     );
     mock.shutdown().await;
 }

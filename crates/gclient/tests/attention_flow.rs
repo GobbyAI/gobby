@@ -52,6 +52,29 @@ fn http_requests(mock: &MockDaemon, method: &str, target: &str) -> usize {
         .count()
 }
 
+fn websocket_requests(mock: &MockDaemon, kind: &str) -> usize {
+    mock.requests()
+        .into_iter()
+        .filter(|request| {
+            request.method == "WS"
+                && request.body.as_ref().and_then(|body| body.get("type")) == Some(&json!(kind))
+        })
+        .count()
+}
+
+async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, count: usize) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if websocket_requests(mock, kind) >= count {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {count} {kind} requests"));
+}
+
 async fn wait_for_http_requests(mock: &MockDaemon, method: &str, target: &str, count: usize) {
     timeout(Duration::from_secs(1), async {
         loop {
@@ -203,8 +226,9 @@ async fn respond_reaches_daemon() {
 }
 
 /// 3.2 agent row click: an idle row focuses its terminal, a blocked row
-/// jumps to its terminal and opens that entry's prompt, and a row names its
-/// session by title and ref, never by the uuid the entry is keyed on.
+/// jumps to its terminal without opening its prompt (the terminal already
+/// shows it), and a row names its session by title and ref, never by the
+/// uuid the entry is keyed on.
 #[tokio::test]
 async fn agent_row_click_jumps_and_labels_the_session() {
     let mock = MockDaemon::start("local-token").await;
@@ -318,7 +342,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         // The loop refetches the roster in its own reconcile and draws before
         // it selects, so the clicks route against a hit map holding the rows.
         wait_for_http_requests(&mock, "GET", "/api/attention/roster", 2).await;
-        let fetched = http_requests(&mock, "GET", "/api/attention/roster");
+        let taken = websocket_requests(&mock, "terminal_take_control");
         send_mouse(
             &input_tx,
             MouseEventKind::Down(MouseButton::Left),
@@ -333,7 +357,9 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             blocked_row,
         )
         .await;
-        wait_for_http_requests(&mock, "GET", "/api/attention/roster", fetched + 1).await;
+        // Each click takes control of the terminal it focuses; the blocked
+        // row's click fetches no prompt.
+        wait_for_websocket_requests(&mock, "terminal_take_control", taken + 2).await;
         for _ in 0..16 {
             tokio::task::yield_now().await;
         }
@@ -354,11 +380,11 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     result.expect("live loop exits cleanly");
 
     assert!(
-        matches!(&chrome.dialog, Some(Dialog::Respond { entry_id, .. }) if entry_id == "session:sess-1"),
-        "the blocked entry's prompt opens: {:?}",
+        chrome.dialog.is_none(),
+        "a blocked row's click opens no dialog: {:?}",
         chrome.dialog
     );
-    assert_eq!(chrome.mode, Mode::Respond);
+    assert_ne!(chrome.mode, Mode::Respond);
     let blocked = workspace
         .pane_for_terminal("terminal-1")
         .expect("blocked terminal pane");

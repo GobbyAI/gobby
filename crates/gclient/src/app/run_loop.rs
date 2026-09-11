@@ -190,12 +190,6 @@ fn apply_scripted_mouse_outcome(
                 .map_err(|error| FrameError::Other(error.to_string()))?;
         }
         MouseOutcome::Scroll { pane, rows } => workspace.set_scroll_offset(pane, rows)?,
-        MouseOutcome::Attention {
-            pane: Some(pane), ..
-        } => workspace
-            .focus_pane(pane)
-            .map_err(|error| FrameError::Other(error.to_string()))?,
-        MouseOutcome::Attention { pane: None, .. } => {}
         MouseOutcome::FocusProject(project_id) => {
             scripted_focus_project(workspace, chrome, &project_id)
         }

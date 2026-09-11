@@ -12,7 +12,7 @@ use crate::startup::load_keymap;
 use crate::ui::chrome::attention_pane;
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
-use crate::ui::sidebar::{agent_blocked, attention_order, next_machine_filter};
+use crate::ui::sidebar::{attention_order, next_machine_filter};
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, project_rows, RowKind};
 use crate::ui::status::{Toast, ToastKind};
 use crate::ui::{Action, Chrome, Mode};
@@ -102,12 +102,6 @@ pub(super) async fn apply_live_mouse_outcome(
         }
         MouseOutcome::Scroll { pane, rows } => {
             set_live_scroll_offset(workspace, pane, rows).await?;
-        }
-        MouseOutcome::Attention { pane, entry_id } => {
-            if let Some(pane) = pane {
-                focus_live_pane(workspace, pane).await?;
-            }
-            open_response_dialog(workspace, chrome, Some(&entry_id)).await?;
         }
         MouseOutcome::Copy => {
             let mut output = std::io::stdout();
@@ -663,11 +657,9 @@ async fn jump_live_attention(
     chrome: &mut Chrome,
     entry_id: &str,
 ) -> Result<(), FrameError> {
+    // The terminal already shows the question, so a jump only reveals it.
     if let Some(pane_id) = attention_pane(&*workspace, entry_id) {
         focus_live_shown_pane(workspace, chrome, pane_id).await?;
-    }
-    if agent_blocked(&*workspace, entry_id) {
-        open_response_dialog(workspace, chrome, Some(entry_id)).await?;
     }
     Ok(())
 }
