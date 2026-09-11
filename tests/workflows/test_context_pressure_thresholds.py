@@ -117,14 +117,14 @@ def _after_tool(
 @pytest.mark.parametrize(
     ("window", "expected"),
     [
-        (None, (128_000, 160_000, 5)),
-        (0, (128_000, 160_000, 5)),
+        (None, (200_000, 256_000, 5)),
+        (0, (200_000, 256_000, 5)),
         (255_999, (128_000, 191_999, 5)),
-        (256_000, (128_000, 160_000, 5)),
-        (258_400, (128_000, 160_000, 5)),
-        (499_999, (128_000, 160_000, 5)),
-        (500_000, (128_000, 160_000, 5)),
-        (1_000_000, (128_000, 160_000, 5)),
+        (256_000, (200_000, 256_000, 5)),
+        (258_400, (200_000, 256_000, 5)),
+        (499_999, (200_000, 256_000, 5)),
+        (500_000, (250_000, 300_000, 5)),
+        (1_000_000, (250_000, 300_000, 5)),
     ],
 )
 def test_threshold_matrix_uses_window_classes(
@@ -157,9 +157,9 @@ def test_threshold_overrides_reconfigure_every_field_and_boundary() -> None:
     ("window", "warn_threshold", "block_threshold"),
     [
         (128_000, 64_000, 96_000),
-        (None, 128_000, 160_000),
-        (256_000, 128_000, 160_000),
-        (500_000, 128_000, 160_000),
+        (None, 200_000, 256_000),
+        (256_000, 200_000, 256_000),
+        (500_000, 250_000, 300_000),
     ],
 )
 def test_pressure_bands_change_exactly_at_selected_thresholds(
@@ -177,7 +177,7 @@ def test_pressure_bands_change_exactly_at_selected_thresholds(
 
 @pytest.mark.parametrize(
     ("used", "expected_band"),
-    [(128_000, "warn"), (160_000, "block")],
+    [(250_000, "warn"), (300_000, "block")],
 )
 def test_turn_start_repeats_guidance_and_writes_block_message_only_in_block(
     used: int,
@@ -201,7 +201,7 @@ def test_turn_start_repeats_guidance_and_writes_block_message_only_in_block(
 
 def test_after_tool_warns_on_crossing_then_every_configured_calls() -> None:
     variables = _variables()
-    manager = _SessionManager(128_000, 1_000_000)
+    manager = _SessionManager(250_000, 1_000_000)
 
     assert _after_tool(variables, manager)
     assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
@@ -214,7 +214,7 @@ def test_after_tool_warns_on_crossing_then_every_configured_calls() -> None:
 
 def test_after_tool_block_band_announces_every_call() -> None:
     variables = _variables()
-    manager = _SessionManager(160_000, 1_000_000)
+    manager = _SessionManager(300_000, 1_000_000)
 
     assert _after_tool(variables, manager)
     assert _after_tool(variables, manager)
@@ -240,7 +240,7 @@ def test_mid_turn_suppression_clears_band_message_and_counter(overrides: dict[st
         }
     )
 
-    assert _after_tool(variables, _SessionManager(160_000, 1_000_000)) == ""
+    assert _after_tool(variables, _SessionManager(300_000, 1_000_000)) == ""
     assert variables[PRESSURE_BAND_VARIABLE] == "none"
     assert variables[BLOCK_MESSAGE_VARIABLE] == ""
     assert variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] == 0
@@ -271,7 +271,7 @@ def test_missing_usage_writes_none_band() -> None:
 
 def test_non_retryable_handoff_failure_caps_epoch_at_warn() -> None:
     variables = _variables()
-    manager = _SessionManager(160_000, 1_000_000)
+    manager = _SessionManager(300_000, 1_000_000)
     failed = _set_handoff_event(
         {
             "success": True,
@@ -301,12 +301,12 @@ def test_background_delivery_failure_keeps_block_band() -> None:
         }
     )
 
-    assert _after_tool(variables, _SessionManager(160_000, 1_000_000))
+    assert _after_tool(variables, _SessionManager(300_000, 1_000_000))
     assert variables[PRESSURE_BAND_VARIABLE] == "block"
     assert variables[BLOCK_MESSAGE_VARIABLE]
     assert variables.get(HANDOFF_UNAVAILABLE_VARIABLE) is not True
 
-    assert _turn_start(variables, _SessionManager(160_000, 1_000_000))
+    assert _turn_start(variables, _SessionManager(300_000, 1_000_000))
     assert variables["context_compact_guidance_kind"] == "failed"
     assert variables[HANDOFF_RESULT_VARIABLE]["delivery_failed"] is True
     assert variables[PRESSURE_BAND_VARIABLE] == "block"
@@ -322,7 +322,7 @@ def test_retryable_handoff_failure_keeps_block_band() -> None:
 
     assert _after_tool(
         variables,
-        _SessionManager(160_000, 1_000_000),
+        _SessionManager(300_000, 1_000_000),
         _set_handoff_event(result),
     )
     assert variables[PRESSURE_BAND_VARIABLE] == "block"
@@ -368,7 +368,7 @@ def test_get_handoff_resets_band_counter_and_epoch_flags() -> None:
 def test_plan_mode_returns_before_turn_accounting() -> None:
     variables = _variables(plan_mode=True)
 
-    assert _turn_start(variables, _SessionManager(160_000, 1_000_000)) == ""
+    assert _turn_start(variables, _SessionManager(300_000, 1_000_000)) == ""
     assert "turns_since_compact" not in variables
     assert variables[PRESSURE_BAND_VARIABLE] == "none"
     assert variables[BLOCK_MESSAGE_VARIABLE] == ""

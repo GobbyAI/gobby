@@ -399,14 +399,14 @@ class TestContextHandoffConfig:
 
     def test_defaults(self) -> None:
         config = ContextHandoffConfig()
-        assert config.warn_tokens == 128_000
-        assert config.block_tokens == 160_000
+        assert config.warn_tokens == 200_000
+        assert config.block_tokens == 256_000
         assert config.small_window_tokens == 256_000
         assert config.small_window_warn_ratio == 0.50
         assert config.small_window_block_ratio == 0.75
         assert config.extended_window_tokens == 500_000
-        assert config.extended_warn_tokens == 128_000
-        assert config.extended_block_tokens == 160_000
+        assert config.extended_warn_tokens == 250_000
+        assert config.extended_block_tokens == 300_000
         assert config.warn_every_tool_calls == 5
         assert DaemonConfig().context_handoff == config
         assert all(field.description for field in ContextHandoffConfig.model_fields.values())

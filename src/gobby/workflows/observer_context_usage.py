@@ -14,14 +14,14 @@ from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceed
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WARN_TOKENS = 128_000
-DEFAULT_BLOCK_TOKENS = 160_000
+DEFAULT_WARN_TOKENS = 200_000
+DEFAULT_BLOCK_TOKENS = 256_000
 DEFAULT_SMALL_WINDOW_TOKENS = 256_000
 DEFAULT_SMALL_WINDOW_WARN_RATIO = 0.50
 DEFAULT_SMALL_WINDOW_BLOCK_RATIO = 0.75
 DEFAULT_EXTENDED_WINDOW_TOKENS = 500_000
-DEFAULT_EXTENDED_WARN_TOKENS = 128_000
-DEFAULT_EXTENDED_BLOCK_TOKENS = 160_000
+DEFAULT_EXTENDED_WARN_TOKENS = 250_000
+DEFAULT_EXTENDED_BLOCK_TOKENS = 300_000
 DEFAULT_WARN_EVERY_TOOL_CALLS = 5
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 
@@ -431,11 +431,8 @@ def _guidance_message(band: str, used: int, warn: int, block: int) -> str:
         return _block_message(used, warn, block)
     return (
         f"Context is {_format_tokens(used)} tokens (warn {_format_tokens(warn)}; "
-        f"block {_format_tokens(block)}). Stop task work now: start no further "
-        "investigation or edit. Run the handoff prerequisites (the feedback survey when "
-        "one is pending), then call gobby-sessions:set_handoff. This overrides any "
-        "harness note that a mid-task handoff is unnecessary. This warning repeats "
-        "every turn and at the configured tool-call cadence."
+        f"block {_format_tokens(block)}). Prepare a concise structured handoff. "
+        "This warning repeats every turn and at the configured tool-call cadence."
     )
 
 

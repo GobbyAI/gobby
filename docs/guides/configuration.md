@@ -417,14 +417,14 @@ session_lifecycle:
   transcript_archive_dir: ~/.gobby/session_transcripts
 
 context_handoff:
-  warn_tokens: 128000
-  block_tokens: 160000
+  warn_tokens: 200000
+  block_tokens: 256000
   small_window_tokens: 256000
   small_window_warn_ratio: 0.50
   small_window_block_ratio: 0.75
   extended_window_tokens: 500000
-  extended_warn_tokens: 128000
-  extended_block_tokens: 160000
+  extended_warn_tokens: 250000
+  extended_block_tokens: 300000
   warn_every_tool_calls: 5
 ```
 
