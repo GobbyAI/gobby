@@ -33,11 +33,21 @@ from mcp.types import (
     JSONRPCResponse,
 )
 
+from gobby.mcp_proxy.transports.base import CLIENT_NAME
+from gobby.utils.version import get_version
+
 LEGACY_PROTOCOL_VERSION = "2025-11-25"
 LEGACY_TOOL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"text": {"type": "string", "default": None}},
 }
+
+
+def assert_gobby_client_info(client_info: Any) -> None:
+    """Every transport must name Gobby rather than leave the SDK default."""
+    assert client_info is not None, "Client was built without client_info"
+    assert client_info.name == CLIENT_NAME
+    assert client_info.version == get_version()
 
 
 class FakeClient:
@@ -135,7 +145,7 @@ def modern_server(name: str = "modern", version: str = "9.9.9") -> MCPServer:
     return server
 
 
-async def _serve_legacy(read: Any, write: Any) -> None:
+async def _serve_legacy(read: Any, write: Any, seen: list[JSONRPCRequest] | None = None) -> None:
     """Answer the handshake-era wire only; ``server/discover`` is unknown here."""
     async with read, write:
         async for item in read:
@@ -145,6 +155,8 @@ async def _serve_legacy(read: Any, write: Any) -> None:
             if isinstance(message, JSONRPCNotification):
                 continue
             assert isinstance(message, JSONRPCRequest)
+            if seen is not None:
+                seen.append(message)
             reply: JSONRPCResponse | JSONRPCError
             if message.method == "initialize":
                 reply = JSONRPCResponse(
@@ -182,11 +194,17 @@ async def _serve_legacy(read: Any, write: Any) -> None:
 
 
 @asynccontextmanager
-async def legacy_transport() -> AsyncIterator[tuple[Any, Any]]:
-    """In-memory ``Transport`` to a server that only speaks the legacy handshake."""
+async def legacy_transport(
+    seen: list[JSONRPCRequest] | None = None,
+) -> AsyncIterator[tuple[Any, Any]]:
+    """In-memory ``Transport`` to a server that only speaks the legacy handshake.
+
+    ``seen`` collects every request the server received, so a test can assert on
+    the raw wire rather than on what the client says it sent.
+    """
     async with create_client_server_memory_streams() as (client_streams, server_streams):
         async with anyio.create_task_group() as task_group:
-            task_group.start_soon(_serve_legacy, *server_streams)
+            task_group.start_soon(_serve_legacy, *server_streams, seen)
             try:
                 yield client_streams
             finally:

@@ -9,7 +9,11 @@ import pytest
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
 from gobby.mcp_proxy.transports.factory import create_transport_connection
 from gobby.mcp_proxy.transports.sse import SSETransportConnection
-from tests.mcp_proxy.transports._support import FakeClient, recording_transport
+from tests.mcp_proxy.transports._support import (
+    FakeClient,
+    assert_gobby_client_info,
+    recording_transport,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -41,8 +45,9 @@ async def test_sse_config_connects_with_explicit_timeout() -> None:
         captured.update(url=url, headers=headers, timeout=timeout, auth=auth)
         return recording_transport(lifecycle)
 
-    def fake_client(transport: Any, *, mode: str = "auto") -> FakeClient:
+    def fake_client(transport: Any, *, mode: str = "auto", client_info: Any = None) -> FakeClient:
         assert mode == "auto"
+        assert_gobby_client_info(client_info)
         client = FakeClient(transport, lifecycle=lifecycle)
         clients.append(client)
         return client

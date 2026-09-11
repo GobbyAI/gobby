@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from mcp.client import Client, ClientSession, Transport
+from mcp.types import Implementation
 
 from gobby.mcp_proxy.models import (
     ConnectionState,
@@ -14,16 +15,29 @@ from gobby.mcp_proxy.models import (
     MCPError,
     MCPServerConfig,
 )
+from gobby.utils.version import get_version
 
 logger = logging.getLogger("gobby.mcp.client")
 
 _HEALTH_ERROR_MAX_LENGTH = 500
 _LEGACY_CLIENT_TEMPLATES = frozenset({"openapi"})
+CLIENT_NAME = "gobby"
 
 
 def _client_mode_for_config(config: MCPServerConfig) -> Literal["auto", "legacy"]:
     """Skip modern discovery for bundled servers known to implement legacy MCP."""
     return "legacy" if config.template in _LEGACY_CLIENT_TEMPLATES else "auto"
+
+
+def gobby_client_info() -> Implementation:
+    """The ``clientInfo`` every outbound connection identifies itself with.
+
+    Left unset, the SDK sends its own ``Implementation(name="mcp", version="0.1.0")``,
+    so Gobby is indistinguishable from any other unconfigured client. Servers read
+    this for telemetry and support, and the modern era repeats it in ``_meta`` on
+    every request, not just at the handshake.
+    """
+    return Implementation(name=CLIENT_NAME, version=get_version())
 
 
 def _format_health_error(error: Exception) -> str:
@@ -213,7 +227,11 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
                 transport = await self._open_transport(stack)
                 # Client negotiates the protocol era (server/discover with an
                 # initialize fallback) before publishing the session.
-                self._client_context = Client(transport, mode=_client_mode_for_config(self.config))
+                self._client_context = Client(
+                    transport,
+                    mode=_client_mode_for_config(self.config),
+                    client_info=gobby_client_info(),
+                )
                 async with self._client_context as client:
                     self._session = client.session
 

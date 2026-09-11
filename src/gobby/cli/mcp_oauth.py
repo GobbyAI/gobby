@@ -20,6 +20,7 @@ from gobby.cli.runtime import require_cli_database
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
 from gobby.mcp_proxy.oauth_callback import OAuthCallback
+from gobby.mcp_proxy.transports.base import gobby_client_info
 from gobby.mcp_proxy.transports.http import build_mcp_http_client
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -60,7 +61,7 @@ async def authorize_server(config: MCPServerConfig, store: SecretStore, timeout:
                 if config.transport == "sse"
                 else streamable_http_client(config.url, http_client=http_client)
             )
-            async with Client(transport) as client:
+            async with Client(transport, client_info=gobby_client_info()) as client:
                 # Some servers permit initialization anonymously and challenge discovery.
                 await client.list_tools()
         if storage.state.tokens is None:

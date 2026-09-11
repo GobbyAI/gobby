@@ -17,13 +17,15 @@ from typing import Any
 
 import pytest
 from mcp.client import Client, ClientSession
-from mcp.types import CallToolResult, ListToolsResult
+from mcp.types import CallToolResult, JSONRPCRequest, ListToolsResult
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 
 from gobby.mcp_proxy.client_manager.tool_inventory import list_tools_from_session
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
+from gobby.mcp_proxy.transports.base import CLIENT_NAME
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection
+from gobby.utils.version import get_version
 from tests.mcp_proxy.transports._support import (
     LEGACY_PROTOCOL_VERSION,
     LEGACY_TOOL_SCHEMA,
@@ -102,6 +104,74 @@ async def test_websocket_connection_runs_the_same_client_lifecycle(monkeypatch: 
     state_after_disconnect: ConnectionState = connection.state
     assert state_after_disconnect == ConnectionState.DISCONNECTED
     assert connection.session is None
+
+
+@pytest.mark.asyncio
+async def test_handshake_initialize_names_gobby_on_the_wire(monkeypatch: Any) -> None:
+    """The legacy ``initialize`` carries Gobby's clientInfo, not the SDK default."""
+    seen: list[JSONRPCRequest] = []
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.transports.websocket.websocket_client",
+        lambda url, headers: legacy_transport(seen),
+    )
+    connection = WebSocketTransportConnection(
+        MCPServerConfig(
+            name="ws-legacy", project_id="p", transport="websocket", url="ws://legacy.test/mcp"
+        )
+    )
+
+    await connection.connect()
+    try:
+        initialize = next(request for request in seen if request.method == "initialize")
+    finally:
+        await connection.disconnect()
+
+    assert initialize.params is not None
+    assert initialize.params["clientInfo"] == {
+        "name": CLIENT_NAME,
+        "version": get_version(),
+    }
+
+
+_WHOAMI_STDIO_SERVER = """
+from mcp.server.mcpserver import Context, MCPServer
+
+server = MCPServer("stdio-whoami", version="1.2.3")
+
+
+@server.tool()
+def whoami(ctx: Context) -> str:
+    params = ctx.request_context.session.client_params
+    info = None if params is None else params.client_info
+    return "" if info is None else f"{info.name} {info.version}"
+
+
+server.run("stdio")
+"""
+
+
+@pytest.mark.asyncio
+async def test_modern_server_sees_gobby_client_info(tmp_path: Any) -> None:
+    """The modern era repeats clientInfo in request ``_meta``; a real server reads it back."""
+    connection = StdioTransportConnection(
+        MCPServerConfig(
+            name="stdio-whoami",
+            project_id="p",
+            transport="stdio",
+            command=sys.executable,
+            args=["-c", _WHOAMI_STDIO_SERVER],
+        ),
+        stdio_errlog_path=str(tmp_path / "stdio-whoami.log"),
+    )
+
+    session = await connection.connect()
+    try:
+        assert session.protocol_version in MODERN_PROTOCOL_VERSIONS
+        result = await session.call_tool("whoami", {})
+        assert result.is_error is False
+        assert result.content[0].text == f"{CLIENT_NAME} {get_version()}"
+    finally:
+        await connection.disconnect()
 
 
 _STDIO_SERVER = """
