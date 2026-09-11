@@ -610,3 +610,65 @@ A scoped #22018 worker is correcting admission semantics while preserving real
 secret rejection, audit redaction, sensitive-path exclusions, response identity,
 and citation bytes. Attempts 1–13 remain unchanged. Attempt 14 and the all14
 cohort remain unrun; full native and installed acceptance remain unproved.
+
+## Attempt 14: credential correction reviewed; native symbol range rejected seed
+
+Credential correction `7946f7bb18bf29ee8a5e20117e7b0810df18aa60` separates
+structured credential admission from terminal privacy redaction. It preserves
+validated response bytes and citation hashes, rejects actual credential shapes,
+and uses snapshot language context for source references. The worker's exact
+262-candidate parity scan reported no remaining Python rejections. Parent
+review covered both changed files without blocking findings.
+
+Parent also repaired an obsolete `_seed_parent_index` import and call in
+`tests/ask/test_validation_native.py`, committed as `b5165ad199`. The collection
+failure was reproduced before the repair. The current snapshot manager prepares
+the test's index itself. Parent validation with the existing immutable pin:
+
+```sh
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/target/ask-probe-07255f62 uv run --no-sync pytest tests/ask/test_evidence.py tests/ask/test_validation.py tests/ask/test_native_integration.py tests/ask/test_validation_native.py -q
+```
+
+All 23 tests passed in 17.54 seconds. Ruff checks and the Python suppression
+ratchet passed. Managed main synchronization at
+`6e258e6b1ddd6188aa4fab6b2e7ec59921ac5bd1` included the latest main commit
+`def724b78b`; foreign main changes were untouched.
+
+Attempt 14 used that clean synchronized source, the unchanged binary hashes
+above, the full integration repository and the unchanged probe question:
+
+```sh
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/target/ask-probe-07255f62 uv run --no-sync python tests/ask/native_probe_harness.py contained-drive --project-root /Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask --output-dir /tmp/gobby-ask-native-probe-12261-fourteenth --timeout-seconds 1500
+```
+
+Fresh Ask `1a5e9916-06b8-49e2-8bd7-d1c6810e3a81` retained deadline
+`2026-09-11T10:41:19.589384Z`. Preparation completed between
+`2026-09-11T10:31:19.852647Z` and `2026-09-11T10:36:27.353188Z`
+(307.501 seconds). Seed then failed at `2026-09-11T10:36:47.008951Z`:
+
+```text
+stale_range: stale range for src/gobby/install/shared/workflows/rules/task-enforcement/track-task-claim.yaml: symbol lines 13..43 resolve to 13..42
+```
+
+No agents or receipts were created; the resumed phase did not run. The complete
+raw export at `/tmp/gobby-ask-native-probe-12261-fourteenth/raw-probe.json` has
+SHA-256 `03c24979cda9cf9f1e8643f26d133e26ab652e82cd44b5c7d3dc71c68a8e7053`.
+Capture errors and missing agent IDs are empty. Cleanup reports no errors,
+schema `gobby_test_askprobe_ded176a9a0b742a3816bf4312ee16685` dropped,
+runtime removed, fresh worker 76706 exited, and terminal host 76917 absent.
+The next correction must address source symbol range generation and related
+parser boundaries without weakening stale-range admission.
+
+Separately, read-only diagnosis confirmed eager Git-status preflight amplifies
+intermittent process stalls into unavailable query tools. A patch at
+`e7695d95c5e16a1876d64a99f30bcca3210904c1` remains isolated in
+`task-22021-query-git-preflight` for independent review. Parent reran
+`tests/utils/test_daemon_git.py tests/workflows/test_workflow_hooks.py`: 61 passed
+and 10 failed in 204.59 seconds. The failing fake executables timed out before
+expected output or first marker writes, including a 60-second case. These
+failures remain unresolved; they are not a passing validation result. The
+independent reviewer ended with zero activity and no review, so review remains
+outstanding. Git and gcode sharing a Gatekeeper root cause is still unproved.
+
+Attempts 1–14 remain immutable failures. Attempt 15 and the all14 cohort are
+unrun. No parent service restart or shared binary installation occurred here.
