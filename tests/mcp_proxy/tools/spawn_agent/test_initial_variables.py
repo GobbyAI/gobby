@@ -921,7 +921,7 @@ class TestSpawnAgentStepVariables:
 
         parent_session = SessionManager(db).get(spawn_request.parent_session_id)
         assert parent_session is not None
-        assert initial_variables["parent_session_ref"] == f"#{parent_session.seq_num}"
+        assert initial_variables["parent_session_ref"] == parent_session.ref
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])

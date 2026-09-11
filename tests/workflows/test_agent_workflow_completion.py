@@ -35,7 +35,7 @@ pytestmark = pytest.mark.unit
 AGENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 ASSIGNED_TASK_UUID = "22222222-2222-4222-8222-222222222222"
 PARENT_SESSION_UUID = "parent-session-uuid"
-PARENT_SESSION_REF = "#4242"
+PARENT_SESSION_REF = "gobby#4242"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -264,11 +264,15 @@ def _after_tool_event(
 
 @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
 @pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
+@pytest.mark.parametrize("target_id", (PARENT_SESSION_UUID, PARENT_SESSION_REF, "#4242"))
+@pytest.mark.parametrize("wrapped", (False, True))
 @pytest.mark.asyncio
 async def test_task_blocker_for_assigned_task_terminates(
     db: HubDatabase,
     agent_name: str,
     task_id: str,
+    target_id: str,
+    wrapped: bool,
 ) -> None:
     instance_manager = _register_bundled_agent_workflow(
         db,
@@ -289,11 +293,16 @@ async def test_task_blocker_for_assigned_task_terminates(
             mcp_tool="send_message",
             tool_arguments={
                 "target": "session",
-                "target_id": PARENT_SESSION_UUID,
+                "target_id": target_id,
                 "message_type": "task_blocker",
                 "metadata": {"task_id": task_id},
                 "content": "The assigned task cannot proceed.",
             },
+            tool_output=(
+                {"success": True, "result": {"success": True, "target_id": PARENT_SESSION_UUID}}
+                if wrapped
+                else {"success": True, "target_id": PARENT_SESSION_UUID}
+            ),
         ),
         session_id=AGENT_SESSION_ID,
         variables=variables,
@@ -304,6 +313,49 @@ async def test_task_blocker_for_assigned_task_terminates(
     assert instance.current_step == "terminate"
     assert instance.variables["blocker_handed_off"] is True
     assert variables["step_workflow_complete"] is True
+
+
+@pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
+@pytest.mark.parametrize("target_id", (PARENT_SESSION_UUID, "#4242"))
+@pytest.mark.parametrize("wrapped", (False, True))
+@pytest.mark.asyncio
+async def test_task_blocker_resolved_to_other_parent_does_not_terminate(
+    db: HubDatabase,
+    agent_name: str,
+    target_id: str,
+    wrapped: bool,
+) -> None:
+    instance_manager = _register_bundled_agent_workflow(
+        db, agent_name=agent_name, current_step="implement"
+    )
+    variables: dict[str, object] = {
+        "assigned_task_id": "#21617",
+        "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        "parent_session_id": PARENT_SESSION_UUID,
+        "parent_session_ref": PARENT_SESSION_REF,
+    }
+    resolved = {"success": True, "target_id": "other-session"}
+    await RuleEngine(db).evaluate(
+        _after_tool_event(
+            mcp_server="gobby-agents",
+            mcp_tool="send_message",
+            tool_arguments={
+                "target": "session",
+                "target_id": target_id,
+                "message_type": "task_blocker",
+                "metadata": {"task_id": "#21617"},
+                "content": "The assigned task cannot proceed.",
+            },
+            tool_output={"success": True, "result": resolved} if wrapped else resolved,
+        ),
+        session_id=AGENT_SESSION_ID,
+        variables=variables,
+    )
+    instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "implement"
+    assert instance.variables["blocker_handed_off"] is False
+    assert "step_workflow_complete" not in variables
 
 
 @pytest.mark.parametrize("agent_name", DEVELOPER_AGENT_NAMES)
