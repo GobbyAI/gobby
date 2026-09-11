@@ -1,6 +1,5 @@
 import asyncio
 import concurrent.futures
-import json
 import logging
 import threading
 from _thread import LockType
@@ -24,8 +23,7 @@ from gobby.storage.hub.operation_deadline import (
 )
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
-from gobby.workflows.enforcement.blocking import is_gobby_call_tool
-from gobby.workflows.engine.event_utils import _get_tool_identity
+from gobby.workflows.engine.event_utils import _get_tool_identity, _target_task_id_for_event
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
@@ -105,35 +103,6 @@ def _git_status_timeout(deadline: BlockingEffectDeadline | None) -> float:
             maximum=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
         ),
     )
-
-
-def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
-    raw_tool_input = data.get("tool_input") or data.get("arguments") or {}
-    if not isinstance(raw_tool_input, dict):
-        return {}
-
-    tool_name = data.get("tool_name", "")
-    if is_gobby_call_tool(tool_name):
-        inner_args = raw_tool_input.get("arguments")
-        if isinstance(inner_args, dict):
-            return inner_args
-        if isinstance(inner_args, str):
-            try:
-                parsed = json.loads(inner_args)
-            except (json.JSONDecodeError, TypeError):
-                return {}
-            if isinstance(parsed, dict):
-                return parsed
-    return raw_tool_input
-
-
-def _target_task_id_for_event(event: HookEvent, variables: dict[str, Any]) -> str | None:
-    if not isinstance(event.data, dict):
-        return None
-
-    from gobby.workflows.task_claim_state import resolve_target_task_id
-
-    return resolve_target_task_id(variables, _target_task_tool_input(event.data).get("task_id"))
 
 
 class _EvalLockState:
@@ -631,59 +600,72 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     GIT_STATUS_UNAVAILABLE_MARKER,
                     DirtyFiles,
                     get_dirty_files_categorized_async,
+                    is_repository_independent_query_identity,
                     resolve_git_worktree_root_async,
                 )
                 from gobby.workflows.safe_evaluator import LazyBool
 
-                metadata_path = event.metadata.get("project_path")
-                worktree_root = await resolve_git_worktree_root_async(
-                    event.cwd, metadata_path if isinstance(metadata_path, str) else None
-                )
-                project_path = await asyncio.to_thread(
-                    self._resolve_project_path, event, worktree_root
-                )
-                if not project_path:
-                    message = (
-                        f"_evaluate_rules: no project_path resolved for session={session_id} "
-                        f"event={event.event_type} source={event.source} "
-                        f"cwd={event.cwd!r} project_id={event.project_id!r} "
-                        f"metadata_path={event.metadata.get('project_path')!r}"
-                    )
-                    event_data = event.data if isinstance(event.data, dict) else {}
-                    has_candidate_path = bool(
-                        event.cwd
-                        or event.metadata.get("project_path")
-                        or event_data.get("project_path")
-                    )
-                    if _is_known_no_repo_project(event.project_id) or has_candidate_path:
-                        logger.debug(message)
-                    else:
-                        logger.warning(message)
-
                 event_data = event.data if isinstance(event.data, dict) else {}
+                repository_independent_query = (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and is_repository_independent_query_identity(_get_tool_identity(event_data))
+                )
+                project_path: str | None = None
+                if not repository_independent_query:
+                    metadata_path = event.metadata.get("project_path")
+                    worktree_root = await resolve_git_worktree_root_async(
+                        event.cwd, metadata_path if isinstance(metadata_path, str) else None
+                    )
+                    project_path = await asyncio.to_thread(
+                        self._resolve_project_path, event, worktree_root
+                    )
+                    if not project_path:
+                        message = (
+                            f"_evaluate_rules: no project_path resolved for session={session_id} "
+                            f"event={event.event_type} source={event.source} "
+                            f"cwd={event.cwd!r} project_id={event.project_id!r} "
+                            f"metadata_path={event.metadata.get('project_path')!r}"
+                        )
+                        has_candidate_path = bool(
+                            event.cwd
+                            or event.metadata.get("project_path")
+                            or event_data.get("project_path")
+                        )
+                        log = (
+                            logger.debug
+                            if _is_known_no_repo_project(event.project_id) or has_candidate_path
+                            else logger.warning
+                        )
+                        log(message)
+
                 skip_checkout_status = event.event_type == HookEventType.BEFORE_TOOL and (
                     _get_tool_identity(event_data) in {"close_task", "gobby-tasks:close_task"}
                 )
-                dirty_files = (
-                    await get_dirty_files_categorized_async(
-                        project_path,
-                        timeout=_git_status_timeout(blocking_deadline),
+                dirty_files: DirtyFiles | None = None
+                if not repository_independent_query:
+                    dirty_files = (
+                        await get_dirty_files_categorized_async(
+                            project_path,
+                            timeout=_git_status_timeout(blocking_deadline),
+                        )
+                        if project_path and not skip_checkout_status
+                        else DirtyFiles(set(), set())
                     )
-                    if project_path and not skip_checkout_status
-                    else DirtyFiles(set(), set())
-                )
 
-                # Lazy-init baseline on first evaluation (rule template may not have fired)
-                if not skip_checkout_status and variables.get("baseline_dirty_files") in (
-                    None,
-                    [GIT_STATUS_UNAVAILABLE_MARKER],
+                if (
+                    dirty_files is not None
+                    and not skip_checkout_status
+                    and variables.get("baseline_dirty_files")
+                    in (
+                        None,
+                        [GIT_STATUS_UNAVAILABLE_MARKER],
+                    )
                 ):
                     initial_dirty = sorted(dirty_files.all)
                     variables["baseline_dirty_files"] = initial_dirty
                     variables.setdefault("session_edited_files", [])
                     variables.setdefault("active_task_id", None)
                     variables.setdefault("task_edited_files", {})
-                    # Persist so future evaluations have it
                     if self._session_var_manager and session_id and not variable_load_failed:
                         await asyncio.to_thread(
                             self._session_var_manager.merge_variables,
@@ -706,24 +688,17 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 target_task_edited = task_edited_file_set(variables, target_task_id)
                 target_task_had_edits = target_task_has_edits(variables, target_task_id)
                 variables["target_task_has_edits"] = target_task_had_edits
+                dirty_paths = dirty_files.all if dirty_files is not None else None
 
                 def _check_dirty(
                     _edited: set[str] = session_edited,
                 ) -> bool:
-                    # Only count files this session actually touched
-                    current_dirty = dirty_files
-                    dirty_tracked = current_dirty.tracked
-                    dirty_untracked = current_dirty.untracked
-                    session_dirty_tracked = _edited & dirty_tracked
-                    session_dirty_untracked = _edited & dirty_untracked
-                    return bool(session_dirty_tracked or session_dirty_untracked)
+                    return dirty_paths is not None and bool(_edited & dirty_paths)
 
                 def _check_target_task_dirty(
                     _edited: set[str] = target_task_edited,
                 ) -> bool:
-                    if not _edited:
-                        return False
-                    return bool(_edited & dirty_files.all)
+                    return dirty_paths is not None and bool(_edited & dirty_paths)
 
                 eval_context = {
                     "has_dirty_files": LazyBool(_check_dirty),
@@ -736,6 +711,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and session_id
                     and event.project_id
                     and project_path
+                    and dirty_paths is not None
                 ):
                     from gobby.workflows.commit_guard import (
                         foreign_dirty_edit_conflict,
@@ -763,22 +739,20 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             session_id=session_id,
                             project_id=event.project_id,
                             project_path=project_path,
-                            dirty_files=lambda: dirty_files.all,
+                            dirty_files=lambda: dirty_paths,
                         )
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""
 
-                # Snapshot BEFORE observers to capture both observer and rule changes in the diff
                 pre_eval = deepcopy(variables)
 
-                # Run built-in observers BEFORE rule evaluation
                 observer_failures = await asyncio.to_thread(
                     self._run_observers,
                     event,
                     session_id,
                     variables,
                     project_path,
-                    dirty_files.all,
+                    dirty_paths,
                 )
                 if (
                     event.event_type == HookEventType.STOP

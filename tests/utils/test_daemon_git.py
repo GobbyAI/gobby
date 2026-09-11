@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import stat
 import subprocess
 import threading
@@ -16,6 +17,7 @@ from gobby.utils.daemon_git import (
     GitFailed,
     GitOk,
     GitTimeout,
+    _ProcessControl,
     parse_porcelain_v1_z,
 )
 
@@ -332,6 +334,95 @@ async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> N
     assert "spawn_seconds=" in result.stderr
     assert "running_seconds=" in result.stderr
     await _assert_processes_gone(leader, child)
+
+
+@pytest.mark.asyncio
+async def test_nonstream_timeout_waits_for_bounded_worker_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_fake_git(tmp_path)
+    real_popen = subprocess.Popen
+    release_cleanup = threading.Event()
+
+    class DelayedCompletionProcess:
+        def __init__(self, process: subprocess.Popen[bytes]) -> None:
+            self._process = process
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._process, name)
+
+        def communicate(self, input_bytes: bytes | None = None) -> tuple[bytes, bytes]:
+            output = self._process.communicate(input_bytes)
+            assert release_cleanup.wait(1)
+            return output
+
+    def delayed_popen(*args: Any, **kwargs: Any) -> DelayedCompletionProcess:
+        return DelayedCompletionProcess(real_popen(*args, **kwargs))
+
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", delayed_popen)
+    asyncio.get_running_loop().call_later(0.08, release_cleanup.set)
+
+    started = time.monotonic()
+    result = await DaemonGitService().run(
+        ["status"],
+        cwd=tmp_path,
+        timeout=0.02,
+        env=_git_env(tmp_path, GIT_TEST_DELAY="30"),
+    )
+    elapsed = time.monotonic() - started
+
+    assert isinstance(result, GitTimeout)
+    assert release_cleanup.is_set()
+    assert elapsed >= 0.07
+    cleanup_match = re.search(r"cleanup_seconds=([0-9.]+)", result.stderr)
+    assert cleanup_match is not None
+    assert float(cleanup_match.group(1)) >= 0.04
+
+
+@pytest.mark.asyncio
+async def test_stream_timeout_bounds_cleanup_of_stuck_consumer() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def worker(
+        loop: asyncio.AbstractEventLoop,
+        completion: asyncio.Future[GitOk | GitFailed],
+        control: _ProcessControl,
+    ) -> None:
+        control.begin_preparing()
+        control.begin_spawn()
+        with control.lock:
+            control.phase = "consuming"
+            control.spawn_finished_at = time.monotonic()
+        if control.begin_consuming():
+            entered.set()
+            release.wait(2)
+        control.mark_finished()
+
+        def settle() -> None:
+            if not completion.done():
+                completion.set_result(GitOk("ok", ("git", "show"), "", ""))
+
+        loop.call_soon_threadsafe(settle)
+
+    request = asyncio.create_task(
+        DaemonGitService()._execute_worker(
+            ("git", "show"),
+            timeout=0.05,
+            worker=worker,
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1)
+    started = time.monotonic()
+    try:
+        result = await asyncio.wait_for(request, 0.6)
+    finally:
+        release.set()
+
+    assert isinstance(result, GitTimeout)
+    assert time.monotonic() - started < 0.5
+    assert "phase=consuming" in result.stderr
 
 
 @pytest.mark.asyncio
