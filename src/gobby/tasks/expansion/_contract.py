@@ -12,7 +12,12 @@ from typing import Any
 
 import psycopg
 
-from gobby.plans.manifest_emitter import emit_stub_manifest
+from gobby.plans.manifest_emitter import (
+    deliverables_by_phase,
+    emit_stub_manifest,
+    resolve_dependency_ref,
+    section_dependency_refs,
+)
 from gobby.plans.parser import (
     ArtifactKind,
     Kind,
@@ -172,11 +177,28 @@ def _validate_contract_manifest(
 
 
 def _contract_deferrals(self: Any, plan_doc: PlanDocument) -> list[dict[str, Any]]:
+    section_by_id = {section.section_id: section for section in plan_doc.sections}
+    deliverables = [section for section in plan_doc.sections if section.kind is Kind.deliverable]
+    deliverable_ids = {section.section_id for section in deliverables}
+    by_phase = deliverables_by_phase(plan_doc, deliverables)
     deferrals: list[dict[str, Any]] = []
     for section in plan_doc.sections:
         if section.kind is not Kind.deferred:
             continue
-        record = _contract_deferral_record(section)
+        # The heading's ``(depends: ...)`` names the leaves that gate the deferred
+        # work; it resolves exactly like a deliverable's annotation.
+        depends_on: list[str] = []
+        for ref in section_dependency_refs(section, section_by_id):
+            resolved = resolve_dependency_ref(
+                ref, deliverable_ids=deliverable_ids, deliverables_by_phase=by_phase
+            )
+            if not resolved:
+                raise ValueError(
+                    f"deferred section {section.section_id!r} depends on {ref!r}, which does "
+                    "not resolve to a deliverable section or a phase with deliverables"
+                )
+            depends_on.extend(candidate for candidate in resolved if candidate not in depends_on)
+        record = _contract_deferral_record(section, depends_on=tuple(depends_on))
         if record is not None:
             deferrals.append(record)
     return deferrals

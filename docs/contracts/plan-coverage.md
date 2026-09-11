@@ -218,6 +218,13 @@ evidence.
 
 `kind: deferred`
 
+A deferred heading may carry `(depends: ...)` naming the deliverable sections
+or phases that gate the deferred work (`## D1 Native default flip (depends: 8.1)`).
+The refs resolve under the deliverable rules, so an unknown ref reports
+`unresolved-dependency`, and a deferred section is never itself a dependency
+target. Deferred headings carry no `[category: ...]`: the created task is
+`planning` work until its spec is written.
+
 Typed deferral object:
 
 ```yaml
@@ -246,8 +253,9 @@ unenforceable. Such work MUST be a `kind: deferred` section instead.
 
 The deferral task is parented under the plan's own epic as tail work; it never
 floats as an orphan follow-up. The task carries the actual ordering edges: a
-`blocked-by` dependency on each external prerequisite, plus dependencies on any
-internal leaves the deferred work needs (for example the audit leaf it follows).
+`blocked-by` dependency on each external prerequisite, plus dependencies on the
+internal leaves the deferred work needs (for example the audit leaf it follows),
+which the heading's `(depends: ...)` names.
 
 The task is created at expansion or finalization, never while the plan is being
 drafted, enhanced, or adversarially reviewed — plans may change or be abandoned
@@ -257,9 +265,15 @@ gates above apply from expansion validation onward.
 
 Expansion apply creates the task for every deferred section whose `task_ref` is
 a placeholder (anything that is not a bare `#N`): one `planning` task under the
-plan's epic, labeled `deferred-from:<plan-id>:<section-id>`, with validation
-criteria that list the original acceptance items and a `blocked-by` edge from
-the epic. The run checkpoint `deferral_task_map` names the created refs. Until
+plan's epic, labeled `deferred-from:<plan-id>:<section-id>` and `needs-planning`,
+with validation criteria that list the original acceptance items, a `blocked-by`
+edge to the leaf created for each section the heading depends on, and a
+`blocked-by` edge from the epic. The task is a ledger entry for work the plan
+could not specify: `needs-planning` is a hold label, and automated dispatch
+never selects a task carrying a hold label (`needs-decision`, `clean-window`,
+`needs-planning`) even once its blockers close. It is planned or expanded by
+hand when the gate passes. The run checkpoint `deferral_task_map` names the
+created refs. Until
 the coordinator writes those refs over the plan placeholders, the provenance
 label is the identity: coverage resolves a placeholder `task_ref` through it
 and reports the resolved ref as the deferral target. A dangling numeric

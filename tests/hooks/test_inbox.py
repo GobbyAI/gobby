@@ -810,7 +810,7 @@ async def test_repeated_drain_does_not_repost_quarantined_below_floor(tmp_path: 
 
 
 def test_quarantine_retention_window_is_a_fixed_positive_constant() -> None:
-    import gobby.hooks.inbox as inbox
+    import gobby.hooks.quarantine_retention as inbox
 
     window = getattr(inbox, "HOOK_QUARANTINE_RETENTION_WINDOW", None)
     assert isinstance(window, float)
@@ -820,7 +820,7 @@ def test_quarantine_retention_window_is_a_fixed_positive_constant() -> None:
 def test_quarantine_prune_retains_inside_and_exact_boundary_deletes_outside(
     tmp_path: Path,
 ) -> None:
-    import gobby.hooks.inbox as inbox
+    import gobby.hooks.quarantine_retention as inbox
 
     prune = getattr(inbox, "prune_hook_quarantine", None)
     assert callable(prune)
@@ -858,7 +858,7 @@ def test_quarantine_prune_retains_inside_and_exact_boundary_deletes_outside(
 
 
 def test_quarantine_prune_recovers_orphan_payload_and_sidecar(tmp_path: Path) -> None:
-    import gobby.hooks.inbox as inbox
+    import gobby.hooks.quarantine_retention as inbox
 
     prune = getattr(inbox, "prune_hook_quarantine", None)
     assert callable(prune)
@@ -1047,7 +1047,7 @@ def test_consume_delivery_receipt_duplicate_ack_does_not_mark(tmp_path: Path) ->
 
 
 def test_quarantine_prune_is_bounded(tmp_path: Path) -> None:
-    import gobby.hooks.inbox as inbox
+    import gobby.hooks.quarantine_retention as inbox
 
     prune = getattr(inbox, "prune_hook_quarantine", None)
     assert callable(prune)

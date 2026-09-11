@@ -706,6 +706,7 @@ class TestWebSocketServerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
+                mock_server.server_state = SimpleNamespace(connections=set(), tasks=set())
                 mock_server.serve = AsyncMock()
                 mock_server_cls.return_value = mock_server
 
@@ -952,6 +953,7 @@ class TestShutdownSessionStatusLifecycle:
         runner = object.__new__(GobbyRunner)
         runner._shutdown_requested = False
         runner._shutdown_intent = ShutdownIntent.STOP
+        runner._drain_terminals_on_shutdown = False
         runner.http_server = SimpleNamespace(services=None)
         runner.database = SimpleNamespace(close=MagicMock())
         server = SimpleNamespace(_runner=runner)

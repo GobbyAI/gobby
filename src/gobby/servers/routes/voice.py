@@ -75,6 +75,7 @@ def _audio_config_marker(config: Any) -> tuple[Any, ...]:
         getattr(voice, "enabled", None),
         getattr(voice, "tts_enabled", None),
         getattr(voice, "tts_provider", None),
+        getattr(voice, "tts_crane_url", None),
         getattr(voice, "tts_reference_audio", None),
         getattr(voice, "tts_reference_text", None),
         getattr(voice, "tts_temperature", None),

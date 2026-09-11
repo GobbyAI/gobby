@@ -29,6 +29,16 @@ from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
+# Labels that hold a task out of automated dispatch until a person acts on it: a
+# decision to make, a clean window to wait for, or a spec still to be written for
+# work a plan deferred. The task stays visible and claimable by hand.
+HOLD_LABELS = frozenset({"needs-decision", "clean-window", "needs-planning"})
+
+
+def has_hold_label(task: object) -> bool:
+    """Return whether a task carries a label that holds it out of dispatch."""
+    return bool(HOLD_LABELS.intersection(getattr(task, "labels", None) or ()))
+
 
 def _is_unattended(task: Any) -> bool:
     """Return whether dispatch should avoid human escalation for a task."""
@@ -103,7 +113,9 @@ def list_automation_candidates(
     ready_with_gate = [
         (task, find_epic_descendant_gate(db, task))
         for task in tasks
-        if not is_blocked_by_deps(task) and find_child_development_ancestor_gate(db, task) is None
+        if not is_blocked_by_deps(task)
+        and not has_hold_label(task)
+        and find_child_development_ancestor_gate(db, task) is None
     ]
     return [
         task

@@ -566,7 +566,10 @@ def _lint_dependency_resolution(plan_doc: PlanDocument) -> list[SemanticLintIssu
     deliverable_ids = {section.section_id for section in deliverables}
     by_phase = deliverables_by_phase(plan_doc, deliverables)
     issues: list[SemanticLintIssue] = []
-    for section in deliverables:
+    # A deferred section may name the leaves that gate it. Its refs resolve under
+    # the deliverable rules; the deferred section itself is never a target.
+    deferred = [section for section in plan_doc.sections if section.kind is Kind.deferred]
+    for section in [*deliverables, *deferred]:
         for ref in section_dependency_refs(section, sections_by_id):
             if resolve_dependency_ref(
                 ref, deliverable_ids=deliverable_ids, deliverables_by_phase=by_phase

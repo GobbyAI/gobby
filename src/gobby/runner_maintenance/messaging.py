@@ -35,7 +35,9 @@ async def hook_quarantine_retention_loop(
     interval_seconds: int = 3600,
 ) -> None:
     """Prune expired hook inbox quarantine files on the maintenance loop."""
-    from gobby.hooks.inbox import hook_quarantine_retention_loop as _hook_quarantine_retention_loop
+    from gobby.hooks.quarantine_retention import (
+        hook_quarantine_retention_loop as _hook_quarantine_retention_loop,
+    )
 
     await _hook_quarantine_retention_loop(
         is_shutdown_requested,

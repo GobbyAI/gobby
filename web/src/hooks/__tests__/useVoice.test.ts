@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import type { RefObject } from "react";
 import { useVoice } from "../useVoice";
 import { parseVoiceStatus } from "../voiceStatus";
 import {
@@ -166,8 +167,14 @@ function pcmChunk(marker: number): ArrayBuffer {
 
 describe("useVoice", () => {
   let wsRef: {
-    current: { readyState: number; send: ReturnType<typeof vi.fn> } | null;
+    current:
+      | (EventTarget & { readyState: number; send: ReturnType<typeof vi.fn> })
+      | null;
   };
+  let statusResponse = vi.fn(async () => ({
+    ok: true,
+    json: async (): Promise<Record<string, unknown>> => ({}),
+  }));
   let projectIdRef: { current: string | null };
   let getUserMediaMock: ReturnType<typeof vi.fn>;
 
@@ -184,11 +191,28 @@ describe("useVoice", () => {
     audioContexts = [];
     deferredAudioWorkletModule = null;
 
+    const socket = new EventTarget();
     wsRef = {
-      current: {
+      current: Object.assign(socket, {
         readyState: 1,
-        send: vi.fn(),
-      },
+        send: vi.fn(async (raw: string) => {
+          const request = JSON.parse(raw);
+          if (request.type !== "voice_status_request") return;
+          const response = await statusResponse();
+          const status = await response.json();
+          socket.dispatchEvent(
+            new MessageEvent("message", {
+              data: JSON.stringify({
+                ...status,
+                type: "voice_status",
+                status: "snapshot",
+                request_id: request.request_id,
+                conversation_id: request.conversation_id,
+              }),
+            }),
+          );
+        }),
+      }),
     };
     projectIdRef = { current: null };
 
@@ -215,7 +239,7 @@ describe("useVoice", () => {
       },
     });
 
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -280,6 +304,55 @@ describe("useVoice", () => {
     });
   };
 
+  it("ignores stale status snapshots after switching conversations without HTTP polling", () => {
+    statusResponse = vi.fn(() => new Promise(() => {}));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { result, rerender, unmount } = renderHook(
+      ({ conversationId }) =>
+        useVoiceStatus({
+          wsRef: wsRef as RefObject<WebSocket | null>,
+          conversationId,
+          socketConnected: true,
+          sttEnabled: false,
+          ttsEnabled: false,
+        }),
+      { initialProps: { conversationId: "old" } },
+    );
+    const oldRequest = sentPayloads().find(
+      (p) => p.type === "voice_status_request",
+    );
+    rerender({ conversationId: "new" });
+    const newRequest = sentPayloads()
+      .filter((p) => p.type === "voice_status_request")
+      .slice(-1)[0];
+    const reply = (request: {
+      request_id: string;
+      conversation_id: string;
+    }) => {
+      wsRef.current?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            ...request,
+            type: "voice_status",
+            status: "snapshot",
+            enabled: true,
+            tts_enabled: true,
+            tts_available: true,
+            voice_ready: true,
+            voice_loading: false,
+          }),
+        }),
+      );
+    };
+    act(() => reply(oldRequest));
+    expect(result.current.voiceReady).toBe(false);
+    act(() => reply(newRequest));
+    expect(result.current.voiceReady).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    unmount();
+    fetchSpy.mockRestore();
+  });
+
   it("preserves voice loading before a configured TTS provider is available", () => {
     const parsed = parseVoiceStatus(
       {
@@ -301,7 +374,7 @@ describe("useVoice", () => {
   });
 
   it("throttles same-target voice_prepare sends across rerender and remount", async () => {
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -334,7 +407,7 @@ describe("useVoice", () => {
     first.rerender();
     expect(voicePreparePayloads()).toHaveLength(1);
 
-    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const fetchMock = statusResponse as ReturnType<typeof vi.fn>;
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
@@ -360,7 +433,7 @@ describe("useVoice", () => {
         (_, index) => [`conv-filler-${index}:true:true`, index] as const,
       ),
     ]);
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -396,7 +469,7 @@ describe("useVoice", () => {
   });
 
   it("sends voice_prepare immediately when requested voice targets change", async () => {
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -440,7 +513,7 @@ describe("useVoice", () => {
   });
 
   it("sends voice_prepare immediately when conversationId changes", async () => {
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -484,7 +557,7 @@ describe("useVoice", () => {
   });
 
   it("does not mark preparing messages without voice_loading as locally loading", async () => {
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: false,
@@ -509,7 +582,7 @@ describe("useVoice", () => {
     );
 
     await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalled();
+      expect(statusResponse).toHaveBeenCalled();
     });
     expect(result.current.voiceLoading).toBe(false);
 
@@ -524,7 +597,7 @@ describe("useVoice", () => {
   });
 
   it("warms voice and resends TTS state when the socket reconnects", async () => {
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -570,13 +643,17 @@ describe("useVoice", () => {
         ]),
       );
     });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/voice/status?want_stt=true&want_tts=true",
+    expect(sentPayloads()).toContainEqual(
+      expect.objectContaining({
+        type: "voice_status_request",
+        want_stt: true,
+        want_tts: true,
+      }),
     );
   });
 
   it("scopes mic-only warmup and status polling to STT", async () => {
-    globalThis.fetch = vi.fn(async () => ({
+    statusResponse = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         enabled: true,
@@ -615,8 +692,12 @@ describe("useVoice", () => {
         ]),
       );
     });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/voice/status?want_stt=true",
+    expect(sentPayloads()).toContainEqual(
+      expect.objectContaining({
+        type: "voice_status_request",
+        want_stt: true,
+        want_tts: false,
+      }),
     );
   });
 
@@ -633,7 +714,13 @@ describe("useVoice", () => {
     );
 
     await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith("/api/voice/status");
+      expect(sentPayloads()).toContainEqual(
+        expect.objectContaining({
+          type: "voice_status_request",
+          want_stt: false,
+          want_tts: false,
+        }),
+      );
     });
   });
 

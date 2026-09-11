@@ -396,6 +396,34 @@ async def test_pre_accept_rejection_hangup_does_not_raise_in_uvicorn(
 
 
 @pytest.mark.asyncio
+async def test_disconnect_during_authentication_does_not_repeat_handshake() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class DelayedAuthServer(_WebSocketServer):
+        async def run_db(self, func: object, *args: object) -> bool:
+            entered.set()
+            await release.wait()
+            return False
+
+    websocket_server = DelayedAuthServer()
+    probe = _LogProbe()
+    logger = logging.getLogger("uvicorn.error")
+    logger.addHandler(probe)
+    try:
+        async with _live_ws_server(websocket_server) as url:
+            async with websockets.connect(url, open_timeout=2, close_timeout=2):
+                await asyncio.wait_for(entered.wait(), timeout=2)
+            release.set()
+    finally:
+        release.set()
+        logger.removeHandler(probe)
+    assert websocket_server.handler_calls == 0
+    assert "Exception in ASGI application" not in probe.text()
+    assert "websocket.accept" not in probe.text()
+
+
+@pytest.mark.asyncio
 async def test_unauthenticated_live_client_closes_with_4401_without_traceback() -> None:
     probe = _LogProbe()
     logger = logging.getLogger("uvicorn.error")

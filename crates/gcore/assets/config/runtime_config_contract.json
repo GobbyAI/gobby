@@ -1880,6 +1880,17 @@
     },
     {
       "activation": "live",
+      "default": 1200.0,
+      "description": "Wall-clock bound on a spawned task-close validator and its durable review deadline.",
+      "key": "gobby_tasks.validation.close_review_validator_timeout_seconds",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 5,
       "description": "Invalid or pending close verdicts before atomic task escalation.",
       "key": "gobby_tasks.validation.close_validation_escalation_threshold",
@@ -1995,6 +2006,17 @@
         "string",
         "null"
       ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Require a path-scoped Git status proof that task-attributed paths are clean before final close.",
+      "key": "gobby_tasks.validation.require_clean_attributed_paths_on_close",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
       "visibility": "public"
     },
     {
@@ -4333,6 +4355,17 @@
       "visibility": "public"
     },
     {
+      "activation": "live",
+      "default": false,
+      "description": "Drain the gterm host (and every native terminal it owns) whenever the daemon stops or restarts. Off by default: the host outlives the daemon and is adopted again on the next start; `gobby stop --terminals` drains it for one shutdown.",
+      "key": "terminals.stop_host_on_shutdown",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
       "activation": "restart_required",
       "default": false,
       "description": "Run daemon in test mode (enables test endpoints)",
@@ -5543,6 +5576,17 @@
     },
     {
       "activation": "live",
+      "default": "http://127.0.0.1:8080",
+      "description": "Base URL of the manually managed Crane TTS service.",
+      "key": "voice.tts_crane_url",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": "auto",
       "description": "Requested TTS compute device: 'auto', 'cuda', 'mps', 'cpu'. Providers may ignore explicit selection if the upstream runtime does not support it.",
       "key": "voice.tts_device",
@@ -5577,7 +5621,7 @@
     {
       "activation": "live",
       "default": "chatterbox",
-      "description": "TTS provider id. Currently supported: 'chatterbox' (voice cloning).",
+      "description": "TTS provider id: 'chatterbox' or 'crane' (external voice cloning).",
       "key": "voice.tts_provider",
       "machineExport": false,
       "namespace": "voice",

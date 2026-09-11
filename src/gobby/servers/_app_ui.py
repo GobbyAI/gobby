@@ -49,10 +49,13 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
     @app.websocket("/ws/{path:path}")
     async def websocket_endpoint(websocket: WebSocket, path: str) -> None:
         del path
+        # Complete the transport handshake before authentication yields to database I/O.
+        # Application messages remain gated on authentication below.
+        adapter = ASGIWebSocketAdapter(websocket, user_id=f"local-web-{uuid4().hex[:8]}")
+        await adapter.accept()
         websocket_server = server.services.websocket_server or server.websocket_server
         if websocket_server is None:
-            await websocket.accept()
-            await websocket.close(code=1013, reason="WebSocket server unavailable")
+            await adapter.close(code=1013, reason="WebSocket server unavailable")
             return
 
         authenticated = await websocket_server.run_db(
@@ -60,12 +63,9 @@ def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
             websocket,
         )
         if not authenticated:
-            await websocket.accept()
-            await websocket.close(code=4401, reason="Authentication required")
+            await adapter.close(code=4401, reason="Authentication required")
             return
 
-        adapter = ASGIWebSocketAdapter(websocket, user_id=f"local-web-{uuid4().hex[:8]}")
-        await adapter.accept()
         try:
             await websocket_server.handle_connection(adapter)
         except Exception:
@@ -88,7 +88,6 @@ async def _proxy_websocket(
 ) -> None:
     import websockets
 
-    accepted = False
     try:
         requested_subprotocols = _requested_websocket_subprotocols(websocket.headers)
         if bearer_token:
@@ -105,7 +104,6 @@ async def _proxy_websocket(
 
         async with backend_connection as backend:
             await websocket.accept(subprotocol=getattr(backend, "subprotocol", None))
-            accepted = True
 
             async def client_to_backend() -> None:
                 try:
@@ -162,11 +160,12 @@ async def _proxy_websocket(
                     raise exc
     except Exception as e:
         logger.debug("WebSocket proxy error: %s", e)
-        if accepted:
-            try:
-                await websocket.close(code=1011)
-            except Exception:
-                pass
+        # Before accept, close rejects the handshake; returning silently leaves
+        # Uvicorn with an incomplete ASGI handshake when the backend is down.
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:

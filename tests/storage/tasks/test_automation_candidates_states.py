@@ -23,6 +23,7 @@ def _task_at_stage(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     stage_state: str,
+    **task_fields: Any,
 ):
     task = create_task(
         temp_db,
@@ -30,6 +31,7 @@ def _task_at_stage(
         title=f"Candidate {stage_state}",
         category="test",
         task_type="task",
+        **task_fields,
     )
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
@@ -53,6 +55,23 @@ def test_list_automation_candidates_includes_stage_actionable_states(
     }
 
     assert {task.id for task in actionable.values()} <= candidate_ids
+
+
+@pytest.mark.parametrize("hold_label", sorted(_automation.HOLD_LABELS))
+def test_list_automation_candidates_excludes_hold_labels(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    hold_label: str,
+) -> None:
+    held = _task_at_stage(temp_db, sample_project, "ready", labels=[hold_label, "other"])
+    free = _task_at_stage(temp_db, sample_project, "ready", labels=["other"])
+
+    candidate_ids = {
+        task.id for task in list_automation_candidates(temp_db, project_id=sample_project["id"])
+    }
+
+    assert free.id in candidate_ids
+    assert held.id not in candidate_ids
 
 
 def test_list_automation_candidates_excludes_done_and_null_current_stage(

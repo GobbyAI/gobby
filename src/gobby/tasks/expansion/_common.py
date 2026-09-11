@@ -325,13 +325,22 @@ def _contract_single_task_id(section_id: str) -> str:
     return f"{section_id}::single"
 
 
-def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
+def _contract_deferral_record(
+    section: PlanSection, *, depends_on: tuple[str, ...] = ()
+) -> dict[str, Any] | None:
+    """Compile a ``kind: deferred`` section into the spec's deferral record.
+
+    ``depends_on`` carries the deliverable section ids the deferred work is gated
+    on, already resolved from the heading's ``(depends: ...)`` annotation; apply
+    turns them into ``blocked_by`` edges on the created task.
+    """
     if section.deferral is None:
         return None
     return {
         "section_id": section.section_id,
-        "title": section.title,
+        "title": _clean_contract_section_title(section.title),
         "task_ref": section.deferral.task_ref,
+        "depends_on": list(depends_on),
         "reason": section.deferral.reason,
         "owner": section.deferral.owner,
         "original_acceptance_items": [

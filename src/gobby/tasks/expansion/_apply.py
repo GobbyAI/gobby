@@ -258,6 +258,7 @@ def apply_run(
             session_id=session_id,
             provenance_label=provenance_label,
             plan_ref_block=plan_ref_block,
+            created_task_map=created_task_map,
         )
 
         created_ids = list(

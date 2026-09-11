@@ -523,6 +523,7 @@ def test_deferrals_preserved(
             "section_id": "D1",
             "title": "Deferred",
             "task_ref": "#777",
+            "depends_on": [],
             "reason": "tracked downstream",
             "owner": "backend-developer",
             "original_acceptance_items": [

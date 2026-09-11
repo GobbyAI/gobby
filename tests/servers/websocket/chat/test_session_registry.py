@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +18,7 @@ from gobby.servers.websocket.chat.session_registry import (
     WebChatSessionRegistry,
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -28,7 +30,7 @@ from tests._timing import drain_asyncio_tasks
 from tests.fixtures.postgres import TEST_USER_ID
 
 
-async def _done_stream():
+async def _done_stream() -> AsyncIterator[DoneEvent]:
     yield DoneEvent(tool_calls_count=0)
 
 
@@ -87,10 +89,38 @@ class TestWebChatSessionRegistry:
             "conversation_id": "conv-1",
             "delivered": True,
             "method": "web_chat",
-            "queued": False,
+            "queued": True,
         }
+        await drain_asyncio_tasks()
         session.send_message.assert_called_once_with(WEB_CHAT_WAKE_PROMPT)
         assert "Task completed" not in session.send_message.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_wake_acknowledges_scheduling_before_slow_turn_finishes(self) -> None:
+        registry = WebChatSessionRegistry()
+        session = MagicMock()
+        session.db_session_id = "db-id"
+        started = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def slow_stream() -> AsyncIterator[DoneEvent]:
+            started.set()
+            await release.wait()
+            finished.set()
+            yield DoneEvent(tool_calls_count=0)
+
+        session.send_message.side_effect = lambda message: slow_stream()
+        registry.register("conv-1", session)
+        result = await asyncio.wait_for(registry.wake_session("db-id"), timeout=1)
+        assert result["delivered"] is True
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert not finished.is_set()
+        release.set()
+        await registry._queued_wake_tasks["conv-1"]
+        await drain_asyncio_tasks()
+        assert finished.is_set()
+        assert not registry._queued_wake_tasks
 
     @pytest.mark.asyncio
     async def test_wake_session_missing_live_session_returns_explicit_failure(self) -> None:
@@ -156,6 +186,7 @@ class TestWebChatSessionRegistry:
 
         assert result == {
             "session_id": "db-id",
+            "conversation_id": "conv-1",
             "delivered": True,
             "method": "web_chat",
             "queued": True,
@@ -215,7 +246,7 @@ class TestWebChatSessionRegistry:
         session = MagicMock()
         session.db_session_id = "db-id"
 
-        async def broken_stream():
+        async def broken_stream() -> AsyncIterator[DoneEvent]:
             raise RuntimeError("boom")
             yield DoneEvent(tool_calls_count=0)
 
@@ -253,7 +284,7 @@ class _LifecycleHost(ChatLifecycleMixin):
 
     def __init__(self) -> None:
         self.clients: dict[Any, dict[str, Any]] = {}
-        self._chat_sessions: dict[str, MagicMock] = {}
+        self._chat_sessions = {}
         self._active_chat_tasks: dict[str, asyncio.Task[None]] = {}
         self._pending_modes: dict[str, str] = {}
         self._pending_worktree_paths: dict[str, str] = {}
@@ -386,7 +417,9 @@ class TestWebChatLifecycle:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_mcp_gate_matches_cli_blocking_decision(self) -> None:
+    async def test_mcp_gate_matches_cli_blocking_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         host = _LifecycleHost()
         host._chat_sessions["conv-1"] = _web_chat_session()
         mcp_call = {
@@ -408,9 +441,8 @@ class TestWebChatLifecycle:
         proxy = MagicMock()
         proxy.call_tool = AsyncMock(return_value={"success": False, "error": "gate failed"})
         host.tool_proxy_getter = lambda: proxy
-        host._dispatch_mcp_calls = ChatLifecycleMixin._dispatch_mcp_calls.__get__(
-            host,
-            _LifecycleHost,
+        monkeypatch.setattr(
+            host, "_dispatch_mcp_calls", ChatLifecycleMixin._dispatch_mcp_calls.__get__(host)
         )
 
         web_result = await host._fire_lifecycle(
@@ -446,7 +478,9 @@ class TestWebChatLifecycle:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_mcp_success_gate_injects_result_before_blocking(self) -> None:
+    async def test_mcp_success_gate_injects_result_before_blocking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         host = _LifecycleHost()
         host._chat_sessions["conv-1"] = _web_chat_session()
         workflow_handler = MagicMock()
@@ -469,9 +503,8 @@ class TestWebChatLifecycle:
         proxy = MagicMock()
         proxy.call_tool = AsyncMock(return_value={"success": True, "value": "found"})
         host.tool_proxy_getter = lambda: proxy
-        host._dispatch_mcp_calls = ChatLifecycleMixin._dispatch_mcp_calls.__get__(
-            host,
-            _LifecycleHost,
+        monkeypatch.setattr(
+            host, "_dispatch_mcp_calls", ChatLifecycleMixin._dispatch_mcp_calls.__get__(host)
         )
 
         result = await host._fire_lifecycle(
@@ -491,8 +524,8 @@ class TestWebChatLifecycle:
     @pytest.mark.integration
     async def test_after_tool_close_task_with_remaining_epic_does_not_queue_handoff(
         self,
-        temp_db,
-        sample_project,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
     ) -> None:
         """Closing one claimed task leaves handoff authoring to the active agent.
 

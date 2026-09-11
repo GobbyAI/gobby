@@ -52,6 +52,17 @@ class ASGIWebSocketAdapter(AsyncIterator[str | bytes]):
             self.disconnected = True
             self.close_code = exc.code
             self.close_reason = exc.reason
+        except RuntimeError as exc:
+            # Uvicorn sansio rejects close on an already-closing transport with
+            # this protocol error instead of reporting ClientDisconnected.
+            if str(exc) != (
+                "Expected ASGI message 'websocket.send' or 'websocket.close', "
+                "but got 'websocket.close'."
+            ):
+                raise
+            self.disconnected = True
+            self.close_code = 1006
+            self.close_reason = "Transport disconnected before close"
 
     def __aiter__(self) -> ASGIWebSocketAdapter:
         return self

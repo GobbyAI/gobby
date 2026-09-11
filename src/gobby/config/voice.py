@@ -78,7 +78,11 @@ class VoiceConfig(BaseModel):
     )
     tts_provider: str = Field(
         default="chatterbox",
-        description="TTS provider id. Currently supported: 'chatterbox' (voice cloning).",
+        description="TTS provider id: 'chatterbox' or 'crane' (external voice cloning).",
+    )
+    tts_crane_url: str = Field(
+        default="http://127.0.0.1:8080",
+        description="Base URL of the manually managed Crane TTS service.",
     )
     tts_mps_memory_limit_gb: float = Field(
         default=12.0,
