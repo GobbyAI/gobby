@@ -963,6 +963,37 @@ def _report_completeness(value: object) -> str:
     return f"{complete}/{len(observations)} complete"
 
 
+def _report_window_detail(value: object) -> str:
+    window = _mapping(value, name="retrieval window")
+    return "; ".join(
+        (
+            f"first_supporting_query={window.get('first_supporting_query')}",
+            f"first_supporting_rank={window.get('first_supporting_rank')}",
+            "recall@5/10/20="
+            f"{_report_metric(window.get('recall_at_5'))} / "
+            f"{_report_metric(window.get('recall_at_10'))} / "
+            f"{_report_metric(window.get('recall_at_20'))}",
+            f"citation_precision@10={_report_metric(window.get('citation_precision_at_10'))}",
+            f"wrong_domain_collisions={window.get('wrong_domain_collisions', 'unknown')}",
+        )
+    )
+
+
+def _report_query_details(value: object) -> list[str]:
+    window = _mapping(value, name="retrieval window")
+    observations = _list(window.get("query_completeness", []), name="query completeness")
+    return [
+        "  - "
+        + "; ".join(
+            f"{name}={json.dumps(observation.get(name), separators=(',', ':'))}"
+            for name in ("invocation_id", "complete", "completeness", "continuation")
+        )
+        for observation in (
+            _mapping(item, name="query completeness observation") for item in observations
+        )
+    ]
+
+
 def _report_class_accuracy(value: object) -> str:
     metrics = _mapping(value, name="answer class metrics")
     return " / ".join(
@@ -1024,6 +1055,21 @@ def render_report(result: object) -> str:
         lines.append(
             f"| {row['question_id']} | {row['disposition']} | " + " | ".join(values) + " |"
         )
+
+    lines.extend(["", "## Per-query retrieval detail", ""])
+    for row in rows:
+        retrieval = row.get("retrieval")
+        if not isinstance(retrieval, dict):
+            lines.append(f"- {row['question_id']}: UNSCORED ({row['disposition']})")
+            continue
+        for window_name in ("before", "after"):
+            window = _mapping(retrieval.get(window_name), name=f"{window_name} retrieval")
+            lines.append(f"### {row['question_id']} {window_name}")
+            lines.append("")
+            lines.append(f"- {_report_window_detail(window)}")
+            lines.append("- Query completeness and continuation:")
+            lines.extend(_report_query_details(window) or ["  - none"])
+            lines.append("")
 
     lines.extend(
         [

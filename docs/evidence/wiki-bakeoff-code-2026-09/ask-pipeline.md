@@ -38,20 +38,25 @@ second daemon framework. Paths must be absolute, owner-only, non-symlink artifac
     "schema": "gobby_test_REPLACE_UNIQUE", "receipt": {"path": "/REPLACE/database.json", "sha256": "REPLACE"}
   },
   "service": {
-    "identity": "REPLACE_CONTAINED_SERVICE_ID", "daemon_url": "http://127.0.0.1:REPLACE_PRIVATE_PORT",
+    "identity": "REPLACE_16_HEX_DEPLOYMENT_TOKEN", "daemon_url": "http://127.0.0.1:REPLACE_PRIVATE_PORT",
     "receipt": {"path": "/REPLACE/service.json", "sha256": "REPLACE"}
   }
 }
 ```
 
 The database receipt JSON contains exactly `host`, `port`, `name`, and `schema`.
-The service receipt JSON contains exactly `identity` and `daemon_url`. No credentials
-or database URL enter the cohort manifest. The runner parses the sealed bootstrap and
-requires its bind host/daemon port and database URL target/search path to match those
-public receipts. Before preparation, every primary, and every export, it revalidates
-private ownership and all three receipt hashes. Immediately before each Ask and export,
-an authenticated `gcode status` through the sealed home and endpoint must return the
-expected project identity and source root; a missing or foreign service fails closed.
+The service receipt JSON contains exactly the daemon deployment token as `identity` and
+the `daemon_url`. No credentials or database URL enter the cohort manifest. The runner
+rejects duplicate bootstrap identity keys and requires the database URL query to contain
+exactly one canonically encoded `options=-csearch_path=<schema>` value; libpq destination
+overrides and additional settings fail closed. Before preparation, every primary, and
+every export, it revalidates private ownership and all three receipt hashes. Immediately
+before each Ask and export, a read-only `gcode status` materializes the interactive grant.
+The runner then presents that grant and the contained operator token to the authenticated
+daemon `/api/runtime/config` route at the same sealed base URL used by Ask/export, and
+reads `/api/projects/<id>`. The accepted deployment token, grant-derived effective
+database/search-path identity and config revision, project id, and checkout root must all
+match their receipts; an absent or foreign daemon fails before the mutating request.
 The runner supplies `GOBBY_DAEMON_URL`, `GOBBY_HOME`, and `GOBBY_TEST_PROTECT=1`
 explicitly to each subprocess. Only a small allowlist of non-secret OS process variables
 is inherited; ambient DB, daemon-port, session, task, provider-token, cloud-credential,

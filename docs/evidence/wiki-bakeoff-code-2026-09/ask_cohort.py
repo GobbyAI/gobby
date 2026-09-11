@@ -7,6 +7,7 @@ then records one append-only primary attempt per question, in cohort order.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -23,9 +24,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import yaml
+from psycopg import ProgrammingError
+from psycopg.conninfo import conninfo_to_dict
+from yaml.constructor import ConstructorError
+from yaml.resolver import BaseResolver
 
 BASE_COMMIT = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_COMMIT = "8b24ac26699aac8b24254a647aa70b208287b492"
@@ -121,6 +128,55 @@ class CommandRunner(Protocol):
     ) -> CommandResult: ...
 
 
+class RuntimeServiceProbe(Protocol):
+    def __call__(
+        self, manifest: Mapping[str, Any], environment: Mapping[str, str], /
+    ) -> dict[str, Any]: ...
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects ambiguous duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[object, object]:
+    seen: set[object] = set()
+    construct_object = cast(Callable[[yaml.Node, bool], object], loader.construct_object)
+    for key_node, _value_node in node.value:
+        key = construct_object(key_node, deep)
+        try:
+            duplicate = key in seen
+            seen.add(key)
+        except TypeError as error:
+            raise ConstructorError(
+                None,
+                None,
+                "bootstrap mapping keys must be scalar",
+                key_node.start_mark,
+            ) from error
+        if duplicate:
+            raise ConstructorError(
+                None,
+                None,
+                f"duplicate bootstrap key {key!r}",
+                key_node.start_mark,
+            )
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+
+_UniqueKeyLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
+def _safe_load_unique(value: str) -> object:
+    loader = _UniqueKeyLoader(value)
+    try:
+        return loader.get_single_data()
+    finally:
+        dispose = cast(Callable[[], None], loader.dispose)
+        dispose()
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -178,6 +234,54 @@ def _digest(value: object, *, name: str) -> str:
     if not _SHA256.fullmatch(digest):
         raise PreparationError(f"{name} must be a lowercase SHA-256")
     return digest
+
+
+def _database_identity_from_conninfo(value: str, *, name: str) -> dict[str, object]:
+    try:
+        connection = conninfo_to_dict(value)
+    except (ProgrammingError, ValueError) as error:
+        raise PreparationError(f"{name} is invalid") from error
+    if connection.get("hostaddr") or connection.get("service"):
+        raise PreparationError(f"{name} contains a destination override")
+    raw_port = connection.get("port")
+    try:
+        port = int(raw_port) if raw_port is not None else None
+    except ValueError as error:
+        raise PreparationError(f"{name} port is invalid") from error
+    options = connection.get("options")
+    match = (
+        re.fullmatch(r"-csearch_path=(gobby_test_[A-Za-z0-9_]+)", options)
+        if isinstance(options, str)
+        else None
+    )
+    if match is None:
+        raise PreparationError(f"{name} must contain exactly one canonical search_path setting")
+    return {
+        "host": connection.get("host"),
+        "port": port,
+        "name": connection.get("dbname"),
+        "schema": match.group(1),
+    }
+
+
+def _bootstrap_database_identity(value: str) -> dict[str, object]:
+    try:
+        endpoint = urlsplit(value)
+        query = parse_qsl(endpoint.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError as error:
+        raise PreparationError("bootstrap database_url is invalid") from error
+    if len(query) != 1 or query[0][0] != "options":
+        raise PreparationError("bootstrap database_url must use exactly one canonical options key")
+    options = query[0][1]
+    if re.fullmatch(r"-csearch_path=gobby_test_[A-Za-z0-9_]+", options) is None:
+        raise PreparationError(
+            "bootstrap database_url must contain exactly one canonical search_path setting"
+        )
+    if endpoint.query != urlencode([("options", options)]):
+        raise PreparationError("bootstrap database_url must use canonical options encoding")
+    if endpoint.scheme not in {"postgres", "postgresql"} or endpoint.fragment:
+        raise PreparationError("bootstrap database_url is invalid")
+    return _database_identity_from_conninfo(value, name="bootstrap database_url")
 
 
 def _private_owned_path(value: object, *, name: str, directory: bool) -> Path:
@@ -260,7 +364,7 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
         raise PreparationError("bootstrap hash changed")
     try:
         bootstrap_settings = _mapping(
-            yaml.safe_load(bootstrap_path.read_text(encoding="utf-8")),
+            _safe_load_unique(bootstrap_path.read_text(encoding="utf-8")),
             name="bootstrap settings",
         )
     except (OSError, UnicodeError, yaml.YAMLError) as error:
@@ -294,33 +398,7 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
     if database_body != database_public:
         raise PreparationError("database receipt does not match its public identity")
     database_url = _string(bootstrap_settings.get("database_url"), name="bootstrap database_url")
-    try:
-        database_endpoint = urlsplit(database_url)
-        database_port = database_endpoint.port
-    except ValueError as error:
-        raise PreparationError("bootstrap database_url is invalid") from error
-    option_values = [
-        item
-        for name, item in parse_qsl(database_endpoint.query, keep_blank_values=True)
-        if name == "options"
-    ]
-    options = option_values[0] if len(option_values) == 1 else ""
-    search_paths = [
-        option.removeprefix("-csearch_path=")
-        for option in options.split()
-        if option.startswith("-csearch_path=")
-    ]
-    bootstrap_database = {
-        "host": database_endpoint.hostname,
-        "port": database_port,
-        "name": unquote(database_endpoint.path.removeprefix("/")),
-        "schema": search_paths[0] if len(search_paths) == 1 else None,
-    }
-    if (
-        database_endpoint.scheme not in {"postgres", "postgresql"}
-        or database_endpoint.fragment
-        or bootstrap_database != database_public
-    ):
+    if _bootstrap_database_identity(database_url) != database_public:
         raise PreparationError("bootstrap database identity does not match database receipt")
 
     service = _mapping(isolation.get("service"), name="service identity")
@@ -333,6 +411,8 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
     service_receipt, service_body = _receipt_payload(service.get("receipt"), name="service")
     if service_body != service_public:
         raise PreparationError("service receipt does not match its public identity")
+    if not re.fullmatch(r"[0-9a-f]{16}", service_public["identity"]):
+        raise PreparationError("service identity must be the 16-character deployment token")
     return {
         "mode": "contained",
         "daemon_url": daemon_url,
@@ -662,12 +742,121 @@ def _verified_execution_environment(manifest: Mapping[str, Any]) -> dict[str, st
     return _command_environment(isolation)
 
 
+def _cached_runtime_grant(
+    manifest: Mapping[str, Any], environment: Mapping[str, str]
+) -> dict[str, Any]:
+    identity = _mapping(manifest.get("runtime_identity"), name="runtime identity")
+    isolation = _mapping(identity.get("isolation"), name="runtime isolation")
+    service = _mapping(isolation.get("service"), name="service identity")
+    deployment_token = _string(service.get("identity"), name="service deployment identity")
+    project_id = _string(identity.get("project_id"), name="project_id")
+    home = _private_owned_path(
+        environment.get("GOBBY_HOME"), name="isolated GOBBY_HOME", directory=True
+    )
+    grant_root = _private_owned_path(
+        str(home / "grants" / deployment_token),
+        name="runtime grant directory",
+        directory=True,
+    )
+    matches: list[dict[str, Any]] = []
+    for candidate in sorted(grant_root.glob("*.json")):
+        if candidate.name.endswith(".settings.json"):
+            continue
+        path = _private_owned_path(str(candidate), name="runtime grant", directory=False)
+        try:
+            payload = _mapping(json.loads(path.read_bytes()), name="runtime grant cache")
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise PreparationError(f"runtime grant cache is invalid: {error}") from error
+        grant = _mapping(payload.get("grant", payload), name="runtime grant")
+        principal = _mapping(grant.get("principal"), name="runtime grant principal")
+        deployment = _mapping(grant.get("deployment"), name="runtime grant deployment")
+        if (
+            principal.get("project_id") == project_id
+            and deployment.get("token") == deployment_token
+        ):
+            matches.append(grant)
+    if len(matches) != 1:
+        raise PreparationError("exactly one accepted runtime grant must bind the project")
+    return matches[0]
+
+
+def _daemon_json(daemon_url: str, path: str, headers: Mapping[str, str]) -> dict[str, Any]:
+    request = urllib_request.Request(f"{daemon_url}{path}", headers=dict(headers), method="GET")
+    try:
+        with urllib_request.urlopen(request, timeout=10) as response:
+            return _mapping(json.load(response), name="daemon-backed runtime identity response")
+    except urllib_error.HTTPError as error:
+        raise PreparationError(
+            f"daemon-backed runtime identity probe rejected {path}: HTTP {error.code}"
+        ) from error
+    except (urllib_error.URLError, TimeoutError, OSError) as error:
+        raise PreparationError(
+            f"daemon-backed runtime identity probe failed for {path}: {error}"
+        ) from error
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise PreparationError(
+            f"daemon-backed runtime identity probe returned invalid JSON for {path}"
+        ) from error
+
+
+def _probe_live_runtime_service(
+    manifest: Mapping[str, Any], environment: Mapping[str, str]
+) -> dict[str, Any]:
+    """Read daemon-backed deployment, database, project, and checkout identities."""
+    identity = _mapping(manifest.get("runtime_identity"), name="runtime identity")
+    isolation = _mapping(identity.get("isolation"), name="runtime isolation")
+    daemon_url = _string(isolation.get("daemon_url"), name="isolated daemon_url")
+    project_id = _string(identity.get("project_id"), name="project_id")
+    grant = _cached_runtime_grant(manifest, environment)
+    token_path = _private_owned_path(
+        str(Path(environment["GOBBY_HOME"]) / "local_cli_token"),
+        name="contained local CLI token",
+        directory=False,
+    )
+    try:
+        bearer = _string(token_path.read_text(encoding="utf-8").strip(), name="local CLI token")
+    except (OSError, UnicodeError) as error:
+        raise PreparationError(f"contained local CLI token is unavailable: {error}") from error
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "X-Gobby-Caller-Project-Id": project_id,
+        "X-Gobby-Project-Id": project_id,
+    }
+    grant_header = base64.urlsafe_b64encode(_canonical_json(grant)).decode().rstrip("=")
+    runtime = _daemon_json(
+        daemon_url,
+        "/api/runtime/config",
+        {**headers, "X-Gobby-Runtime-Grant": grant_header},
+    )
+    project = _daemon_json(daemon_url, f"/api/projects/{quote(project_id, safe='')}", headers)
+    checkout = _mapping(project.get("checkout"), name="live runtime service checkout")
+    capabilities = _mapping(grant.get("capabilities"), name="runtime grant capabilities")
+    postgres = _mapping(capabilities.get("postgres"), name="runtime grant postgres capability")
+    if postgres.get("mode") != "direct":
+        raise PreparationError("runtime grant must provide direct PostgreSQL identity")
+    database = _database_identity_from_conninfo(
+        _string(postgres.get("dsn"), name="runtime grant PostgreSQL DSN"),
+        name="runtime grant PostgreSQL DSN",
+    )
+    deployment = _mapping(grant.get("deployment"), name="runtime grant deployment")
+    return {
+        "daemon_url": daemon_url,
+        "deployment_token": deployment.get("token"),
+        "database": database,
+        "config_revision": runtime.get("config_revision"),
+        "grant_config_revision": grant.get("config_revision"),
+        "project_id": project.get("id"),
+        "project_root": checkout.get("root_path"),
+    }
+
+
 def _verify_live_runtime_service(
     manifest: Mapping[str, Any],
     command_runner: CommandRunner,
     environment: Mapping[str, str],
+    runtime_service_probe: RuntimeServiceProbe,
 ) -> None:
-    """Bind the sealed endpoint/home to the expected live project before native Ask."""
+    """Bind the sealed endpoint/home to the daemon used by native Ask."""
     status_argv = (
         str(manifest["gcode"]["path"]),
         "--project",
@@ -676,23 +865,30 @@ def _verify_live_runtime_service(
         "json",
         "status",
     )
-    try:
-        status = _mapping(
-            json.loads(
-                _require_success(
-                    command_runner(status_argv, 30, environment),
-                    operation="contained runtime service preflight",
-                )
-            ),
-            name="contained runtime service status",
-        )
-    except (json.JSONDecodeError, UnicodeError) as error:
-        raise PreparationError("contained runtime service status is invalid") from error
-    expected_project = manifest["runtime_identity"]["project_id"]
-    observed_project = status.get("id", status.get("project_id"))
-    if observed_project != expected_project:
+    _require_success(
+        command_runner(status_argv, 30, environment),
+        operation="contained runtime grant materialization",
+    )
+    observed = runtime_service_probe(manifest, environment)
+    identity = _mapping(manifest.get("runtime_identity"), name="runtime identity")
+    isolation = _mapping(identity.get("isolation"), name="runtime isolation")
+    service = _mapping(isolation.get("service"), name="service identity")
+    expected_database = _mapping(isolation.get("database"), name="database identity")
+    expected_database_public = {
+        name: expected_database[name] for name in ("host", "port", "name", "schema")
+    }
+    if observed.get("daemon_url") != isolation.get("daemon_url"):
+        raise PreparationError("live runtime service endpoint does not match receipt")
+    if observed.get("deployment_token") != service.get("identity"):
+        raise PreparationError("live runtime service deployment does not match receipt")
+    if observed.get("config_revision") != observed.get("grant_config_revision"):
+        raise PreparationError("live runtime service config revision does not match its grant")
+    if observed.get("database") != expected_database_public:
+        raise PreparationError("live runtime service database identity does not match receipt")
+    expected_project = identity["project_id"]
+    if observed.get("project_id") != expected_project:
         raise PreparationError("live runtime service project identity does not match receipt")
-    observed_root = status.get("root_path")
+    observed_root = observed.get("project_root")
     if (
         not isinstance(observed_root, str)
         or Path(observed_root).resolve() != Path(manifest["source"]["project_root"]).resolve()
@@ -901,6 +1097,7 @@ def _execute_attempt(
     index: int,
     reason: str | None,
     command_runner: CommandRunner,
+    runtime_service_probe: RuntimeServiceProbe,
     now: Callable[[], str],
 ) -> dict[str, Any]:
     retrieval_mode = "hybrid" if kind == "hybrid" else "deterministic"
@@ -939,7 +1136,7 @@ def _execute_attempt(
         expected_binary_hash = manifest["gcode"]["executable_sha256"]
         if _sha256_file(Path(manifest["gcode"]["path"])) != expected_binary_hash:
             raise PreparationError("gcode executable hash differs from installed CLI acceptance")
-        _verify_live_runtime_service(manifest, command_runner, environment)
+        _verify_live_runtime_service(manifest, command_runner, environment, runtime_service_probe)
         command = command_runner(argv, CLIENT_TIMEOUT_SECONDS, environment)
     except (Exception, KeyboardInterrupt) as error:
         contract_error = isinstance(error, CohortError)
@@ -998,7 +1195,9 @@ def _execute_attempt(
                     raise AttemptError("completed Ask result returned a nonzero exit code")
                 stage = "export"
                 environment = _verified_execution_environment(manifest)
-                _verify_live_runtime_service(manifest, command_runner, environment)
+                _verify_live_runtime_service(
+                    manifest, command_runner, environment, runtime_service_probe
+                )
                 export_dir = attempt_dir / "export"
                 export_argv = (
                     str(manifest["gcode"]["path"]),
@@ -1121,6 +1320,7 @@ def run_primary(
     manifest_path: Path,
     *,
     command_runner: CommandRunner | None = None,
+    runtime_service_probe: RuntimeServiceProbe = _probe_live_runtime_service,
     now: Callable[[], str] = _utc_now,
 ) -> list[dict[str, Any]]:
     """Run each missing primary once, serially, without replacing prior attempts."""
@@ -1140,6 +1340,7 @@ def run_primary(
             index=1,
             reason=None,
             command_runner=runner,
+            runtime_service_probe=runtime_service_probe,
             now=now,
         )
         accounting.append(outcome)
@@ -1155,6 +1356,7 @@ def run_supplement(
     kind: Literal["retry", "hybrid"],
     reason: str,
     command_runner: CommandRunner | None = None,
+    runtime_service_probe: RuntimeServiceProbe = _probe_live_runtime_service,
     now: Callable[[], str] = _utc_now,
 ) -> dict[str, Any]:
     """Run one separately labelled retry or optional hybrid experiment."""
@@ -1177,6 +1379,7 @@ def run_supplement(
         index=1,
         reason=reason,
         command_runner=command_runner or run_command,
+        runtime_service_probe=runtime_service_probe,
         now=now,
     )
 

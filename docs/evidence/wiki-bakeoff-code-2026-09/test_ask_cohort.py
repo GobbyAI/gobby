@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import socket
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 import yaml
@@ -20,8 +21,12 @@ from ask_cohort import (
     cohort_contract,
     prepare_cohort,
     primary_accounting,
-    run_primary,
-    run_supplement,
+)
+from ask_cohort import (
+    run_primary as _run_primary,
+)
+from ask_cohort import (
+    run_supplement as _run_supplement,
 )
 from ask_scoring import (
     Q14_CHANGED_PATHS,
@@ -139,7 +144,9 @@ def _receipt(path: Path, payload: object) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": _sha256(encoded)}
 
 
-def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
+def _runtime_identity(
+    gcode_bytes: bytes, root: Path, *, daemon_port: int = 61999
+) -> dict[str, object]:
     gobby_home = root / "contained-gobby-home"
     gobby_home.mkdir(mode=0o700)
     bootstrap = gobby_home / "bootstrap.yaml"
@@ -152,7 +159,7 @@ def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
     bootstrap.write_text(
         yaml.safe_dump(
             {
-                "daemon_port": 61999,
+                "daemon_port": daemon_port,
                 "bind_host": "127.0.0.1",
                 "database_url": (
                     "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
@@ -163,8 +170,38 @@ def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
         encoding="utf-8",
     )
     bootstrap.chmod(0o600)
-    daemon_url = "http://127.0.0.1:61999"
-    service = {"identity": "ask-daemon-unit", "daemon_url": daemon_url}
+    daemon_url = f"http://127.0.0.1:{daemon_port}"
+    deployment_token = "a" * 16
+    service_identity = {"identity": deployment_token, "daemon_url": daemon_url}
+    service = {**service_identity, "receipt": _receipt(root / "service.json", service_identity)}
+    grant_dir = gobby_home / "grants" / deployment_token
+    grant_dir.mkdir(parents=True, mode=0o700)
+    grant = {
+        "version": 2,
+        "api_contract": 1,
+        "config_revision": 17,
+        "deployment": {"token": deployment_token, "fencing_epoch": 1},
+        "principal": {"project_id": "project-frozen-ask"},
+        "capabilities": {
+            "postgres": {
+                "mode": "direct",
+                "dsn": (
+                    "host=127.0.0.1 port=60892 dbname=gobby_test "
+                    "user=gobby_ix_unit options=-csearch_path=gobby_test_askcohort_unit"
+                ),
+                "role_name": "gobby_ix_unit",
+                "credential_generation": 1,
+                "valid_until": 4_102_444_800,
+            }
+        },
+        "signature": "fixture-signature",
+    }
+    grant_path = grant_dir / "project-frozen-ask.json"
+    grant_path.write_text(json.dumps({"grant": grant}), encoding="utf-8")
+    grant_path.chmod(0o600)
+    token_path = gobby_home / "local_cli_token"
+    token_path.write_text("contained-operator-token\n", encoding="utf-8")
+    token_path.chmod(0o600)
     return {
         "schema_version": 1,
         "project_id": "project-frozen-ask",
@@ -187,7 +224,7 @@ def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
                 "sha256": _sha256(bootstrap.read_bytes()),
             },
             "database": {**database, "receipt": _receipt(root / "database.json", database)},
-            "service": {**service, "receipt": _receipt(root / "service.json", service)},
+            "service": service,
         },
         "execution_gates": {
             "#22018": {"status": "accepted", "evidence_sha256": "3" * 64},
@@ -220,6 +257,85 @@ def _runtime_status(
         ).encode(),
         stderr=b"",
         wall_seconds=0.01,
+    )
+
+
+def _runtime_command(
+    argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
+) -> CommandResult:
+    assert timeout == 30
+    return _runtime_status(argv, environment)
+
+
+def _runtime_service_probe(
+    manifest: Mapping[str, object], _environment: Mapping[str, str]
+) -> dict[str, object]:
+    runtime = cast(dict[str, object], manifest["runtime_identity"])
+    isolation = cast(dict[str, object], runtime["isolation"])
+    service = cast(dict[str, object], isolation["service"])
+    database = cast(dict[str, object], isolation["database"])
+    source = cast(dict[str, object], manifest["source"])
+    return {
+        "daemon_url": isolation["daemon_url"],
+        "deployment_token": service["identity"],
+        "database": {name: database[name] for name in ("host", "port", "name", "schema")},
+        "config_revision": 17,
+        "grant_config_revision": 17,
+        "project_id": runtime["project_id"],
+        "project_root": source["project_root"],
+    }
+
+
+def run_primary(
+    manifest_path: Path,
+    *,
+    command_runner: Callable[[tuple[str, ...], float, Mapping[str, str]], CommandResult],
+    runtime_service_probe: Callable[
+        [Mapping[str, object], Mapping[str, str]], dict[str, object]
+    ] = _runtime_service_probe,
+) -> list[dict[str, object]]:
+    return cast(
+        list[dict[str, object]],
+        _run_primary(
+            manifest_path,
+            command_runner=command_runner,
+            runtime_service_probe=runtime_service_probe,
+        ),
+    )
+
+
+def run_supplement(
+    manifest_path: Path,
+    *,
+    question_id: str,
+    kind: Literal["retry", "hybrid"],
+    reason: str,
+    command_runner: Callable[[tuple[str, ...], float, Mapping[str, str]], CommandResult],
+    now: Callable[[], str] | None = None,
+) -> dict[str, object]:
+    if now is not None:
+        return cast(
+            dict[str, object],
+            _run_supplement(
+                manifest_path,
+                question_id=question_id,
+                kind=kind,
+                reason=reason,
+                command_runner=command_runner,
+                runtime_service_probe=_runtime_service_probe,
+                now=now,
+            ),
+        )
+    return cast(
+        dict[str, object],
+        _run_supplement(
+            manifest_path,
+            question_id=question_id,
+            kind=kind,
+            reason=reason,
+            command_runner=command_runner,
+            runtime_service_probe=_runtime_service_probe,
+        ),
     )
 
 
@@ -269,14 +385,17 @@ def _contract() -> dict[str, object]:
     }
 
 
-def _prepare(tmp_path: Path) -> Path:
+def _prepare(tmp_path: Path, *, daemon_port: int = 61999) -> Path:
     source_root = tmp_path / "source"
     source_root.mkdir()
     gcode = tmp_path / "gcode"
     gcode_bytes = b"fake-gcode-binary"
     gcode.write_bytes(gcode_bytes)
     identity = tmp_path / "runtime-identity.json"
-    identity.write_text(json.dumps(_runtime_identity(gcode_bytes, tmp_path)), encoding="utf-8")
+    identity.write_text(
+        json.dumps(_runtime_identity(gcode_bytes, tmp_path, daemon_port=daemon_port)),
+        encoding="utf-8",
+    )
     trees = {
         "0216f1e33f05962d49467d95fe84609041c6dba8": "7" * 40,
         "8b24ac26699aac8b24254a647aa70b208287b492": "8" * 40,
@@ -286,7 +405,7 @@ def _prepare(tmp_path: Path) -> Path:
         argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
     ) -> CommandResult:
         assert timeout > 0
-        assert environment["GOBBY_DAEMON_URL"] == "http://127.0.0.1:61999"
+        assert environment["GOBBY_DAEMON_URL"] == f"http://127.0.0.1:{daemon_port}"
         assert environment["GOBBY_HOME"] == str((tmp_path / "contained-gobby-home").resolve())
         assert environment["GOBBY_TEST_PROTECT"] == "1"
         assert "DATABASE_URL" not in environment
@@ -543,8 +662,48 @@ def test_prepare_refuses_unaccepted_final_prerequisite(tmp_path: Path) -> None:
                     "&options=-csearch_path%3Dgobby_test_askcohort_unit"
                 )
             },
-            "bootstrap database identity",
+            "canonical options",
             id="duplicate-search-path",
+        ),
+        *[
+            pytest.param(
+                {
+                    "database_url": (
+                        "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?"
+                        f"{override}&options=-csearch_path%3Dgobby_test_askcohort_unit"
+                    )
+                },
+                "canonical options",
+                id=f"query-override-{name}",
+            )
+            for name, override in (
+                ("hostaddr", "hostaddr=127.0.0.2"),
+                ("host", "host=127.0.0.2"),
+                ("port", "port=5432"),
+                ("dbname", "dbname=foreign"),
+                ("service", "service=foreign"),
+            )
+        ],
+        pytest.param(
+            {
+                "database_url": (
+                    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+                    "?options=%2Dcsearch_path%3Dgobby_test_askcohort_unit"
+                )
+            },
+            "canonical options",
+            id="noncanonical-escaping",
+        ),
+        pytest.param(
+            {
+                "database_url": (
+                    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+                    "?options=-csearch_path%3Dgobby_test_askcohort_unit"
+                    "%20-cstatement_timeout%3D0"
+                )
+            },
+            "canonical search_path",
+            id="multiple-settings",
         ),
     ],
 )
@@ -583,42 +742,125 @@ def test_runtime_isolation_binds_bootstrap_endpoint_and_database(
         )
 
 
+@pytest.mark.parametrize("key", ["database_url", "bind_host", "daemon_port"])
+def test_runtime_isolation_rejects_duplicate_bootstrap_identity_keys(
+    tmp_path: Path, key: str
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    gcode = tmp_path / "gcode"
+    gcode_bytes = b"fake-gcode-binary"
+    gcode.write_bytes(gcode_bytes)
+    runtime_identity = _runtime_identity(gcode_bytes, tmp_path)
+    isolation = cast(dict[str, object], runtime_identity["isolation"])
+    bootstrap_receipt = cast(dict[str, object], isolation["bootstrap"])
+    bootstrap_path = Path(cast(str, bootstrap_receipt["path"]))
+    duplicate_values = {
+        "database_url": (
+            "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+            "?options=-csearch_path%3Dgobby_test_askcohort_unit"
+        ),
+        "bind_host": "127.0.0.1",
+        "daemon_port": 61999,
+    }
+    with bootstrap_path.open("a", encoding="utf-8") as bootstrap:
+        bootstrap.write(f"{key}: {duplicate_values[key]}\n")
+    bootstrap_receipt["sha256"] = _sha256(bootstrap_path.read_bytes())
+    identity_path = tmp_path / "runtime-identity.json"
+    identity_path.write_text(json.dumps(runtime_identity), encoding="utf-8")
+
+    with pytest.raises(PreparationError, match=rf"duplicate bootstrap key.*{key}"):
+        prepare_cohort(
+            runtime_identity_path=identity_path,
+            gcode_binary=gcode,
+            project_root=source_root,
+            output_root=tmp_path / "cohort",
+            command_runner=lambda _argv, _timeout, _environment: pytest.fail(
+                "duplicate bootstrap identities must fail before commands"
+            ),
+        )
+
+
 @pytest.mark.parametrize(
-    ("status_update", "message"),
+    ("service_update", "message"),
     [
-        pytest.param({"id": "foreign-project"}, "live runtime service project", id="project"),
-        pytest.param({"root_path": "foreign"}, "live runtime service project root", id="root"),
+        pytest.param(
+            {"project_id": "foreign-project"}, "live runtime service project", id="project"
+        ),
+        pytest.param({"project_root": "foreign"}, "live runtime service project root", id="root"),
+        pytest.param(
+            {"deployment_token": "b" * 16},
+            "live runtime service deployment",
+            id="deployment",
+        ),
+        pytest.param(
+            {
+                "database": {
+                    "host": "127.0.0.2",
+                    "port": 60892,
+                    "name": "gobby_test",
+                    "schema": "gobby_test_askcohort_unit",
+                }
+            },
+            "live runtime service database",
+            id="database",
+        ),
     ],
 )
 def test_primary_binds_live_service_to_expected_project_and_root(
-    tmp_path: Path, status_update: dict[str, str], message: str
+    tmp_path: Path, service_update: dict[str, object], message: str
 ) -> None:
     manifest_path = _prepare(tmp_path)
-    calls: list[tuple[str, ...]] = []
+    calls: list[dict[str, object]] = []
 
     def wrong_service(
-        argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
-    ) -> CommandResult:
-        calls.append(argv)
-        assert argv[-1] == "status"
-        assert timeout == 30
-        status = {
-            "id": "project-frozen-ask",
-            "root_path": str(tmp_path / "source"),
-        }
-        status.update(status_update)
-        return CommandResult(
-            exit_code=0,
-            stdout=json.dumps(status).encode(),
-            stderr=b"",
-            wall_seconds=0.01,
-        )
+        manifest: Mapping[str, object], environment: Mapping[str, str]
+    ) -> dict[str, object]:
+        assert environment["GOBBY_DAEMON_URL"] == "http://127.0.0.1:61999"
+        status = _runtime_service_probe(manifest, environment)
+        status.update(service_update)
+        calls.append(status)
+        return status
 
     with pytest.raises(PreparationError, match=message):
-        run_primary(manifest_path, command_runner=wrong_service)
+        run_primary(
+            manifest_path,
+            command_runner=_runtime_command,
+            runtime_service_probe=wrong_service,
+        )
 
     assert len(calls) == 1
-    assert "ask" not in calls[0]
+
+
+@pytest.mark.integration
+def test_primary_rejects_absent_daemon_before_mutating_ask(tmp_path: Path) -> None:
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        daemon_port = cast(tuple[str, int], reservation.getsockname())[1]
+        manifest_path = _prepare(tmp_path, daemon_port=daemon_port)
+        calls: list[tuple[str, ...]] = []
+
+        def status_only(
+            argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
+        ) -> CommandResult:
+            calls.append(argv)
+            if argv[-1] != "status":
+                pytest.fail("absent daemon must be rejected before mutating Ask")
+            project_root = argv[argv.index("--project") + 1]
+            assert environment["GOBBY_DAEMON_URL"] == f"http://127.0.0.1:{daemon_port}"
+            return CommandResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {"id": "project-frozen-ask", "root_path": project_root, "indexed": True}
+                ).encode(),
+                stderr=b"",
+                wall_seconds=0.01,
+            )
+
+        with pytest.raises(PreparationError, match="daemon-backed runtime identity probe"):
+            _run_primary(manifest_path, command_runner=status_only)
+
+        assert len(calls) == 1
 
 
 def test_runtime_isolation_drift_is_recorded_before_primary_and_export(tmp_path: Path) -> None:
@@ -1440,19 +1682,55 @@ def test_report_materializes_measurements_raw_hashes_and_missing_values() -> Non
                     "retrieval": {
                         "query_count": 3,
                         "before": {
-                            "supported": False,
-                            "reciprocal_rank": 0.0,
-                            "gold_span_recall": 0.0,
-                            "query_completeness": [{"complete": True}],
+                            "supported": True,
+                            "first_supporting_query": 1,
+                            "first_supporting_rank": 4,
+                            "reciprocal_rank": 0.25,
+                            "gold_span_recall": 0.3,
+                            "recall_at_5": 0.1,
+                            "recall_at_10": 0.2,
+                            "recall_at_20": 0.3,
+                            "citation_precision_at_10": 0.4,
+                            "wrong_domain_collisions": 5,
+                            "query_completeness": [
+                                {
+                                    "invocation_id": "before-query-1",
+                                    "complete": True,
+                                    "completeness": "before-complete",
+                                    "continuation": None,
+                                }
+                            ],
                         },
                         "after": {
                             "supported": True,
-                            "reciprocal_rank": 0.5,
-                            "gold_span_recall": 1.0,
+                            "first_supporting_query": 2,
+                            "first_supporting_rank": 3,
+                            "reciprocal_rank": 0.333,
+                            "gold_span_recall": 0.8,
+                            "recall_at_5": 0.6,
+                            "recall_at_10": 0.7,
+                            "recall_at_20": 0.8,
+                            "citation_precision_at_10": 0.9,
+                            "wrong_domain_collisions": 10,
                             "query_completeness": [
-                                {"complete": True},
-                                {"complete": False},
-                                {"complete": True},
+                                {
+                                    "invocation_id": "after-query-1",
+                                    "complete": True,
+                                    "completeness": "after-complete",
+                                    "continuation": None,
+                                },
+                                {
+                                    "invocation_id": "after-query-2",
+                                    "complete": False,
+                                    "completeness": "after-partial",
+                                    "continuation": "continue-after-2",
+                                },
+                                {
+                                    "invocation_id": "after-query-3",
+                                    "complete": True,
+                                    "completeness": "after-final",
+                                    "continuation": None,
+                                },
                             ],
                         },
                     },
@@ -1510,7 +1788,19 @@ def test_report_materializes_measurements_raw_hashes_and_missing_values() -> Non
         }
     )
 
-    assert "| Q14 | completed | 3 | False / 0.000" in report
+    assert "| Q14 | completed | 3 | True / 0.250" in report
+    assert "## Per-query retrieval detail" in report
+    assert "first_supporting_query=1; first_supporting_rank=4" in report
+    assert "recall@5/10/20=0.100 / 0.200 / 0.300" in report
+    assert "citation_precision@10=0.400; wrong_domain_collisions=5" in report
+    assert "first_supporting_query=2; first_supporting_rank=3" in report
+    assert "recall@5/10/20=0.600 / 0.700 / 0.800" in report
+    assert "citation_precision@10=0.900; wrong_domain_collisions=10" in report
+    assert "before-query-1" in report
+    assert "before-complete" in report
+    assert "after-query-2" in report
+    assert "after-partial" in report
+    assert "continue-after-2" in report
     assert "## Runtime and usage" in report
     assert '"input_tokens":456' in report
     assert "## Raw artifact inventory" in report
