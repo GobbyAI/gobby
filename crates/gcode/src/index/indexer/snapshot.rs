@@ -72,8 +72,11 @@ pub(crate) fn index_snapshot(ctx: &Context, commit_oid: &str) -> anyhow::Result<
 
     // Every eligible file gets its own selector, including files inherited from
     // the parent. An Ask snapshot must not depend on mutable parent index state.
+    let mut sources = snapshot.read_eligible_blobs()?;
     for entry in snapshot.eligible_entries() {
-        let source = snapshot.read_blob(&entry.path)?;
+        let source = sources
+            .remove(&entry.path)
+            .context("eligible snapshot blob is missing from captured sources")?;
         let hash = entry
             .content_hash
             .as_deref()
