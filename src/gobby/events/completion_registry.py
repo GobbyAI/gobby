@@ -171,6 +171,26 @@ class CompletionEventRegistry:
             message,
         )
 
+    async def notify_and_cleanup(
+        self,
+        completion_id: str,
+        result: dict[str, Any],
+        message: str = "",
+        durable_subscriber_count: int = 0,
+    ) -> dict[str, bool] | None:
+        """Notify terminal listeners, then remove only that registration generation."""
+        registered_event = self._events.get(completion_id)
+        try:
+            return await self.notify(
+                completion_id,
+                result,
+                message,
+                durable_subscriber_count,
+            )
+        finally:
+            if self._events.get(completion_id) is registered_event:
+                self.cleanup(completion_id)
+
     async def wake_sessions(
         self,
         completion_id: str,

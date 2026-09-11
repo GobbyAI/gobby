@@ -152,6 +152,10 @@ class AskService:
                             # to this caller or caller cancellation to the execution.
                             await asyncio.wait({task})
                             continue
+                        await self.completion_registry.notify_and_cleanup(
+                            completion_id,
+                            {"status": result.status},
+                        )
                         return result
                     if self.completion_registry.get_result(completion_id) is not None:
                         # A resume claim can precede replacement of the old notification.
@@ -160,7 +164,7 @@ class AskService:
                     try:
                         # A caller timeout must not clean up other waiters' subscription.
                         await self.completion_registry.wait(completion_id)
-                    except CompletionResultEvictedError:
+                    except (CompletionResultEvictedError, KeyError):
                         # A resumed execution may replace a completed registration.
                         continue
         except TimeoutError:
@@ -185,15 +189,30 @@ class AskService:
         if not isinstance(original_caller, str) or not original_caller:
             raise RuntimeError("Ask execution context has no immutable caller session")
         pipeline = self._pipeline(run_id)
+        await self._drain_task_before_resume(record)
         decision = await asyncio.to_thread(recovery.inspect, run_id, project_id=project_id)
-        await asyncio.to_thread(
-            recovery.claim_resume,
-            run_id,
-            project_id=project_id,
-            caller_session_id=caller_session_id,
-            decision=decision,
+        claim_task = asyncio.create_task(
+            asyncio.to_thread(
+                recovery.claim_resume,
+                run_id,
+                project_id=project_id,
+                caller_session_id=caller_session_id,
+                decision=decision,
+            )
         )
+        caller_cancelled = False
+        while True:
+            try:
+                await asyncio.shield(claim_task)
+                break
+            except asyncio.CancelledError:
+                if claim_task.cancelled():
+                    raise
+                caller_cancelled = True
+        claim_task.result()
         self._ensure_task(record, pipeline, inputs, original_caller)
+        if caller_cancelled:
+            raise asyncio.CancelledError
         return await asyncio.to_thread(self._result, record)
 
     async def recover_daemon_execution(self, run_id: str, *, project_id: str) -> bool:
@@ -395,6 +414,21 @@ class AskService:
         if not task.cancelled() and (error := task.exception()) is not None:
             logger.error("native Ask background task escaped its boundary", exc_info=error)
 
+    async def _drain_task_before_resume(self, record: AskRunRecord) -> None:
+        previous = self._tasks.get(record.run_id)
+        if previous is None or previous.done():
+            return
+        try:
+            async with asyncio.timeout(self._remaining(record.binding.deadline_at)):
+                await asyncio.shield(previous)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+        except Exception:
+            if not previous.done():
+                raise
+
     async def _execute_pipeline(
         self,
         record: AskRunRecord,
@@ -444,7 +478,10 @@ class AskService:
         result = await asyncio.to_thread(self._result, record)
         if result.status in {"completed", "failed", "cancelled"}:
             # Pipeline completion precedes Ask error mapping and resource cleanup.
-            await self.completion_registry.notify(f"ask:{record.run_id}", {"status": result.status})
+            await self.completion_registry.notify_and_cleanup(
+                f"ask:{record.run_id}",
+                {"status": result.status},
+            )
 
     async def prepare(
         self,

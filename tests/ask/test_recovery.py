@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -100,6 +101,38 @@ class _RecordingPipelineExecutor:
         del pipeline, project_id
         self.calls.append((execution_id, session_id, inputs))
         assert execution_id is not None
+        execution = self.manager.update_execution_status(
+            execution_id,
+            ExecutionStatus.COMPLETED,
+        )
+        assert execution is not None
+        return execution
+
+
+class _FailThenCompletePipelineExecutor:
+    def __init__(self, manager: LocalPipelineExecutionManager) -> None:
+        self.manager = manager
+        self.calls = 0
+        self.session_ids: list[str | None] = []
+        self.retry_started = asyncio.Event()
+        self.complete_retry = asyncio.Event()
+
+    async def execute(
+        self,
+        pipeline: PipelineDefinition,
+        inputs: dict[str, Any],
+        project_id: str,
+        execution_id: str | None = None,
+        session_id: str | None = None,
+    ) -> PipelineExecution:
+        del pipeline, inputs, project_id
+        self.calls += 1
+        self.session_ids.append(session_id)
+        assert execution_id is not None
+        if self.calls == 1:
+            raise RuntimeError("first execution failed before cleanup")
+        self.retry_started.set()
+        await self.complete_retry.wait()
         execution = self.manager.update_execution_status(
             execution_id,
             ExecutionStatus.COMPLETED,
@@ -282,7 +315,289 @@ async def test_wait_rechecks_durable_completion_after_registration(
     result = await service.wait(record.run_id, project_id=record.binding.project_id, timeout=1)
     assert result.status == "completed"
     assert not registry.waiting.is_set()
+    assert not registry.is_registered(f"ask:{record.run_id}")
     assert result.binding.deadline_at == record.binding.deadline_at
+
+
+@pytest.mark.asyncio
+async def test_completion_cleanup_preserves_replacement_registration() -> None:
+    wake_started = asyncio.Event()
+    allow_wake = asyncio.Event()
+
+    async def delayed_wake(
+        _session_id: str,
+        _message: str,
+        _payload: dict[str, Any],
+    ) -> dict[str, bool]:
+        wake_started.set()
+        await allow_wake.wait()
+        return {"ism_persisted": True}
+
+    registry = CompletionEventRegistry(wake_callback=delayed_wake)
+    completion_id = "ask:retried-run"
+    registry.register(completion_id, subscribers=["waiting-session"])
+    notification = asyncio.create_task(
+        registry.notify_and_cleanup(completion_id, {"status": "failed"})
+    )
+    await asyncio.wait_for(wake_started.wait(), timeout=1)
+    registry.cleanup(completion_id)
+    registry.register(completion_id, subscribers=[])
+
+    allow_wake.set()
+    await asyncio.wait_for(notification, timeout=1)
+
+    assert registry.is_registered(completion_id)
+    assert registry.get_result(completion_id) is None
+
+
+@pytest.mark.asyncio
+async def test_resume_queues_retry_behind_inflight_cleanup(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, record, _registry = waiting_run
+    project_id = record.binding.project_id
+    executor = _FailThenCompletePipelineExecutor(service.storage.manager)
+    service.pipeline_executor = executor
+    release_entered = asyncio.Event()
+    allow_release = asyncio.Event()
+    release_calls = 0
+
+    async def block_first_release(_run_id: str) -> None:
+        nonlocal release_calls
+        release_calls += 1
+        if release_calls == 1:
+            release_entered.set()
+            await allow_release.wait()
+
+    monkeypatch.setattr(service.stage_runtime, "release", block_first_release)
+    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    old_task = service._tasks[record.run_id]
+    resume_task: asyncio.Task[Any] | None = None
+    replacement: asyncio.Task[None] | None = None
+    try:
+        await asyncio.wait_for(release_entered.wait(), timeout=1)
+        assert service.get(record.run_id, project_id=project_id).status == "failed"
+        resume_task = asyncio.create_task(
+            service.resume(
+                record.run_id,
+                project_id=project_id,
+                caller_session_id="resume-operator",
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(resume_task), timeout=0.01)
+
+        assert service.get(record.run_id, project_id=project_id).status == "failed"
+        assert not old_task.cancelled()
+        allow_release.set()
+        resumed = await asyncio.wait_for(resume_task, timeout=1)
+        assert resumed.status == "pending"
+        assert resumed.binding.deadline_at == record.binding.deadline_at
+        replacement = service._tasks[record.run_id]
+        assert replacement is not old_task
+
+        await asyncio.wait_for(executor.retry_started.wait(), timeout=1)
+        assert service._tasks[record.run_id] is replacement
+        executor.complete_retry.set()
+        result = await service.wait(record.run_id, project_id=project_id, timeout=1)
+        assert result.status == "completed"
+        assert result.binding.deadline_at == record.binding.deadline_at
+        assert executor.calls == 2
+        assert executor.session_ids == ["original-caller", "original-caller"]
+    finally:
+        allow_release.set()
+        executor.complete_retry.set()
+        if resume_task is not None:
+            resume_task.cancel()
+            await asyncio.gather(resume_task, return_exceptions=True)
+        await asyncio.gather(old_task, return_exceptions=True)
+        if replacement is not None:
+            await asyncio.gather(replacement, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_resume_cancellation_does_not_cancel_inflight_cleanup_or_claim(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, record, _registry = waiting_run
+    project_id = record.binding.project_id
+    executor = _FailThenCompletePipelineExecutor(service.storage.manager)
+    service.pipeline_executor = executor
+    release_entered = asyncio.Event()
+    allow_release = asyncio.Event()
+
+    async def block_release(_run_id: str) -> None:
+        release_entered.set()
+        await allow_release.wait()
+
+    monkeypatch.setattr(service.stage_runtime, "release", block_release)
+    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    old_task = service._tasks[record.run_id]
+    resume_task: asyncio.Task[Any] | None = None
+    try:
+        await asyncio.wait_for(release_entered.wait(), timeout=1)
+        resume_task = asyncio.create_task(
+            service.resume(
+                record.run_id,
+                project_id=project_id,
+                caller_session_id="resume-operator",
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(resume_task), timeout=0.01)
+        resume_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await resume_task
+
+        assert service.get(record.run_id, project_id=project_id).status == "failed"
+        assert not old_task.cancelled()
+        assert executor.calls == 1
+    finally:
+        allow_release.set()
+        if resume_task is not None:
+            resume_task.cancel()
+            await asyncio.gather(resume_task, return_exceptions=True)
+        await asyncio.gather(old_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_resume_cancellation_after_claim_still_installs_owner(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ask.recovery import AskRecoveryController
+
+    service, record, _registry = waiting_run
+    project_id = record.binding.project_id
+    service.storage.manager.update_execution_status(record.run_id, ExecutionStatus.FAILED)
+    claim_entered = threading.Event()
+    allow_claim = threading.Event()
+    original_claim = AskRecoveryController.claim_resume
+
+    def delayed_claim(
+        controller: AskRecoveryController,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        claim_entered.set()
+        assert allow_claim.wait(timeout=1)
+        return original_claim(controller, *args, **kwargs)
+
+    monkeypatch.setattr(AskRecoveryController, "claim_resume", delayed_claim)
+    resume_task = asyncio.create_task(
+        service.resume(
+            record.run_id,
+            project_id=project_id,
+            caller_session_id="resume-operator",
+        )
+    )
+    try:
+        assert await asyncio.to_thread(claim_entered.wait, 1)
+        resume_task.cancel()
+        await asyncio.sleep(0)
+        assert not resume_task.done()
+        allow_claim.set()
+        with pytest.raises(asyncio.CancelledError):
+            await resume_task
+
+        result = await service.wait(record.run_id, project_id=project_id, timeout=1)
+        assert result.status == "completed"
+        executor = cast(_RecordingPipelineExecutor, service.pipeline_executor)
+        assert len(executor.calls) == 1
+        execution_id, session_id, _inputs = executor.calls[0]
+        assert execution_id == record.run_id
+        assert session_id == "original-caller"
+    finally:
+        allow_claim.set()
+        resume_task.cancel()
+        await asyncio.gather(resume_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_old_done_callback_preserves_replacement_owner(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, _registry = waiting_run
+    hold_replacement = asyncio.Event()
+
+    async def wait_for_release() -> None:
+        await hold_replacement.wait()
+
+    old_task = asyncio.create_task(asyncio.sleep(0))
+    await old_task
+    replacement = asyncio.create_task(wait_for_release())
+    service._tasks[record.run_id] = replacement
+    try:
+        service._task_done(record.run_id, old_task)
+        assert service._tasks[record.run_id] is replacement
+    finally:
+        replacement.cancel()
+        await asyncio.gather(replacement, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_terminal_run_cleans_completion_registration_after_wait(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, registry = waiting_run
+    project_id = record.binding.project_id
+    waiter = asyncio.create_task(service.wait(record.run_id, project_id=project_id))
+    try:
+        await asyncio.wait_for(registry.waiting.wait(), timeout=1)
+        assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+        result = await asyncio.wait_for(waiter, timeout=1)
+        assert result.status == "completed"
+        assert not registry.is_registered(f"ask:{record.run_id}")
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_terminal_run_cleans_completion_registration_without_waiter(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, registry = waiting_run
+    project_id = record.binding.project_id
+    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    task = service._tasks[record.run_id]
+
+    await asyncio.wait_for(task, timeout=1)
+
+    assert service.get(record.run_id, project_id=project_id).status == "completed"
+    assert not registry.is_registered(f"ask:{record.run_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["timeout", "disconnect"])
+async def test_terminal_run_cleans_registration_after_only_waiter_leaves(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    interruption: str,
+) -> None:
+    service, record, registry = waiting_run
+    project_id = record.binding.project_id
+    completion_id = f"ask:{record.run_id}"
+    sibling_id = "ask:sibling-run"
+    if interruption == "timeout":
+        with pytest.raises(TimeoutError, match="timed out waiting for Ask run"):
+            await service.wait(record.run_id, project_id=project_id, timeout=0.01)
+    else:
+        disconnected = asyncio.create_task(service.wait(record.run_id, project_id=project_id))
+        await asyncio.wait_for(registry.waiting.wait(), timeout=1)
+        disconnected.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await disconnected
+    assert registry.is_registered(completion_id)
+    registry.register(sibling_id, subscribers=[])
+
+    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    task = service._tasks[record.run_id]
+    await asyncio.wait_for(task, timeout=1)
+
+    assert not registry.is_registered(completion_id)
+    assert registry.is_registered(sibling_id)
 
 
 @pytest.mark.asyncio
