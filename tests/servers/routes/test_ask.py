@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +20,7 @@ from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.ask import create_ask_router
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.auth import AuthStore, hash_token
-from gobby.utils.local_token import issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -32,6 +33,7 @@ DEADLINE = "2026-09-09T12:10:00Z"
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 _AskOperation = Literal["start", "get", "wait", "resume", "cancel", "export"]
+_ManagedOwner = Literal["agent_run", "managed_execution"]
 
 
 class _Result:
@@ -57,6 +59,7 @@ class _Result:
 
 class _AskService:
     def __init__(self, publication_root: Path | None = None) -> None:
+        self.operations: list[str] = []
         self.start_call: tuple[Any, Path, str] | None = None
         self.wait_call: tuple[str, str, float | None] | None = None
         self.cancel_calls: list[str] = []
@@ -69,29 +72,35 @@ class _AskService:
             raise error
 
     async def start(self, request: Any, *, project_root: Path, caller_session_id: str) -> _Result:
+        self.operations.append("start")
         self._raise_for("start")
         self.start_call = (request, project_root, caller_session_id)
         return _Result("running")
 
     def get(self, run_id: str, *, project_id: str) -> _Result:
+        self.operations.append("get")
         self._raise_for("get")
         return _Result("running")
 
     async def wait(self, run_id: str, *, project_id: str, timeout: float | None = None) -> _Result:
+        self.operations.append("wait")
         self._raise_for("wait")
         self.wait_call = (run_id, project_id, timeout)
         return _Result("completed", outcome="unknown")
 
     async def resume(self, run_id: str, **_: Any) -> _Result:
+        self.operations.append("resume")
         self._raise_for("resume")
         return _Result("running")
 
     async def cancel(self, run_id: str, **_: Any) -> _Result:
+        self.operations.append("cancel")
         self._raise_for("cancel")
         self.cancel_calls.append(run_id)
         return _Result("cancelled")
 
     def publication_root(self, run_id: str, *, project_id: str) -> Path:
+        self.operations.append("export")
         self._raise_for("export")
         if self._publication_root is None:
             raise AssertionError("publication root was not configured")
@@ -103,11 +112,14 @@ class _AuthHarness:
     client: TestClient
     service: _AskService
     agent_headers: dict[str, str]
+    managed_execution_headers: dict[str, str]
     ask_principal_headers: dict[str, str]
     operator_headers: dict[str, str]
     project_id: str
     project_root: Path
     resolved_projects: list[str]
+    resolved_project_roots: list[str]
+    invalidate_after_auth: Callable[[_ManagedOwner], None]
 
 
 async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -120,21 +132,39 @@ def authenticated_ask_harness(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Any:
     project_id = str(sample_project["id"])
     token_file = tmp_path / "local_cli_token"
     token_file.write_text("operator-token")
     AuthStore(temp_db).set_local_api_token_hash(hash_token("operator-token"))
     auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    managed_execution_live = [True]
+    original_fetchone = temp_db.fetchone
+
+    def fetchone(
+        query: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Any:
+        if "managed_execution_is_login_capable" in query:
+            return {"login_capable": managed_execution_live[0]}
+        return original_fetchone(query, params)
+
+    monkeypatch.setattr(temp_db, "fetchone", fetchone)
     publication_root = tmp_path / "publication"
     publication_root.mkdir()
     (publication_root / "answer.md").write_text("verified answer\n")
     ask_service = _AskService(publication_root)
     resolved_projects: list[str] = []
+    resolved_project_roots: list[str] = []
 
     def resolve_service(resolved_project_id: str) -> _AskService:
         resolved_projects.append(resolved_project_id)
         return ask_service
+
+    def resolve_project_root(resolved_project_id: str) -> Path:
+        resolved_project_roots.append(resolved_project_id)
+        return tmp_path
 
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         parent = session_manager.register(
@@ -156,6 +186,8 @@ def authenticated_ask_harness(
             workflow_name="native-ask",
             agent_name="ask-investigator",
         )
+        managed_execution_id = "33333333-3333-4333-8333-333333333333"
+        pending_invalidation: list[_ManagedOwner | None] = [None]
 
         def headers_for(run_id: str) -> dict[str, str]:
             token = issue_agent_api_token(
@@ -171,19 +203,47 @@ def authenticated_ask_harness(
                 "X-Gobby-Caller-Project-Id": project_id,
             }
 
+        managed_execution_token = issue_tool_api_token(
+            "operator-token",
+            managed_execution_id=managed_execution_id,
+            session_id=parent.id,
+            project_id=project_id,
+            timeout_seconds=60,
+        )
+        managed_execution_headers = {
+            "Authorization": f"Bearer {managed_execution_token}",
+            "X-Gobby-Managed-Execution-Id": managed_execution_id,
+            "X-Gobby-Session-Id": parent.id,
+            "X-Gobby-Caller-Project-Id": project_id,
+        }
+
+        def invalidate_after_auth(owner: _ManagedOwner) -> None:
+            pending_invalidation[0] = owner
+
+        async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+            result = await asyncio.to_thread(func, *args, **kwargs)
+            owner = pending_invalidation[0]
+            if owner is not None and getattr(func, "__name__", None) == "authenticate":
+                pending_invalidation[0] = None
+                if owner == "agent_run":
+                    await asyncio.to_thread(manager.complete, ordinary_run.id)
+                else:
+                    managed_execution_live[0] = False
+            return result
+
         server = SimpleNamespace(
             auth_service=auth_service,
             services=SimpleNamespace(
                 get_ask_service=resolve_service,
                 http_admission_closed=False,
             ),
-            run_db=_run_db,
+            run_db=run_db,
         )
         app = FastAPI()
         app.include_router(
             create_ask_router(
                 cast("HTTPServer", server),
-                project_root_resolver=lambda _project_id: tmp_path,
+                project_root_resolver=resolve_project_root,
             )
         )
         app.add_middleware(AuthMiddleware, server=cast("HTTPServer", server))
@@ -193,6 +253,7 @@ def authenticated_ask_harness(
                 client=client,
                 service=ask_service,
                 agent_headers=headers_for(ordinary_run.id),
+                managed_execution_headers=managed_execution_headers,
                 ask_principal_headers=headers_for(ask_principal_run.id),
                 operator_headers={
                     "Authorization": "Bearer operator-token",
@@ -201,6 +262,8 @@ def authenticated_ask_harness(
                 project_id=project_id,
                 project_root=tmp_path,
                 resolved_projects=resolved_projects,
+                resolved_project_roots=resolved_project_roots,
+                invalidate_after_auth=invalidate_after_auth,
             )
 
 
@@ -268,20 +331,55 @@ def test_shared_run_contract_and_event_driven_wait(
     ]
 
 
+@pytest.mark.parametrize("owner", ["agent_run", "managed_execution"])
 @pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
 def test_signed_managed_token_can_access_same_project_ask_routes(
     operation: _AskOperation,
+    owner: _ManagedOwner,
     authenticated_ask_harness: _AuthHarness,
 ) -> None:
+    headers = (
+        authenticated_ask_harness.agent_headers
+        if owner == "agent_run"
+        else authenticated_ask_harness.managed_execution_headers
+    )
     response = _request_ask(
         authenticated_ask_harness.client,
         operation,
         project_id=authenticated_ask_harness.project_id,
-        headers=authenticated_ask_harness.agent_headers,
+        headers=headers,
     )
 
     assert response.status_code == (202 if operation == "start" else 200)
     assert authenticated_ask_harness.resolved_projects == [authenticated_ask_harness.project_id]
+
+
+@pytest.mark.parametrize("owner", ["agent_run", "managed_execution"])
+@pytest.mark.parametrize("target", ["same", "foreign"])
+@pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
+def test_managed_token_revoked_between_middleware_and_route_fails_closed(
+    operation: _AskOperation,
+    target: Literal["same", "foreign"],
+    owner: _ManagedOwner,
+    authenticated_ask_harness: _AuthHarness,
+) -> None:
+    harness = authenticated_ask_harness
+    headers = harness.agent_headers if owner == "agent_run" else harness.managed_execution_headers
+    project_id = harness.project_id if target == "same" else "foreign-project"
+    harness.invalidate_after_auth(owner)
+
+    response = _request_ask(
+        harness.client,
+        operation,
+        project_id=project_id,
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Ask project access denied"}
+    assert harness.resolved_projects == []
+    assert harness.resolved_project_roots == []
+    assert harness.service.operations == []
 
 
 @pytest.mark.parametrize("operation", ["start", "get", "wait", "resume", "cancel", "export"])
@@ -430,7 +528,7 @@ def test_unavailable_project_never_uses_default_service(operation: str, tmp_path
         resolved_projects.append(project_id)
 
     server = SimpleNamespace(
-        auth_service=SimpleNamespace(verified_agent_claims=lambda _request: None),
+        auth_service=SimpleNamespace(request_principal=lambda _request: None),
         services=SimpleNamespace(ask_service=_AskService(), get_ask_service=resolve_service),
         run_db=_run_db,
     )

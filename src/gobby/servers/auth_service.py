@@ -343,6 +343,12 @@ class AuthService:
     def _credential_accepted(self, request: HTTPConnection) -> bool:
         return self._accepted_bearer(request) is not False
 
+    def request_principal(
+        self, request: HTTPConnection
+    ) -> AgentApiTokenClaims | None | Literal[False]:
+        """Return live managed claims, None for an operator, or False when rejected."""
+        return self._accepted_bearer(request)
+
     def _accepted_bearer(
         self, request: HTTPConnection
     ) -> AgentApiTokenClaims | None | Literal[False]:

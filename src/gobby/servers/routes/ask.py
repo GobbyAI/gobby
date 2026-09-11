@@ -60,13 +60,13 @@ async def _authorize_project(
     auth_service = getattr(server, "auth_service", None)
     if auth_service is None:
         raise HTTPException(status_code=503, detail="Authentication service is unavailable")
-    claims = cast(
-        AgentApiTokenClaims | None,
-        await server.run_db(auth_service.verified_agent_claims, request),
+    principal = cast(
+        AgentApiTokenClaims | None | Literal[False],
+        await server.run_db(auth_service.request_principal, request),
     )
-    if claims is not None and claims.project_id != project_id:
+    if principal is False or (principal is not None and principal.project_id != project_id):
         raise HTTPException(status_code=403, detail="Ask project access denied")
-    return claims
+    return principal
 
 
 def _ask_http_exception(error: Exception) -> HTTPException:
