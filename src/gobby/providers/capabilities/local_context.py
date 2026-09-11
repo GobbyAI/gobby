@@ -10,6 +10,21 @@ from types import MappingProxyType
 from typing import Any
 
 
+@dataclass(frozen=True)
+class LocalContextIdentity:
+    """Configured endpoint identity supplied by route normalization to collectors.
+
+    The fingerprint incorporates credentials without exposing them. Only the
+    non-secret identifiers belong in persisted observations.
+    """
+
+    machine_id: str
+    endpoint_id: str
+    configuration_fingerprint: str
+    api_base: str = field(repr=False)
+    api_key: str | None = field(default=None, repr=False)
+
+
 class ContextDiagnostic(StrEnum):
     CANONICAL_UNKNOWN = "context_canonical_unknown"
     RUNTIME_UNKNOWN = "context_runtime_unknown"
