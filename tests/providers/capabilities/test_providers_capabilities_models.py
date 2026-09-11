@@ -1,9 +1,14 @@
 """Tests for typed provider capability domain models."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
+from gobby.providers.capabilities.local_context import (
+    LocalContextInstance,
+    build_context_observation,
+)
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -67,3 +72,49 @@ def test_supported_efforts_null_vs_empty_distinct() -> None:
     assert ProviderSnapshot.from_dict(unknown_payload) == unknown
     assert ProviderSnapshot.from_dict(empty_payload) == explicitly_empty
     assert unknown != explicitly_empty
+
+
+def test_local_context_provenance_round_trip_and_remote_omission() -> None:
+    remote = _snapshot(None)
+    remote_payload = remote.to_dict()
+    assert "local_context" not in remote_payload["models"][0]["provenance"]["context_length"]
+
+    observation = build_context_observation(
+        machine_id="machine-a",
+        endpoint_id="studio-a",
+        configuration_fingerprint="config-a",
+        provider="lmstudio",
+        model_id="model",
+        instance_id="instance-a",
+        digest="sha256:model",
+        canonical_limit=262_144,
+        observed_at=datetime(2026, 9, 11, 12, tzinfo=UTC),
+        provenance={"canonical_limit": "/api/v1/models/0/max_context_length"},
+        instances=(
+            LocalContextInstance(
+                model_id="model",
+                instance_id="instance-a",
+                digest="sha256:model",
+                canonical_limit=262_144,
+                runtime_limit=32_768,
+                provenance={"runtime_limit": "/api/v1/models/0/loaded_instances/0"},
+            ),
+        ),
+    )
+    fact = FactProvenance(
+        source_key="local-context",
+        source_url="http://localhost:1234/v1",
+        observed_at=observation.observed_at,
+        local_context=observation,
+    )
+    local = replace(
+        remote,
+        models=(replace(remote.models[0], provenance={"context_length": fact}),),
+    )
+
+    payload = local.to_dict()
+
+    assert payload["models"][0]["provenance"]["context_length"]["local_context"] == (
+        observation.to_dict()
+    )
+    assert ProviderSnapshot.from_dict(payload) == local

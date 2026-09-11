@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 import pytest
 from psycopg.errors import UniqueViolation
 
+from gobby.providers.capabilities.local_context import (
+    LocalContextInstance,
+    build_context_observation,
+)
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -154,3 +158,40 @@ def test_all_snapshots_follow_provider_display_order(postgres_db: HubDatabase) -
     snapshots = store.get_all_snapshots()
 
     assert [snapshot.provider for snapshot in snapshots] == ["claude", "qwen", "extension"]
+
+
+def test_store_round_trips_structured_local_context_provenance(
+    postgres_db: HubDatabase,
+) -> None:
+    store = ProviderCapabilityStore(postgres_db)
+    snapshot = _snapshot()
+    observation = build_context_observation(
+        machine_id="machine-a",
+        endpoint_id="studio-a",
+        configuration_fingerprint="config-a",
+        provider="lmstudio",
+        model_id="gpt-test",
+        instance_id="instance-a",
+        canonical_limit=262_144,
+        observed_at=datetime(2026, 9, 11, 12, tzinfo=UTC),
+        instances=(
+            LocalContextInstance(
+                model_id="gpt-test",
+                instance_id="instance-a",
+                canonical_limit=262_144,
+                runtime_limit=32_768,
+            ),
+        ),
+    )
+    local_fact = replace(
+        snapshot.models[0].provenance["catalog"],
+        local_context=observation,
+    )
+    snapshot = replace(
+        snapshot,
+        models=(replace(snapshot.models[0], provenance={"context_length": local_fact}),),
+    )
+
+    store.replace_provider_snapshot(snapshot)
+
+    assert store.get_provider_snapshot("codex") == replace(snapshot, generation=1)
