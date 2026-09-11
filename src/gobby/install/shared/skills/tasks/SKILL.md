@@ -105,9 +105,10 @@ error in committed code — follows this ladder, in order:
    patterns) and yield the turn. Reserve sleeps, repeated status calls, and
    repeated `capture_output` for bounded diagnostics.
 3. File for the user — last resort, edge cases only: the fix needs a
-   genuine architecture or product decision, or has a blast radius that
-   needs a clean window. Label the task `needs-decision` or `clean-window`
-   and state why in the description.
+   genuine architecture or product decision (`needs-decision`), a dedicated
+   planning pass before implementation can be specified (`needs-planning`),
+   or a clean window for its blast radius (`clean-window`). State why in the
+   description.
 
 Operational friction — restarting a shared service, rebuilding a tool,
 waiting for a quiet window — is coordination inside step 1, never a reason
@@ -197,7 +198,7 @@ Follow this order exactly:
 1. Finish all file edits.
 2. Sweep the native tracker and current transcript for owned findings; fix every
    finding inside the same Gobby task unless the user explicitly directs another
-   task or `needs-decision`/`clean-window` applies.
+   task or `needs-decision`/`needs-planning`/`clean-window` applies.
 3. Run focused validation after the final edit.
 4. Fix every encountered error, warning, and failure; rerun validation to success.
 5. Stage specific files and commit with

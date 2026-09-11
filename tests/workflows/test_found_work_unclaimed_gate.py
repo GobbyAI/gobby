@@ -120,6 +120,14 @@ async def test_query_returns_only_unclaimed_unlabeled_tasks_created_by_session(
     )
     tasks.create_task(
         project_id=project_id,
+        title="Needs planning",
+        created_in_session_id=owner_id,
+        labels=["needs-planning"],
+        category="code",
+        validation_criteria="Planning decisions are recorded.",
+    )
+    tasks.create_task(
+        project_id=project_id,
         title="Claimed",
         created_in_session_id=owner_id,
         claimed_by_session_id=owner_id,

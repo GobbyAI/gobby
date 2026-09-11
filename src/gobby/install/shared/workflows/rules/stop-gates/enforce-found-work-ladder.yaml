@@ -26,7 +26,7 @@ rules:
         reason: >-
           Found-work ladder: add it to the claimed task's native tracker and fix it now,
           hand it to its active owner via
-          send_message, or — edge case — file it labeled needs-decision/clean-window with the
+          send_message, or — edge case — file it labeled needs-decision/needs-planning/clean-window with the
           reason. Don't ask, and don't go silent. This alert fires once per session — act on
           it, or stop again to proceed.
 
@@ -48,7 +48,7 @@ rules:
           {{ terminal_validation_failure_commands | join('\n') }}
           Fix it inside the claimed task, hand a confined foreign failure to its active
           owner via send_message after a scoped green rerun, or file the edge case with a
-          needs-decision/clean-window label and reason.
+          needs-decision/needs-planning/clean-window label and reason.
 
   block-unclaimed-found-work:
     description: "Block stop while this session's found-work filings remain unclaimed"
@@ -67,5 +67,5 @@ rules:
           Found-work ladder: this session filed {{ unclaimed_found_work_tasks | join(', ') }} and
           left them unclaimed. Claim and finish each one now (claim_task, fix, close), hand it to
           its active owner via send_message, or — edge case only — label it
-          needs-decision/clean-window with the reason in its description. Filing is not a terminal
+          needs-decision/needs-planning/clean-window with the reason in its description. Filing is not a terminal
           state.

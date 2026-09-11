@@ -293,7 +293,7 @@ For an actionable Gobby defect, dispositions map to the Found Work ladder:
 `fixed` includes the `#N` task this session claimed and closed or still has claimed
 in progress; `escalated` includes the active owner session reference after
 `send_message`; `filed-task` is rung 3 only and includes the `#N` task this session
-created with `needs-decision` or `clean-window`, whose description explains why
+created with `needs-decision`, `needs-planning`, or `clean-window`, whose description explains why
 rungs 1 and 2 do not apply. Unlabeled or unclaimed filings and every other defect
 disposition are shirked found work. Intake rejects invalid claims, the stop gate
 blocks unclaimed filings, and the nightly digest flags them.

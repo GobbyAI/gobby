@@ -46,7 +46,7 @@ def _shirked_cluster_lines(
             if (
                 is_task_closed(task)
                 or get_claimed_session_id(task) is not None
-                or {"needs-decision", "clean-window"}.intersection(labels)
+                or {"needs-decision", "needs-planning", "clean-window"}.intersection(labels)
             ):
                 resolved = True
                 break
@@ -127,7 +127,7 @@ def render_digest(
     else:
         lines.append(
             "- None — every actionable cluster had a fixed disposition or a filed-task "
-            "whose task was closed, claimed, or labeled needs-decision/clean-window."
+            "whose task was closed, claimed, or labeled needs-decision/needs-planning/clean-window."
         )
     lines.append("")
 

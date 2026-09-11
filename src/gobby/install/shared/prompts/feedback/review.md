@@ -28,7 +28,7 @@ For an actionable Gobby defect, read dispositions through the found-work ladder:
 `fixed` includes a #N task claimed or closed by the observer or by one of the
 observer's spawned descendant sessions; `escalated` includes the active owner session
 ref after `send_message`;
-`filed-task` is rung 3 only and includes a #N task carrying `needs-decision` or
+`filed-task` is rung 3 only and includes a #N task carrying `needs-decision`, `needs-planning`, or
 `clean-window`, with its description explaining why rungs 1 and 2 do not apply.
 Unlabeled or unclaimed filings, plus every other defect disposition, are shirked
 found work.

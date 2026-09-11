@@ -46,8 +46,9 @@ how the system behaves so you can work with it instead of being surprised by it.
       close gates once a passing scoped rerun against owned or clean paths
       proves the confinement.
    3. File for the user — last resort, edge cases only: the fix needs a genuine
-      architecture or product decision, or has a blast radius that needs a clean
-      window. Label it `needs-decision` or `clean-window` and state why in the
+      architecture or product decision (`needs-decision`), a dedicated planning
+      pass before implementation can be specified (`needs-planning`), or a
+      clean window for its blast radius (`clean-window`). State why in the
       description.
    Operational friction is never a deferral reason. Needing a daemon restart
    means announcing it to active sessions via `send_message` and waiting for a

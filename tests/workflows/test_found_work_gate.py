@@ -363,7 +363,7 @@ class TestPermissionDeferralConfirmation:
         llm.call_json_feature.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("label", ["needs-decision", "clean-window"])
+    @pytest.mark.parametrize("label", ["needs-decision", "needs-planning", "clean-window"])
     async def test_same_session_labeled_deferral_clears_candidate(self, label: str) -> None:
         llm = SimpleNamespace(call_json_feature=AsyncMock())
         task_links = SimpleNamespace(
@@ -882,7 +882,7 @@ class TestFoundWorkDeclarativeRules:
         assert response.decision == "block"
         assert "Found-work ladder" in (response.reason or "")
         assert "send_message" in (response.reason or "")
-        assert "needs-decision/clean-window" in (response.reason or "")
+        assert "needs-decision/needs-planning/clean-window" in (response.reason or "")
         assert "once per session" in (response.reason or "")
         assert variables["found_work_shirk_alerted"] is True
         assert variables["found_work_shirk_confirmed"] is False

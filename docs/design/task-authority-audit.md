@@ -75,7 +75,7 @@ Relationship-check status per mutation tool. Bucket: **G** = interim claim guard
 | reopen_task | none — session never resolved | anonymous reopen wipes closure + `validation_fail_count` | G |
 | delete_task | none — no session import at all | `cascade=True` default hard-deletes trees | G |
 | update_task | none | rewrite foreign `validation_criteria`, `affected_files`, parent, priority | G |
-| add_label / remove_label | `live-session` guard only (caller *type*, not relationship) | strip `tdd:required` / `needs-decision` / `clean-window` from anyone's task | G |
+| add_label / remove_label | `live-session` guard only (caller *type*, not relationship) | strip `tdd:required` / `needs-decision` / `needs-planning` / `clean-window` from anyone's task | G |
 | append_description_section | none | heading-squatting suppresses later legitimate appends | G |
 | create_task (`blocks=[...]`) | creator resolved; target owner never | throwaway task blocks a foreign in-flight task | R (edge ownership) |
 | add_dependency / remove_dependency | none | flip a foreign task's readiness either direction | R |
