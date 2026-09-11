@@ -114,15 +114,22 @@ class CraneTTSProvider(BaseTTSProvider):
                 self._sample_rate = sample_rate
                 pending = b""
                 received = False
+                # Crane's first codec block can contain only 160 ms of audio,
+                # followed by over a second of synthesis. Hold that fragment
+                # until there is at least half a second to start playback.
+                startup_bytes = sample_rate  # mono PCM16: 0.5 seconds
                 async for chunk in response.aiter_bytes():
                     pending += chunk
                     end = len(pending) - len(pending) % 2
-                    if end:
+                    if end and (received or end >= startup_bytes):
                         received = True
                         yield pending[:end], sample_rate
                         pending = pending[end:]
-                if pending:
+                if len(pending) % 2:
                     raise ValueError("Crane response ended with a partial PCM sample")
+                if pending:
+                    received = True
+                    yield pending, sample_rate
                 if not received:
                     raise ValueError("Crane response contained no PCM audio")
             finally:

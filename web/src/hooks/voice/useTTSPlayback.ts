@@ -40,7 +40,8 @@ export function useTTSPlayback({
   const resumePlaybackPendingRef = useRef(false);
   const resumeContextRef = useRef<AudioContext | null>(null);
   const resumePromiseRef = useRef<Promise<AudioContext | null> | null>(null);
-  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const scheduledSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const nextStartTimeRef = useRef(0);
   const pendingTTSMetaRef = useRef<TTSMeta | null>(null);
   const mountedRef = useRef(true);
   const playErrorCountRef = useRef(0);
@@ -95,8 +96,10 @@ export function useTTSPlayback({
   const playNextChunk = useCallback(
     function playNextChunk() {
       if (audioQueueRef.current.length === 0) {
-        isPlayingRef.current = false;
-        if (mountedRef.current) setIsSpeaking(false);
+        if (scheduledSourcesRef.current.size === 0) {
+          isPlayingRef.current = false;
+          if (mountedRef.current) setIsSpeaking(false);
+        }
         return;
       }
 
@@ -126,33 +129,59 @@ export function useTTSPlayback({
         return;
       }
 
-      const buffer = audioQueueRef.current.shift();
-      if (!buffer) {
-        isPlayingRef.current = false;
-        if (mountedRef.current) setIsSpeaking(false);
-        return;
-      }
-
-      try {
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(ctx.destination);
-        source.onended = playNextChunk;
-        source.start();
-        currentSourceRef.current = source;
-        playErrorCountRef.current = 0;
-      } catch (err) {
-        console.error("Voice: Failed to play audio chunk:", err);
-        playErrorCountRef.current += 1;
-        if (playErrorCountRef.current >= 3) {
-          audioQueueRef.current = [];
+      while (audioQueueRef.current.length > 0) {
+        const buffer = audioQueueRef.current.shift();
+        if (!buffer) {
           isPlayingRef.current = false;
-          playErrorCountRef.current = 0;
           if (mountedRef.current) setIsSpeaking(false);
           return;
         }
-        setTimeout(playNextChunk, 0);
+
+        let source: AudioBufferSourceNode | null = null;
+        try {
+          source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          const scheduledSource = source;
+          const epoch = playbackEpochRef.current;
+          source.onended = () => {
+            scheduledSourcesRef.current.delete(scheduledSource);
+            scheduledSource.disconnect();
+            if (epoch !== playbackEpochRef.current) return;
+            if (
+              scheduledSourcesRef.current.size === 0 &&
+              audioQueueRef.current.length === 0
+            ) {
+              isPlayingRef.current = false;
+              if (mountedRef.current) setIsSpeaking(false);
+            }
+          };
+          // onended runs on the JS thread: scheduling from it leaves a gap at
+          // every boundary even when the next buffer is already available.
+          const startAt =
+            nextStartTimeRef.current > ctx.currentTime
+              ? nextStartTimeRef.current
+              : ctx.currentTime + 0.05;
+          source.start(startAt);
+          nextStartTimeRef.current = startAt + buffer.duration;
+          scheduledSourcesRef.current.add(source);
+          playErrorCountRef.current = 0;
+        } catch (err) {
+          if (source) {
+            source.onended = null;
+            source.disconnect();
+          }
+          console.error("Voice: Failed to play audio chunk:", err);
+          playErrorCountRef.current += 1;
+          if (playErrorCountRef.current >= 3) {
+            audioQueueRef.current = [];
+            playErrorCountRef.current = 0;
+            break;
+          }
+        }
       }
+      isPlayingRef.current = scheduledSourcesRef.current.size > 0;
+      if (mountedRef.current) setIsSpeaking(isPlayingRef.current);
     },
     [ensureAudioContextRunning, getAudioContext],
   );
@@ -165,7 +194,10 @@ export function useTTSPlayback({
       if (!ctx) return;
 
       try {
-        if (audioQueueRef.current.length >= MAX_AUDIO_QUEUE_SIZE) {
+        if (
+          audioQueueRef.current.length + scheduledSourcesRef.current.size >=
+          MAX_AUDIO_QUEUE_SIZE + 1
+        ) {
           console.warn("Voice: Audio queue full, dropping incoming chunk");
           setTransientError("Audio dropped — connection too slow");
           return;
@@ -183,10 +215,8 @@ export function useTTSPlayback({
         audioQueueRef.current.push(audioBuffer);
         if (mountedRef.current) setIsSpeaking(true);
 
-        if (!isPlayingRef.current) {
-          isPlayingRef.current = true;
-          playNextChunk();
-        }
+        isPlayingRef.current = true;
+        playNextChunk();
       } catch (err) {
         console.error("Voice: Failed to queue audio chunk:", err);
       }
@@ -195,16 +225,17 @@ export function useTTSPlayback({
   );
 
   const stopLocalPlayback = useCallback(() => {
-    const currentSource = currentSourceRef.current;
-    currentSourceRef.current = null;
-    try {
-      if (currentSource) {
-        currentSource.onended = null;
-        currentSource.stop();
+    for (const source of scheduledSourcesRef.current) {
+      source.onended = null;
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+        // Already stopped.
       }
-    } catch {
-      // Already stopped.
     }
+    scheduledSourcesRef.current.clear();
+    nextStartTimeRef.current = 0;
     audioQueueRef.current = [];
     isPlayingRef.current = false;
     playbackEpochRef.current += 1;

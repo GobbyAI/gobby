@@ -144,8 +144,31 @@ def test_endpoint_changes_invalidate_voice_configuration(config: VoiceConfig) ->
 
 
 @pytest.mark.asyncio
+async def test_short_opening_fragment_is_buffered_without_delaying_later_chunks(
+    config: VoiceConfig,
+) -> None:
+    opening = b"\x01\x00" * 3840  # Crane's 160 ms first codec block.
+    following = b"\x02\x00" * 24000
+    body = PCMStream([opening, following, b"\x03\x00"])
+    provider = CraneTTSProvider(config)
+    provider._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, headers=HEADERS, stream=body)
+        ),
+        base_url=config.tts_crane_url,
+    )
+    try:
+        chunks = [chunk async for chunk in provider.synthesize_stream("Hello.")]
+        assert chunks == [(opening + following, 24000), (b"\x03\x00", 24000)]
+        assert body.closed
+    finally:
+        await provider.unload()
+
+
+@pytest.mark.asyncio
 async def test_unload_closes_suspended_stream(config: VoiceConfig) -> None:
-    body = PCMStream([b"\x01\x00", b"\x02\x00"])
+    first_chunk = b"\x01\x00" * 12000
+    body = PCMStream([first_chunk, b"\x02\x00"])
     provider = CraneTTSProvider(config)
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -156,7 +179,7 @@ async def test_unload_closes_suspended_stream(config: VoiceConfig) -> None:
     provider._client = client
     stream = provider.synthesize_stream("Hello.")
     try:
-        assert await anext(stream) == (b"\x01\x00", 24000)
+        assert await anext(stream) == (first_chunk, 24000)
         await provider.unload()
         assert body.closed and client.is_closed
     finally:
@@ -277,7 +300,6 @@ async def test_cancellation_closes_http_and_next_synthesis_works(config: VoiceCo
     )
     stream = provider.synthesize_stream("Interrupted.")
     try:
-        assert await anext(stream) == (b"\x01\x00", 24000)
         pending = asyncio.ensure_future(anext(stream))
         await asyncio.wait_for(blocked.waiting.wait(), 2)
         pending.cancel()
@@ -315,6 +337,7 @@ async def test_pipeline_real_http_order_interruption_and_recovery(config: VoiceC
             )
             await writer.drain()
             if payload["input"] == "Interrupt.":
+                request_received.set()
                 assert await reader.read() == b""
                 disconnected.set()
             else:
@@ -342,17 +365,12 @@ async def test_pipeline_real_http_order_interruption_and_recovery(config: VoiceC
         assert [
             call.args[0] for call in ws.send.call_args_list if isinstance(call.args[0], bytes)
         ] == [b"\x01\x00", b"\x01\x00"]
-        audio_sent = asyncio.Event()
-
-        async def send(value: str | bytes) -> None:
-            if isinstance(value, bytes):
-                audio_sent.set()
-
-        ws.send.side_effect = send
+        # Cancel while the first short fragment is still being buffered.
+        request_received = asyncio.Event()
         interrupted = TTSPipeline(provider, "trial", clients)
         pipelines.append(interrupted)
         interrupted.feed_text("Interrupt. Discard this sentence.")
-        await asyncio.wait_for(audio_sent.wait(), 5)
+        await asyncio.wait_for(request_received.wait(), 5)
         await interrupted.cancel()
         await asyncio.wait_for(disconnected.wait(), 5)
         recovery = TTSPipeline(provider, "trial", clients)

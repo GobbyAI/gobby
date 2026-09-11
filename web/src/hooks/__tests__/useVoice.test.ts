@@ -33,6 +33,7 @@ let lastWorkletNode: {
 interface StartedSource {
   buffer: AudioBuffer | null;
   connect: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
   onended: ((event?: Event) => void) | null;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
@@ -71,6 +72,7 @@ vi.mock("@ricky0123/vad-web", () => ({
 }));
 
 class MockAudioContext {
+  currentTime = 0;
   sampleRate = 48_000;
   state: AudioContextState = mockAudioContextInitialState;
   destination = {};
@@ -121,14 +123,16 @@ class MockAudioContext {
         startedSources.push(source);
       }),
       stop: vi.fn(),
+      disconnect: vi.fn(),
       onended: null as ((event?: Event) => void) | null,
     };
     return source as unknown as AudioBufferSourceNode;
   }
 
-  createBuffer(_channels: number, length: number) {
+  createBuffer(_channels: number, length: number, sampleRate: number) {
     const buffer = new Float32Array(length);
     return {
+      duration: length / sampleRate,
       getChannelData: () => buffer,
     } as unknown as AudioBuffer;
   }
@@ -1460,6 +1464,56 @@ describe("useVoice", () => {
     expectVoiceLog("vad_error", { error: "VAD denied" });
   });
 
+  it("schedules contiguous TTS buffers and cancels every scheduled source", () => {
+    const { result } = renderHook(() =>
+      useVoice(
+        wsRef as React.RefObject<WebSocket | null>,
+        "conv-tts-clock",
+        0,
+        projectIdRef,
+        { sttEnabled: false, ttsEnabled: true, voiceInputMode: "ptt" },
+        true,
+      ),
+    );
+    const enqueue = () => {
+      result.current.handleVoiceMessage({
+        type: "tts_audio",
+        sample_rate: 24_000,
+        format: "pcm_s16le",
+        chunk_index: 1,
+      });
+      result.current.handleBinaryMessage(new Int16Array(24_000).buffer);
+    };
+    act(() => {
+      enqueue();
+      audioContexts[0].currentTime = 1.03;
+      enqueue();
+    });
+    expect(startedSources).toHaveLength(2);
+    expect(startedSources[0].start).toHaveBeenCalledWith(0.05);
+    expect(startedSources[1].start).toHaveBeenCalledWith(1.05);
+    act(() => {
+      audioContexts[0].currentTime = 1.2;
+      startedSources[0].onended?.(new Event("ended"));
+    });
+    expect(result.current.isSpeaking).toBe(true);
+    act(() => {
+      audioContexts[0].currentTime = 3;
+      enqueue();
+    });
+    expect(startedSources[2].start).toHaveBeenCalledWith(3.05);
+    const staleCallback = startedSources[1].onended;
+    act(() => result.current.stopTTS());
+    for (const source of startedSources.slice(1)) {
+      expect(source.stop).toHaveBeenCalledOnce();
+      expect(source.disconnect).toHaveBeenCalledOnce();
+      expect(source.onended).toBeNull();
+    }
+    act(() => staleCallback?.(new Event("ended")));
+    expect(result.current.isSpeaking).toBe(false);
+    expect(startedSources).toHaveLength(3);
+  });
+
   it("drops incoming TTS audio when the playback queue is full", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { result } = renderHook(() =>
@@ -1493,14 +1547,6 @@ describe("useVoice", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       "Voice: Audio queue full, dropping incoming chunk",
     );
-    expect(startedSources).toHaveLength(1);
-
-    for (let count = 0; count < 50; count++) {
-      act(() => {
-        startedSources[startedSources.length - 1].onended?.(new Event("ended"));
-      });
-    }
-
     expect(startedSources).toHaveLength(51);
     const playedMarkers = startedSources.map((source) => {
       const sample = source.buffer?.getChannelData(0)[0] ?? 0;
@@ -1548,7 +1594,7 @@ describe("useVoice", () => {
     });
 
     await waitFor(() => {
-      expect(startedSources).toHaveLength(1);
+      expect(startedSources).toHaveLength(2);
     });
     expect(
       Math.round((startedSources[0].buffer?.getChannelData(0)[0] ?? 0) * 32768),
