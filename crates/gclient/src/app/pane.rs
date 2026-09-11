@@ -73,6 +73,9 @@ pub struct Pane {
     pub(super) frame_source: Option<PaneFrameSource>,
     pub(super) fallback_in_flight: bool,
     pub(super) direct_available: bool,
+    /// The daemon lists this terminal with `ownership: external`: a tmux
+    /// session someone else started, which closing must never kill.
+    pub external: bool,
     pub(super) attach: AttachState,
     pub(super) tombstones: HashSet<String>,
     pub(super) status_message: Option<String>,
@@ -124,6 +127,7 @@ impl Pane {
             frame_source: Some(PaneFrameSource::Scripted(frame_source)),
             fallback_in_flight: false,
             direct_available: false,
+            external: false,
             attach: AttachState::Attached {
                 attachment_id,
                 transport: Transport::Direct,

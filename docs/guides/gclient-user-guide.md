@@ -209,13 +209,18 @@ fresh shell for the same project. Worktree rows
 in the sidebar open a tab whose shell starts in that worktree, or reveal the tab
 that already shows it.
 
-**Closing kills the terminal.** `close_pane`, `close_terminal`, and `close tab`
-ask the daemon to kill the terminal process. The terminal is not backgrounded and
-does not reappear in the sidebar; use `release_control` or `detach` if you only
-want to stop typing into it. Closing a tab kills every pane in it. With
-`confirm close` on (the default), closing a tab first opens a dialog that names
-the tab and counts its panes; `y` or `enter` confirms, `n` or `esc` cancels. If
-the daemon refuses the kill, the pane stays.
+**Closing kills gobby's terminals, not yours.** `close_pane`, `close_terminal`,
+and `close tab` ask the daemon to kill a terminal gobby started. The terminal is
+not backgrounded and does not reappear in the sidebar; use `release_control` or
+`detach` if you only want to stop typing into it. A tmux session you started
+yourself (the sidebar lists it because the daemon found it, ownership
+`external`) is never killed by `close_pane` or `close tab`: the pane leaves the
+tab, its control lease is released, and the session stays in the sidebar to
+reopen later. Only `close_terminal` kills an external session. Closing a tab
+kills every gobby-owned pane in it. With `confirm close` on (the default),
+closing a tab first opens a dialog that names the tab and counts its panes; `y`
+or `enter` confirms, `n` or `esc` cancels. If the daemon refuses the kill, the
+pane stays.
 
 Renames apply locally: a tab name, a pane name, or a project label is yours and
 does not change the daemon's terminal title.

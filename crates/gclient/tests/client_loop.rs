@@ -943,6 +943,162 @@ async fn focus_moves_control_and_settles_pending_input_once() {
     mock.shutdown().await;
 }
 
+/// A tab showing the user's own tmux session (`ownership: external`) next
+/// to a gobby-owned terminal: the external pane holds the lease, so closing
+/// the tab releases it and kills only the gobby-owned terminal.
+async fn mixed_ownership_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+    mock.use_unique_attachment_ids();
+    let external = json!({
+        "terminal_id": "terminal-mine",
+        "backend": "tmux",
+        "state": "live",
+        "ownership": "external"
+    });
+    let owned = json!({
+        "terminal_id": "terminal-gobby",
+        "backend": "native",
+        "state": "live",
+        "ownership": "gobby"
+    });
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [owned, external],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    // The relist after a kill lists only the survivor.
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [external],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let home = pin_tabs(
+        &mut workspace,
+        "project-1",
+        &["terminal-gobby", "terminal-mine"],
+    );
+    (workspace, home)
+}
+
+/// Closing a tab kills its gobby-owned pane and only releases the external
+/// tmux session's lease: no `terminal_kill` names it, the tab goes, and the
+/// session stays in the roster.
+#[tokio::test]
+async fn closing_a_tab_spares_external_tmux_sessions() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let kills = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(kills.len(), 1, "only the gobby-owned terminal is killed");
+    assert_eq!(
+        kills[0].get("terminal_id"),
+        Some(&json!("terminal-gobby")),
+        "the kill names the gobby-owned terminal"
+    );
+    let releases = websocket_requests(&mock, "terminal_release_control");
+    assert_eq!(releases.len(), 1, "the external pane's lease is released");
+    assert_eq!(
+        releases[0].get("terminal_id"),
+        Some(&json!("terminal-mine"))
+    );
+    assert!(chrome.active_tab().is_none(), "the tab is gone");
+    assert!(
+        workspace.pane_for_terminal("terminal-mine").is_some(),
+        "the external session stays in the roster"
+    );
+    assert!(
+        workspace.pane_for_terminal("terminal-gobby").is_none(),
+        "the killed terminal left the roster"
+    );
+    mock.shutdown().await;
+}
+
+/// `close_pane` on an external tmux session releases its lease and drops the
+/// slot; the session is never killed and the tab keeps its other pane.
+#[tokio::test]
+async fn closing_a_pane_spares_an_external_tmux_session() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        websocket_requests(&mock, "terminal_kill").is_empty(),
+        "an external session is never killed"
+    );
+    let tab = chrome.active_tab().expect("the tab keeps its other pane");
+    assert_eq!(tab.slots.len(), 1);
+    let mine = workspace
+        .pane_for_terminal("terminal-mine")
+        .expect("the external session stays in the roster");
+    assert!(
+        tab.slot_for(mine).is_none(),
+        "the external pane left the tab"
+    );
+    assert!(workspace.pane(mine).is_observe(), "its lease was released");
+    mock.shutdown().await;
+}
+
 /// One live terminal pinned into a tab, for the control-refusal tests.
 async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mock.use_unique_attachment_ids();

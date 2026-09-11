@@ -113,6 +113,7 @@ impl Workspace<LiveDaemon> {
             let pane_id = self.ensure_live_pane(&terminal_id, backend);
             let pane = self.panes.get_mut(&pane_id).expect("live pane exists");
             pane.direct_available = row_has_direct_locator(&row);
+            pane.external = row_is_external(&row);
             pane.title = row_title(&row);
             pane.address = row_address(&row);
             pane.session_id = row
@@ -586,6 +587,10 @@ fn row_address(row: &TerminalRow) -> Option<String> {
     }
     let pane_id = attach.get("pane_id").and_then(Value::as_str)?;
     (!pane_id.is_empty()).then(|| pane_id.to_string())
+}
+
+fn row_is_external(row: &TerminalRow) -> bool {
+    row.fields.get("ownership").and_then(Value::as_str) == Some("external")
 }
 
 fn row_has_direct_locator(row: &TerminalRow) -> bool {
