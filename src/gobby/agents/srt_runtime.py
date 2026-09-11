@@ -72,6 +72,7 @@ class SandboxLaunch:
     policy_hash: str | None = None
     policy_path: str | None = None
     violation_path: str | None = None
+    managed_bootstrap_path: str | None = None
     node_path: str | None = None
     runner_path: str | None = None
     shim_path: str | None = None
@@ -118,6 +119,7 @@ class SandboxLaunch:
             "policy_hash": self.policy_hash,
             "policy_path": self.policy_path,
             "violation_path": self.violation_path,
+            "managed_bootstrap_path": self.managed_bootstrap_path,
             "provider_executable": self.provider_executable,
         }
 
@@ -612,6 +614,7 @@ async def prepare_sandbox_launch(
         policy_hash=policy_hash,
         policy_path=str(policy_path),
         violation_path=str(violation_path),
+        managed_bootstrap_path=effective_env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
         provider_env={**run_environment, "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir())},
         provider_executable=provider_executable,
         node_path=str(installation.node),
