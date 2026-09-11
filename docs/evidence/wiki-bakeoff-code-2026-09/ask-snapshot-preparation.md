@@ -761,3 +761,43 @@ runtime evidence checks.
 
 Attempts 1–15 remain immutable failures. Attempt 16 and all14 remain unrun.
 Parent has not installed shared binaries or landed the epic on `0.5.0`.
+
+## Attempt 16: launch identity retained; SRT policy validation fails
+
+The launch receipt correction was merged at `8bb14b6fca` after parent review
+and 52 focused harness tests passed in 3.64 seconds. The correction awaits the
+registered managed spawn task and owns receipt capture through cancellation;
+an incomplete launch retains its agent identity in the raw export.
+
+Attempt 16 used clean source `8bb14b6fca2b4ad10ea3d2988b9de6afe74b2dbe`
+and the unchanged `target/ask-probe-3f8410b4` binary pins listed above:
+
+```sh
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/target/ask-probe-3f8410b4 uv run --no-sync python tests/ask/native_probe_harness.py contained-drive --project-root /Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask --output-dir /tmp/gobby-ask-native-probe-12261-sixteenth --timeout-seconds 1500
+```
+
+Ask run `0bd2999f-4ee0-4069-94ba-e53fa9ad5f04` completed preparation from
+`2026-09-11T14:30:18.736984Z` to `14:35:30.240879Z`, then seed from
+`14:35:30.245416Z` to `14:36:00.510184Z`. Investigation failed at
+`14:36:01.116395Z`. Agent `5ee53929-f8ec-4fca-8317-790278dabb50` recorded
+`Ask SRT policy semantics changed after validation` and was cancelled with
+no PID, terminal, or child session. The receipt path also reported
+`native Ask launch policy is missing or outside the owned runtime`.
+The relationship between these errors remains under investigation.
+
+The command exited 1. Its immutable raw export is
+`/tmp/gobby-ask-native-probe-12261-sixteenth/raw-probe.json`, SHA-256
+`e686b494c12aa73db464219685ab274e886d820804690ff8e02691e699641f24`.
+It reports `complete=false`, one `IncompleteLaunch` session capture error,
+and `missing_agent_run_ids=[]`. Agent identity is now retained, but no launch
+receipt or native boundary acceptance was obtained.
+
+Cleanup verified worker PID 57230 and terminal-host PID 57299 absent, with
+their sockets absent. Agent liveness remained unknown, so runtime
+`/private/tmp/gobby-ap-myn4pgvr` and isolated schema
+`gobby_test_askprobe_321e8f6be3de458588a822029ac49d31` remain retained.
+Unknown liveness is not proof of successful cleanup.
+
+Attempts 1–16 remain immutable failures. Attempt 17 and all14 remain unrun.
+The next correction must resolve the actual managed-launch policy mismatch
+while preserving semantic validation and the native evidence requirements.
