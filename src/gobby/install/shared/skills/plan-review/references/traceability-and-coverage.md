@@ -125,6 +125,12 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
   ONLY that section to do the work. The implementing agent does **not** get
   the full plan document. A section that says "see Phase 1 for context" is a
   blocking finding.
+  Assess Research context proportionally: can the executor locate the work and
+  understand the approach from this section alone? Check observed references,
+  call paths/helpers/fixtures, decisions, and observed versus planned checks.
+  A heading alone proves nothing. Name the concrete missing information and its
+  implementation consequence; copy necessary shared findings into the owner.
+  Approximate line hints stay outside Targets; proposed symbols are labeled new.
 - **Atomic implementation leaves** — apply `plan-draft`'s Task Granularity
   Guidelines to every deliverable; load them with
   `get_skill_file(name="plan-draft", path="references/task-structure.md")`.

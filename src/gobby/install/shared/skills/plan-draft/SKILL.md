@@ -35,12 +35,17 @@ registration, and expansion begin only after materialization.
 ## Common Drafting Flow
 
 1. Establish the Plan-Coverage grammar required by the plan.
-2. Inventory targets, consumers, carriers, and ordering constraints.
+2. Inventory targets, consumers, carriers, and ordering constraints. Capture what
+   inspection reveals as you go, then carry the findings into each owning
+   deliverable's Research context. Copy shared findings needed by each executor;
+   preserve actionable conclusions rather than search transcripts.
 3. Call `get_skill_file(name="plan-draft", path="references/task-structure.md")`
    and apply its Task Granularity Guidelines to every proposed deliverable before
    drafting. One section becomes one leaf; expansion does not subdivide oversized
    sections.
-4. Draft phases and deliverable tasks with category, goal, targets, implementation, validation, and exclusions.
+4. Draft phases and deliverable tasks with category, goal, targets, Research
+   context, implementation, validation, and exclusions. Follow the Research
+   Context contract in `docs/contracts/plan-coverage.md` proportionally to the work.
 5. Recheck granularity after adding acceptance cases or consumers, then run
    deterministic verification and revise the whole plan after every finding.
 

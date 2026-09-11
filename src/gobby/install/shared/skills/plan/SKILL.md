@@ -20,7 +20,12 @@ investigating the request.
 
 1. Investigate the request and repository before choosing a route. Resolve
    discoverable facts through repository inspection, using `gcode` for code
-   navigation. Do not ask the user for facts the repository can answer.
+   navigation. Do not ask the user for facts the repository can answer. Capture
+   actionable findings as exploration happens: observed behavior, file-qualified
+   symbols, call paths, helpers, fixtures, constraints, approach decisions, and
+   observed versus planned checks. Carry them into the owning deliverable's
+   Research context; retain them in the canonical draft or existing staging
+   handoff rather than reconstructing them at the end.
 2. Inventory independently closeable deliverables and their real dependency
    edges. A deliverable has one outcome, one bounded scope, and criteria that let
    it close without waiting for another deliverable.

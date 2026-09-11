@@ -214,6 +214,48 @@ the defining one), and dynamic access by string that does not spell the bare
 name. The `plan-draft` consumer sweep covers these with literal `gcode grep`
 evidence.
 
+## Research Context
+
+Every deliverable's implementation specification includes a **Research context:**
+block before `**Acceptance:**`, proportional to the work. Capture findings during exploration
+and carry them into the owning section as the plan develops:
+
+- Observed existing behavior and entry points, with file paths and exact indexed
+  qualified symbols. Explicitly label proposed symbols as new.
+- Relevant call paths, consumers, reusable helpers, and test fixtures, including
+  read-only dependencies and the contracts they supply.
+- The chosen approach, constraints, and consequential rejected alternatives with
+  their reasons. Preserve decisions that would otherwise need rediscovery.
+- Focused verification commands and expected outcomes. Label checks already run
+  and their observed results separately from planned checks; planned success is
+  not evidence of a passing run.
+
+Approximate line locations are optional navigation hints, clearly labeled and
+kept outside `Targets:`. End the contiguous inventory with a blank line before
+the research block. Read-only references belong in research prose; changes and
+consumer coverage still follow the existing Target Inventory rules. Do not use
+change-intent wording for a dependency that is only being inspected.
+
+Each section must stand alone: copy necessary shared findings from framing,
+constraints, or sibling sections into every owning deliverable. Expansion copies
+the section body into the leaf description; context left only elsewhere is not
+part of that leaf's implementation specification. Preserve useful conclusions
+and evidence, without dumping search transcripts.
+
+Drafting verification and qualitative review check whether an executor can locate
+the work and understand the approach from the section alone. A heading or a list
+of paths is insufficient: findings must name the concrete missing reference,
+behavior, decision, or verification detail and its implementation consequence.
+This is an authoring and review requirement, with no new parser grammar, storage
+field, or deterministic validation gate.
+
+Executors read this context, inspect referenced symbols, and check relevant
+changes first. When it still matches the code, proceed with the supplied approach
+and focused verification. Stale references, contradictory evidence, or missing
+required information trigger targeted rediscovery, broadening only as needed.
+Correct the execution context before edits; approximate line hints never replace
+symbol identity or verification against the current checkout.
+
 ## Deferrals
 
 `kind: deferred`

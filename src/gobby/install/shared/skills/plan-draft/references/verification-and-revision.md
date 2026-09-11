@@ -48,9 +48,17 @@ each phase heading with `` `kind: framing` `` on the next non-blank line.
 
 ### 5. Sections Are Self-Contained
 
-Spot-check three `### N.N` sections: does each one contain enough detail (file
-paths, code examples, behavioral specs) that an agent who sees ONLY that section
-can do the work without outside context?
+Read every deliverable in isolation. Can an executor locate the work and
+understand the approach from that section alone? Check its Research context for
+observed behavior and file-qualified symbols, relevant call paths, consumers,
+helpers and fixtures, constraints and consequential rejected alternatives, and
+focused verification commands with expected outcomes. Distinguish observed
+results from planned checks and mark proposed symbols as new.
+
+Copy necessary shared findings into each owning section. Keep optional approximate
+line hints explicitly labeled and outside Targets. A heading alone proves nothing:
+name and repair concrete missing references, behavior, decisions, or checks.
+Scale detail to the work; preserve actionable findings without search transcripts.
 
 ### 6. Symbol Targets Resolve
 

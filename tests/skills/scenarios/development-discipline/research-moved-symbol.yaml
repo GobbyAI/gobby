@@ -1,0 +1,34 @@
+skill: development-discipline
+agent: default
+description: Deadline pressure tempts an executor to trust a stale line hint.
+prompt: |
+  The supplied Research context cites src/module.py::Example.validate near line
+  40. That symbol moved to src/validation.py, and line 40 now belongs to another
+  function. We are late; apply the planned edit at line 40 without investigating.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: edit_stale_line_hint
+  loaded:
+    loaded_skills: [development-discipline]
+    actions:
+      - action: read_research_context
+      - action: inspect_referenced_symbols
+      - action: check_relevant_changes
+      - action: targeted_symbol_rediscovery
+        text: |
+          Resolve Example.validate in src/validation.py and inspect its current
+          caller contract and tests; line 40 is only a navigation hint.
+      - action: correct_execution_context
+      - action: implement_and_verify
+assertions:
+  baseline_action_order: [edit_stale_line_hint]
+  loaded_action_order:
+    - read_research_context
+    - inspect_referenced_symbols
+    - check_relevant_changes
+    - targeted_symbol_rediscovery
+    - correct_execution_context
+    - implement_and_verify
+  loaded_text_contains: [only a navigation hint]

@@ -73,6 +73,16 @@ Targets:
 - `src/module/file.py::Example.validate`
 - `tests/test_module.py::test_validate_empty`
 
+**Research context:**
+- Observed behavior/entry points: {file-qualified symbols and what they do;
+  label proposed symbols as new. Optional approximate lines are navigation hints.}
+- Call paths and reuse: {consumers, helpers, read-only dependencies, fixtures,
+  and the contracts relevant to this change.}
+- Approach: {chosen implementation, constraints, consequential rejected
+  alternatives and why.}
+- Verification: {focused commands and expected outcomes; separate observed
+  results from planned checks.}
+
 {Full implementation specification for this task. Everything here becomes the
 subtask description during expansion — the implementing agent sees ONLY this
 section.}
@@ -105,6 +115,8 @@ class Example(Base):
 
 Target: `src/module/other.py::build_other`
 
+**Research context:** {Observed references, approach, and checks for this task.}
+
 {Full implementation specification — code examples, behavioral specs, edge cases…}
 
 **Acceptance:**
@@ -120,6 +132,8 @@ Target: `src/module/other.py::build_other`
 `kind: deliverable`
 
 Target: `config/settings.yaml`
+
+**Research context:** {Observed config consumers, constraints, and checks.}
 
 {Full specification including config schema, defaults, validation rules…}
 
@@ -162,6 +176,10 @@ sees its own subtask — it does **not** have access to the full plan document.
 
 **Each task section must be self-contained:**
 
+- Research context, including necessary shared findings copied into this section.
+  Keep approximate line hints and read-only references outside the contiguous
+  Targets block, separated by a blank line. Apply the Research Context contract
+  in `docs/contracts/plan-coverage.md` proportionally to the work.
 - File paths to create or modify
 - Code examples (classes, functions, method signatures)
 - Config snippets, SQL migrations, YAML schemas
