@@ -18,8 +18,16 @@ pub(super) struct RestClient {
 
 impl RestClient {
     pub(super) fn new(base_url: Url, token: String) -> Self {
+        // The client's own connect and total timeouts back the per-call
+        // deadline below; a builder failure (TLS backend) leaves the
+        // deadline as the only bound rather than failing the connect.
+        let client = Client::builder()
+            .connect_timeout(REQUEST_DEADLINE)
+            .timeout(REQUEST_DEADLINE)
+            .build()
+            .unwrap_or_default();
         Self {
-            client: Client::new(),
+            client,
             base_url,
             token,
         }
@@ -184,7 +192,13 @@ impl RestClient {
         let response = timeout_at(deadline, request.send())
             .await
             .map_err(|_| DaemonError::Timeout)?
-            .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
+            .map_err(|error| {
+                if error.is_timeout() {
+                    DaemonError::Timeout
+                } else {
+                    DaemonError::Unavailable { retry_after: None }
+                }
+            })?;
         if response.status().is_success() {
             return Ok(response);
         }
@@ -199,10 +213,18 @@ impl RestClient {
     ) -> Result<T, DaemonError> {
         let deadline = Instant::now() + REQUEST_DEADLINE;
         let response = self.send(deadline, method, url, body).await?;
+        // The client's total timeout can end the body read first; it is the
+        // same deadline, so it reports the same way.
         timeout_at(deadline, response.json())
             .await
             .map_err(|_| DaemonError::Timeout)?
-            .map_err(protocol)
+            .map_err(|error| {
+                if error.is_timeout() {
+                    DaemonError::Timeout
+                } else {
+                    protocol(error)
+                }
+            })
     }
 
     async fn empty(
