@@ -229,15 +229,17 @@ title.
 | Indicator | Meaning |
 | --- | --- |
 | `● held` | You hold the lease. Keys, pastes, and mouse reports go to the terminal. |
-| `○ observe` | You are watching. Input is not sent. |
+| `○ observe` | You are watching; the first keystroke takes control and is delivered once the lease is granted. |
 | `▲ take-back` | Someone else holds the lease. `prefix+shift+a` or the indicator asks for it back. |
-| `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. |
-| `◌ read-only` | A write's outcome is unknown after a disconnect. Take control again to continue. |
+| `◌ lease lost` | The daemon revoked your lease, typically because another viewer took over. Typing is refused until you take control again. |
+| `◌ read-only` | A write's outcome is unknown after a disconnect. Typing is refused; take control again to continue. |
 
 Focusing a pane takes control of it automatically, whether you focus it by
 keyboard, by click, or through the navigator. Typing into an observed pane also
 requests control first and delivers the pending keystrokes once the lease is
-granted. To look at a pane without taking it, `alt+click` it.
+granted; keys typed while that request is still pending are dropped, and the
+status line says `acquiring control`. To look at a pane without taking it,
+`alt+click` it.
 
 `prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
 take: the pane then shows `▲ take-back` and the reason lands in the status line.

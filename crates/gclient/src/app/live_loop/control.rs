@@ -7,8 +7,19 @@ use tokio::time::Instant;
 
 use crate::daemon::{Daemon, DaemonError, LiveDaemon};
 use crate::frame_source::{FrameError, FrameSource};
+use crate::ui::Chrome;
 
 use super::super::{ControlState, PaneId, Workspace};
+
+/// Status shown when a key lands in a pane whose lease another viewer took.
+pub const LEASE_LOST_INPUT: &str =
+    "lease lost: take control (prefix+t) or take back (prefix+shift+a) to type";
+/// Status shown when a key lands in a pane whose last write's outcome is
+/// unknown.
+pub const READ_ONLY_INPUT: &str =
+    "read-only after an unconfirmed write: take control (prefix+t) to type";
+/// Status shown when a key lands while a take-control request is pending.
+pub const ACQUIRING_CONTROL: &str = "acquiring control: keys typed before the grant are dropped";
 
 pub(super) async fn focus_live_pane(
     workspace: &mut Workspace<LiveDaemon>,
@@ -164,8 +175,15 @@ pub(super) async fn release_live_control(
         .map_err(FrameError::from)
 }
 
+/// Keys for a held pane go out at once; an observed pane takes control
+/// first and delivers them once the lease is granted. A pane whose lease
+/// was lost, or whose last write's outcome is unknown, refuses them until
+/// control is taken explicitly (the scripted path's `read_only` refusal),
+/// and keys typed while a take is already pending are dropped; the status
+/// line says so in both cases.
 pub(super) async fn send_live_input(
     workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
     pane_id: PaneId,
     data: &[u8],
 ) -> Result<(), FrameError> {
@@ -176,7 +194,17 @@ pub(super) async fn send_live_input(
         return send_live_write(workspace, pane_id, data, false).await;
     }
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-    if !pane.is_live() || pane.pending_input.is_some() {
+    if !pane.is_live() {
+        return Ok(());
+    }
+    let refusal = match pane.control {
+        ControlState::LeaseLost => Some(LEASE_LOST_INPUT),
+        ControlState::UncertainReadOnly => Some(READ_ONLY_INPUT),
+        _ if pane.pending_input.is_some() => Some(ACQUIRING_CONTROL),
+        _ => None,
+    };
+    if let Some(refusal) = refusal {
+        chrome.status_message = Some(refusal.to_string());
         return Ok(());
     }
     pane.pending_input = Some(data.to_vec());

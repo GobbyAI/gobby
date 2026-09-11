@@ -843,25 +843,43 @@ async fn focus_moves_control_and_settles_pending_input_once() {
         .await;
         settle_live_event().await;
 
+        // A lost lease refuses typing until control is taken explicitly.
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            2,
+            "typing into a lost lease starts no request"
+        );
+        assert!(websocket_requests(&mock, "terminal_input").is_empty());
+        // The take-back is refused: the pane observes with a take-back offer.
+        mock.enqueue_take_control_reply(false, 2, Some("held by peer"));
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        settle_live_event().await;
+
+        // Typing into the observed pane takes control; a stale grant leaves
+        // the key pending.
         mock.enqueue_take_control_reply(true, 1, None);
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 4).await;
         assert!(
             websocket_requests(&mock, "terminal_input").is_empty(),
             "a stale grant cannot settle the pending key"
         );
         send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
-        tokio::task::yield_now().await;
+        settle_live_event().await;
         assert_eq!(
             websocket_requests(&mock, "terminal_take_control").len(),
-            3,
+            4,
             "further keys must not start another request while input is pending"
         );
 
         mock.enqueue_take_control_reply(true, 2, None);
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 4).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 5).await;
         wait_for_websocket_requests(&mock, "terminal_input", 1).await;
         let writes = websocket_requests(&mock, "terminal_input");
         assert_eq!(writes.len(), 1, "the pending key must be written once");
@@ -878,14 +896,20 @@ async fn focus_moves_control_and_settles_pending_input_once() {
         }))
         .await;
         settle_live_event().await;
-        mock.enqueue_take_control_reply(false, 3, Some("held by peer"));
+        // Typing sends nothing again; the explicit take-back is refused and
+        // the pane keeps its take-back offer.
         send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 5).await;
+        settle_live_event().await;
+        assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 5);
+        mock.enqueue_take_control_reply(false, 3, Some("held by peer"));
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 6).await;
         tokio::task::yield_now().await;
         assert_eq!(
             websocket_requests(&mock, "terminal_input").len(),
             1,
-            "a rejected pending key must be discarded"
+            "a refused take-back writes nothing"
         );
         drop(input_tx);
         focused_terminal_id
@@ -914,6 +938,172 @@ async fn focus_moves_control_and_settles_pending_input_once() {
             .as_deref()
             .is_some_and(|message| message.contains("held by peer")),
         "control refusal reason must remain visible: {:?}",
+        chrome.status_message
+    );
+    mock.shutdown().await;
+}
+
+/// One live terminal pinned into a tab, for the control-refusal tests.
+async fn single_terminal_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+    mock.use_unique_attachment_ids();
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({
+            "items": [{"terminal_id": "terminal-a", "backend": "native", "state": "live"}],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let home = pin_tabs(&mut workspace, "project-1", &["terminal-a"]);
+    (workspace, home)
+}
+
+/// A pane whose lease another viewer took refuses typing: nothing reaches
+/// the daemon and the status line names take control (the scripted path's
+/// `read_only` refusal, on the live loop).
+#[tokio::test]
+async fn lost_lease_refuses_typing_and_names_take_control() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let attachment_id = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("attachment_id")
+            .and_then(Value::as_str)
+            .expect("focused attachment")
+            .to_string();
+        mock.send_event_and_wait(json!({
+            "type": "terminal_lease_lost",
+            "terminal_id": "terminal-a",
+            "attachment_id": attachment_id,
+            "holder": "peer",
+            "lease_generation": 2,
+            "daemon_epoch": "epoch-1",
+            "seq": 2
+        }))
+        .await;
+        settle_live_event().await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        websocket_requests(&mock, "terminal_take_control").len(),
+        1,
+        "the key starts no take-control request"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "the key is not written"
+    );
+    let pane = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("terminal pane");
+    assert!(workspace.pane(pane).is_lease_lost());
+    assert!(
+        chrome
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.contains("take control")),
+        "the status names take control: {:?}",
+        chrome.status_message
+    );
+    mock.shutdown().await;
+}
+
+/// Keys typed while a take-control request is still pending are dropped,
+/// and the status line says control is being acquired.
+#[tokio::test]
+async fn keys_during_a_pending_take_report_acquiring_control() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        let attachment_id = websocket_requests(&mock, "terminal_take_control")[0]
+            .get("attachment_id")
+            .and_then(Value::as_str)
+            .expect("focused attachment")
+            .to_string();
+        // A lost lease and a refused take-back leave the pane observing at
+        // lease generation 2; typing then takes control, and a stale grant
+        // leaves the key pending.
+        mock.send_event_and_wait(json!({
+            "type": "terminal_lease_lost",
+            "terminal_id": "terminal-a",
+            "attachment_id": attachment_id,
+            "holder": "peer",
+            "lease_generation": 2,
+            "daemon_epoch": "epoch-1",
+            "seq": 2
+        }))
+        .await;
+        settle_live_event().await;
+        mock.enqueue_take_control_reply(false, 2, Some("held by peer"));
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('A'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        mock.enqueue_take_control_reply(true, 1, None);
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 3).await;
+        send_key(&input_tx, KeyCode::Char('z'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        websocket_requests(&mock, "terminal_take_control").len(),
+        3,
+        "a pending take starts no second request"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "neither key is written before the grant"
+    );
+    assert!(
+        chrome
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.contains("acquiring control")),
+        "the status reports the pending take: {:?}",
         chrome.status_message
     );
     mock.shutdown().await;
@@ -967,8 +1157,18 @@ async fn write_outcomes_drive_pane_state() {
             2,
             "an indeterminate write must not be resent"
         );
+        // An unknown write outcome refuses typing until control is taken.
         send_key(&input_tx, KeyCode::Char('r'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            1,
+            "typing into a read-only pane starts no request"
+        );
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('t'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        send_key(&input_tx, KeyCode::Char('r'), KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_input", 3).await;
         settle_live_event().await;
         assert_eq!(
