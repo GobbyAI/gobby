@@ -1,17 +1,19 @@
 //! 3.5 gclient starts independently of the Python CLI.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use gobby_client::persist::ClientSession;
 use gobby_client::prefs::{load_prefs, save_prefs};
 use gobby_client::startup::{
-    parse_args, prepare_at, resolve_probe_env_at, resolve_project_at, start_session,
-    start_session_at, GtermHostState, HealthClient, HttpHealthClient, ProbeEnv, Ready,
-    StartupError,
+    initial_project, parse_args, prepare_at, resolve_probe_env_at, resolve_project_at,
+    start_session, start_session_at, GtermHostState, HealthClient, HttpHealthClient, ProbeEnv,
+    Ready, StartupError,
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
 use gobby_client::ui::keymap::{Action, Keymap, HERDR_PREFIX};
 use gobby_client::ui::settings::{render_settings, AgentSort, ClientPrefs};
 use gobby_client::ui::Chrome;
 use gobby_client::FrameDelivery;
+use gobby_core::project::PERSONAL_PROJECT_ID;
 use gobby_terminal::protocol::PROTOCOL_VERSION;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -500,20 +502,25 @@ fn project_is_resolved_before_raw_mode() {
     std::fs::create_dir_all(&nested).expect("create nested project path");
 
     assert_eq!(
-        resolve_project_at(None, &nested).expect("discover containing project"),
-        project_id
+        resolve_project_at(None, &nested)
+            .expect("discover containing project")
+            .as_deref(),
+        Some(project_id)
     );
     assert_eq!(
-        resolve_project_at(Some(project_id), &nested).expect("accept project UUID"),
-        project_id
+        resolve_project_at(Some(project_id), &nested)
+            .expect("accept project UUID")
+            .as_deref(),
+        Some(project_id)
     );
     assert_eq!(
         resolve_project_at(
             Some(root.path().to_str().expect("UTF-8 project path")),
             &nested
         )
-        .expect("resolve project path"),
-        project_id
+        .expect("resolve project path")
+        .as_deref(),
+        Some(project_id)
     );
     let body = r#"{
         "status": "ok",
@@ -538,12 +545,33 @@ fn project_is_resolved_before_raw_mode() {
             Err(err) => panic!("healthy daemon failed: {err}"),
         };
     let _ = server.join();
-    assert_eq!(ready.project, project_id);
+    assert_eq!(ready.project.as_deref(), Some(project_id));
+    // `start_session` launches from the real working directory.
+    assert_eq!(
+        ready.launch_dir,
+        std::env::current_dir().expect("current directory")
+    );
     assert_eq!(enters.load(Ordering::SeqCst), 1);
     drop(guard);
 
+    // Outside every checkout the client still starts: no project, the
+    // launch directory kept for its first shell, and the probe reached.
     let outside = tempfile::tempdir().expect("outside project");
     let args = parse_args(["gclient"]).expect("parse discovery");
+    let ready = prepare_at(
+        &args,
+        env_at("http://unused"),
+        &HealthyHost,
+        outside.path(),
+        outside.path(),
+    )
+    .expect("outside-project startup reaches the health probe");
+    assert_eq!(ready.project, None);
+    assert_eq!(ready.launch_dir, outside.path());
+
+    // An explicit `--project` that does not resolve still fails first.
+    let missing = outside.path().join("missing").display().to_string();
+    let args = parse_args(["gclient", "--project", &missing]).expect("parse --project");
     let (health, health_calls) = CountingHealth::new();
     let error = prepare_at(
         &args,
@@ -552,7 +580,7 @@ fn project_is_resolved_before_raw_mode() {
         outside.path(),
         outside.path(),
     )
-    .expect_err("outside-project startup succeeded");
+    .expect_err("missing explicit project succeeded");
     assert_eq!(health_calls.load(Ordering::SeqCst), 0);
     let message = error.to_string();
     assert!(message.contains(&outside.path().display().to_string()));
@@ -580,22 +608,35 @@ fn project_is_resolved_before_raw_mode() {
     assert!(message.contains("--project"));
 }
 
+/// `Ready.project` is optional and `run_ready` opens on `initial_project`:
+/// the resolved project, else the one the saved session had focused, else
+/// the personal project.
 #[test]
-fn ready_carries_a_resolved_project() {
-    fn project_field_is_string(ready: &Ready) -> &String {
-        &ready.project
+fn ready_carries_an_optional_project() {
+    fn project_field_is_optional(ready: &Ready) -> Option<&str> {
+        ready.project.as_deref()
     }
 
-    let _: fn(&Ready) -> &String = project_field_is_string;
+    let _: fn(&Ready) -> Option<&str> = project_field_is_optional;
     let views_source = include_str!("../src/views/mod.rs");
     assert!(
-        views_source.contains("workspace.restore_project(&ready.project)"),
-        "run_ready must restore the resolved project"
+        views_source.contains("initial_project(ready.project, session.as_ref())"),
+        "run_ready must open on the initial project"
     );
-    assert!(
-        !views_source.contains("if let Some(project) = ready.project"),
-        "run_ready retained a project-less branch"
+    let saved = ClientSession {
+        focused_project: Some("saved-project".to_string()),
+        ..ClientSession::default()
+    };
+    assert_eq!(
+        initial_project(Some("cwd-project".to_string()), Some(&saved)),
+        "cwd-project"
     );
+    assert_eq!(initial_project(None, Some(&saved)), "saved-project");
+    assert_eq!(
+        initial_project(None, Some(&ClientSession::default())),
+        PERSONAL_PROJECT_ID
+    );
+    assert_eq!(initial_project(None, None), PERSONAL_PROJECT_ID);
 }
 
 struct HealthyHost;

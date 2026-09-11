@@ -93,6 +93,9 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     pending_sidebar: PendingSidebar,
     pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
+    /// Where gclient was started; shells of a project with no checkout
+    /// here begin in it.
+    launch_dir: Option<PathBuf>,
     frame_delivery: FrameDelivery,
     lifecycle: Option<Snapshot>,
     daemon_ready: bool,
@@ -169,6 +172,7 @@ impl Workspace {
             pending_sidebar: PendingSidebar::default(),
             pending_attention: None,
             gobby_home: None,
+            launch_dir: None,
             frame_delivery: FrameDelivery::Auto,
             lifecycle: None,
             daemon_ready: true,

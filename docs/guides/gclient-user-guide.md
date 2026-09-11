@@ -12,8 +12,8 @@ For building, installing, and the wire protocols, read
 
 ## Launching
 
-`gobby install` places the binary at `~/.gobby/bin/gclient`. Run it from inside a
-Gobby project checkout:
+`gobby install` places the binary at `~/.gobby/bin/gclient`. Run it from any
+directory:
 
 ```bash
 gclient
@@ -25,7 +25,7 @@ Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] [--fra
 
 | Flag | Meaning |
 | --- | --- |
-| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`. |
+| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it reopens the project it last had focused, or the personal project with one shell in the directory it was launched from. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
 | `--token-file PATH` | Bearer token file. Defaults to `~/.gobby/local_cli_token`. |
 | `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. |
@@ -33,7 +33,8 @@ Usage: gclient [--project PROJECT] [--daemon-url URL] [--token-file PATH] [--fra
 | `--version`, `-V` | Print the version and exit. |
 | `--help`, `-h` | Print the usage line and exit. |
 
-Startup checks, in order: the project resolves, `~/.gobby/client/prefs.toml`
+Startup checks, in order: an explicit `--project` resolves (a directory
+outside every checkout is fine), `~/.gobby/client/prefs.toml`
 parses, the keymap override file parses, the daemon answers `/api/health`, and the
 health report shows a running gterm host speaking the client's protocol version.
 Each failure prints one message naming the fix (`gobby start`, `gobby init`,
