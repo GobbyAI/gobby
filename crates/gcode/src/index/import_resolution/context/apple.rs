@@ -18,6 +18,13 @@ pub(super) fn build_objc_indexes(root_path: &Path, candidate_files: &[PathBuf]) 
     let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if !matches!(ext, "h" | "m" | "mm") {
+                return None;
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             let source = std::fs::read(path).unwrap_or_default();

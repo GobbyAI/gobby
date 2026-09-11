@@ -23,6 +23,9 @@ pub(super) fn build_java_class_index(
     let observations = candidate_files
         .par_iter()
         .map(|path| {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("java") {
+                return (HashSet::new(), HashMap::new());
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             std::fs::read(path)
@@ -109,6 +112,10 @@ pub(super) fn build_kotlin_package_files(
     let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str())?;
+            if !matches!(ext, "kt" | "kts") {
+                return None;
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             observe_kotlin_source(&rel_str, &std::fs::read(path).ok()?)
@@ -163,6 +170,10 @@ pub(super) fn build_scala_package_files(
     let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str())?;
+            if !matches!(ext, "scala" | "sc") {
+                return None;
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             observe_scala_source(&rel_str, &std::fs::read(path).ok()?)

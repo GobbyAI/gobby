@@ -20,6 +20,9 @@ pub(super) fn build_csharp_index(root_path: &Path, candidate_files: &[PathBuf]) 
     let observations = candidate_files
         .par_iter()
         .map(|path| {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("cs") {
+                return (HashSet::new(), HashMap::new());
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             std::fs::read(path)
