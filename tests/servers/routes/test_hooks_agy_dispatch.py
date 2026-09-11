@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
@@ -181,6 +181,7 @@ def test_execute_hook_dispatches_agy_adapter(session_storage: SessionManager) ->
             "session_id": "agy-123",
             "cwd": "/tmp",
         },
+        "_enqueued_at": "2026-06-24T12:00:00Z",
     }
     assert mock_adapter.handle_native.call_args.args[1] is adapter_hook_manager
 
@@ -583,7 +584,11 @@ class TestAgyAdapterTimeoutRetry:
             "retry_kind": "adapter_timeout",
         }
         mark_processed.assert_not_called()
-        release.assert_called_once_with("env-agy-timeout")
+        # The retry path releases for the caller, then request teardown
+        # releases again as a CAS on the lease this execution owned.
+        assert release.call_args_list[0] == call("env-agy-timeout")
+        assert len(release.call_args_list) == 2
+        assert set(release.call_args_list[1].kwargs) == {"owner_token"}
 
     def test_ingress_retry_includes_retry_kind_discriminator(
         self,

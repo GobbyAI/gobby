@@ -13,10 +13,8 @@ from gobby.hooks.inbox import _get_hook_inbox_drain_lock, drain_hook_inbox_barri
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("blocked_on", ["lock", "post"])
-async def test_barrier_deadline_retains_unresolved_envelope(
-    tmp_path: Path, blocked_on: str
-) -> None:
+async def test_barrier_deadline_retains_unresolved_envelope(tmp_path: Path) -> None:
+    """A barrier that never gets the drain lock reports the envelope and starts no replay."""
     app = FastAPI()
     pending = tmp_path / "pending.json"
     pending.write_text(
@@ -33,17 +31,13 @@ async def test_barrier_deadline_retains_unresolved_envelope(
         )
     )
     lock = _get_hook_inbox_drain_lock(app)
-    if blocked_on == "lock":
-        await lock.acquire()
-
-    async def stalled_post(*args: object, **kwargs: object) -> httpx.Response:
-        await asyncio.Event().wait()
-        return httpx.Response(200)
+    await lock.acquire()
+    post = AsyncMock(return_value=httpx.Response(200))
 
     try:
         with (
             patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
-            patch("gobby.hooks.inbox._post_envelope", stalled_post),
+            patch("gobby.hooks.inbox._post_envelope", new=post),
         ):
             result = await asyncio.wait_for(
                 drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=0.01), timeout=1
@@ -51,10 +45,10 @@ async def test_barrier_deadline_retains_unresolved_envelope(
         assert result.timed_out is True
         assert result.unresolved_run_ids == ("run-1",)
         assert pending.exists()
-        assert lock.locked() is (blocked_on == "lock")
+        post.assert_not_awaited()
+        assert lock.locked()
     finally:
-        if blocked_on == "lock":
-            lock.release()
+        lock.release()
 
     with (
         patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
@@ -64,6 +58,58 @@ async def test_barrier_deadline_retains_unresolved_envelope(
     assert not retried.timed_out
     assert retried.replayed == 1
     assert not pending.exists()
+
+
+@pytest.mark.asyncio
+async def test_barrier_timeout_never_cancels_a_running_replay(tmp_path: Path) -> None:
+    """A replay slower than the barrier finishes in the background and consumes its envelope."""
+    app = FastAPI()
+    pending = tmp_path / "pending.json"
+    pending.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "enqueued_at": "2026-04-16T12:00:00Z",
+                "critical": False,
+                "response_capability": "hook-response.v1",
+                "hook_type": "session-start",
+                "input_data": {"terminal_context": {"gobby_agent_run_id": "run-1"}},
+                "source": "claude",
+            }
+        )
+    )
+    lock = _get_hook_inbox_drain_lock(app)
+    release_post = asyncio.Event()
+    posts = 0
+
+    async def slow_post(*args: object, **kwargs: object) -> httpx.Response:
+        nonlocal posts
+        posts += 1
+        await release_post.wait()
+        return httpx.Response(200)
+
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
+        patch("gobby.hooks.inbox._post_envelope", slow_post),
+    ):
+        result = await asyncio.wait_for(
+            drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=0.01), timeout=1
+        )
+        assert result.timed_out is True
+        assert result.unresolved_run_ids == ("run-1",)
+        # The replay is still in flight: it owns the lock and its envelope.
+        assert lock.locked()
+        assert pending.exists()
+
+        release_post.set()
+        async with lock:  # waits for the background replay to release it
+            pass
+        assert posts == 1
+        assert not pending.exists()
+
+        settled = await drain_hook_inbox_barrier(app, tmp_path, timeout_seconds=1)
+    assert settled.timed_out is False
+    assert settled.replayed == 0
 
 
 @pytest.mark.asyncio

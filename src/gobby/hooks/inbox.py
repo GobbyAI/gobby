@@ -16,6 +16,7 @@ import httpx
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks import grok_pending_context
+from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     DirectoryPruneResult,
@@ -570,6 +571,14 @@ async def drain_hook_inbox_once(
         )
 
 
+async def _replay_inbox_holding_lock(app: Any, lock: asyncio.Lock, pending_dir: Path) -> int:
+    """Run one replay pass over an acquired drain lock and release it after."""
+    try:
+        return await _drain_hook_inbox_once_locked(app, pending_dir, include_fresh=True)
+    finally:
+        lock.release()
+
+
 async def drain_hook_inbox_barrier(
     app: Any,
     inbox_dir: Path | None = None,
@@ -581,16 +590,20 @@ async def drain_hook_inbox_barrier(
     pending_dir = inbox_dir or get_hook_inbox_dir()
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     replayed = 0
+    lock = _get_hook_inbox_drain_lock(app)
 
+    # The timeout bounds how long this caller waits, never a replay: a
+    # cancelled replay would leave the envelope's processing lease live and
+    # every later replay refused as a duplicate. Each replay runs in its own
+    # task that owns the lock until it finishes, so a timed-out barrier
+    # leaves it running and a later barrier waits on the lock.
     timeout = asyncio.timeout(max(0.0, timeout_seconds))
     try:
-        async with timeout, _get_hook_inbox_drain_lock(app):
+        async with timeout:
             while True:
-                replayed += await _drain_hook_inbox_once_locked(
-                    app,
-                    pending_dir,
-                    include_fresh=True,
-                )
+                await lock.acquire()
+                replay = create_background_task(_replay_inbox_holding_lock(app, lock, pending_dir))
+                replayed += await asyncio.shield(replay)
                 pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
                 if not pending_files:
                     return HookInboxBarrierResult(replayed, False, (), ())
@@ -601,8 +614,9 @@ async def drain_hook_inbox_barrier(
         if not timeout.expired():
             raise
 
-    # A cancelled replay retains its envelope; a separate drain's lock owner
-    # remains untouched. Report pending identities so startup can fence runs.
+    # A replay still running keeps its envelope until it finishes; a separate
+    # drain's lock owner remains untouched. Report pending identities so
+    # startup can fence runs until a later barrier sees them settle.
     pending_files = _iter_inbox_files(pending_dir) if pending_dir.exists() else []
     run_ids, session_ids = _unresolved_envelope_identities(pending_files)
     return HookInboxBarrierResult(

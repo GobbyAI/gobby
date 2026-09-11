@@ -45,9 +45,14 @@ class AdapterHookTimeout(TimeoutError):
         self.timeout_seconds = timeout_seconds
 
 
-def start_envelope_lease_renewal(envelope_id: str, owner_token: str) -> None:
-    """Renew a live envelope lease until the owner can no longer CAS."""
-    create_background_task(_renew_envelope_lease(envelope_id, owner_token))
+def start_envelope_lease_renewal(envelope_id: str, owner_token: str) -> asyncio.Task[None]:
+    """Renew a live envelope lease until the owner can no longer CAS.
+
+    The caller owns the returned task: cancel it when the execution that
+    holds the lease ends, or the lease outlives its owner and every replay
+    of the envelope is refused as a duplicate.
+    """
+    return create_background_task(_renew_envelope_lease(envelope_id, owner_token))
 
 
 def schedule_adapter_timeout_finalization(
