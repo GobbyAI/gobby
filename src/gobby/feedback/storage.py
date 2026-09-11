@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -135,6 +136,51 @@ class FeedbackReviewStore:
             "UPDATE feedback_review_runs SET findings = %s, actions = %s WHERE id = %s",
             (_json(findings), _json(actions), run_id),
         )
+
+    def assign_reviewer(self, run_id: str, agent_run_id: str, report_path: str) -> None:
+        """Bind submission authority and its Markdown destination before review."""
+        self.db.execute(
+            "UPDATE feedback_review_runs SET actions = COALESCE(actions, '{}'::jsonb) || %s::jsonb "
+            "WHERE id = %s AND status = 'running'",
+            (_json({"reviewer_agent_run_id": agent_run_id, "report_path": report_path}), run_id),
+        )
+
+    def submit_review(
+        self, run_id: str, session_id: str, findings: dict[str, Any], summary_md: str
+    ) -> str:
+        """Persist a reviewer submission independently of agent completion/handoff."""
+        from gobby.feedback.agent import validate_feedback_findings
+
+        if not summary_md.strip():
+            raise ValueError("A nonblank Markdown summary is required")
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM feedback_review_runs WHERE id = %s FOR UPDATE", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown feedback review run: {run_id}")
+            run = _run_from_row(row)
+            if run.status != "running":
+                raise ValueError("Feedback review is no longer accepting submissions")
+            actions = run.actions or {}
+            owner = conn.execute(
+                "SELECT child_session_id FROM agent_runs WHERE id = %s",
+                (actions.get("reviewer_agent_run_id"),),
+            ).fetchone()
+            if owner is None or owner["child_session_id"] != session_id:
+                raise ValueError("Only the assigned reviewer may submit this review")
+            validate_feedback_findings(
+                findings, observation_ids=[item["id"] for item in run.observations]
+            )
+            report_path = actions.get("report_path")
+            if not isinstance(report_path, str) or not report_path:
+                raise ValueError("Feedback review has no Markdown destination")
+            write_review_report(report_path, summary_md)
+            conn.execute(
+                "UPDATE feedback_review_runs SET findings = %s, digest_md = %s WHERE id = %s",
+                (_json(findings), summary_md, run_id),
+            )
+            return report_path
 
     def observations_page(self, run_id: str, *, offset: int = 0, limit: int = 50) -> dict[str, Any]:
         """Read frozen observations; concurrent feedback never enters this batch."""
@@ -284,6 +330,18 @@ def _decode_json(value: Any) -> dict[str, Any] | None:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def write_review_report(report_path: str, markdown: str) -> None:
+    """Replace a run's local report without exposing a partially written document."""
+    path = Path(report_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".md.tmp")
+    try:
+        temporary.write_text(markdown.rstrip() + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _json(value: dict[str, Any] | None) -> str | None:

@@ -229,3 +229,85 @@ def test_mark_running_interrupted_finalizes_only_orphaned_runs(
     assert completed.status == "completed"
 
     assert store.mark_running_interrupted() == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_large_markdown_review_through_api(
+    temp_db: HubDatabase, session_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.mcp_proxy.tools import feedback as tools_module
+    from gobby.storage.agents import LocalAgentRunManager
+
+    observation_id = _insert_feedback(temp_db, session_id)
+    store = FeedbackReviewStore(temp_db)
+    batch = store.freeze_batch(200, dry_run=False)
+    assert batch is not None
+    run_id, _rows = batch
+    agent = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session_id,
+        child_session_id=session_id,
+        provider="claude",
+        prompt="Review feedback",
+        agent_name="feedback-reviewer",
+    )
+    report = tmp_path / "reports" / "feedback.md"
+    store.assign_reviewer(run_id, agent.id, str(report))
+    monkeypatch.setattr(tools_module, "get_current_session_id", lambda: session_id)
+    findings = {
+        "clusters": [
+            {
+                "observation_ids": [observation_id],
+                "cited_paths": [],
+                "theme": "Verified concern",
+                "classification": "defect",
+                "proposed_task": None,
+                "digest_note": "Current implementation already addresses this concern.",
+            }
+        ]
+    }
+    summary = "# Feedback review\n\n" + "Verified evidence and explanation.\n" * 1000
+    registry = tools_module.create_feedback_registry(temp_db)
+    result = await registry.call(
+        "submit_review",
+        {
+            "run_id": run_id,
+            "findings": findings,
+            "summary_md": summary,
+        },
+    )
+    assert result["success"] is True
+    assert result["report_path"] == str(report)
+    assert report.read_text() == summary
+    saved = store.get_run(run_id)
+    assert saved is not None
+    assert saved.findings == findings
+    assert saved.digest_md == summary
+    assert saved.status == "running"
+    assert len(store.list_unreviewed(200)) == 1
+
+    monkeypatch.setattr(tools_module, "get_current_session_id", lambda: "foreign-session")
+    rejected = await registry.call(
+        "submit_review",
+        {
+            "run_id": run_id,
+            "findings": findings,
+            "summary_md": "overwrite",
+        },
+    )
+    assert rejected["success"] is False
+    assert "assigned reviewer" in rejected["error"]
+    assert report.read_text() == summary
+
+    monkeypatch.setattr(tools_module, "get_current_session_id", lambda: session_id)
+    invalid = await registry.call(
+        "submit_review",
+        {
+            "run_id": run_id,
+            "findings": {"clusters": []},
+            "summary_md": "Missing evidence",
+        },
+    )
+    assert invalid["success"] is False
+    assert "exactly once" in invalid["error"]
+    assert report.read_text() == summary
+    assert len(store.list_unreviewed(200)) == 1

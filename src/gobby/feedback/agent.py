@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import jsonschema
@@ -15,8 +15,8 @@ from gobby.events.completion_registry import (
     CompletionEventRegistry,
     CompletionResultEvictedError,
 )
+from gobby.feedback.storage import FeedbackReviewStore
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
-from gobby.sessions.handoff_records import get_agent_end_handoff
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
 from gobby.utils.machine_id import require_machine_id
@@ -56,10 +56,15 @@ FEEDBACK_FINDINGS_SCHEMA: dict[str, Any] = {
                         "properties": {
                             "title": {"type": "string"},
                             "description": {"type": "string"},
+                            "verification_evidence": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": r"\S",
+                            },
                             "labels": {"type": "array", "items": {"type": "string"}},
                             "priority": {"type": "integer", "minimum": 1, "maximum": 4},
                         },
-                        "required": ["title", "description"],
+                        "required": ["title", "description", "verification_evidence"],
                         "additionalProperties": False,
                     },
                     "digest_note": {"type": "string"},
@@ -86,12 +91,16 @@ class FeedbackReviewerResult:
 
     agent_run_id: str
     findings: dict[str, Any]
+    summary_md: str = ""
+    report_path: str | None = None
 
 
 class FeedbackReviewerProtocol(Protocol):
     """The agent-review slice consumed by :class:`FeedbackReviewService`."""
 
-    async def review(self, prompt: str, *, timeout_seconds: float) -> FeedbackReviewerResult: ...
+    async def review(
+        self, prompt: str, *, run_id: str, timeout_seconds: float
+    ) -> FeedbackReviewerResult: ...
 
 
 class FeedbackReviewerError(RuntimeError):
@@ -195,8 +204,11 @@ class FeedbackReviewerAgent:
         self.git_manager = git_manager
         self.daemon_config = daemon_config
 
-    async def review(self, prompt: str, *, timeout_seconds: float) -> FeedbackReviewerResult:
-        """Run the named reviewer and return its validated agent-end payload."""
+    async def review(
+        self, prompt: str, *, run_id: str, timeout_seconds: float
+    ) -> FeedbackReviewerResult:
+        """Run the reviewer and read its separately submitted report."""
+        review_run_id = run_id
         runner = self.runner
         project_id = self.project_id
         if runner is None:
@@ -273,15 +285,19 @@ class FeedbackReviewerAgent:
             raise FeedbackReviewerLaunchError(f"feedback reviewer launch failed: {exc}") from exc
 
         run_id_value = spawn_result.get("run_id")
-        run_id = str(run_id_value) if run_id_value else None
-        if not spawn_result.get("success") or run_id is None:
+        spawned_run_id = str(run_id_value) if run_id_value else None
+        if not spawn_result.get("success") or spawned_run_id is None:
             detail = str(spawn_result.get("error") or "spawn returned no agent run")
             raise FeedbackReviewerLaunchError(
                 f"feedback reviewer launch failed: {detail}",
-                agent_run_id=run_id,
+                agent_run_id=spawned_run_id,
             )
 
+        run_id = spawned_run_id
         completion_error: Exception | None = None
+        store = FeedbackReviewStore(self.db)
+        report_path = str(Path(project_path) / ".gobby/reports/feedback" / f"{review_run_id}.md")
+        await asyncio.to_thread(store.assign_reviewer, review_run_id, run_id, report_path)
         try:
             await self.completion_registry.wait(
                 run_id,
@@ -293,6 +309,16 @@ class FeedbackReviewerAgent:
             completion_error = exc
 
         run = await asyncio.to_thread(runner.get_run, run_id)
+        submitted = await asyncio.to_thread(store.get_run, review_run_id)
+        if submitted is not None and submitted.findings is not None and submitted.digest_md:
+            findings = validate_feedback_findings(submitted.findings, agent_run_id=run_id)
+            return FeedbackReviewerResult(
+                agent_run_id=run_id,
+                findings=findings,
+                summary_md=submitted.digest_md,
+                report_path=report_path,
+            )
+
         if run is None:
             detail = f": {completion_error}" if completion_error is not None else ""
             raise FeedbackReviewerRunError(
@@ -317,18 +343,7 @@ class FeedbackReviewerAgent:
                 agent_run_id=run_id,
             )
 
-        handoff = await asyncio.to_thread(get_agent_end_handoff, self.db, run_id)
-        if handoff is None:
-            raise FeedbackReviewerResultError(
-                f"feedback reviewer agent {run_id} returned no agent-end handoff",
-                agent_run_id=run_id,
-            )
-        try:
-            decoded: object = json.loads(handoff.payload.current_state)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise FeedbackReviewerResultError(
-                f"feedback reviewer agent {run_id} returned invalid JSON: {exc}",
-                agent_run_id=run_id,
-            ) from exc
-        findings = validate_feedback_findings(decoded, agent_run_id=run_id)
-        return FeedbackReviewerResult(agent_run_id=run_id, findings=findings)
+        raise FeedbackReviewerResultError(
+            f"feedback reviewer agent {run_id} did not submit its review report",
+            agent_run_id=run_id,
+        )

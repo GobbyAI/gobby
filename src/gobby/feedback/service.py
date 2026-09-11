@@ -14,7 +14,7 @@ from gobby.feedback.agent import (
     validate_feedback_findings,
 )
 from gobby.feedback.digest import render_digest
-from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow
+from gobby.feedback.storage import FeedbackReviewStore, FeedbackRow, write_review_report
 from gobby.prompts.loader import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -50,31 +50,26 @@ class FeedbackReviewService:
         findings: dict[str, Any] = {}
         actions: dict[str, Any] = {}
         attempts: list[dict[str, Any]] = []
+        report_path: str | None = None
 
         def checkpoint(current: dict[str, Any]) -> None:
             nonlocal actions
             actions = current
             actions["review_attempts"] = attempts
             actions["reviewer_agent_run_id"] = reviewer_agent_run_id
+            actions["report_path"] = report_path
             self.store.save_progress(run_id, findings, actions)
 
         try:
             review_result = await self._distill(run_id, rows, attempts)
             reviewer_agent_run_id = review_result.agent_run_id
+            report_path = review_result.report_path
             findings = review_result.findings
             checkpoint(actions)
             actions = await self.actions.apply(
                 findings, rows, dry_run=dry_run, checkpoint=checkpoint
             )
             checkpoint(actions)
-            if not dry_run:
-                failed_ids = {
-                    value
-                    for outcome in actions.get("failed", [])
-                    for value in outcome["observation_ids"]
-                }
-                reviewed = {row.id for row in rows} - failed_ids
-                actions["rows_marked_reviewed"] = self.store.mark_reviewed(sorted(reviewed), run_id)
             status = "partial" if actions.get("failed") else "completed"
             digest = render_digest(
                 rows,
@@ -83,6 +78,18 @@ class FeedbackReviewService:
                 dry_run=dry_run,
                 resolve_task=self.actions._resolve_feedback_task,
             )
+            if review_result.summary_md:
+                digest = review_result.summary_md.rstrip() + "\n\n---\n\n" + digest
+            if report_path:
+                await asyncio.to_thread(write_review_report, report_path, digest)
+            if not dry_run:
+                failed_ids = {
+                    value
+                    for outcome in actions.get("failed", [])
+                    for value in outcome["observation_ids"]
+                }
+                reviewed = {row.id for row in rows} - failed_ids
+                actions["rows_marked_reviewed"] = self.store.mark_reviewed(sorted(reviewed), run_id)
             self.store.finalize_run(
                 run_id,
                 status=status,
@@ -114,6 +121,7 @@ class FeedbackReviewService:
             "tasks_filed": len(actions.get("filed", [])),
             "deduplicated": actions.get("deduplicated", 0),
             "reviewer_agent_run_id": reviewer_agent_run_id,
+            "report_path": report_path,
         }
 
     async def _distill(
@@ -139,7 +147,7 @@ class FeedbackReviewService:
             self.store.save_progress(run_id, {}, {"review_attempts": attempts})
             try:
                 result = await self.reviewer.review(
-                    prompt, timeout_seconds=DISTILL_TOTAL_DEADLINE_SECONDS
+                    prompt, run_id=run_id, timeout_seconds=DISTILL_TOTAL_DEADLINE_SECONDS
                 )
                 attempt.update(phase="validation", agent_run_id=result.agent_run_id)
                 findings = validate_feedback_findings(
@@ -148,7 +156,12 @@ class FeedbackReviewService:
                     observation_ids=[row.id for row in rows],
                 )
                 attempt["status"] = "completed"
-                return FeedbackReviewerResult(agent_run_id=result.agent_run_id, findings=findings)
+                return FeedbackReviewerResult(
+                    agent_run_id=result.agent_run_id,
+                    findings=findings,
+                    summary_md=result.summary_md,
+                    report_path=result.report_path,
+                )
             except BaseException as exc:
                 attempt.update(
                     status="interrupted" if isinstance(exc, asyncio.CancelledError) else "failed",
@@ -163,5 +176,10 @@ class FeedbackReviewService:
                 raise
             finally:
                 attempt["completed_at"] = datetime.now(UTC).isoformat()
-                self.store.save_progress(run_id, {}, {"review_attempts": attempts})
+                current = self.store.get_run(run_id)
+                saved_actions = current.actions or {} if current else {}
+                saved_actions["review_attempts"] = attempts
+                self.store.save_progress(
+                    run_id, current.findings or {} if current else {}, saved_actions
+                )
         raise RuntimeError("feedback review retry exhausted")
