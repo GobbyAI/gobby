@@ -126,7 +126,7 @@ strictly below `small_window_tokens` use `small_window_warn_ratio` and
 `extended_window_tokens`, plus unknown or invalid windows, use `warn_tokens` and
 `block_tokens`; windows at or above the extended cutoff use `extended_warn_tokens`
 and `extended_block_tokens`. Warnings repeat every turn and every
-`warn_every_tool_calls` tool calls. Plan mode, pipelines, and web chat are exempt.
+`warn_every_tool_calls` tool calls. Plan mode and pipelines are exempt.
 At block pressure, handoff prerequisites and schema discovery remain callable. A
 non-retryable missing terminal compaction path caps the epoch at warning pressure;
 a background delivery failure remains blocked until `set_handoff` is retried.

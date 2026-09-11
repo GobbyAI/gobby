@@ -37,6 +37,7 @@ _NON_RETRYABLE_HANDOFF_ERROR_CODES = frozenset(
         "terminal_target_unavailable",
         "terminal_target_not_live",
         "unsupported_session_type",
+        "web_chat_registry_unavailable",
         "no_compaction_command",
         "interrupt_observation_unavailable",
     }

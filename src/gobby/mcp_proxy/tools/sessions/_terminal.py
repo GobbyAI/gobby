@@ -621,6 +621,7 @@ def register_terminal_tools(
                 return {
                     "compacted": False,
                     "reason": "web_chat session registry is not available",
+                    "error_code": "web_chat_registry_unavailable",
                 }
             compact_target = resolved_session_id
             if (

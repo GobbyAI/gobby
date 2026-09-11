@@ -351,9 +351,9 @@ windows at or above `extended_window_tokens` use the extended thresholds. Warnin
 repeat every turn start and every
 `warn_every_tool_calls` calls. At the block threshold, only `set_handoff`,
 `feedback`, `get_handoff`, `review_task_memories`, `end_agent_run`, and MCP schema
-discovery remain callable. Plan mode, pipelines, and web-chat sessions skip this
-enforcement. A non-retryable inability to compact downgrades the epoch to warning
-pressure; background delivery failures stay gated for a `set_handoff` retry.
+discovery remain callable. Plan mode and pipelines skip this enforcement. A
+non-retryable inability to compact downgrades the epoch to warning pressure;
+background delivery failures stay gated for a `set_handoff` retry.
 
 ```python
 call_tool("gobby-sessions", "get_handoff", {})
