@@ -833,6 +833,23 @@ arguments. Its regression failed before the change, then passed; all 78
 focused Git/workflow tests passed. This logging correction awaits landing
 and coordinated Gobby daemon restart before it is live.
 
+On September 11, parent adapted the logging correction onto current `0.5.0`
+in a separate managed worktree. The conflict resolution preserved main's
+`control.diagnostic()` and boolean `consumer_active` cleanup semantics;
+only cwd plumbing and the warning were added. Parent passed all 87 tests in
+`tests/utils/test_daemon_git.py` and `tests/workflows/test_git_utils.py`, plus
+Ruff, formatting, one-file mypy and diff checks. Independent review
+`9c9a5707-451d-4f8c-95d6-6919ff325948` allowed both staged files with no findings,
+using Git blobs after the code index returned stale pre-patch lines.
+
+Commit `4a91865782` was linked to coordinator #22021 and managed-merged into
+local `0.5.0` at `8a4f09356cf1678377ae487cd06f79d4a6b03f96`. The temporary
+worktree was deleted through the managed lifecycle. Newer main fixes and
+unrelated working changes were preserved. At this checkpoint daemon PID
+5175 still predates the correction: restart coordination is pending the
+native worker's explicit hold and remaining active-owner acknowledgement.
+The warning is landed but not yet verified live; no shared binary was replaced.
+
 ## Attempt 17: pinned config preserved; rendered policy still differs
 
 Independent review allowed the three-file SRT correction `5f42ce6ef9`, and
