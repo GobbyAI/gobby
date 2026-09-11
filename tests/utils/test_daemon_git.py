@@ -17,7 +17,6 @@ from gobby.utils.daemon_git import (
     GitFailed,
     GitOk,
     GitTimeout,
-    _ProcessControl,
     parse_porcelain_v1_z,
 )
 
@@ -78,6 +77,20 @@ def _git_env(tmp_path: Path, **values: str) -> dict[str, str]:
     env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
     env.update(values)
     return env
+
+
+class _CompletedStreamProcess:
+    """A process double that has already spooled one stdout chunk."""
+
+    pid = 2_147_483_647
+    returncode = 0
+
+    def __init__(self, *_args: object, **kwargs: object) -> None:
+        stdout = cast(Any, kwargs["stdout"])
+        stdout.write(b"chunk")
+
+    def wait(self) -> int:
+        return self.returncode
 
 
 async def _wait_for_file(path: Path) -> None:
@@ -381,48 +394,102 @@ async def test_nonstream_timeout_waits_for_bounded_worker_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_stream_timeout_bounds_cleanup_of_stuck_consumer() -> None:
+async def test_stream_timeout_waits_for_callback_longer_than_cleanup_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", _CompletedStreamProcess)
     entered = threading.Event()
     release = threading.Event()
+    finished = threading.Event()
+    returned = threading.Event()
+    writes: list[tuple[bytes, bool]] = []
 
-    def worker(
-        loop: asyncio.AbstractEventLoop,
-        completion: asyncio.Future[GitOk | GitFailed],
-        control: _ProcessControl,
-    ) -> None:
-        control.begin_preparing()
-        control.begin_spawn()
-        with control.lock:
-            control.phase = "consuming"
-            control.spawn_finished_at = time.monotonic()
-        if control.begin_consuming():
-            entered.set()
-            release.wait(2)
-        control.mark_finished()
-
-        def settle() -> None:
-            if not completion.done():
-                completion.set_result(GitOk("ok", ("git", "show"), "", ""))
-
-        loop.call_soon_threadsafe(settle)
+    def consume(chunk: bytes) -> None:
+        entered.set()
+        assert release.wait(2)
+        writes.append((chunk, returned.is_set()))
+        finished.set()
 
     request = asyncio.create_task(
-        DaemonGitService()._execute_worker(
-            ("git", "show"),
+        DaemonGitService().stream_bytes(
+            ["show"],
+            cwd=tmp_path,
+            consume=consume,
             timeout=0.05,
-            worker=worker,
+            env={},
         )
     )
     assert await asyncio.to_thread(entered.wait, 1)
-    started = time.monotonic()
+    premature_result: GitOk | GitFailed | GitTimeout | None = None
     try:
-        result = await asyncio.wait_for(request, 0.6)
+        try:
+            premature_result = await asyncio.wait_for(asyncio.shield(request), 0.35)
+        except TimeoutError:
+            pass
+    finally:
+        if premature_result is not None:
+            returned.set()
+        release.set()
+
+    result = premature_result or await asyncio.wait_for(request, 1)
+    returned.set()
+    assert await asyncio.to_thread(finished.wait, 1)
+
+    assert premature_result is None
+    assert isinstance(result, GitTimeout)
+    assert "phase=consuming" in result.stderr
+    assert writes == [(b"chunk", False)]
+
+
+@pytest.mark.asyncio
+async def test_stream_cancellation_waits_for_callback_longer_than_cleanup_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", _CompletedStreamProcess)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    cancellation_returned = threading.Event()
+    writes: list[tuple[bytes, bool]] = []
+
+    def consume(chunk: bytes) -> None:
+        entered.set()
+        assert release.wait(2)
+        writes.append((chunk, cancellation_returned.is_set()))
+        finished.set()
+
+    request = asyncio.create_task(
+        DaemonGitService().stream_bytes(
+            ["show"],
+            cwd=tmp_path,
+            consume=consume,
+            timeout=10,
+            env={},
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1)
+    request.cancel()
+    cancelled_early = False
+    try:
+        try:
+            await asyncio.wait_for(asyncio.shield(request), 0.35)
+        except TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            cancelled_early = True
+            cancellation_returned.set()
     finally:
         release.set()
 
-    assert isinstance(result, GitTimeout)
-    assert time.monotonic() - started < 0.5
-    assert "phase=consuming" in result.stderr
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    cancellation_returned.set()
+    assert await asyncio.to_thread(finished.wait, 1)
+
+    assert not cancelled_early
+    assert writes == [(b"chunk", False)]
 
 
 @pytest.mark.asyncio

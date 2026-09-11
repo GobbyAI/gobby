@@ -330,6 +330,18 @@ class TestProjectPathResolution:
                 {"result_id": "result-1"},
             ),
             (
+                "mcp__gobby-agents__get_agent_result",
+                {"run_id": "run-1"},
+            ),
+            (
+                "call_tool",
+                {
+                    "server_name": "gobby-agents",
+                    "tool_name": "get_inter_session_message",
+                    "arguments": {"message_id": "message-1"},
+                },
+            ),
+            (
                 "mcp__gobby__call_tool",
                 {"args": '{"server_name":"gobby-results","tool_name":"get_tool_result"}'},
             ),
@@ -343,6 +355,8 @@ class TestProjectPathResolution:
         ids=(
             "wrapped-skill",
             "direct-result",
+            "direct-agent-result",
+            "wrapped-inter-session-message",
             "wrapped-route-alias",
             "direct-sessions",
             "argumentless-handoff",
@@ -453,6 +467,34 @@ class TestProjectPathResolution:
             (
                 HookEventType.BEFORE_TOOL,
                 {
+                    "tool_name": "mcp__gobby-agents__spawn_agent",
+                    "tool_input": {"task_id": "#1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__end_agent_run",
+                    "tool_input": {"run_id": "run-1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__send_message",
+                    "tool_input": {"target_session_id": "session-1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__wait_for_agent",
+                    "tool_input": {"run_id": "run-1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
                     "tool_name": "mcp__gobby-skills__get_skill_and_delete",
                     "tool_input": {"name": "python"},
                 },
@@ -471,6 +513,10 @@ class TestProjectPathResolution:
             "arbitrary-wrapper",
             "shell-spoof",
             "external-lookalike",
+            "agent-spawn",
+            "agent-stop",
+            "agent-send",
+            "agent-subscription",
             "prefix-lookalike",
             "stop",
         ),

@@ -45,6 +45,8 @@ _REPOSITORY_INDEPENDENT_QUERY_TOOLS = frozenset(
         *PROVIDER_DISCOVERY_TOOLS,
         *(f"gobby:{tool}" for tool in DISCOVERY_TOOLS & GOBBY_PROXY_TOOLS),
         "gobby:get_variable",
+        "gobby-agents:get_agent_result",
+        "gobby-agents:get_inter_session_message",
         "gobby-memory:get_memory",
         "gobby-memory:get_related_memories",
         "gobby-memory:list_memories",
