@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -45,6 +46,12 @@ def _regression_plan_doc() -> PlanDocument:
 
 def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
+
+
+def _write_plan(tmp_path: Path, text: str, name: str) -> Path:
+    path = tmp_path / name
+    path.write_text(textwrap.dedent(text).lstrip("\n").rstrip() + "\n", encoding="utf-8")
+    return path
 
 
 def test_build_file_context_rejects_parent_traversal(tmp_path: Path) -> None:
@@ -414,3 +421,134 @@ async def test_invoke_llm_compile_wraps_unexpected_provider_error(
         await service._invoke_llm_compile(run, {"task": {}})
 
     assert isinstance(excinfo.value.__cause__, RuntimeError)
+
+
+def test_contract_deferral_record_carries_depends_and_clean_title(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_path = _write_plan(
+        tmp_path,
+        """
+        > **Plan ID:** deferral-depends
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Immediate
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 - Immediate work exists. file: `src/immediate.py`
+
+        ### 1.2 Follow-up
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.2.1 - Follow-up work exists. file: `src/follow_up.py`
+
+        ## D1 Gated flip (depends: 1.2, P1)
+        `kind: deferred`
+
+        ```yaml
+        deferral:
+          task_ref: "#TBD-created-at-expansion"
+          reason: "waits on the follow-up evidence"
+          owner: "backend-developer"
+          original_acceptance_items:
+            - D1.1
+        ```
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Immediate from manifest"
+          category: code
+          implementation_domain: backend
+          task_type: task
+          depends_on: []
+          validation_criteria: "Immediate validation from manifest"
+          labels:
+            - "covers:deferral-depends:1.1:1.1.1"
+          assigned_agent: backend-developer
+          tdd: false
+          source_section: "1.1"
+        - title: "Follow-up from manifest"
+          category: code
+          implementation_domain: backend
+          task_type: task
+          depends_on: ["1.1"]
+          validation_criteria: "Follow-up validation from manifest"
+          labels:
+            - "covers:deferral-depends:1.2:1.2.1"
+          assigned_agent: backend-developer
+          tdd: false
+          source_section: "1.2"
+        ```
+        """,
+        name="deferral-depends.md",
+    )
+
+    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
+
+    assert [record["section_id"] for record in spec["deferrals"]] == ["D1"]
+    record = spec["deferrals"][0]
+    assert record["title"] == "Gated flip"
+    # 1.2 is named directly; P1 expands to its deliverables without repeating 1.2.
+    assert record["depends_on"] == ["1.2", "1.1"]
+
+
+def test_contract_deferral_dependency_must_resolve(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_path = _write_plan(
+        tmp_path,
+        """
+        > **Plan ID:** deferral-dangling
+
+        ## A1 Immediate
+        `kind: deliverable`
+
+        **Acceptance:**
+        - A1.1 - Immediate work exists. file: `src/immediate.py`
+
+        ## D1 Gated flip (depends: 9.9)
+        `kind: deferred`
+
+        ```yaml
+        deferral:
+          task_ref: "#TBD-created-at-expansion"
+          reason: "waits on nothing that exists"
+          owner: "backend-developer"
+          original_acceptance_items:
+            - D1.1
+        ```
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Immediate from manifest"
+          category: code
+          implementation_domain: backend
+          task_type: task
+          depends_on: []
+          validation_criteria: "Immediate validation from manifest"
+          labels:
+            - "covers:deferral-dangling:A1:A1.1"
+          assigned_agent: backend-developer
+          tdd: false
+          source_section: "A1"
+        ```
+        """,
+        name="deferral-dangling.md",
+    )
+
+    with pytest.raises(ValueError, match="deferred section 'D1' depends on '9.9'"):
+        service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
