@@ -1019,7 +1019,7 @@
     },
     {
       "activation": "live",
-      "default": 256000,
+      "default": 160000,
       "description": "Tool-block threshold for standard and unknown context windows",
       "key": "context_handoff.block_tokens",
       "machineExport": false,
@@ -1030,7 +1030,7 @@
     },
     {
       "activation": "live",
-      "default": 300000,
+      "default": 160000,
       "description": "Tool-block threshold for extended context windows",
       "key": "context_handoff.extended_block_tokens",
       "machineExport": false,
@@ -1041,7 +1041,7 @@
     },
     {
       "activation": "live",
-      "default": 250000,
+      "default": 128000,
       "description": "Warning threshold for extended context windows",
       "key": "context_handoff.extended_warn_tokens",
       "machineExport": false,
@@ -1107,7 +1107,7 @@
     },
     {
       "activation": "live",
-      "default": 200000,
+      "default": 128000,
       "description": "Warning threshold for standard and unknown context windows",
       "key": "context_handoff.warn_tokens",
       "machineExport": false,

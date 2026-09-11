@@ -253,12 +253,12 @@ class ContextHandoffConfig(BaseModel):
     """Context-pressure handoff thresholds and warning cadence."""
 
     warn_tokens: int = Field(
-        default=200_000,
+        default=128_000,
         gt=0,
         description="Warning threshold for standard and unknown context windows",
     )
     block_tokens: int = Field(
-        default=256_000,
+        default=160_000,
         gt=0,
         description="Tool-block threshold for standard and unknown context windows",
     )
@@ -285,12 +285,12 @@ class ContextHandoffConfig(BaseModel):
         description="Windows at or above this size use the extended thresholds",
     )
     extended_warn_tokens: int = Field(
-        default=250_000,
+        default=128_000,
         gt=0,
         description="Warning threshold for extended context windows",
     )
     extended_block_tokens: int = Field(
-        default=300_000,
+        default=160_000,
         gt=0,
         description="Tool-block threshold for extended context windows",
     )
