@@ -439,6 +439,11 @@ fn run() -> anyhow::Result<()> {
             receipt.as_deref().map(std::path::Path::new),
         ),
         Command::Index {
+            snapshot_commit: Some(commit_oid),
+            ..
+        } => commands::index::run_snapshot(&ctx, &commit_oid, format),
+        Command::Index {
+            snapshot_commit: None,
             path,
             files,
             full,

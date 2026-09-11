@@ -15,7 +15,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn discovered_scan_removes_local_selector_when_ast_indexing_returns_none() {
         let (mut conn, database_url) = connect_test_db();
-        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_root = project_tempdir();
         let project_id = unique_test_project_id("gcode-discovered-skip-cleanup");
         cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
         let _cleanup = ProjectCleanup {
@@ -78,7 +78,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn token_named_css_is_indexed_while_plaintext_token_container_is_skipped() {
         let (mut conn, database_url) = connect_test_db();
-        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_root = project_tempdir();
         let project_id = unique_test_project_id("gcode-token-content-policy");
         cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
         let _cleanup = ProjectCleanup {
@@ -129,7 +129,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn configured_exclude_prunes_local_file_selector() {
         let (mut conn, database_url) = connect_test_db();
-        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_root = project_tempdir();
         let project_id = unique_test_project_id("gcode-configured-exclude-cleanup");
         cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
         let _cleanup = ProjectCleanup {
@@ -186,7 +186,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn cleanup_project_deletes_code_inheritance() {
         let (mut conn, database_url) = connect_test_db();
-        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_root = project_tempdir();
         let project_id = unique_test_project_id("gcode-cleanup-inheritance");
         cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
         let _cleanup = ProjectCleanup {
@@ -275,6 +275,15 @@ fn test_context(database_url: String, project_root: PathBuf, project_id: String)
         grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     }
+}
+
+fn project_tempdir() -> tempfile::TempDir {
+    // Low-level index requests must use the same canonical root registered by
+    // test_context; macOS's default /var temp directory aliases /private/var.
+    let parent = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonical temp root");
+    tempfile::tempdir_in(parent).expect("project tempdir")
 }
 
 fn discovered_request(project_root: &Path, full: bool) -> IndexRequest {

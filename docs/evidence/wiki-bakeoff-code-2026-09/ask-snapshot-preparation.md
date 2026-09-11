@@ -303,3 +303,41 @@ The production fix must index the verified eligible inventory while preserving
 security exclusions and ordinary navigation policy; it must not waive completeness
 or allowlist only the first failing path. No new full probe is justified until
 this real-native fixture passes fresh and recovered retrieval.
+
+## Complete snapshot inventory indexing
+
+The parent reproduced the remaining `.gitignore` failure on integration
+`cdce43626b` with a freshly rebuilt private `gcode`: one failure in 3.07 seconds.
+The correction adds `gcode index --snapshot-commit <oid>` and passes the run's
+immutable commit through both fresh and recovered Ask snapshot preparation.
+This command verifies the complete materialization, indexes verified Git blob
+bytes through the existing parser and fact sinks, then verifies it again.
+It indexes every eligible file, including hidden, ignored, excluded-directory,
+and empty committed text. Snapshot overlays receive their own file selectors
+and tombstones for parent-only paths. Ordinary discovery policy is unchanged.
+The command rejects partial ordinary scan options. Sensitive, symlink, and
+untracked exclusions remain enforced by the snapshot inventory and verifier.
+
+The first native GREEN was one pass in 6.66 seconds, using the same command as
+RED, with `GOBBY_NATIVE_BIN_DIR` set to the integration worktree's private
+`target/release` directory:
+
+```sh
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src \
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test \
+GOBBY_TEST_PROTECT=1 GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/target/release \
+uv run --no-sync pytest tests/ask/test_native_integration.py::test_real_managed_snapshot_queries_branch_native_gcode -q
+```
+
+That test exercises real managed credentials, native indexing/evidence, fresh
+and recovered generations, historical merge and root commit metadata, secret
+exclusion, and rejection of a stale runtime identity. It launches no provider
+agent. The companion snapshot/isolation files passed 83 tests; the focused Rust
+CLI/parser run passed 149 tests. Exact final validation and subsequent review
+are recorded under coordinator task `#22021`.
+
+This resolves the small inventory regression, not the full native security or
+resume acceptance. Attempts 1–11 remain unchanged, attempt 12 must retain its
+original deadline and separate evidence directory, and the all-14 cohort has
+not yet run. No shared binary installation or daemon restart was performed for
+this correction.

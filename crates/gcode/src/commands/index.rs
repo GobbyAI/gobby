@@ -20,6 +20,20 @@ pub(crate) enum RunIndexLockedOutput {
     Projections(IndexSyncProjectionsOutput),
 }
 
+/// Snapshot indexing is whole-inventory, with the same project lock as ordinary indexing.
+pub(crate) fn run_snapshot(ctx: &Context, commit_oid: &str, format: Format) -> anyhow::Result<()> {
+    let result = index_lock::with_project_lock(ctx, IndexLockPolicy::wait(), || {
+        api::index_snapshot(ctx, commit_oid)
+    })?;
+    let IndexLockResult::Acquired(outcome) = result else {
+        anyhow::bail!("snapshot index lock was not acquired");
+    };
+    match format {
+        Format::Json => output::print_json(&outcome),
+        Format::Text => output::print_text(&index_text(&outcome)),
+    }
+}
+
 // Args map 1:1 to the `gcode index` CLI flags; a wrapper struct would only add
 // indirection between clap and this entry point.
 #[allow(clippy::too_many_arguments)]

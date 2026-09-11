@@ -272,6 +272,7 @@ async def ensure_isolation_code_index(
     api_token: str | None = None,
     identity_env: Mapping[str, str] | None = None,
     phase_timings_ms: MutableMapping[str, float] | None = None,
+    snapshot_commit: str | None = None,
 ) -> CodeIndexPreflightResult:
     """Prepare and verify `gcode` access inside an isolated workspace.
 
@@ -360,9 +361,12 @@ async def ensure_isolation_code_index(
         finish_spawn_phase(phase_timings_ms, "code_index_status", status_started)
 
     index_started = start_spawn_phase()
+    index_command = [gcode_command, "index", "--quiet", "--project", str(workspace)]
+    if snapshot_commit is not None:
+        index_command.extend(["--snapshot-commit", snapshot_commit])
     try:
         await _run_gcode(
-            [gcode_command, "index", "--quiet", "--project", str(workspace)],
+            index_command,
             cwd=workspace,
             timeout=remaining(),
             timeout_code="gcode_index_timeout",

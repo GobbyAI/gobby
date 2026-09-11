@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn test_parse_snapshot_index_requires_whole_inventory() {
+    let commit = "a".repeat(40);
+    let cli = Cli::try_parse_from(["gcode", "index", "--snapshot-commit", &commit])
+        .expect("snapshot index parses");
+    assert!(
+        matches!(cli.command, Command::Index { snapshot_commit: Some(value), .. } if value == commit)
+    );
+    for partial in [vec!["src"], vec!["--files", "src/lib.rs"], vec!["--full"]] {
+        let mut args = vec!["gcode", "index", "--snapshot-commit", &commit];
+        args.extend(partial);
+        let Err(error) = Cli::try_parse_from(args) else {
+            panic!("snapshot index must reject ordinary scan scope");
+        };
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+}
+
+#[test]
 fn test_parse_index_require_cpp_semantics() {
     let cli =
         Cli::try_parse_from(["gcode", "index", "--require-cpp-semantics"]).expect("index parses");

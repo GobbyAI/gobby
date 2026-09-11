@@ -630,7 +630,7 @@ fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
     abs.starts_with(filter_abs)
 }
 
-fn write_tombstone(
+pub(super) fn write_tombstone(
     conn: &mut Client,
     project_id: &str,
     root_path: &Path,

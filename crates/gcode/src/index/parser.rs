@@ -61,6 +61,29 @@ pub(crate) fn parse_file_with_semantic(
         return Ok(None);
     }
 
+    let Ok(source) = std::fs::read(file_path) else {
+        return Ok(None);
+    };
+    parse_source_with_semantic(
+        file_path,
+        project_id,
+        root_path,
+        source,
+        import_context,
+        semantic_resolver,
+    )
+}
+
+/// Parse captured source after the caller has established its eligibility.
+/// Ordinary files use the checks above; snapshot indexing supplies verified Git blobs.
+pub(crate) fn parse_source_with_semantic(
+    file_path: &Path,
+    project_id: &str,
+    root_path: &Path,
+    source: Vec<u8>,
+    import_context: &ImportResolutionContext,
+    semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
+) -> anyhow::Result<Option<ParseResult>> {
     let file_str = file_path.to_string_lossy();
     let Some(language) = languages::detect_language(&file_str) else {
         return Ok(None);
@@ -69,10 +92,6 @@ pub(crate) fn parse_file_with_semantic(
         return Ok(None);
     };
     let Some(ts_lang) = languages::get_ts_language_for_path(language, &file_str) else {
-        return Ok(None);
-    };
-
-    let Ok(source) = std::fs::read(file_path) else {
         return Ok(None);
     };
 

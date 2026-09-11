@@ -531,7 +531,9 @@ async def test_snapshot_cancellation_revokes_grant_issued_in_blocking_call(
         snapshot_executable=_branch_gcode(),
     )
     task = asyncio.create_task(
-        manager._prepare_index(run_id, source_root, datetime.now(UTC) + timedelta(seconds=10))
+        manager._prepare_index(
+            run_id, source_root, datetime.now(UTC) + timedelta(seconds=10), commit_oid
+        )
     )
     assert await asyncio.to_thread(entered.wait, 2)
     task.cancel()

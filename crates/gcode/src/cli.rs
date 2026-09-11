@@ -72,6 +72,9 @@ pub(crate) enum Command {
     Init,
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
+        /// Index every eligible verified Git blob in an exact materialized snapshot
+        #[arg(long, conflicts_with_all = ["path", "files", "full", "require_cpp_semantics", "sync_projections", "skip_if_locked"])]
+        snapshot_commit: Option<String>,
         /// Path to index (default: project root)
         path: Option<String>,
         /// Index only specific files

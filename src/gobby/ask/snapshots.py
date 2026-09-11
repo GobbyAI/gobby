@@ -403,7 +403,9 @@ class AskSnapshotManager:
 
         runtime: SnapshotIndexRuntime | None = None
         try:
-            runtime = await self._prepare_index(record.run_id, source_root, deadline_at)
+            runtime = await self._prepare_index(
+                record.run_id, source_root, deadline_at, record.binding.commit_oid
+            )
             lifecycle_pointer = await self._publish_lifecycle(
                 record=record,
                 generation=current.generation + 1,
@@ -495,6 +497,7 @@ class AskSnapshotManager:
                 record.run_id,
                 source_root,
                 record.binding.deadline_at,
+                record.binding.commit_oid,
             )
             lifecycle_pointer = await self._publish_lifecycle(
                 record=record,
@@ -728,6 +731,7 @@ class AskSnapshotManager:
         run_id: str,
         source_root: Path,
         deadline_at: datetime,
+        commit_oid: str,
     ) -> SnapshotIndexRuntime:
         remaining = _remaining_seconds(deadline_at)
         if self.index_preparer is not None:
@@ -780,6 +784,7 @@ class AskSnapshotManager:
                     credential=issued.credential,
                     principal_kind="tool_chat",
                     identity_env=identity_env,
+                    snapshot_commit=commit_oid,
                 )
             )
             try:
