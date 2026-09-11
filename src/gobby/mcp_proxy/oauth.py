@@ -3,12 +3,17 @@
 import asyncio
 import hashlib
 import shlex
+import webbrowser
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Literal
+from urllib.parse import urlsplit
 
 import httpx2
+from mcp.client import Client
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, OAuthFlowError
 from mcp.client.auth.utils import create_client_registration_request
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthClientMetadata,
@@ -18,9 +23,21 @@ from mcp.shared.auth import (
 )
 from pydantic import AnyUrl, BaseModel
 
-from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
+from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPError, MCPServerConfig
+from gobby.mcp_proxy.oauth_callback import OAuthCallback
+from gobby.mcp_proxy.transports.base import gobby_client_info
+from gobby.mcp_proxy.transports.http import build_mcp_http_client
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
+
+DEFAULT_OAUTH_TIMEOUT_SECONDS = 300.0
+
+
+def oauth_auth_command(config: MCPServerConfig) -> str:
+    command = ["gobby", "mcp-proxy", "auth", config.name]
+    if config.project_id == GLOBAL_PROJECT_ID:
+        command.append("--global")
+    return shlex.join(command)
 
 
 class OAuthState(BaseModel):
@@ -81,10 +98,7 @@ class PersistentOAuthProvider(OAuthClientProvider):
             raise ValueError("OAuth requires an HTTP or SSE MCP server")
         self.persistent_storage = storage
         self.interactive = redirect_handler is not None
-        command = ["gobby", "mcp-proxy", "auth", config.name]
-        if config.project_id == GLOBAL_PROJECT_ID:
-            command.append("--global")
-        self.auth_command = shlex.join(command)
+        self.auth_command = oauth_auth_command(config)
 
         async def needs_login(_url: str) -> None:
             raise MCPAuthorizationRequired(self.auth_command)
@@ -208,3 +222,67 @@ class PersistentOAuthProvider(OAuthClientProvider):
         refreshed = await super()._handle_refresh_response(response)
         await self._save_context()
         return refreshed
+
+
+async def authorize_server(
+    config: MCPServerConfig,
+    store: SecretStore,
+    timeout: float,
+    open_browser: Callable[[str], Awaitable[None]],
+) -> None:
+    """Complete interactive OAuth and persist credentials for one MCP server."""
+    storage = MCPOAuthStorage(store, config)
+    await storage.load()
+    port = 0
+    if storage.state.client and storage.state.client.redirect_uris:
+        redirect = urlsplit(str(storage.state.client.redirect_uris[0]))
+        if (
+            redirect.scheme != "http"
+            or redirect.hostname != "127.0.0.1"
+            or redirect.path != "/callback"
+            or not redirect.port
+            or redirect.query
+            or redirect.fragment
+            or redirect.username
+        ):
+            raise MCPError("Stored OAuth client has an invalid loopback callback URI")
+        port = redirect.port
+
+    async with asyncio.timeout(timeout), OAuthCallback(open_browser, port) as callback:
+        auth = PersistentOAuthProvider(
+            config, storage, callback.redirect_uri, callback.redirect, callback.wait
+        )
+        if config.url is None:
+            raise ValueError("OAuth requires a server URL")
+        async with build_mcp_http_client(config.headers, auth) as http_client:
+            transport = (
+                sse_client(config.url, headers=config.headers, auth=auth)
+                if config.transport == "sse"
+                else streamable_http_client(config.url, http_client=http_client)
+            )
+            async with Client(transport, client_info=gobby_client_info()) as client:
+                # Some servers permit initialization anonymously and challenge discovery.
+                await client.list_tools()
+        if storage.state.tokens is None:
+            raise MCPError(
+                "The MCP server did not request OAuth during initialization or tool discovery; "
+                "check the server URL and authentication requirements"
+            )
+
+
+async def authorize_server_in_browser(
+    config: MCPServerConfig,
+    store: SecretStore,
+    timeout: float = DEFAULT_OAUTH_TIMEOUT_SECONDS,
+    *,
+    browser_open: Callable[[str], bool] | None = None,
+) -> None:
+    """Launch the system browser and complete OAuth for a daemon-owned request."""
+    opener = browser_open or webbrowser.open
+
+    async def open_browser(url: str) -> None:
+        opened = await asyncio.to_thread(opener, url)
+        if not opened:
+            raise MCPAuthorizationRequired(oauth_auth_command(config))
+
+    await authorize_server(config, store, timeout, open_browser)

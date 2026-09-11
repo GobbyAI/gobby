@@ -9,16 +9,20 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
-import click
 import httpx2
 import pytest
 from mcp.client.auth import AuthorizationCodeResult, OAuthFlowError
 
-from gobby.cli.mcp_oauth import authorize_server
-from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
-from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
+from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPError, MCPServerConfig
+from gobby.mcp_proxy.oauth import (
+    MCPOAuthStorage,
+    PersistentOAuthProvider,
+    authorize_server,
+    authorize_server_in_browser,
+)
 from gobby.mcp_proxy.transports.factory import create_transport_connection
 from gobby.mcp_proxy.transports.http import HTTPTransportConnection
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
@@ -200,14 +204,14 @@ async def test_cli_login_discovers_tools_after_public_initialization(
         return httpx2.AsyncClient(auth=auth, transport=httpx2.MockTransport(respond))
 
     with (
-        patch("gobby.cli.mcp_oauth.OAuthCallback", return_value=callback),
-        patch("gobby.cli.mcp_oauth.build_mcp_http_client", side_effect=http_client),
+        patch("gobby.mcp_proxy.oauth.OAuthCallback", return_value=callback),
+        patch("gobby.mcp_proxy.oauth.build_mcp_http_client", side_effect=http_client),
     ):
         if protected:
-            await authorize_server(config, secret_store, 5)
+            await authorize_server(config, secret_store, 5, AsyncMock())
         else:
-            with pytest.raises(click.ClickException, match="did not request OAuth"):
-                await authorize_server(config, secret_store, 5)
+            with pytest.raises(MCPError, match="did not request OAuth"):
+                await authorize_server(config, secret_store, 5, AsyncMock())
     assert methods[:3] == ["initialize", "notifications/initialized", "tools/list"]
     storage = MCPOAuthStorage(secret_store, config)
     await storage.load()
@@ -218,6 +222,28 @@ async def test_cli_login_discovers_tools_after_public_initialization(
     else:
         assert storage.state.tokens is None
         assert server.registration == {}
+
+
+@pytest.mark.asyncio
+async def test_browser_launch_failure_preserves_scoped_auth_command(
+    secret_store: SecretStore,
+) -> None:
+    config = MCPServerConfig(
+        name="fieldy",
+        project_id=GLOBAL_PROJECT_ID,
+        transport="http",
+        url="https://api.fieldy.ai/mcp",
+        requires_oauth=True,
+    )
+    authorize = AsyncMock()
+    with patch("gobby.mcp_proxy.oauth.authorize_server", authorize):
+        await authorize_server_in_browser(config, secret_store, browser_open=lambda _url: False)
+
+    assert authorize.await_args is not None
+    open_browser = authorize.await_args.args[3]
+    with pytest.raises(MCPAuthorizationRequired) as caught:
+        await open_browser("https://auth.example/authorize")
+    assert caught.value.command == "gobby mcp-proxy auth fieldy --global"
 
 
 async def login(

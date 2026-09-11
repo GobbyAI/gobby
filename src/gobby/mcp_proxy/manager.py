@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from mcp import ClientSession
@@ -32,6 +32,9 @@ from gobby.mcp_proxy.models import (
 )
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 from gobby.mcp_proxy.transports.factory import create_transport_connection
+from gobby.storage.secrets import SecretStore
+
+OAuthAuthorizer = Callable[[MCPServerConfig, SecretStore], Awaitable[None]]
 
 _create_transport_connection = create_transport_connection
 
@@ -65,6 +68,7 @@ class MCPClientManager:
         metrics_manager: Any | None = None,
         stdio_errlog_path: str | None = None,
         template_expand: Callable[..., Mapping[str, Any]] | None = None,
+        oauth_authorizer: OAuthAuthorizer | None = None,
     ):
         self._connections: dict[str, BaseTransportConnection] = {}
         self._configs: dict[str, MCPServerConfig] = {}
@@ -74,6 +78,8 @@ class MCPClientManager:
         self._health_check_interval = health_check_interval
         self._health_check_task: asyncio.Task[None] | None = None
         self._reconnect_tasks: set[asyncio.Task[None]] = set()
+        self._oauth_authorization_tasks: dict[str, asyncio.Task[None]] = {}
+        self._oauth_authorization_versions: dict[str, int] = {}
         self._running = False
         self.external_id = external_id
         self.project_path = project_path
@@ -85,6 +91,7 @@ class MCPClientManager:
         self.connection_timeout = connection_timeout
         self.max_connection_retries = max_connection_retries
         self.stdio_errlog_path = stdio_errlog_path
+        self.oauth_authorizer = oauth_authorizer
         self._lazy_connector = LazyServerConnector(
             retry_config=RetryConfig(max_retries=max_connection_retries),
         )
@@ -163,7 +170,10 @@ class MCPClientManager:
         return await server_registry.add_server(self, config)
 
     async def remove_server(self, server_id: str, project_id: str | None = None) -> dict[str, Any]:
-        return await server_registry.remove_server(self, server_id, project_id)
+        await connections.cancel_oauth_authorization(self, server_id)
+        result = await server_registry.remove_server(self, server_id, project_id)
+        self._oauth_authorization_versions.pop(server_id, None)
+        return result
 
     async def update_server(
         self,
@@ -171,6 +181,7 @@ class MCPClientManager:
         config: MCPServerConfig | Mapping[str, Any],
         project_id: str | None = None,
     ) -> dict[str, Any]:
+        await connections.cancel_oauth_authorization(self, server_id)
         return await server_registry.update_server(self, server_id, config, project_id)
 
     async def set_server_description(self, server_id: str, description: str) -> None:
@@ -221,6 +232,14 @@ class MCPClientManager:
             config,
             create_connection,
         )
+
+    async def _authorize_oauth(self, config: MCPServerConfig) -> None:
+        if self.oauth_authorizer is None:
+            raise RuntimeError("Automatic MCP OAuth authorization is unavailable")
+        db = getattr(self.mcp_db_manager, "db", None)
+        if db is None:
+            raise ValueError("MCP OAuth requires a database-backed secret store")
+        await self.oauth_authorizer(config, SecretStore(db))
 
     async def disconnect_all(self) -> None:
         await connections.disconnect_all(self, logger)

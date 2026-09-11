@@ -2,12 +2,9 @@
 
 import asyncio
 import webbrowser
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import click
-from mcp.client import Client
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client
 
 from gobby.cli.mcp_proxy import (
     call_mcp_api,
@@ -17,58 +14,11 @@ from gobby.cli.mcp_proxy import (
     resolve_cli_mcp_project,
 )
 from gobby.cli.runtime import require_cli_database
-from gobby.mcp_proxy.models import MCPServerConfig
-from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
-from gobby.mcp_proxy.oauth_callback import OAuthCallback
-from gobby.mcp_proxy.transports.base import gobby_client_info
-from gobby.mcp_proxy.transports.http import build_mcp_http_client
+from gobby.mcp_proxy.models import MCPError, MCPServerConfig
+from gobby.mcp_proxy.oauth import authorize_server
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.secrets import SecretStore
-
-
-async def authorize_server(config: MCPServerConfig, store: SecretStore, timeout: float) -> None:
-    storage = MCPOAuthStorage(store, config)
-    await storage.load()
-    port = 0
-    if storage.state.client and storage.state.client.redirect_uris:
-        redirect = urlsplit(str(storage.state.client.redirect_uris[0]))
-        if (
-            redirect.scheme != "http"
-            or redirect.hostname != "127.0.0.1"
-            or redirect.path != "/callback"
-            or not redirect.port
-            or redirect.query
-            or redirect.fragment
-            or redirect.username
-        ):
-            raise click.ClickException("Stored OAuth client has an invalid loopback callback URI")
-        port = redirect.port
-
-    async def open_browser(url: str) -> None:
-        click.echo(f"Authorize {config.name} in your browser:\n{url}")
-        await asyncio.to_thread(webbrowser.open, url)
-
-    async with asyncio.timeout(timeout), OAuthCallback(open_browser, port) as callback:
-        auth = PersistentOAuthProvider(
-            config, storage, callback.redirect_uri, callback.redirect, callback.wait
-        )
-        if config.url is None:
-            raise ValueError("OAuth requires a server URL")
-        async with build_mcp_http_client(config.headers, auth) as http_client:
-            transport = (
-                sse_client(config.url, headers=config.headers, auth=auth)
-                if config.transport == "sse"
-                else streamable_http_client(config.url, http_client=http_client)
-            )
-            async with Client(transport, client_info=gobby_client_info()) as client:
-                # Some servers permit initialization anonymously and challenge discovery.
-                await client.list_tools()
-        if storage.state.tokens is None:
-            raise click.ClickException(
-                "The MCP server did not request OAuth during initialization or tool discovery; "
-                "check the server URL and authentication requirements"
-            )
 
 
 @mcp_proxy.command("auth")
@@ -96,11 +46,18 @@ def auth_server(ctx: click.Context, name: str, global_scope: bool, timeout: floa
         requires_oauth=True,
         headers=store.resolve_dict(row.headers, project_id=row.project_id) if row.headers else None,
     )
+
+    async def open_browser(url: str) -> None:
+        click.echo(f"Authorize {config.name} in your browser:\n{url}")
+        await asyncio.to_thread(webbrowser.open, url)
+
     try:
         config.validate()
-        asyncio.run(authorize_server(config, store, timeout))
+        asyncio.run(authorize_server(config, store, timeout, open_browser))
     except click.ClickException:
         raise
+    except MCPError as exc:
+        raise click.ClickException(str(exc)) from exc
     except TimeoutError as exc:
         raise click.ClickException(
             "OAuth authorization timed out; run auth again to retry"
