@@ -508,3 +508,56 @@ and passed afterward. All 100 focused harness, cleanup, and provenance tests
 passed in 5.23 seconds. Ruff, test quality, test types, and the suppression ratchet
 passed. This corrects the controller contract; another full native probe still
 depends on the product line-range correction and parent review.
+
+## Range corrections reviewed; native launch recovery pending
+
+The range producer correction `e447449f5ed9b8ea5ca0ba5bb625d4c00e8ed3ca`
+removes the synthetic segment after a terminal LF. Parent DB-backed validation
+then exposed `index_incomplete` for `fixtures/empty.txt`. The prescribed Rust
+test database, `gobby_gcode_test` on loopback port 60892, worked; the earlier
+worker's Python-test-database and fresh-image failures were not prerequisites
+for this validation.
+
+Correction `4361440167e6463a7530e9ecc47053666b412ac8` admits an absent ordinary
+index row only for a verified empty or valid UTF-8 whitespace-only snapshot
+blob. Missing nonblank facts and mismatched indexed hashes remain errors. Tests
+cover empty and Unicode-whitespace admission, missing nonblank facts, terminal
+LF/CRLF, unterminated content, and real blank lines at an overlap boundary. The
+integration metadata assertions now cover the exact seven-path fixture commit.
+Parent independently reviewed both diffs and ran:
+
+```sh
+env -u DEVELOPER_DIR -u DATABASE_URL GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test GOBBY_TEST_PROTECT=1 cargo test -p gobby-code --test evidence -- --nocapture
+```
+
+All four tests passed in 8.43 seconds. Both commits were merged through the
+managed worktree tools into the integration branch at `ba3aca4d1842c64171fc5261c9b73f04aa268bcf`;
+the correction worktree was deleted through the same tools. Main was then merged
+through `07255f624fb2ccc2f827cc3e8d8f3d48fd29acaa`, preserving committed main
+changes through `2a0164ad1f` without touching foreign main dirt.
+
+The release gcode build completed in 62 seconds. Immutable probe binaries at
+`target/ask-probe-07255f62` have these SHA-256 digests:
+
+- gcode: `bd676d06d9933251fe1e6f6ee363c3f39c58281fee03f95a3e889ed1072641d0`
+- gterm: `a910dd61e2f379ac91362ef492c667fb69b7adf3b9cc95959839ad11d18b7326`
+
+The preliminary `tests/ask/test_native_integration.py` run with that pin stalled
+at native launch. A sample of gcode PID 52926 showed only `_dyld_start`, with a
+112 KB footprint; `codesign --verify --strict` passed. The sample is preserved at
+`/tmp/gobby-12261-probe-07255f62-sample.txt`. Concurrent syspolicyd PID 7443 logs
+again showed `Unable to initialize qtn_proc: 3` and
+`dispatch_mig_server returned 268435459`. The parent terminated the two owned
+stalled gcode children so test cleanup could finish: two tests passed and the two
+native cases failed after termination (413.91 seconds total). This run is not
+passing native acceptance and is separate from numbered full probe attempts.
+
+The user-authorized graceful syspolicyd restart was requested through macOS
+administrator authentication and was still awaiting authentication at this
+checkpoint. No Gobby daemon restart or shared binary install occurred. Ordinary
+coordination sends, a read-only diagnostic worker launch, and session listing
+were blocked by the recurrent MCP Git-status preflight failure; even the optional
+preflight setting did not unblock a coordination message. No diagnostic worker
+was created. Direct integration Git status completed in 0.09 seconds. Both the
+OS launch recovery and the Git-status failure remain owned, unresolved work.
+Attempt 13 and the all14 cohort have not run; attempts 1–12 remain unchanged.
