@@ -81,9 +81,9 @@ Overrides only reduce a verified value. Preserve raw limits and source paths.
 Include lossless JSON-compatible serialization and strict deserialization.
 
 **Acceptance:**
-- 1.1.1 - Canonical 262144 and runtime 32768 resolve to 32768; lower overrides reduce it, larger overrides cannot increase it. test: `tests/providers/capabilities/test_local_context.py`.
-- 1.1.2 - Multiple instances use the minimum, explicit selection uses that instance, and any missing required evidence yields unknown even with an override. test: `tests/providers/capabilities/test_local_context.py`.
-- 1.1.3 - Invalid values, conflicting identities, contradictory limits and round-trip provenance are covered. test: `tests/providers/capabilities/test_local_context.py`.
+- 1.1.1 - Canonical 262144 and runtime 32768 resolve to 32768; lower overrides reduce it, larger overrides cannot increase it. test: `tests/providers/capabilities/test_local_context.py::test_effective_limits_and_overrides`.
+- 1.1.2 - Multiple instances use the minimum, explicit selection uses that instance, and any missing required evidence yields unknown even with an override. test: `tests/providers/capabilities/test_local_context.py::test_instance_evidence`.
+- 1.1.3 - Invalid values, conflicting identities, contradictory limits and round-trip provenance are covered. test: `tests/providers/capabilities/test_local_context.py::test_invalid_evidence_roundtrip`.
 
 ### 1.2 Discover LM Studio context [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -103,8 +103,8 @@ eligible duplicate catalog entry rather than taking the first. HTTP/JSON failure
 retain sanitized diagnostics and endpoint identity. Do not change discovery IDs.
 
 **Acceptance:**
-- 1.2.1 - Mock native metadata proves architecture/runtime distinction, loaded and unloaded cases, multiple instances and explicit instance selection. test: `tests/providers/capabilities/test_local_context_lmstudio.py`.
-- 1.2.2 - Mixed embedding/LLM catalogs, duplicate identities, invalid values, contradictory metadata and endpoint failure retain independent typed observations. test: `tests/providers/capabilities/test_local_context_lmstudio.py`.
+- 1.2.1 - Mock native metadata proves architecture/runtime distinction, loaded and unloaded cases, multiple instances and explicit instance selection. test: `tests/providers/capabilities/test_local_context_lmstudio.py::test_lmstudio_instances`.
+- 1.2.2 - Mixed embedding/LLM catalogs, duplicate identities, invalid values, contradictory metadata and endpoint failure retain independent typed observations. test: `tests/providers/capabilities/test_local_context_lmstudio.py::test_lmstudio_unknown_metadata`.
 
 ### 1.3 Discover Ollama context [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -124,8 +124,8 @@ context, digest mismatch, failed endpoint or malformed metadata remains unknown.
 Use 1.1's minimum rule; never use Modelfile num_ctx as proof of running context.
 
 **Acceptance:**
-- 1.3.1 - Mock show/ps metadata yields 32768 for 262144 canonical context and preserves digest and both source paths. test: `tests/providers/capabilities/test_local_context_ollama.py`.
-- 1.3.2 - Multiple running records, missing ps evidence, unrelated architecture fields, digest changes and invalid values fail conservatively. test: `tests/providers/capabilities/test_local_context_ollama.py`.
+- 1.3.1 - Mock show/ps metadata yields 32768 for 262144 canonical context and preserves digest and both source paths. test: `tests/providers/capabilities/test_local_context_ollama.py::test_ollama_context_provenance`.
+- 1.3.2 - Multiple running records, missing ps evidence, unrelated architecture fields, digest changes and invalid values fail conservatively. test: `tests/providers/capabilities/test_local_context_ollama.py::test_ollama_invalid_runtime`.
 
 ### 1.4 Preserve vLLM serving limits and ID projections [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -146,8 +146,8 @@ conservative duplicate handling. Missing max_model_len is unknown; no model-card
 or OpenRouter fallback. Do not change server startup, health or model loading.
 
 **Acceptance:**
-- 1.4.1 - max_model_len survives parsing and positive-value validation, with unknown for missing/invalid serving metadata. test: `tests/providers/capabilities/test_local_context_vllm.py`.
-- 1.4.2 - Existing list[str] projections, explicit/auto model selection, embeddings consumers and malformed catalog behavior remain unchanged. test: `tests/agents/test_local_model.py`.
+- 1.4.1 - max_model_len survives parsing and positive-value validation, with unknown for missing/invalid serving metadata. test: `tests/providers/capabilities/test_local_context_vllm.py::test_vllm_serving_limits`.
+- 1.4.2 - Existing list[str] projections, explicit/auto model selection, embeddings consumers and malformed catalog behavior remain unchanged. test: `tests/agents/test_local_model.py::test_vllm_context_id_projection`.
 
 ### 1.5 Discover generic loopback context [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -167,8 +167,8 @@ Support localhost, 127.0.0.0/8 and IPv6 loopback with URL parsing; no DNS guessi
 Generic remote endpoints remain on the existing remote route.
 
 **Acceptance:**
-- 1.5.1 - Mock loopback serving metadata yields a positive conservative limit without guessed provider semantics. test: `tests/providers/capabilities/test_local_context_generic.py`.
-- 1.5.2 - Missing metadata, invalid values, non-loopback URLs and mixed model catalogs cannot fabricate local limits. test: `tests/providers/capabilities/test_local_context_generic.py`.
+- 1.5.1 - Mock loopback serving metadata yields a positive conservative limit without guessed provider semantics. test: `tests/providers/capabilities/test_local_context_generic.py::test_generic_serving_limits`.
+- 1.5.2 - Missing metadata, invalid values, non-loopback URLs and mixed model catalogs cannot fabricate local limits. test: `tests/providers/capabilities/test_local_context_generic.py::test_generic_unknown_metadata`.
 
 ## P2: Capability integration
 `kind: framing`
@@ -195,8 +195,8 @@ affect the fingerprint; raw credentials never persist. Whole endpoint snapshots
 replace atomically so removed models disappear. Persist unknown observations too.
 
 **Acceptance:**
-- 2.1.1 - Isolated storage round-trips all limits, instance/digest identity, timestamp, provenance and unknown diagnostics. test: `tests/providers/capabilities/test_local_context_store.py`.
-- 2.1.2 - Identical model names on different machines/endpoints and local/remote routes never collide; replacement removes stale identities without changing other snapshots. test: `tests/providers/capabilities/test_local_context_store.py`.
+- 2.1.1 - Isolated storage round-trips all limits, instance/digest identity, timestamp, provenance and unknown diagnostics. test: `tests/providers/capabilities/test_local_context_store.py::test_observation_storage_roundtrip`.
+- 2.1.2 - Identical model names on different machines/endpoints and local/remote routes never collide; replacement removes stale identities without changing other snapshots. test: `tests/providers/capabilities/test_local_context_store.py::test_observation_storage_isolation`.
 
 ### 2.2 Refresh observations from endpoint and CLI configuration [category: code] (depends: 1.2, 1.3, 1.4, 1.5, 2.1)
 `kind: deliverable`
@@ -233,9 +233,9 @@ but still requires fresh evidence before use.
 separate lifecycle. This leaf owns the single refresh/publication state machine.
 
 **Acceptance:**
-- 2.2.1 - Existing endpoint and CLI settings produce endpoint-scoped routes, distinguish local/remote models and redact credentials. test: `tests/providers/capabilities/test_local_context_config.py`.
-- 2.2.2 - Endpoint failure/recovery, concurrent callers, waiter cancellation and event-loop responsiveness are covered with mocked I/O. test: `tests/providers/capabilities/test_local_context_refresh.py`.
-- 2.2.3 - Configuration or model/instance changes during refresh discard stale results and invalidate old observations. test: `tests/providers/capabilities/test_local_context_refresh.py`.
+- 2.2.1 - Existing endpoint and CLI settings produce endpoint-scoped routes, distinguish local/remote models and redact credentials. test: `tests/providers/capabilities/test_local_context_config.py::test_configured_local_routes`.
+- 2.2.2 - Endpoint failure/recovery, concurrent callers, waiter cancellation and event-loop responsiveness are covered with mocked I/O. test: `tests/providers/capabilities/test_local_context_refresh.py::test_refresh_failure_recovery_coalescing`.
+- 2.2.3 - Configuration or model/instance changes during refresh discard stale results and invalidate old observations. test: `tests/providers/capabilities/test_local_context_refresh.py::test_superseded_refresh`.
 
 ### 2.3 Resolve local context without remote fallback [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -260,8 +260,8 @@ route override, provider matrix, OpenRouter and alias precedence exactly.
 Keep all I/O outside these synchronous methods.
 
 **Acceptance:**
-- 2.3.1 - Local verified limits clamp overrides and local unknowns never touch OpenRouter, aliases or model-marker floors. test: `tests/providers/capabilities/test_resolve.py`.
-- 2.3.2 - Public context wrappers preserve remote precedence/warnings and return local unknown quietly with diagnostics available. test: `tests/llm/test_context_window.py`.
+- 2.3.1 - Local verified limits clamp overrides and local unknowns never touch OpenRouter, aliases or model-marker floors. test: `tests/providers/capabilities/test_resolve.py::test_local_context_never_uses_remote_metadata`.
+- 2.3.2 - Public context wrappers preserve remote precedence/warnings and return local unknown quietly with diagnostics available. test: `tests/llm/test_context_window.py::test_local_context_public_resolution`.
 
 ### 2.4 Replace provider exclusions with local-model exclusions [category: code] (depends: 2.1, 2.2)
 `kind: deliverable`
@@ -281,8 +281,8 @@ and missing alias targets still warn exactly as before. Wire the shared service
 once into existing daemon capability construction without adding a lifecycle owner.
 
 **Acceptance:**
-- 2.4.1 - Mixed local/remote entries under one CLI provider exclude only local routes, including unknowns. test: `tests/providers/capabilities/test_local_context_coverage.py`.
-- 2.4.2 - Remote missing metadata/alias warnings and recovery remain intact after local endpoint failure and recovery. test: `tests/providers/capabilities/test_providers_capabilities_refresh.py`.
+- 2.4.1 - Mixed local/remote entries under one CLI provider exclude only local routes, including unknowns. test: `tests/providers/capabilities/test_local_context_coverage.py::test_mixed_local_remote_coverage`.
+- 2.4.2 - Remote missing metadata/alias warnings and recovery remain intact after local endpoint failure and recovery. test: `tests/providers/capabilities/test_providers_capabilities_refresh.py::test_local_coverage_remote_recovery`.
 
 ## P3: Consumer integration
 `kind: framing`
@@ -318,9 +318,9 @@ contracts; collectors, storage, refresh races and resolution are already closeab
 and owned by earlier leaves. Six production files carry that one dataflow.
 
 **Acceptance:**
-- 3.1.1 - Generation and chat setup await refresh and consume the new effective value or unknown after failure; remote routes stay unchanged. test: `tests/servers/test_local_context_consumers.py`.
-- 3.1.2 - Catalog IDs/defaults/modalities/eligibility and existing group consumers are unchanged while context and provenance use observations. test: `tests/servers/test_local_provider_models.py`.
-- 3.1.3 - Model switches and identical names at separate endpoints never inherit previous context in chat/history projections. test: `tests/servers/test_local_context_consumers.py`.
+- 3.1.1 - Generation and chat setup await refresh and consume the new effective value or unknown after failure; remote routes stay unchanged. test: `tests/servers/test_local_context_consumers.py::test_generation_and_chat_refresh`.
+- 3.1.2 - Catalog IDs/defaults/modalities/eligibility and existing group consumers are unchanged while context and provenance use observations. test: `tests/servers/test_local_provider_models.py::test_context_observation_preserves_catalog`.
+- 3.1.3 - Model switches and identical names at separate endpoints never inherit previous context in chat/history projections. test: `tests/servers/test_local_context_consumers.py::test_chat_context_endpoint_isolation`.
 
 ### 3.2 Integrate coding-session context consumers [category: code] (depends: 2.2, 2.3, 3.1)
 `kind: deliverable`
@@ -352,9 +352,9 @@ unloading, role config, 65536-token gate or lean coding profile.
 into session metadata. Existing spawn/resume lifecycle ownership does not change.
 
 **Acceptance:**
-- 3.2.1 - Spawn, resume and coding chat setup refresh the selected route before activation and persist matching provenance. test: `tests/agents/test_local_context_setup.py`.
-- 3.2.2 - Local session context clamps reported/override values, stays unknown without runtime evidence and isolates endpoint/machine/model changes. test: `tests/sessions/test_context_usage.py`.
-- 3.2.3 - Remote sessions preserve reported/catalog/OpenRouter behavior and existing local setup lifecycle remains unchanged. test: `tests/agents/test_local_context_setup.py`.
+- 3.2.1 - Spawn, resume and coding chat setup refresh the selected route before activation and persist matching provenance. test: `tests/agents/test_local_context_setup.py::test_coding_setup_context_refresh`.
+- 3.2.2 - Local session context clamps reported/override values, stays unknown without runtime evidence and isolates endpoint/machine/model changes. test: `tests/sessions/test_context_usage.py::test_local_session_observation`.
+- 3.2.3 - Remote sessions preserve reported/catalog/OpenRouter behavior and existing local setup lifecycle remains unchanged. test: `tests/agents/test_local_context_setup.py::test_coding_setup_remote_unchanged`.
 
 ## V1 Verification
 `kind: verification`
@@ -379,14 +379,14 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   task_type: feature
   depends_on: []
   validation_criteria: '1.1.1: Canonical 262144 and runtime 32768 resolve to 32768;
-    lower overrides reduce it, larger overrides cannot increase it. test: `tests/providers/capabilities/test_local_context.py`.
+    lower overrides reduce it, larger overrides cannot increase it. test: `tests/providers/capabilities/test_local_context.py::test_effective_limits_and_overrides`.
 
     1.1.2: Multiple instances use the minimum, explicit selection uses that instance,
     and any missing required evidence yields unknown even with an override. test:
-    `tests/providers/capabilities/test_local_context.py`.
+    `tests/providers/capabilities/test_local_context.py::test_instance_evidence`.
 
     1.1.3: Invalid values, conflicting identities, contradictory limits and round-trip
-    provenance are covered. test: `tests/providers/capabilities/test_local_context.py`.'
+    provenance are covered. test: `tests/providers/capabilities/test_local_context.py::test_invalid_evidence_roundtrip`.'
   labels:
   - covers:local-model-context-discovery:1.1:1.1.1
   - covers:local-model-context-discovery:1.1:1.1.2
@@ -401,10 +401,10 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   - '1.1'
   validation_criteria: '1.2.1: Mock native metadata proves architecture/runtime distinction,
     loaded and unloaded cases, multiple instances and explicit instance selection.
-    test: `tests/providers/capabilities/test_local_context_lmstudio.py`.
+    test: `tests/providers/capabilities/test_local_context_lmstudio.py::test_lmstudio_instances`.
 
     1.2.2: Mixed embedding/LLM catalogs, duplicate identities, invalid values, contradictory
-    metadata and endpoint failure retain independent typed observations. test: `tests/providers/capabilities/test_local_context_lmstudio.py`.'
+    metadata and endpoint failure retain independent typed observations. test: `tests/providers/capabilities/test_local_context_lmstudio.py::test_lmstudio_unknown_metadata`.'
   labels:
   - covers:local-model-context-discovery:1.2:1.2.1
   - covers:local-model-context-discovery:1.2:1.2.2
@@ -417,10 +417,10 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   depends_on:
   - '1.1'
   validation_criteria: '1.3.1: Mock show/ps metadata yields 32768 for 262144 canonical
-    context and preserves digest and both source paths. test: `tests/providers/capabilities/test_local_context_ollama.py`.
+    context and preserves digest and both source paths. test: `tests/providers/capabilities/test_local_context_ollama.py::test_ollama_context_provenance`.
 
     1.3.2: Multiple running records, missing ps evidence, unrelated architecture fields,
-    digest changes and invalid values fail conservatively. test: `tests/providers/capabilities/test_local_context_ollama.py`.'
+    digest changes and invalid values fail conservatively. test: `tests/providers/capabilities/test_local_context_ollama.py::test_ollama_invalid_runtime`.'
   labels:
   - covers:local-model-context-discovery:1.3:1.3.1
   - covers:local-model-context-discovery:1.3:1.3.2
@@ -433,10 +433,10 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   depends_on:
   - '1.1'
   validation_criteria: '1.4.1: max_model_len survives parsing and positive-value validation,
-    with unknown for missing/invalid serving metadata. test: `tests/providers/capabilities/test_local_context_vllm.py`.
+    with unknown for missing/invalid serving metadata. test: `tests/providers/capabilities/test_local_context_vllm.py::test_vllm_serving_limits`.
 
     1.4.2: Existing list[str] projections, explicit/auto model selection, embeddings
-    consumers and malformed catalog behavior remain unchanged. test: `tests/agents/test_local_model.py`.'
+    consumers and malformed catalog behavior remain unchanged. test: `tests/agents/test_local_model.py::test_vllm_context_id_projection`.'
   labels:
   - covers:local-model-context-discovery:1.4:1.4.1
   - covers:local-model-context-discovery:1.4:1.4.2
@@ -449,10 +449,10 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   depends_on:
   - '1.1'
   validation_criteria: '1.5.1: Mock loopback serving metadata yields a positive conservative
-    limit without guessed provider semantics. test: `tests/providers/capabilities/test_local_context_generic.py`.
+    limit without guessed provider semantics. test: `tests/providers/capabilities/test_local_context_generic.py::test_generic_serving_limits`.
 
     1.5.2: Missing metadata, invalid values, non-loopback URLs and mixed model catalogs
-    cannot fabricate local limits. test: `tests/providers/capabilities/test_local_context_generic.py`.'
+    cannot fabricate local limits. test: `tests/providers/capabilities/test_local_context_generic.py::test_generic_unknown_metadata`.'
   labels:
   - covers:local-model-context-discovery:1.5:1.5.1
   - covers:local-model-context-discovery:1.5:1.5.2
@@ -465,11 +465,11 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   depends_on:
   - '1.1'
   validation_criteria: '2.1.1: Isolated storage round-trips all limits, instance/digest
-    identity, timestamp, provenance and unknown diagnostics. test: `tests/providers/capabilities/test_local_context_store.py`.
+    identity, timestamp, provenance and unknown diagnostics. test: `tests/providers/capabilities/test_local_context_store.py::test_observation_storage_roundtrip`.
 
     2.1.2: Identical model names on different machines/endpoints and local/remote
     routes never collide; replacement removes stale identities without changing other
-    snapshots. test: `tests/providers/capabilities/test_local_context_store.py`.'
+    snapshots. test: `tests/providers/capabilities/test_local_context_store.py::test_observation_storage_isolation`.'
   labels:
   - covers:local-model-context-discovery:2.1:2.1.1
   - covers:local-model-context-discovery:2.1:2.1.2
@@ -486,13 +486,13 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   - '1.5'
   - '2.1'
   validation_criteria: '2.2.1: Existing endpoint and CLI settings produce endpoint-scoped
-    routes, distinguish local/remote models and redact credentials. test: `tests/providers/capabilities/test_local_context_config.py`.
+    routes, distinguish local/remote models and redact credentials. test: `tests/providers/capabilities/test_local_context_config.py::test_configured_local_routes`.
 
     2.2.2: Endpoint failure/recovery, concurrent callers, waiter cancellation and
-    event-loop responsiveness are covered with mocked I/O. test: `tests/providers/capabilities/test_local_context_refresh.py`.
+    event-loop responsiveness are covered with mocked I/O. test: `tests/providers/capabilities/test_local_context_refresh.py::test_refresh_failure_recovery_coalescing`.
 
     2.2.3: Configuration or model/instance changes during refresh discard stale results
-    and invalidate old observations. test: `tests/providers/capabilities/test_local_context_refresh.py`.'
+    and invalidate old observations. test: `tests/providers/capabilities/test_local_context_refresh.py::test_superseded_refresh`.'
   labels:
   - covers:local-model-context-discovery:2.2:2.2.1
   - covers:local-model-context-discovery:2.2:2.2.2
@@ -506,10 +506,10 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   depends_on:
   - '2.1'
   validation_criteria: '2.3.1: Local verified limits clamp overrides and local unknowns
-    never touch OpenRouter, aliases or model-marker floors. test: `tests/providers/capabilities/test_resolve.py`.
+    never touch OpenRouter, aliases or model-marker floors. test: `tests/providers/capabilities/test_resolve.py::test_local_context_never_uses_remote_metadata`.
 
     2.3.2: Public context wrappers preserve remote precedence/warnings and return
-    local unknown quietly with diagnostics available. test: `tests/llm/test_context_window.py`.'
+    local unknown quietly with diagnostics available. test: `tests/llm/test_context_window.py::test_local_context_public_resolution`.'
   labels:
   - covers:local-model-context-discovery:2.3:2.3.1
   - covers:local-model-context-discovery:2.3:2.3.2
@@ -523,10 +523,10 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   - '2.1'
   - '2.2'
   validation_criteria: '2.4.1: Mixed local/remote entries under one CLI provider exclude
-    only local routes, including unknowns. test: `tests/providers/capabilities/test_local_context_coverage.py`.
+    only local routes, including unknowns. test: `tests/providers/capabilities/test_local_context_coverage.py::test_mixed_local_remote_coverage`.
 
     2.4.2: Remote missing metadata/alias warnings and recovery remain intact after
-    local endpoint failure and recovery. test: `tests/providers/capabilities/test_providers_capabilities_refresh.py`.'
+    local endpoint failure and recovery. test: `tests/providers/capabilities/test_providers_capabilities_refresh.py::test_local_coverage_remote_recovery`.'
   labels:
   - covers:local-model-context-discovery:2.4:2.4.1
   - covers:local-model-context-discovery:2.4:2.4.2
@@ -542,13 +542,13 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   - '2.4'
   validation_criteria: '3.1.1: Generation and chat setup await refresh and consume
     the new effective value or unknown after failure; remote routes stay unchanged.
-    test: `tests/servers/test_local_context_consumers.py`.
+    test: `tests/servers/test_local_context_consumers.py::test_generation_and_chat_refresh`.
 
     3.1.2: Catalog IDs/defaults/modalities/eligibility and existing group consumers
-    are unchanged while context and provenance use observations. test: `tests/servers/test_local_provider_models.py`.
+    are unchanged while context and provenance use observations. test: `tests/servers/test_local_provider_models.py::test_context_observation_preserves_catalog`.
 
     3.1.3: Model switches and identical names at separate endpoints never inherit
-    previous context in chat/history projections. test: `tests/servers/test_local_context_consumers.py`.'
+    previous context in chat/history projections. test: `tests/servers/test_local_context_consumers.py::test_chat_context_endpoint_isolation`.'
   labels:
   - covers:local-model-context-discovery:3.1:3.1.1
   - covers:local-model-context-discovery:3.1:3.1.2
@@ -564,13 +564,13 @@ dependency graph before supported human-handoff manifest derive/apply and expans
   - '2.3'
   - '3.1'
   validation_criteria: '3.2.1: Spawn, resume and coding chat setup refresh the selected
-    route before activation and persist matching provenance. test: `tests/agents/test_local_context_setup.py`.
+    route before activation and persist matching provenance. test: `tests/agents/test_local_context_setup.py::test_coding_setup_context_refresh`.
 
     3.2.2: Local session context clamps reported/override values, stays unknown without
-    runtime evidence and isolates endpoint/machine/model changes. test: `tests/sessions/test_context_usage.py`.
+    runtime evidence and isolates endpoint/machine/model changes. test: `tests/sessions/test_context_usage.py::test_local_session_observation`.
 
     3.2.3: Remote sessions preserve reported/catalog/OpenRouter behavior and existing
-    local setup lifecycle remains unchanged. test: `tests/agents/test_local_context_setup.py`.'
+    local setup lifecycle remains unchanged. test: `tests/agents/test_local_context_setup.py::test_coding_setup_remote_unchanged`.'
   labels:
   - covers:local-model-context-discovery:3.2:3.2.1
   - covers:local-model-context-discovery:3.2:3.2.2
