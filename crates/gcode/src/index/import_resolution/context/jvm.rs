@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -21,54 +20,72 @@ pub(super) fn build_java_class_index(
     root_path: &Path,
     candidate_files: &[PathBuf],
 ) -> JavaClassIndex {
-    let (local_classes, mut class_files) = candidate_files
+    let observations = candidate_files
         .par_iter()
         .map(|path| {
-            let mut local_classes = HashSet::new();
-            let mut class_files: HashMap<String, Vec<String>> = HashMap::new();
-            let ext = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or_default();
-            if ext != "java" {
-                return (local_classes, class_files);
-            }
-            let Ok(file) = File::open(path) else {
-                return (local_classes, class_files);
-            };
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
-            let mut package = None;
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim();
-                if package.is_none() {
-                    package = line
-                        .strip_prefix("package ")
-                        .map(|rest| rest.trim().trim_end_matches(';').trim().to_string());
-                }
-                for class_name in java_declared_types(line) {
-                    local_classes.insert(class_name.clone());
-                    if let Some(package) = package.as_deref()
-                        && !package.is_empty()
-                    {
-                        let fqcn = format!("{package}.{class_name}");
-                        local_classes.insert(fqcn.clone());
-                        class_files.entry(fqcn).or_default().push(rel_str.clone());
-                    }
-                }
-            }
-            (local_classes, class_files)
+            std::fs::read(path)
+                .ok()
+                .map(|source| observe_java_source(&rel_str, &source))
+                .unwrap_or_default()
         })
-        .reduce(
-            || (HashSet::new(), HashMap::new()),
-            |mut acc, (classes, files)| {
-                acc.0.extend(classes);
-                for (fqcn, paths) in files {
-                    acc.1.entry(fqcn).or_default().extend(paths);
-                }
-                acc
-            },
-        );
+        .collect::<Vec<_>>();
+    collect_java_index(observations)
+}
+
+pub(super) fn build_java_class_index_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> JavaClassIndex {
+    collect_java_index(
+        sources
+            .iter()
+            .map(|(rel, source)| observe_java_source(rel, source)),
+    )
+}
+
+fn observe_java_source(
+    rel: &str,
+    source: &[u8],
+) -> (HashSet<String>, HashMap<String, Vec<String>>) {
+    let mut local_classes = HashSet::new();
+    let mut class_files: HashMap<String, Vec<String>> = HashMap::new();
+    if Path::new(rel).extension().and_then(|ext| ext.to_str()) != Some("java") {
+        return (local_classes, class_files);
+    }
+    let mut package = None;
+    for line in BufReader::new(source).lines().map_while(Result::ok) {
+        let line = line.trim();
+        if package.is_none() {
+            package = line
+                .strip_prefix("package ")
+                .map(|rest| rest.trim().trim_end_matches(';').trim().to_string());
+        }
+        for class_name in java_declared_types(line) {
+            local_classes.insert(class_name.clone());
+            if let Some(package) = package.as_deref()
+                && !package.is_empty()
+            {
+                let fqcn = format!("{package}.{class_name}");
+                local_classes.insert(fqcn.clone());
+                class_files.entry(fqcn).or_default().push(rel.to_string());
+            }
+        }
+    }
+    (local_classes, class_files)
+}
+
+fn collect_java_index(
+    observations: impl IntoIterator<Item = (HashSet<String>, HashMap<String, Vec<String>>)>,
+) -> JavaClassIndex {
+    let mut local_classes = HashSet::new();
+    let mut class_files: HashMap<String, Vec<String>> = HashMap::new();
+    for (classes, files) in observations {
+        local_classes.extend(classes);
+        for (fqcn, paths) in files {
+            class_files.entry(fqcn).or_default().extend(paths);
+        }
+    }
     for files in class_files.values_mut() {
         files.sort();
         files.dedup();
@@ -89,60 +106,49 @@ pub(super) fn build_kotlin_package_files(
     root_path: &Path,
     candidate_files: &[PathBuf],
 ) -> HashMap<String, Vec<String>> {
-    let mut package_files = candidate_files
+    let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
-            let ext = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or_default();
-            if ext != "kt" && ext != "kts" {
-                return None;
-            }
-            let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
-            // The `package` header is the first substantive element of a Kotlin
-            // file (after optional file annotations and comments). Stop at the
-            // first real line so a later string/identifier containing "package "
-            // cannot be mistaken for the declaration; absent a header, the file
-            // is in the root package.
-            let mut package = String::new();
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim();
-                if line.is_empty()
-                    || line.starts_with("//")
-                    || line.starts_with("/*")
-                    || line.starts_with('*')
-                    || line.starts_with('@')
-                {
-                    continue;
-                }
-                if let Some(rest) = line.strip_prefix("package ") {
-                    package = rest.trim().trim_end_matches(';').trim().to_string();
-                }
-                break;
-            }
-            Some((package, rel_str))
+            observe_kotlin_source(&rel_str, &std::fs::read(path).ok()?)
         })
-        .fold(
-            HashMap::<String, Vec<String>>::new,
-            |mut acc, (package, rel)| {
-                acc.entry(package).or_default().push(rel);
-                acc
-            },
-        )
-        .reduce(HashMap::<String, Vec<String>>::new, |mut acc, map| {
-            for (package, files) in map {
-                acc.entry(package).or_default().extend(files);
-            }
-            acc
-        });
-    for files in package_files.values_mut() {
-        files.sort();
-        files.dedup();
+        .collect::<Vec<_>>();
+    collect_package_files(observations)
+}
+
+pub(super) fn build_kotlin_package_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    collect_package_files(
+        sources
+            .iter()
+            .filter_map(|(rel, source)| observe_kotlin_source(rel, source)),
+    )
+}
+
+fn observe_kotlin_source(rel: &str, source: &[u8]) -> Option<(String, String)> {
+    let ext = Path::new(rel).extension().and_then(|ext| ext.to_str())?;
+    if !matches!(ext, "kt" | "kts") {
+        return None;
     }
-    package_files
+    let mut package = String::new();
+    for line in BufReader::new(source).lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with("//")
+            || line.starts_with("/*")
+            || line.starts_with('*')
+            || line.starts_with('@')
+        {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("package ") {
+            package = rest.trim().trim_end_matches(';').trim().to_string();
+        }
+        break;
+    }
+    Some((package, rel.to_string()))
 }
 
 /// Maps each locally-declared Scala package to the project-relative files that
@@ -154,63 +160,71 @@ pub(super) fn build_scala_package_files(
     root_path: &Path,
     candidate_files: &[PathBuf],
 ) -> HashMap<String, Vec<String>> {
-    let mut package_files = candidate_files
+    let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
-            let ext = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or_default();
-            if ext != "scala" && ext != "sc" {
-                return None;
-            }
-            let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
-            let mut package_segments = Vec::new();
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim();
-                if line.is_empty()
-                    || line.starts_with("//")
-                    || line.starts_with("/*")
-                    || line.starts_with('*')
-                {
-                    continue;
-                }
-                let Some(rest) = line.strip_prefix("package ") else {
-                    break;
-                };
-                let rest = rest.trim();
-                if rest.starts_with("object ") {
-                    break;
-                }
-                let segment = rest
-                    .trim_end_matches([';', '{'])
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-                    .trim_end_matches('{')
-                    .trim();
-                if segment.is_empty() {
-                    break;
-                }
-                package_segments.push(segment.to_string());
-            }
-            Some((package_segments.join("."), rel_str))
+            observe_scala_source(&rel_str, &std::fs::read(path).ok()?)
         })
-        .fold(
-            HashMap::<String, Vec<String>>::new,
-            |mut acc, (package, rel)| {
-                acc.entry(package).or_default().push(rel);
-                acc
-            },
-        )
-        .reduce(HashMap::<String, Vec<String>>::new, |mut acc, map| {
-            for (package, files) in map {
-                acc.entry(package).or_default().extend(files);
-            }
-            acc
-        });
+        .collect::<Vec<_>>();
+    collect_package_files(observations)
+}
+
+pub(super) fn build_scala_package_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    collect_package_files(
+        sources
+            .iter()
+            .filter_map(|(rel, source)| observe_scala_source(rel, source)),
+    )
+}
+
+fn observe_scala_source(rel: &str, source: &[u8]) -> Option<(String, String)> {
+    let ext = Path::new(rel).extension().and_then(|ext| ext.to_str())?;
+    if !matches!(ext, "scala" | "sc") {
+        return None;
+    }
+    let mut package_segments = Vec::new();
+    for line in BufReader::new(source).lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with("//")
+            || line.starts_with("/*")
+            || line.starts_with('*')
+        {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("package ") else {
+            break;
+        };
+        let rest = rest.trim();
+        if rest.starts_with("object ") {
+            break;
+        }
+        let segment = rest
+            .trim_end_matches([';', '{'])
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('{')
+            .trim();
+        if segment.is_empty() {
+            break;
+        }
+        package_segments.push(segment.to_string());
+    }
+    Some((package_segments.join("."), rel.to_string()))
+}
+
+fn collect_package_files(
+    observations: impl IntoIterator<Item = (String, String)>,
+) -> HashMap<String, Vec<String>> {
+    let mut package_files = HashMap::<String, Vec<String>>::new();
+    for (package, rel) in observations {
+        package_files.entry(package).or_default().push(rel);
+    }
     for files in package_files.values_mut() {
         files.sort();
         files.dedup();

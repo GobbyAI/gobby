@@ -1,5 +1,9 @@
 use super::common::*;
+use std::collections::BTreeMap;
 use std::fs;
+
+use crate::index::captured_sources::CapturedSources;
+use crate::index::import_resolution::context::build_import_resolution_context_from_sources;
 
 #[test]
 fn loads_rust_inline_table_dependency_names() {
@@ -423,4 +427,157 @@ fn path_derived_names_for_files_inverts_declaration_maps_once() {
     assert_eq!(names["src/pkg/mod.py"], vec!["pkg.mod", "src.pkg.mod"]);
     assert!(names["README.md"].is_empty());
     assert_eq!(names.len(), 3);
+}
+
+#[test]
+fn captured_context_uses_only_inventory_bytes_and_rejects_cargo_escapes() {
+    let live = TempDir::new().expect("live tempdir");
+    fs::write(
+        live.path().join("LiveOnly.java"),
+        "package live; public class LiveOnly {}",
+    )
+    .expect("live extra");
+    fs::write(
+        live.path().join("package.json"),
+        r#"{"name":"live-only","dependencies":{"live-dependency":"1"}}"#,
+    )
+    .expect("live package manifest");
+    fs::write(
+        live.path().join("Cargo.toml"),
+        "[package]\nname = \"live-only\"\n[dependencies]\nlive_dep = \"1\"\n",
+    )
+    .expect("live Cargo manifest");
+    let files = BTreeMap::from([
+        (
+            "Cargo.toml".to_string(),
+            br#"[workspace]
+members = ["crates/*", "../outside", "/absolute"]
+"#
+            .to_vec(),
+        ),
+        (
+            "crates/app/Cargo.toml".to_string(),
+            br#"[package]
+name = "captured-app"
+[dependencies]
+serde = "1"
+"#
+            .to_vec(),
+        ),
+        (
+            "outside/Cargo.toml".to_string(),
+            br#"[package]
+name = "escaped"
+[dependencies]
+evil = "1"
+"#
+            .to_vec(),
+        ),
+        (
+            "package.json".to_string(),
+            br#"{"name":"captured-js","dependencies":{"react":"1"}}"#.to_vec(),
+        ),
+        (
+            "go.mod".to_string(),
+            b"module example.com/captured\n".to_vec(),
+        ),
+        (
+            "pubspec.yaml".to_string(),
+            b"name: captured_dart\ndependencies:\n  http: any\n".to_vec(),
+        ),
+        (
+            "mix.exs".to_string(),
+            b"defp deps, do: [{:jason, \"~> 1.0\"}]\n".to_vec(),
+        ),
+        (
+            "src/main/java/pkg/Widget.java".to_string(),
+            b"package pkg;\npublic class Widget {}\n".to_vec(),
+        ),
+        (
+            "src/captured_stub.pyi".to_string(),
+            b"def captured_stub() -> None: ...\n".to_vec(),
+        ),
+        (
+            "src/App.cs".to_string(),
+            b"namespace Captured;\npublic class App {}\n".to_vec(),
+        ),
+        (
+            "src/Feature.kt".to_string(),
+            b"package captured.kt\nclass Feature\n".to_vec(),
+        ),
+        (
+            "src/Feature.scala".to_string(),
+            b"package captured.scala\nclass Feature\n".to_vec(),
+        ),
+        (
+            "Sources/Widget.h".to_string(),
+            b"@interface Widget\n@end\n".to_vec(),
+        ),
+        (
+            "lib/sample.php".to_string(),
+            b"<?php\nnamespace Captured;\nclass Sample {}\n".to_vec(),
+        ),
+        (
+            "lib/sample.rb".to_string(),
+            b"class CapturedRuby\nend\n".to_vec(),
+        ),
+        (
+            "lib/sample.ex".to_string(),
+            b"defmodule Captured.Elixir do\nend\n".to_vec(),
+        ),
+        ("pkg/file.go".to_string(), b"package pkg\n".to_vec()),
+    ]);
+    let sources = CapturedSources::new(&files).expect("validated captured sources");
+
+    let context = build_import_resolution_context_from_sources(&sources);
+
+    assert_eq!(context.js_self_package_name.as_deref(), Some("captured-js"));
+    assert!(context.python_modules.contains("captured_stub"));
+    assert!(context.js_external_packages.contains("react"));
+    assert!(!context.js_external_packages.contains("live-dependency"));
+    assert_eq!(
+        context.go_module_path.as_deref(),
+        Some("example.com/captured")
+    );
+    assert_eq!(context.go_package_files["pkg"], vec!["pkg/file.go"]);
+    assert!(context.rust_external_crates.contains("serde"));
+    assert!(!context.rust_external_crates.contains("live_dep"));
+    assert!(!context.rust_external_crates.contains("evil"));
+    assert_eq!(
+        context.rust_self_crate_names["crates/app/src"],
+        "captured_app"
+    );
+    assert!(
+        !context
+            .rust_self_crate_names
+            .values()
+            .any(|name| name == "escaped")
+    );
+    assert_eq!(
+        context.java_class_files["pkg.Widget"],
+        vec!["src/main/java/pkg/Widget.java"]
+    );
+    assert_eq!(
+        context.csharp_type_files["Captured.App"],
+        vec!["src/App.cs"]
+    );
+    assert_eq!(
+        context.kotlin_package_files["captured.kt"],
+        vec!["src/Feature.kt"]
+    );
+    assert_eq!(
+        context.scala_package_files["captured.scala"],
+        vec!["src/Feature.scala"]
+    );
+    assert_eq!(context.objc_file_types["Sources/Widget.h"], vec!["Widget"]);
+    assert!(context.php_local_symbols.contains("captured\\sample"));
+    assert!(context.ruby_local_constant_roots.contains("CapturedRuby"));
+    assert!(context.elixir_local_module_roots.contains("Captured"));
+    assert_eq!(
+        context.dart_self_package_name.as_deref(),
+        Some("captured_dart")
+    );
+    assert!(context.dart_external_packages.contains("http"));
+    assert!(context.elixir_external_roots.contains_key("Jason"));
+    assert!(context.java_candidate_files("live.LiveOnly").is_empty());
 }

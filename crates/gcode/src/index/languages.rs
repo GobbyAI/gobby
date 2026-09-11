@@ -495,6 +495,31 @@ pub fn detect_language_from_content(file_path: &str, content: &[u8]) -> Option<&
     Some(detect_header_source(&source))
 }
 
+pub(crate) fn detect_language_from_content_with_paths(
+    file_path: &str,
+    content: &[u8],
+    contains_path: impl Fn(&str) -> bool,
+) -> Option<&'static str> {
+    let path = Path::new(file_path);
+    let extension = path.extension()?.to_string_lossy().to_lowercase();
+    if extension != "h" {
+        return detect_language_from_content(file_path, content);
+    }
+    let has_objc_sibling = ["m", "mm"].into_iter().any(|extension| {
+        contains_path(&crate::index::normalize_storage_path(
+            &path.with_extension(extension),
+        ))
+    });
+    if has_objc_sibling {
+        return Some("objc");
+    }
+    detect_language_from_content(file_path, content)
+}
+
+#[cfg(test)]
+#[path = "languages/captured_tests.rs"]
+mod captured_tests;
+
 /// Return whether `file_path` is supported by the shared language registry.
 pub fn is_supported_language(file_path: &str) -> bool {
     detect_language(file_path).is_some()

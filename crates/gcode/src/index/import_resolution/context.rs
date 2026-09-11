@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::index::captured_sources::CapturedSources;
+
 use super::js_local::js_candidate_files;
 use super::predicates::ruby_require_root;
 use super::rust_local::{
@@ -33,15 +35,37 @@ pub(super) use python::{
 };
 
 pub(super) use apple::build_swift_module_files;
-use apple::{build_objc_indexes, objc_relative_import_file, swift_modules_for_rel};
-use dotnet::build_csharp_index;
+use apple::{
+    build_objc_indexes, build_objc_indexes_from_sources, build_swift_module_files_from_sources,
+    objc_relative_import_file, swift_modules_for_rel,
+};
+use dotnet::{build_csharp_index, build_csharp_index_from_sources};
 pub(super) use elixir::build_elixir_local_module_files;
 #[cfg(test)]
 pub(super) use elixir::load_elixir_dependency_names;
-use elixir::{build_elixir_local_module_roots, load_elixir_external_roots};
-use jvm::{build_java_class_index, build_kotlin_package_files, build_scala_package_files};
+use elixir::{
+    build_elixir_local_module_files_from_sources, build_elixir_local_module_roots,
+    build_elixir_local_module_roots_from_sources, load_elixir_external_roots,
+    load_elixir_external_roots_from_sources,
+};
+use jvm::{
+    build_java_class_index, build_java_class_index_from_sources, build_kotlin_package_files,
+    build_kotlin_package_files_from_sources, build_scala_package_files,
+    build_scala_package_files_from_sources,
+};
+use package_metadata::{
+    build_go_package_files_from_sources, load_dart_external_packages_from_sources,
+    load_dart_self_package_name_from_sources, load_go_module_path_from_sources,
+    load_js_external_packages_from_sources, load_js_self_package_name_from_sources,
+    load_rust_external_crates_from_sources, load_rust_self_crate_names_from_sources,
+};
+use python::build_python_module_index_from_sources;
 pub(super) use scripting::build_php_symbol_files;
-use scripting::{build_lua_module_files, build_ruby_constant_files};
+use scripting::{
+    build_lua_module_files, build_lua_module_files_from_sources,
+    build_php_symbol_files_from_sources, build_ruby_constant_files,
+    build_ruby_constant_files_from_sources,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct ImportResolutionContext {
@@ -457,6 +481,49 @@ pub fn build_import_resolution_context(
         HashMap::new(),
         HashMap::new(),
     )
+}
+
+pub(crate) fn build_import_resolution_context_from_sources(
+    sources: &CapturedSources<'_>,
+) -> ImportResolutionContext {
+    let java_index = build_java_class_index_from_sources(sources);
+    let csharp_index = build_csharp_index_from_sources(sources);
+    let ruby_constant_files = build_ruby_constant_files_from_sources(sources);
+    let php_symbol_files = build_php_symbol_files_from_sources(sources);
+    let swift_module_files = build_swift_module_files_from_sources(sources);
+    let objc_index = build_objc_indexes_from_sources(sources);
+    ImportResolutionContext {
+        python_modules: build_python_module_index_from_sources(sources),
+        js_external_packages: load_js_external_packages_from_sources(sources),
+        js_self_package_name: load_js_self_package_name_from_sources(sources),
+        go_module_path: load_go_module_path_from_sources(sources),
+        go_package_files: build_go_package_files_from_sources(sources),
+        rust_external_crates: load_rust_external_crates_from_sources(sources),
+        rust_self_crate_names: load_rust_self_crate_names_from_sources(sources),
+        java_local_classes: java_index.local_classes,
+        java_class_files: java_index.class_files,
+        csharp_local_roots: csharp_index.local_roots,
+        csharp_type_files: csharp_index.type_files,
+        kotlin_package_files: build_kotlin_package_files_from_sources(sources),
+        scala_package_files: build_scala_package_files_from_sources(sources),
+        lua_module_files: build_lua_module_files_from_sources(sources),
+        objc_import_files: objc_index.import_files,
+        objc_file_types: objc_index.file_types,
+        objc_file_functions: objc_index.file_functions,
+        php_local_symbols: php_symbol_files.keys().cloned().collect(),
+        php_symbol_files,
+        ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
+        ruby_constant_files,
+        ruby_require_root_overrides: HashMap::new(),
+        swift_local_modules: swift_module_files.keys().cloned().collect(),
+        swift_module_files,
+        dart_external_packages: load_dart_external_packages_from_sources(sources),
+        dart_self_package_name: load_dart_self_package_name_from_sources(sources),
+        elixir_external_roots: load_elixir_external_roots_from_sources(sources),
+        elixir_external_root_overrides: HashMap::new(),
+        elixir_local_module_roots: build_elixir_local_module_roots_from_sources(sources),
+        elixir_module_files: build_elixir_local_module_files_from_sources(sources),
+    }
 }
 
 pub fn build_import_resolution_context_with_overrides(

@@ -12,6 +12,10 @@ pub(super) fn write_file(root: &Path, rel: &str, contents: &[u8]) {
 /// Run git in `dir` with a fixed test identity, signing off, and an empty
 /// hooks directory so the operator's global hooks never run.
 pub(super) fn git(dir: &Path, hooks: &Path, args: &[&str]) {
+    git_output(dir, hooks, args);
+}
+
+pub(super) fn git_output(dir: &Path, hooks: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -34,4 +38,5 @@ pub(super) fn git(dir: &Path, hooks: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
