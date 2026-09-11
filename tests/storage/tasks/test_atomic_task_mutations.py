@@ -121,12 +121,12 @@ def test_concurrent_link_commit_preserves_both_commits(
 
     with patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha):
         errors = _run_concurrently(
-            lambda: _lifecycle.link_commit(temp_db, task.id, "commit-a"),
-            lambda: _lifecycle.link_commit(temp_db, task.id, "commit-b"),
+            lambda: _lifecycle.link_commit(temp_db, task.id, "aaa1111"),
+            lambda: _lifecycle.link_commit(temp_db, task.id, "bbb2222"),
         )
 
     assert errors == []
-    assert set(manager.get_task(task.id).commits or []) == {"commit-a", "commit-b"}
+    assert set(manager.get_task(task.id).commits or []) == {"aaa1111", "bbb2222"}
 
 
 def test_concurrent_unlink_commit_removes_both_commits(
@@ -141,9 +141,9 @@ def test_concurrent_unlink_commit_removes_both_commits(
         validation_criteria="Test task completion is observable.",
     )
     with patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha):
-        _lifecycle.link_commit(temp_db, task.id, "commit-a")
-        _lifecycle.link_commit(temp_db, task.id, "commit-b")
-        _lifecycle.link_commit(temp_db, task.id, "commit-c")
+        _lifecycle.link_commit(temp_db, task.id, "aaa1111")
+        _lifecycle.link_commit(temp_db, task.id, "bbb2222")
+        _lifecycle.link_commit(temp_db, task.id, "ccc3333")
         monkeypatch.setattr(
             _lifecycle,
             "get_task",
@@ -151,12 +151,12 @@ def test_concurrent_unlink_commit_removes_both_commits(
         )
 
         errors = _run_concurrently(
-            lambda: _lifecycle.unlink_commit(temp_db, task.id, "commit-a"),
-            lambda: _lifecycle.unlink_commit(temp_db, task.id, "commit-b"),
+            lambda: _lifecycle.unlink_commit(temp_db, task.id, "aaa1111"),
+            lambda: _lifecycle.unlink_commit(temp_db, task.id, "bbb2222"),
         )
 
     assert errors == []
-    assert manager.get_task(task.id).commits == ["commit-c"]
+    assert manager.get_task(task.id).commits == ["ccc3333"]
 
 
 def test_concurrent_escalate_has_exactly_one_winner(

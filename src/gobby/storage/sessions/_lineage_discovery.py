@@ -50,7 +50,7 @@ class _LineageDiscoveryMixin:
         updated_recent_sql = newer_than_now_expr(self.db, "updated_at", "%s", "minute")
         # newer_than_now_expr returns a trusted static fragment for the active SQL dialect.
         query = (
-            "SELECT * FROM sessions WHERE machine_id = %s AND status = %s AND project_id = %s"  # nosec B608
+            "SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id) WHERE machine_id = %s AND status = %s AND project_id = %s"  # nosec B608
             f" AND {updated_recent_sql}"
         )
         params: list[Any] = [machine_id, status, project_id, max_age_minutes]
@@ -93,7 +93,7 @@ class _LineageDiscoveryMixin:
         """
         rows = self.db.fetchall(
             """
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE parent_session_id = %s
             ORDER BY created_at ASC
             """,

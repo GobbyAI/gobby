@@ -21,7 +21,7 @@ function deferred<T>() {
 function session(id: string, title: string): GobbySession {
   return {
     id,
-    ref: `#${id}`,
+    ref: `project#${id}`,
     external_id: id,
     source: "claude",
     project_id: "project-1",
@@ -112,13 +112,15 @@ describe("ResumeSessionModal", () => {
     await act(async () => {
       second.resolve(responseWith([session("new", "Newest response")]));
     });
-    expect(await screen.findByText("Newest response")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/project#.*: Newest response/),
+    ).toBeInTheDocument();
 
     await act(async () => {
       first.resolve(responseWith([session("old", "Stale response")]));
     });
-    expect(screen.queryByText("Stale response")).not.toBeInTheDocument();
-    expect(screen.getByText("Newest response")).toBeInTheDocument();
+    expect(screen.queryByText(/Stale response/)).not.toBeInTheDocument();
+    expect(screen.getByText(/project#.*: Newest response/)).toBeInTheDocument();
   });
 
   it("uses the latest sessions fallback without refetching on prop identity changes", async () => {
@@ -153,7 +155,9 @@ describe("ResumeSessionModal", () => {
       } as Response);
     });
 
-    expect(await screen.findByText("Latest fallback")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/project#.*: Latest fallback/),
+    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

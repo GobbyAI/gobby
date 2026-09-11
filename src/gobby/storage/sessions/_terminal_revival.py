@@ -91,7 +91,7 @@ class _TerminalRevivalMixin:
             rows = conn.execute(
                 """
                 SELECT *
-                FROM sessions
+                FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
                 WHERE machine_id IS NOT DISTINCT FROM %s
                   AND session_type = 'terminal'
                   AND BTRIM(terminal_context ->> 'tmux_pane') = %s
@@ -110,7 +110,7 @@ class _TerminalRevivalMixin:
                   END = %s
                   AND status != 'deleted'
                 ORDER BY created_at, id
-                FOR UPDATE
+                FOR UPDATE OF sessions
                 """,
                 (machine_id, pane, socket_identity),
             ).fetchall()

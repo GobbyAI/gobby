@@ -98,7 +98,7 @@ export function CommandPalette({
             if (!searchTerm) return true;
             const title = (s.title || "").toLowerCase();
             const ref = (s.ref ?? "").toLowerCase();
-            const seq = s.seq_num != null ? `#${s.seq_num}` : "";
+            const seq = s.ref ?? "";
             return (
               title.includes(searchTerm) ||
               ref.includes(searchTerm) ||
@@ -435,7 +435,7 @@ function SessionItem({
   onSelect: () => void;
   onHover: () => void;
 }) {
-  const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
+  const seqLabel = session.ref ?? null;
   const titleText = getSessionTitleText(session.title);
 
   return (

@@ -18,7 +18,7 @@ def try_resolve_session_field(
     session_manager: HookSessionManager | None,
     project_id: str | None,
 ) -> bool:
-    """Resolve a #N or <project>-S#N session reference in container[field] to a UUID."""
+    """Resolve a #N or <project>#N session reference in container[field] to a UUID."""
     from gobby.storage.session_resolution import is_project_qualified_session_ref
 
     if session_manager is None:

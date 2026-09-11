@@ -69,8 +69,10 @@ def schedule_tmux_window_rename(
 
 
 def _synthesize_fallback_title(session: object) -> str:
-    seq_num = getattr(session, "seq_num", None)
-    return f"(gobby): S#{seq_num}" if isinstance(seq_num, int) else "(gobby)"
+    ref = getattr(session, "ref", None)
+    if not isinstance(ref, str) or not ref or _contains_unresolved_session_ref(ref):
+        ref = getattr(session, "id", None)
+    return f"({ref})" if isinstance(ref, str) and ref else "(gobby)"
 
 
 def _contains_unresolved_session_ref(value: Any) -> bool:

@@ -9,6 +9,7 @@ This module provides operations for managing task lifecycle:
 """
 
 import logging
+import re
 from datetime import datetime
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -162,7 +163,7 @@ def link_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     Raises:
         ValueError: If task not found or SHA cannot be resolved.
     """
-    if not commit_sha:
+    if re.fullmatch(r"[0-9a-fA-F]{4,64}", commit_sha) is None:
         raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
 
     get_task(db, task_id)  # Validate identity without reading mutation state.

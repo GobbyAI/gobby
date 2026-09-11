@@ -1,7 +1,7 @@
 """Inter-agent messaging and command tools for the gobby-agents MCP server.
 
 Provides P2P messaging and command coordination between sessions:
-- send_message: target-based messaging; session targets accept UUID, #N, or <project>-S#N
+- send_message: target-based messaging; session targets accept UUID, #N, or <project>#N
 - get_inter_session_message: Retrieve one complete message for a participant
 - get_inter_session_messages: Read-only query of message history
 """
@@ -109,7 +109,7 @@ def add_messaging_tools(
             "global reaches every live non-system session owned by this machine; "
             "project reaches that population in the sender's project. Both exclude "
             "the sender and forbid target_id. Session targets accept a full UUID, "
-            "#N (caller project), or <project>-S#N (e.g. gobby-S#11265) for a "
+            "#N (caller project), or <project>#N (e.g. gobby#11265) for a "
             "session in another project. Messages are automatically injected "
             "into the recipient's context on their next tool call via hook "
             "rules — no polling or mailbox fetch needed. Also auto-writes "

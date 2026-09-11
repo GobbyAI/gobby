@@ -338,6 +338,7 @@ class TestCommitClearSuccessor:
         successor = MagicMock()
         successor.id = "succ-db"
         successor.seq_num = 99
+        successor.ref = "gobby#99"
         persist_targets: list[str] = []
 
         def _commit(*_args: Any, **_kwargs: Any) -> MagicMock:
@@ -377,7 +378,7 @@ class TestCommitClearSuccessor:
         transport.send_direct.assert_awaited_once()
         assert transport.send_direct.await_args is not None
         assert transport.send_direct.await_args.args[0]["db_session_id"] == "succ-db"
-        assert transport.send_direct.await_args.args[0]["session_ref"] == "#99"
+        assert transport.send_direct.await_args.args[0]["session_ref"] == "gobby#99"
         session._on_mode_persist("code")
         assert persist_targets == ["succ-db"]
         claims.assert_called_once()
@@ -400,6 +401,7 @@ class TestCommitClearSuccessor:
         successor = MagicMock()
         successor.id = "succ-db"
         successor.seq_num = 99
+        successor.ref = "gobby#99"
 
         with (
             patch(

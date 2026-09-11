@@ -90,6 +90,7 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
     session = SimpleNamespace(
         db_session_id="db-1",
         seq_num=12,
+        session_ref="other-project#12",
         project_id="project-1",
         model="gpt-5.4",
     )
@@ -139,7 +140,7 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
         "message_id": "assistant-1",
         "conversation_id": "conv-1",
         "db_session_id": "db-1",
-        "session_ref": "#12",
+        "session_ref": "other-project#12",
         "title": "ACP title",
         "session_title": "ACP title",
         "updated_at": "2026-06-27T05:00:00Z",

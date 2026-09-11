@@ -268,7 +268,7 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
         .then((data) => {
           const s = data?.session;
           if (!s || !isCurrentRequest()) return;
-          const ref = typeof s.seq_num === "number" ? `#${s.seq_num}` : null;
+          const ref = typeof s.ref === "string" ? s.ref : null;
           setSessionRef(ref);
           const nextMeta: SessionObservationMeta = {
             ref,

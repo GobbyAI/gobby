@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 from unittest.mock import patch
 
@@ -191,7 +192,7 @@ class TestProjectScopedSeqNum:
 
 
 class TestProjectQualifiedSeqNum:
-    """'<project>-S#N' resolves a seq_num inside a named project."""
+    """'<project>#N' resolves a seq_num inside a named project."""
 
     @pytest.fixture
     def two_projects(
@@ -228,32 +229,32 @@ class TestProjectQualifiedSeqNum:
         self, session_manager: SessionManager, two_projects: dict[str, Any]
     ) -> None:
         resolved = session_manager.resolve_session_reference(
-            "game-goblins-S#1", project_id=two_projects["gobby"].id
+            "game-goblins#1", project_id=two_projects["gobby"].id
         )
         assert resolved == two_projects["goblins_s1"].id
 
     def test_resolves_by_project_uuid(
         self, session_manager: SessionManager, two_projects: dict[str, Any]
     ) -> None:
-        ref = f"{two_projects['gobby'].id}-S#1"
+        ref = f"{two_projects['gobby'].id}#1"
         assert session_manager.resolve_session_reference(ref) == two_projects["gobby_s1"].id
 
     def test_unknown_project_raises(
         self, session_manager: SessionManager, two_projects: dict[str, Any]
     ) -> None:
         with pytest.raises(ValueError, match="project 'nope' not found"):
-            session_manager.resolve_session_reference("nope-S#1")
+            session_manager.resolve_session_reference("nope#1")
 
     def test_unknown_seq_num_raises_with_project(
         self, session_manager: SessionManager, two_projects: dict[str, Any]
     ) -> None:
         with pytest.raises(ValueError, match="Session #99 not found in project 'game-goblins'"):
-            session_manager.resolve_session_reference("game-goblins-S#99")
+            session_manager.resolve_session_reference("game-goblins#99")
 
     def test_bare_seq_num_miss_hints_qualified_form(
         self, session_manager: SessionManager, two_projects: dict[str, Any]
     ) -> None:
-        with pytest.raises(ValueError, match=r"<project>-S#N"):
+        with pytest.raises(ValueError, match=r"<project>#N"):
             session_manager.resolve_session_reference("#99", project_id=two_projects["gobby"].id)
 
 
@@ -495,3 +496,108 @@ class TestResolveReferenceExternalId:
             session_manager.resolve_session_reference(
                 str(_uuid.uuid4()), project_id=sample_project["id"]
             )
+
+
+@pytest.mark.parametrize("project_name", ["literal-S", "hyphenated-project", "part#name"])
+def test_qualified_ref_uses_final_hash_and_literal_project_name(
+    session_manager: SessionManager,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    temp_db: HubDatabase,
+    project_name: str,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "qualified-project").project
+    with temp_db.transaction() as conn:
+        conn.execute("UPDATE projects SET name = %s WHERE id = %s", (project_name, project.id))
+    session = session_manager.register(
+        external_id="qualified-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=project.id,
+    )
+    assert session.ref == f"{project_name}#{session.seq_num}"
+    assert session_manager.resolve_session_reference(session.ref) == session.id
+    assert session_manager.resolve_session_reference(str(session.seq_num), project.id) == session.id
+    assert session_manager.resolve_session_reference(session.id) == session.id
+    assert {item.ref for item in session_manager.list(project_id=project.id)} == {session.ref}
+
+
+@pytest.mark.parametrize("ref", ["##1", "project#", "project#-1", "project#1x", "project#1\n"])
+def test_malformed_qualified_ref_is_rejected(session_manager: SessionManager, ref: str) -> None:
+    from gobby.storage.session_resolution import is_project_qualified_session_ref
+
+    assert not is_project_qualified_session_ref(ref)
+    with pytest.raises(ValueError):
+        session_manager.resolve_session_reference(ref)
+
+
+def test_deleted_project_and_retired_alias_are_not_resolved(
+    session_manager: SessionManager,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    temp_db: HubDatabase,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "qualified-deleted").project
+    session = session_manager.register(
+        external_id="deleted-project-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=project.id,
+    )
+    with pytest.raises(ValueError, match="project.*not found"):
+        session_manager.resolve_session_reference(f"{project.name}-S#{session.seq_num}")
+    with temp_db.transaction() as conn:
+        conn.execute("UPDATE projects SET deleted_at = NOW() WHERE id = %s", (project.id,))
+    for qualifier in (project.name, project.id):
+        with pytest.raises(ValueError, match="project.*not found"):
+            session_manager.resolve_session_reference(f"{qualifier}#{session.seq_num}")
+    assert session_manager.resolve_session_reference(session.id) == session.id
+
+
+def test_canonical_ref_fallbacks_and_serialization(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    session = session_manager.register(
+        external_id="ref-fallbacks",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    assert session.ref == f"test-project#{session.seq_num}"
+    assert session.to_dict()["ref"] == session.to_brief()["ref"] == session.ref
+    for name in (None, "", "  "):
+        assert replace(session, project_name=name).ref == f"{session.project_id}#{session.seq_num}"
+    assert replace(session, seq_num=None).ref == session.id
+
+
+def test_automatic_title_normalization_preserves_suffix_source_and_manual_title(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    automatic = session_manager.register(
+        external_id="automatic-title",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manual = session_manager.register(
+        external_id="manual-title",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=sample_project["id"],
+        title="(old-S#1): My manual title",
+    )
+    old = f"(test-project-S#{automatic.seq_num}): Task #42 - Keep: exact suffix"
+    session_manager.update_title(automatic.id, old, title_source="task")
+    changed: list[tuple[str, str]] = []
+    session_manager.register_title_listener(lambda sid, title: changed.append((sid, title)))
+    expected = f"({automatic.ref}): Task #42 - Keep: exact suffix"
+    with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as rename:
+        assert session_manager.normalize_automatic_title_refs() == 1
+        assert session_manager.normalize_automatic_title_refs() == 0
+        rename.assert_called_once()
+        assert rename.call_args.args[1] == expected
+    saved = session_manager.get(automatic.id)
+    assert saved is not None
+    assert (saved.title, saved.title_source) == (expected, "task")
+    assert changed == [(automatic.id, expected)]
+    saved_manual = session_manager.get(manual.id)
+    assert saved_manual is not None
+    assert (saved_manual.title, saved_manual.title_source) == (manual.title, "manual")

@@ -236,7 +236,7 @@ def compose_session_response(
     # Compute session_ref from session object or fallback to session_id
     session_ref = session_id
     if session and session.seq_num:
-        session_ref = f"#{session.seq_num}"
+        session_ref = session.ref
 
     # Build system message — session ID banner only (for terminal display).
     # Agent tree, external ID, and claimed tasks removed to reduce token waste.

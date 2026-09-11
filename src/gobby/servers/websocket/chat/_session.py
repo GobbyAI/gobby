@@ -271,6 +271,7 @@ class ChatSessionMixin:
             "successor_id": successor.id,
             "predecessor_id": predecessor_id,
             "seq_num": successor.seq_num,
+            "session_ref": successor.ref,
         }
 
     def _transfer_clear_claims(self, predecessor_id: str, successor_id: str) -> None:
@@ -538,6 +539,7 @@ class ChatSessionMixin:
         if existing_db_session:
             session.db_session_id = existing_db_session.id
             session.seq_num = existing_db_session.seq_num
+            session.session_ref = existing_db_session.ref
             session._session_manager_ref = session_manager
 
             if (
@@ -584,6 +586,7 @@ class ChatSessionMixin:
                 )
                 session.db_session_id = db_session.id
                 session.seq_num = db_session.seq_num
+                session.session_ref = db_session.ref
                 session._session_manager_ref = session_manager
 
                 # Compatibility path for callers that still lazily create web

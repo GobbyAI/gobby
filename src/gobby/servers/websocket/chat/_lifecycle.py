@@ -349,7 +349,7 @@ class ChatLifecycleMixin:
                 and getattr(session, "seq_num", None)
                 and event_type not in (HookEventType.STOP, HookEventType.SUBAGENT_STOP)
             ):
-                session_ref = f"#{session.seq_num}"
+                session_ref = session.session_ref or db_session_id
                 ctx = result.get("context")
                 if event_type == HookEventType.PRE_COMPACT:
                     # Richer context for compaction survival

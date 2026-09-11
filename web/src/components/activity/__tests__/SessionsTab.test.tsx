@@ -866,7 +866,7 @@ describe("SessionsTab", () => {
             id: "provisional-title",
             ref: "#9829",
             seq_num: 9829,
-            title: "(gobby-S#9829): S#9829",
+            title: "(gobby#9829): S#9829",
           }),
         ]}
       />,
@@ -875,7 +875,7 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("S#9829")).toBeInTheDocument();
     });
-    expect(screen.queryByText("(gobby-S#9829): S#9829")).toBeNull();
+    expect(screen.queryByText("(gobby#9829): S#9829")).toBeNull();
   });
 
   it("orders session entries by ref (#N) descending, not by recency", async () => {
@@ -1005,28 +1005,41 @@ describe("SessionsTab", () => {
     const lifecycleSessions = [
       LIVE_SESSION,
       PAUSED_SESSION,
-      makeSession({ id: "interrupted-1", title: "Interrupted Terminal", status: "interrupted" }),
-      makeSession({ id: "input-1", title: "Input Terminal", status: "awaiting_input" }),
+      makeSession({
+        id: "interrupted-1",
+        title: "Interrupted Terminal",
+        status: "interrupted",
+      }),
+      makeSession({
+        id: "input-1",
+        title: "Input Terminal",
+        status: "awaiting_input",
+      }),
       makeSession({
         id: "approval-1",
         title: "Approval Terminal",
         status: "awaiting_approval",
       }),
-      makeSession({ id: "handoff-1", title: "Handoff Terminal", status: "awaiting_handoff" }),
+      makeSession({
+        id: "handoff-1",
+        title: "Handoff Terminal",
+        status: "awaiting_handoff",
+      }),
     ];
     render(
-      <SessionsTab
-        sessions={lifecycleSessions}
-        focusSessionId="live-1"
-      />,
+      <SessionsTab sessions={lifecycleSessions} focusSessionId="live-1" />,
     );
 
     await waitFor(() => {
       expect(screen.getAllByText("Live Terminal").length).toBeGreaterThan(0);
       expect(screen.getAllByText("Paused Terminal").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("Interrupted Terminal").length).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText("Interrupted Terminal").length,
+      ).toBeGreaterThan(0);
       expect(screen.getAllByText("Input Terminal").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("Approval Terminal").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Approval Terminal").length).toBeGreaterThan(
+        0,
+      );
       expect(screen.getAllByText("Handoff Terminal").length).toBeGreaterThan(0);
     });
 

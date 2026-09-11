@@ -17,6 +17,7 @@ from gobby.servers.routes.tasks_dependency_routes import register_task_dependenc
 from gobby.servers.routes.tasks_lifecycle_routes import register_task_lifecycle_routes
 from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
@@ -234,7 +235,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             try:
                 placeholders = ",".join("%s" for _ in owner_ids)
                 rows = server.session_manager.db.fetchall(
-                    f"SELECT id, seq_num, source FROM sessions WHERE id IN ({placeholders})",  # nosec B608
+                    f"""SELECT s.*, p.name AS project_name FROM sessions s
+                    LEFT JOIN projects p ON p.id = s.project_id
+                    WHERE s.id IN ({placeholders})""",  # nosec B608
                     tuple(owner_ids),
                 )
                 sessions_by_id = {row["id"]: row for row in rows}
@@ -249,7 +252,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             session = sessions_by_id.get(owner_id)
             item["owner_session_ref"] = {
                 "session_id": owner_id,
-                "ref": f"#{session['seq_num']}" if session and session["seq_num"] else owner_id[:8],
+                "ref": Session.from_row(session).ref if session else owner_id,
                 "source": session["source"] if session else None,
             }
 

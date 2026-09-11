@@ -223,7 +223,7 @@ export function toSessionObservationMeta(
     ref: sessionMetaValue(
       overrides,
       "ref",
-      typeof session.seq_num === "number" ? `#${session.seq_num}` : null,
+      sessionString(session, "ref", null),
     ),
     source: sessionMetaValue(
       overrides,

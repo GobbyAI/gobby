@@ -283,7 +283,7 @@ class _AgentRunLifecycleMixin:
                                 OR {consumed_sql}
                           )
                   )
-                RETURNING *
+                RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
                 """,
                 (now, list(LIVE_SESSION_STATUS_ORDER), list(TERMINAL_AGENT_RUN_STATUSES)),
             ).fetchall()

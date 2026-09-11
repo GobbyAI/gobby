@@ -25,6 +25,7 @@ class ChatSessionProtocol(Protocol):
     # Identity
     conversation_id: str
     db_session_id: str | None
+    session_ref: str | None
     seq_num: int | None
     project_id: str | None
     project_path: str | None

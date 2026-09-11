@@ -144,9 +144,9 @@ class ChatStreamEventHandler:
         db_session_id = getattr(session, "db_session_id", None)
         if isinstance(db_session_id, str) and db_session_id:
             payload["db_session_id"] = db_session_id
-        seq_num = getattr(session, "seq_num", None)
-        if isinstance(seq_num, int) and seq_num > 0:
-            payload["session_ref"] = f"#{seq_num}"
+        session_ref = getattr(session, "session_ref", None)
+        if isinstance(session_ref, str) and session_ref:
+            payload["session_ref"] = session_ref
 
         if "title" in info:
             title = info.get("title")

@@ -218,7 +218,7 @@ class _QueryMixin:
 
         rows = self.db.fetchall(
             f"""
-            SELECT * FROM sessions
+            SELECT * FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
             WHERE {where_clause}
             ORDER BY updated_at DESC, id DESC
             LIMIT %s

@@ -28,10 +28,11 @@ class ChatStreamPersistence:
         self.assistant_blocks = assistant_blocks
 
     def session_ref(self) -> str | None:
-        """Get the session ref (#N) for the current conversation."""
+        """Get the canonical session ref for the current conversation."""
         session = self.owner._chat_sessions.get(self.conversation_id)
-        if session and getattr(session, "seq_num", None):
-            return f"#{session.seq_num}"
+        if session:
+            ref = getattr(session, "session_ref", None) or getattr(session, "db_session_id", None)
+            return ref if isinstance(ref, str) else None
         return None
 
     async def persist_message(

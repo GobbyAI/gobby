@@ -48,10 +48,7 @@ function displayLabel(
   gobbySession: GobbySession | null,
 ): string {
   if (gobbySession !== null) {
-    const ref =
-      gobbySession.seq_num === null
-        ? gobbySession.ref
-        : `#${gobbySession.seq_num}`;
+    const ref = gobbySession.ref;
     const title = stripSessionTitlePrefix(gobbySession.title);
     return title ? `${ref} ${title}` : ref;
   }

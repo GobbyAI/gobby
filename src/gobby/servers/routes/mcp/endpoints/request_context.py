@@ -97,7 +97,7 @@ def _get_argument_session_id(arguments: Any) -> str | None:
 def _session_ref_seq_num(session_ref: str | None) -> int | None:
     if not session_ref:
         return None
-    raw = session_ref[1:] if session_ref.startswith("#") else session_ref
+    raw = session_ref.rsplit("#", 1)[-1]
     return int(raw) if raw.isdigit() else None
 
 

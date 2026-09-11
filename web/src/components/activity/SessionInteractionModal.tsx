@@ -14,7 +14,7 @@ import { getToolCallError, isSuccessfulToolCall } from "./toolCallStatus";
 interface SessionEntry {
   id: string;
   label: string;
-  seqNum?: number | null;
+  sessionRef?: string | null;
 }
 
 interface SessionInteractionModalProps {
@@ -122,8 +122,8 @@ export function SessionInteractionModal({
     }
   }, [text, entry.id, fromSessionId, onClose]);
 
-  const displayLabel = entry.seqNum
-    ? `#${entry.seqNum}: ${entry.label}`
+  const displayLabel = entry.sessionRef
+    ? `${entry.sessionRef}: ${entry.label}`
     : entry.label;
 
   return (

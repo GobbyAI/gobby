@@ -65,7 +65,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             sandbox_enabled: Whether the session runtime was launched sandboxed
 
         Returns:
-            Session details including session_id, session_ref (#N), and status
+            Session details including session_id, session_ref (<project>#N), and status
         """
         from gobby.utils.machine_id import get_machine_id
         from gobby.utils.project_context import get_project_context
@@ -136,7 +136,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
 
             return {
                 "session_id": session.id,
-                "session_ref": f"#{session.seq_num}",
+                "session_ref": session.ref,
                 "external_id": session.external_id,
                 "status": session.status,
                 "source": session.source,

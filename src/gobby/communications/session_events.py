@@ -56,7 +56,8 @@ def _canonical_session_title(transition: SessionStatusTransition) -> str:
         return title
     legacy_prefix = re.compile(rf"^#{transition.seq_num}(?:\s*[-–—:]\s*|\s+)")
     title = legacy_prefix.sub("", title, count=1).strip() or "Session"
-    return f"#{transition.seq_num} - {title}"
+    ref = transition.session_ref or f"{transition.project_id}#{transition.seq_num}"
+    return f"{ref} - {title}"
 
 
 async def route_session_status_transition(

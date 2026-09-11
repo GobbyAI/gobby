@@ -4,7 +4,7 @@ interface SessionTitleLike {
   title?: string | null;
 }
 
-// Persisted titles carry a parenthesised provenance prefix ("(gobby-S#11155): ")
+// Persisted titles carry a parenthesised provenance prefix ("(gobby#11155): ")
 // that the tmux window name needs and the UI already shows as the session ref.
 const PARENTHESISED_PREFIX = /^\s*\([^)]*\)\s*:?\s*/;
 

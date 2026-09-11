@@ -232,6 +232,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         logger.warning("Failed to populate model metadata: %s", e, exc_info=True)
 
     runner.session_manager = SessionManager(runner.database)
+    runner.session_manager.normalize_automatic_title_refs()
     runner.task_manager = LocalTaskManager(runner.database)
     runner.session_task_manager = SessionTaskManager(runner.database)
 

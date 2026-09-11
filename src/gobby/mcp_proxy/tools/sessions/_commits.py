@@ -64,7 +64,7 @@ def register_commits_tools(
 
     @registry.tool(
         name="get_session_commits",
-        description="Get git commits made during a session timeframe. Accepts #N, N, UUID, or prefix for session_id.",
+        description="Get git commits made during a session timeframe. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.",
     )
     async def get_session_commits(
         session_id: str,
@@ -77,7 +77,7 @@ def register_commits_tools(
         git log within that timeframe.
 
         Args:
-            session_id: Session reference - supports #N, N (seq_num), UUID, or prefix
+            session_id: Session reference - supports <project>#N, local #N/N, UUID, or prefix
             max_commits: Maximum commits to return (default 20)
 
         Returns:
@@ -182,10 +182,10 @@ def register_commits_tools(
 
     @registry.tool(
         name="mark_loop_complete",
-        description="""Mark the autonomous loop as complete, preventing session chaining. Accepts #N, N, UUID, or prefix for session_id.
+        description="""Mark the autonomous loop as complete, preventing session chaining. Accepts <project>#N, local #N/N, UUID, or prefix for session_id.
 
 Args:
-    session_id: (REQUIRED) Your session ID. Accepts #N, N, UUID, or prefix. Get it from:
+    session_id: (REQUIRED) Your session ID. Accepts <project>#N, local #N/N, UUID, or prefix. Get it from:
         1. Your injected context (look for 'Session Ref: #N' or 'session_id: xxx')
         2. Or call get_current_session(external_id, source) first""",
     )
@@ -203,7 +203,7 @@ Args:
         - The user has explicitly asked to stop
 
         Args:
-            session_id: Session reference - supports #N, N (seq_num), UUID, or prefix (REQUIRED)
+            session_id: Session reference - supports <project>#N, local #N/N, UUID, or prefix (REQUIRED)
 
         Returns:
             Success status and session details

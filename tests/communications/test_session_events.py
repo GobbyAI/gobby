@@ -57,6 +57,7 @@ def make_transition(
         seq_num=42,
         title="Index docs",
         source="codex",
+        session_ref="gobby#42",
     )
 
 
@@ -101,7 +102,7 @@ async def test_route_session_status_transition_preserves_scope_and_utc_event_id(
     assert router.calls == [
         {
             "event_type": "session.agent.paused",
-            "content": "#42 - Index docs - Paused",
+            "content": "gobby#42 - Index docs - Paused",
             "project_id": "22222222-2222-4222-8222-222222222222",
             "session_id": "11111111-1111-4111-8111-111111111111",
             "event_id": ("11111111-1111-4111-8111-111111111111:paused:2026-07-30T23:00:00+00:00"),
@@ -131,6 +132,7 @@ def test_format_session_status_message_uses_session_fallback_without_title() -> 
         seq_num=None,
         title=None,
         source=transition.source,
+        session_ref=transition.session_ref,
     )
 
     assert format_session_status_message(transition) == "Session - Expired"
@@ -153,6 +155,7 @@ def test_format_session_status_message_does_not_duplicate_legacy_ref(
         seq_num=42,
         title=legacy_title,
         source=transition.source,
+        session_ref=transition.session_ref,
     )
 
-    assert format_session_status_message(transition) == "#42 - Codex - Paused"
+    assert format_session_status_message(transition) == "gobby#42 - Codex - Paused"

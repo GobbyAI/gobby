@@ -36,9 +36,10 @@ def guard_handoff_shutdown(db: HubDatabase, machine_id: str) -> Iterator[None]:
             raise HandoffShutdownBlocked("Handoff staging or another shutdown is in progress")
         rows = conn.execute(
             """
-            SELECT s.seq_num, s.id,
+            SELECT s.seq_num, s.id, s.project_id, p.name AS project_name,
                    v.variables -> 'set_handoff_pending' ->> 'attempt_id' AS attempt_id
               FROM sessions s JOIN session_variables v ON v.session_id = s.id
+              LEFT JOIN projects p ON p.id = s.project_id
              WHERE s.machine_id = %s
                AND jsonb_typeof(v.variables -> 'set_handoff_pending') = 'object'
                AND (
@@ -56,7 +57,9 @@ def guard_handoff_shutdown(db: HubDatabase, machine_id: str) -> Iterator[None]:
         ).fetchall()
         if rows:
             attempts = ", ".join(
-                f"#{row['seq_num']} ({row['attempt_id'] or 'unknown attempt'})" for row in rows
+                f"{(row['project_name'] or '').strip() or row['project_id']}#{row['seq_num']} "
+                f"({row['attempt_id'] or 'unknown attempt'})"
+                for row in rows
             )
             raise HandoffShutdownBlocked(
                 f"Unresolved set_handoff in session(s) {attempts}. "
