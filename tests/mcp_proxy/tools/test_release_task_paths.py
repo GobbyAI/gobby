@@ -292,7 +292,7 @@ async def test_release_succeeds_when_the_dirt_belongs_to_another_sessions_open_t
         "released_paths": [SHARED_PATH],
         "remaining_paths": [],
         "foreign_dirty_paths": {
-            SHARED_PATH: [{"task": f"#{other.seq_num}", "session": f"#{foreign.seq_num}"}]
+            SHARED_PATH: [{"task": f"#{other.seq_num}", "session": foreign.ref}]
         },
     }
     owner_variables = harness.variables.get_variables(harness.owner.id)
@@ -371,7 +371,7 @@ async def test_release_uses_claimed_integration_checkout_without_main_fallback(
             "released_paths": [SHARED_PATH],
             "remaining_paths": [],
             "foreign_dirty_paths": {
-                SHARED_PATH: [{"task": f"#{other.seq_num}", "session": f"#{foreign.seq_num}"}]
+                SHARED_PATH: [{"task": f"#{other.seq_num}", "session": foreign.ref}]
             },
         }
         assert harness.task.id not in harness.variables.get_variables(harness.owner.id).get(
@@ -642,14 +642,14 @@ async def test_inspect_task_path_ownership_reports_staged_dirty_and_unowned_path
         "path": SHARED_PATH,
         "dirty": True,
         "staged": True,
-        "owners": [{"task": f"#{harness.task.seq_num}", "session": f"#{harness.owner.seq_num}"}],
+        "owners": [{"task": f"#{harness.task.seq_num}", "session": harness.owner.ref}],
         "unowned": False,
     }
     assert entries[foreign_path] == {
         "path": foreign_path,
         "dirty": True,
         "staged": False,
-        "owners": [{"task": f"#{other.seq_num}", "session": f"#{foreign.seq_num}"}],
+        "owners": [{"task": f"#{other.seq_num}", "session": foreign.ref}],
         "unowned": False,
     }
     assert entries[unowned_path] == {

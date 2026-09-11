@@ -183,8 +183,10 @@ not only by declarative rules:
 | `force_allow_stop` | Set `true` on catastrophic failures (rate limit, billing) |
 | `found_work_shirk_alerted` | Set `true` by the found-work shirk stop gate the first time it blocks a permission-seeking defect deferral; the gate never fires again in that session (session-lifetime, never reset on `turn_start`) |
 | `found_work_shirk_confirmed` | Set alongside `found_work_shirk_alerted`: `true` when the LLM confirmed the deferral, `false` when the alert rested on the fast-path verdict alone |
-| `baseline_dirty_files` | Initialized from the first rule evaluation's git status |
-| `session_edited_files` | Updated by tool observers as the session edits files |
+| `baseline_dirty_files` | Marker only; hooks never sample git status (the sessions capture-baseline tool writes a real list) |
+| `session_edited_files` | Updated by tool observers as the session edits files (session-lifetime history) |
+| `session_dirty_files` | Paths edited since git last reported them clean; `has_dirty_files` reads this, and the session's own git activity reconciles it |
+| `session_dirty_file_checkouts` | Checkout root to the `session_dirty_files` paths edited there; a reconcile releases only paths its own checkout's git can see |
 | `context_compact_guidance_kind` | Current observer guidance kind: unknown, warn, block, failed, or empty |
 | `context_compact_guidance_message` | Turn-start or after-tool context-pressure guidance text |
 | `context_compact_mid_turn_pressure_band` | Current enforcement band: none, warn, or block |
@@ -421,8 +423,10 @@ These are set during execution, not initialized from definitions:
 | `_assigned_pipeline` | string | Pipeline to auto-run on start |
 | `assigned_task_id` | string | Task ref assigned to a spawned/persona task worker |
 | `session_task` | string | Current task ref or UUID used by task-aware rules |
-| `baseline_dirty_files` | list | Dirty files captured as the session baseline |
+| `baseline_dirty_files` | list | Dirty files captured by the sessions capture-baseline tool (hooks write an unsampled marker) |
 | `session_edited_files` | list | Files edited by this session |
+| `session_dirty_files` | list | Files edited by this session that git has not yet reported clean |
+| `session_dirty_file_checkouts` | object | Checkout root to the dirty paths edited in that checkout |
 | `set_handoff_pending` | object | One-shot attempt marker written only by `set_handoff` and consumed by `get_handoff`. |
 | `handoff_pull_pending` | bool | Defer turn-start meta skill loads until `get_handoff` consumes. Set on compact stage and clear-successor bind. |
 | `grok_pending_briefing` | list | Ordered, id-deduplicated context components waiting for acknowledged Grok PreToolUse/Stop delivery. |

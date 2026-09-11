@@ -1,16 +1,13 @@
 import subprocess
-import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
-from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -21,13 +18,11 @@ from gobby.storage.projects import (
     PERSONAL_PROJECT_ID,
     LocalProjectManager,
 )
+from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, DirtyFiles
 from gobby.workflows.hooks import (
-    _GIT_STATUS_FLOOR_SECONDS,
     _NO_REPO_SYSTEM_PROJECTS,
     WorkflowHookHandler,
-    _git_status_timeout,
     _is_known_no_repo_project,
 )
 from tests.fixtures.isolated_checkout import (
@@ -307,13 +302,13 @@ class TestWorkflowHookHandlerDisabled:
 
 
 class TestProjectPathResolution:
-    """Verify project_path for dirty file checks uses event.cwd."""
+    """Dirty state is the edit ledger; project_path resolution never runs git status."""
 
     @pytest.mark.asyncio
-    async def test_existing_baseline_is_kept_and_snapshot_taken_once(self) -> None:
-        """One async snapshot per evaluation; an existing baseline is never resampled."""
-        handler, _mock_engine = _handler_with_variables(
-            {"baseline_dirty_files": ["seed.py"], "session_edited_files": []}
+    async def test_dirty_state_comes_from_the_ledger_without_git_status(self) -> None:
+        """A hook event reads the daemon's edit ledger; git status never runs."""
+        handler, mock_engine = _handler_with_variables(
+            {"session_dirty_files": ["new.py"], "session_edited_files": ["new.py"]}
         )
 
         event = HookEvent(
@@ -327,29 +322,20 @@ class TestProjectPathResolution:
 
         with (
             patch.object(handler, "_resolve_project_path", return_value="/repo"),
-            patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty,
+            patch.object(daemon_git, "status", new_callable=AsyncMock) as mock_status,
         ):
-            mock_dirty.return_value = DirtyFiles({"seed.py", "new.py"}, set())
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"
-        mock_dirty.assert_called_once_with(
-            "/repo",
-            timeout=DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
-        )
-        variable_manager = cast(Any, handler._session_var_manager)
-        persisted = [
-            call.args[1]
-            for call in variable_manager.merge_variables.call_args_list
-            if len(call.args) > 1 and isinstance(call.args[1], dict)
-        ]
-        assert all("baseline_dirty_files" not in payload for payload in persisted)
+        eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
+        assert eval_context["has_dirty_files"] is True
+        mock_status.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_close_task_skips_whole_checkout_dirty_snapshot(self) -> None:
+    async def test_close_task_does_not_prejudge_ledger_dirty_state(self) -> None:
         handler, mock_engine = _handler_with_variables(
             {
-                "baseline_dirty_files": [],
+                "session_dirty_files": ["tracked.py"],
                 "session_edited_files": ["tracked.py"],
                 "task_edited_files": {"task-1": ["tracked.py"]},
             }
@@ -366,29 +352,56 @@ class TestProjectPathResolution:
 
         with (
             patch.object(handler, "_resolve_project_path", return_value="/repo"),
-            patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty,
+            patch.object(daemon_git, "status", new_callable=AsyncMock) as mock_status,
         ):
             response = await handler._evaluate_rules(event)
 
-            eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
-            assert not bool(eval_context["has_dirty_files"])
-            assert not bool(eval_context["has_target_task_dirty_files"])
-
+        eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
+        assert eval_context["has_dirty_files"] is False
+        assert eval_context["has_target_task_dirty_files"] is False
+        assert eval_context["target_task_has_edits"] is True
         assert response.decision == "allow"
-        mock_dirty.assert_not_called()
+        mock_status.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_dirty_files_uses_event_cwd_for_worktree(self, tmp_path: Path) -> None:
-        """get_dirty_files should receive event.cwd, not None or metadata.project_path.
+    async def test_other_task_tools_read_target_task_dirty_state_from_the_ledger(
+        self,
+    ) -> None:
+        handler, mock_engine = _handler_with_variables(
+            {
+                "session_dirty_files": ["tracked.py"],
+                "session_edited_files": ["tracked.py"],
+                "task_edited_files": {"task-1": ["tracked.py"]},
+            }
+        )
 
-        This ensures worktree agents get dirty file checks scoped to their
-        worktree directory, not the daemon's cwd.
-        """
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={"tool_name": "update_task", "tool_input": {"task_id": "task-1"}},
+            metadata={"_platform_session_id": MOCK_SESSION_ID},
+        )
+
+        with (
+            patch.object(handler, "_resolve_project_path", return_value="/repo"),
+            patch.object(daemon_git, "status", new_callable=AsyncMock) as mock_status,
+        ):
+            await handler._evaluate_rules(event)
+
+        eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
+        assert eval_context["has_dirty_files"] is True
+        assert eval_context["has_target_task_dirty_files"] is True
+        mock_status.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_project_path_uses_event_cwd_for_worktree(self, tmp_path: Path) -> None:
+        """The resolved project path is event.cwd, not the daemon's cwd; no status runs."""
         worktree_path = tmp_path / "agent-worktree-123"
         worktree_path.mkdir()
         subprocess.run(["git", "init"], cwd=worktree_path, check=True, capture_output=True)
         handler = WorkflowHookHandler()
-        # Wire up a mock rule engine with async evaluate
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
         mock_engine.db = MagicMock()
@@ -403,25 +416,15 @@ class TestProjectPathResolution:
             cwd=str(worktree_path),
         )
 
-        with patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty:
-            mock_dirty.return_value = DirtyFiles(set(), set())
-            # Call _evaluate_rules directly (async) to avoid threading issues
+        with patch.object(daemon_git, "status", new_callable=AsyncMock) as mock_status:
             await handler._evaluate_rules(event)
 
-            # Get the eval_context that was passed to rule_engine.evaluate
-            assert mock_engine.evaluate.called
-            call_kwargs = mock_engine.evaluate.call_args
-            eval_context = call_kwargs.kwargs.get("eval_context", {})
-            # Force the LazyBool to evaluate, which reads the cached snapshot
-            assert "has_dirty_files" in eval_context
-            bool(eval_context["has_dirty_files"])
-            assert mock_dirty.call_count >= 1
-            # Every call should use event.cwd, not None
-            for call in mock_dirty.call_args_list:
-                assert call[0][0] == str(worktree_path.resolve())
+        assert mock_engine.evaluate.called
+        assert Path(event.metadata["project_path"]).resolve() == worktree_path.resolve()
+        mock_status.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_dirty_files_prefers_valid_repo_path_over_unusable_cwd(
+    async def test_project_path_prefers_valid_repo_path_over_unusable_cwd(
         self, tmp_path: Path
     ) -> None:
         non_repo = tmp_path / "plain"
@@ -445,21 +448,17 @@ class TestProjectPathResolution:
             metadata={"project_path": str(repo)},
         )
 
-        with patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty:
-            mock_dirty.return_value = DirtyFiles(set(), set())
+        with patch.object(daemon_git, "status", new_callable=AsyncMock) as mock_status:
             await handler._evaluate_rules(event)
 
-            eval_context = mock_engine.evaluate.call_args.kwargs.get("eval_context", {})
-            bool(eval_context["has_dirty_files"])
-            assert mock_dirty.call_args_list
-            for call in mock_dirty.call_args_list:
-                assert call[0][0] == str(repo.resolve())
+        assert mock_engine.evaluate.called
+        assert Path(event.metadata["project_path"]).resolve() == repo.resolve()
+        mock_status.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_dirty_files_outside_a_repo_return_empty_without_git_status(
         self, tmp_path: Path
     ) -> None:
-        from gobby.utils.daemon_git import daemon_git
         from gobby.workflows.git_utils import get_dirty_files_categorized_async
 
         with patch.object(daemon_git, "status") as mock_status:
@@ -467,62 +466,6 @@ class TestProjectPathResolution:
 
         assert not dirty
         mock_status.assert_not_called()
-
-    @pytest.mark.parametrize(
-        ("expires_in", "expected"),
-        [
-            (30.0, DEFAULT_GIT_STATUS_TIMEOUT_SECONDS),
-            (3.0, 3.0),
-            # A spent budget floors rather than reaching zero: a zero-second scan
-            # would time out, report a clean tree, and stop the gates from gating.
-            (0.0, _GIT_STATUS_FLOOR_SECONDS),
-            (-5.0, _GIT_STATUS_FLOOR_SECONDS),
-        ],
-    )
-    def test_git_status_timeout_caps_on_the_budget_and_floors_when_spent(
-        self,
-        expires_in: float,
-        expected: float,
-    ) -> None:
-        deadline = BlockingEffectDeadline(time.monotonic() + expires_in)
-
-        assert _git_status_timeout(deadline) == pytest.approx(expected, abs=0.05)
-
-    def test_git_status_timeout_without_a_deadline_uses_the_default(self) -> None:
-        assert _git_status_timeout(None) == DEFAULT_GIT_STATUS_TIMEOUT_SECONDS
-
-    @pytest.mark.asyncio
-    async def test_hook_path_bounds_the_dirty_scan_by_the_shared_budget(
-        self, tmp_path: Path
-    ) -> None:
-        """The scan spends the same budget the blocking effects do, so it answers to it."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-        handler = WorkflowHookHandler()
-        mock_engine = MagicMock()
-        mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
-        mock_engine.db = MagicMock()
-        handler.rule_engine = mock_engine
-
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id=MOCK_EXTERNAL_ID,
-            source=SessionSource.CLAUDE,
-            timestamp=MOCK_TIMESTAMP,
-            data={"tool_name": "Edit"},
-            cwd=str(repo),
-            metadata={},
-        )
-        deadline = BlockingEffectDeadline(time.monotonic() + 2.0)
-
-        with patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as mock_dirty:
-            mock_dirty.return_value = DirtyFiles(set(), set())
-            await handler._evaluate_rules(event, blocking_deadline=deadline)
-
-        assert mock_dirty.call_args_list
-        for call in mock_dirty.call_args_list:
-            assert call.kwargs["timeout"] == pytest.approx(2.0, abs=0.2)
 
     @pytest.mark.asyncio
     async def test_personal_no_repo_project_does_not_warn_or_shell_out(

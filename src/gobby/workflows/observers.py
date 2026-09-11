@@ -29,7 +29,6 @@ from gobby.workflows.observer_commits import (
     _looks_like_commit_success,
     detect_bash_commit,
     detect_commit_link,
-    release_clean_task_paths_after_commit,
 )
 from gobby.workflows.observer_mcp import (
     _extract_loaded_skill_name,
@@ -71,7 +70,6 @@ __all__ = [
     "detect_plan_mode_from_context",
     "detect_task_claim",
     "detect_turn_interrupt",
-    "release_clean_task_paths_after_commit",
     "reconcile_claimed_tasks",
 ]
 

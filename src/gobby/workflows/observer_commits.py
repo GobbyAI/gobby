@@ -13,15 +13,9 @@ from gobby.workflows.observer_utils import (
     _shell_tool_succeeded,
     _successful_close_result,
 )
-from gobby.workflows.task_claim_state import (
-    active_task_id_for_edit,
-    task_edited_file_set,
-    task_edited_file_set_for_checkout,
-)
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
-    from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -44,6 +38,39 @@ def _looks_like_commit_success(output: str) -> bool:
     return True
 
 
+def commit_link_succeeded(event: HookEvent) -> bool:
+    """Return whether this event linked a commit to a task through gobby-tasks.
+
+    True when ``link_commit`` or ``auto_link_commits`` succeeded, or
+    ``close_task`` succeeded with a ``commit_sha`` argument.
+    """
+    if not event.data:
+        return False
+
+    server_name = event.data.get("mcp_server", "")
+    if server_name != "gobby-tasks":
+        return False
+
+    inner_tool = event.data.get("mcp_tool", "")
+    if inner_tool not in ("link_commit", "close_task", "auto_link_commits"):
+        return False
+
+    if inner_tool == "close_task":
+        tool_input = event.data.get("tool_input", {}) or {}
+        arguments = tool_input.get("arguments", {}) or {}
+        if not arguments.get("commit_sha"):
+            return False
+
+    tool_output = event.data.get("tool_output") or {}
+    if isinstance(tool_output, dict):
+        if tool_output.get("error") or tool_output.get("status") == "error":
+            return False
+        result = tool_output.get("result")
+        if isinstance(result, dict) and result.get("error"):
+            return False
+    return inner_tool != "close_task" or _successful_close_result(tool_output) is not None
+
+
 def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: str) -> None:
     """Detect when a commit is linked to a task in this session.
 
@@ -52,32 +79,9 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
     rules depend on this variable (require-error-triage, require-commit-
     before-close, block-skip-validation-with-commit, require-memory-review).
     """
-    if not event.data:
+    if not commit_link_succeeded(event):
         return
-
-    server_name = event.data.get("mcp_server", "")
-    if server_name != "gobby-tasks":
-        return
-
-    inner_tool = event.data.get("mcp_tool", "")
-    if inner_tool not in ("link_commit", "close_task", "auto_link_commits"):
-        return
-
-    if inner_tool == "close_task":
-        tool_input = event.data.get("tool_input", {}) or {}
-        arguments = tool_input.get("arguments", {}) or {}
-        if not arguments.get("commit_sha"):
-            return
-
-    tool_output = event.data.get("tool_output") or {}
-    if isinstance(tool_output, dict):
-        if tool_output.get("error") or tool_output.get("status") == "error":
-            return
-        result = tool_output.get("result")
-        if isinstance(result, dict) and result.get("error"):
-            return
-    if inner_tool == "close_task" and _successful_close_result(tool_output) is None:
-        return
+    inner_tool = (event.data or {}).get("mcp_tool", "")
 
     variables["task_has_commits"] = True
     variables["_found_work_fix_commit_turn"] = True
@@ -120,44 +124,3 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
         )
         return True
     return False
-
-
-def release_clean_task_paths_after_commit(
-    event: HookEvent,
-    variables: dict[str, Any],
-    session_id: str,
-    *,
-    variable_manager: SessionVariableManager,
-    project_path: str,
-    dirty_paths: set[str],
-) -> list[str]:
-    """Release active-task paths made clean by a successful owner commit."""
-    task_id = active_task_id_for_edit(variables)
-    if task_id is None:
-        return []
-    attributed = task_edited_file_set_for_checkout(variables, task_id, project_path)
-    if not attributed:
-        attributed = task_edited_file_set(variables, task_id)
-    if not attributed:
-        return []
-
-    clean_paths = sorted(attributed - dirty_paths)
-    if not clean_paths:
-        return []
-    released, _remaining = variable_manager.release_task_edited_files(
-        session_id,
-        task_id,
-        clean_paths,
-        checkout_root=project_path,
-    )
-    if not released:
-        return []
-
-    refreshed = variable_manager.get_variables(session_id)
-    for key in (
-        "task_edited_files",
-        "task_edited_file_times",
-        "task_edited_file_checkouts",
-    ):
-        variables[key] = refreshed.get(key, {})
-    return released

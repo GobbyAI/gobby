@@ -620,23 +620,21 @@ class FoundWorkStopAnalyzer:
         db = self._db
         if not project_id or db is None:
             return set()
-        try:
-            from gobby.workflows.commit_guard import foreign_owned_dirty_paths
-            from gobby.workflows.git_utils import get_dirty_files_categorized_async
+        from gobby.workflows.commit_guard import (
+            DirtyEditOwnershipInspectionError,
+            foreign_owned_dirty_paths_async,
+        )
 
-            dirty = await get_dirty_files_categorized_async(project_path)
-            ownership = await asyncio.to_thread(
-                foreign_owned_dirty_paths,
+        try:
+            return await foreign_owned_dirty_paths_async(
                 db,
                 session_id=session_id,
                 project_id=project_id,
                 checkout_root=project_path,
-                paths=dirty.all,
             )
-        except Exception:
+        except DirtyEditOwnershipInspectionError:
             logger.debug("Could not verify confined foreign validation failure", exc_info=True)
             return set()
-        return set(ownership)
 
 
 async def _assistant_message(

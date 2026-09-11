@@ -1263,7 +1263,8 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
     variables = _variables(db, session_id)
-    # Sampling is deferred to async workflow evaluation, which replaces the marker.
+    # The marker records that activation did not sample; dirty state comes from
+    # the edit ledger, and only the sessions capture-baseline action writes a list.
     assert variables["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
     assert variables["session_edited_files"] == ["kept.py"]
     assert variables["active_task_id"] is None
@@ -1314,7 +1315,7 @@ def test_baseline_dirty_sampling_is_deferred_to_workflow_evaluation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The hook path never samples git status; async rule evaluation owns that."""
+    """The hook path never samples git status; dirty state comes from the edit ledger."""
     session_id = _register_session(session_manager, project_id, tmp_path)
 
     def unexpected_sample(*args: Any, **kwargs: Any) -> DirtyFiles:

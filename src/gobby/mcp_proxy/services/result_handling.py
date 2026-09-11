@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.workflows.block_audit import audit_source_block
-from gobby.workflows.git_utils import GitStatusUnavailable
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -16,13 +15,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.mcp.server")
 
 BeforeToolOutcome = Literal["policy_denied", "failed_pre_dispatch"]
-
-_GIT_STATUS_FAIL_OPEN_TOOLS = frozenset({("gobby-tasks", "list_tasks")})
-
-
-def _can_fail_open_on_git_status(server_name: str, tool_name: str) -> bool:
-    """Return whether an audited pure query may run without Git status."""
-    return (server_name, tool_name) in _GIT_STATUS_FAIL_OPEN_TOOLS
 
 
 async def _evaluate_workflow_handler(workflow_handler: Any, event: "HookEvent") -> Any:
@@ -171,42 +163,6 @@ async def apply_before_tool_enforcement(
             )
     try:
         response = await _evaluate_workflow_handler(workflow_handler, event)
-    except GitStatusUnavailable:
-        if _can_fail_open_on_git_status(server_name, tool_name):
-            logger.debug(
-                "Skipping workflow evaluation for read-only %s/%s: Git status unavailable",
-                server_name,
-                tool_name,
-            )
-            return server_name, tool_name, arguments, None, None
-
-        reason = "Git status is temporarily unavailable; retry the tool."
-        logger.warning(
-            "Workflow evaluation blocked %s/%s: %s",
-            server_name,
-            tool_name,
-            reason,
-        )
-        await audit_source_block(
-            workflow_handler,
-            event,
-            rule_id="proxy-evaluation-failure",
-            reason=reason,
-            tool_name=f"{server_name}:{tool_name}",
-        )
-        return (
-            server_name,
-            tool_name,
-            arguments,
-            {
-                "success": False,
-                "error": reason,
-                "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
-                "server_name": server_name,
-                "tool_name": tool_name,
-            },
-            "failed_pre_dispatch",
-        )
     except Exception as exc:
         logger.warning(
             "Workflow evaluation failed for %s/%s: %s",
@@ -298,13 +254,6 @@ async def apply_after_tool_workflow(
         return
     try:
         response = await _evaluate_workflow_handler(workflow_handler, event)
-    except GitStatusUnavailable:
-        logger.warning(
-            "Workflow after_tool evaluation skipped for %s/%s: Git status unavailable",
-            server_name,
-            tool_name,
-        )
-        return
     except Exception as exc:
         logger.warning(
             "Workflow after_tool evaluation failed for %s/%s: %s",

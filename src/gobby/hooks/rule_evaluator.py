@@ -11,7 +11,6 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.block_audit import audit_source_block_sync
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
-from gobby.workflows.git_utils import GitStatusUnavailable
 
 DispatchMcpCalls = Callable[[list[dict[str, Any]], HookEvent], list[dict[str, Any]]]
 FormatDiscoveryResult = Callable[[dict[str, Any]], str]
@@ -151,28 +150,6 @@ class WorkflowRuleEvaluator:
             return workflow_context, None
         except WorkflowEvaluationTimeout:
             raise
-        except GitStatusUnavailable as exc:
-            if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:
-                self.logger.warning(
-                    "Git status unavailable during %s; blocking stop: %s",
-                    event.event_type.value,
-                    exc,
-                )
-                response = HookResponse(
-                    decision="block",
-                    reason="Git status is temporarily unavailable; retry the stop.",
-                )
-                self._audit_source_block(
-                    event,
-                    response,
-                    rule_id="hook-stop-git-status-unavailable",
-                )
-                return None, response
-            self.logger.debug(
-                "Git status unavailable during advisory workflow evaluation: %s",
-                exc,
-            )
-            return None, None
         except Exception as exc:
             self.logger.exception("Workflow evaluation failed: %s", exc)
             if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:

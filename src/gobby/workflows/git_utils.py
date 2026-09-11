@@ -363,10 +363,21 @@ def resolve_git_worktree_root(*candidate_paths: str | Path | None) -> str | None
     return None
 
 
+# Candidate path -> worktree root. Hook events arrive several times a second
+# from the same few directories, and a directory's worktree root does not
+# change while it exists, so ordinary events spawn no git process at all.
+# Negative answers are not cached: a directory can become a repository later.
+_WORKTREE_ROOT_CACHE: dict[str, str] = {}
+
+
 async def resolve_git_worktree_root_async(
     *candidate_paths: str | Path | None,
 ) -> str | None:
-    """Return the first candidate path that belongs to a git worktree."""
+    """Return the first candidate path that belongs to a git worktree.
+
+    Never raises: a candidate whose resolution fails is logged and skipped, so
+    rule evaluation continues without a worktree root instead of dropping.
+    """
     for raw_path in candidate_paths:
         if raw_path is None:
             continue
@@ -377,6 +388,9 @@ async def resolve_git_worktree_root_async(
         if not Path(path_text).is_dir():
             logger.debug("resolve_git_worktree_root: candidate is not a directory: %s", path_text)
             continue
+        cached = _WORKTREE_ROOT_CACHE.get(path_text)
+        if cached is not None:
+            return cached
 
         result = await daemon_git.run(
             ["rev-parse", "--show-toplevel"],
@@ -390,10 +404,17 @@ async def resolve_git_worktree_root_async(
                 path_text,
             )
             continue
-        result = _require_git_ok(result, "Git worktree resolution")
+        if not isinstance(result, GitOk):
+            logger.warning(
+                "resolve_git_worktree_root: skipping candidate %s: %s",
+                path_text,
+                result.stderr.strip() or result.status,
+            )
+            continue
 
         worktree_root = result.stdout.strip()
         if worktree_root:
+            _WORKTREE_ROOT_CACHE[path_text] = worktree_root
             return worktree_root
 
     return None
