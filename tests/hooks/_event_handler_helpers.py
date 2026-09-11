@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -30,8 +31,8 @@ def make_event(
     event_type: HookEventType,
     session_id: str = "test-session",
     source: str = "claude",
-    data: dict | None = None,
-    metadata: dict | None = None,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
     machine_id: str | None = TEST_MACHINE_ID,
 ) -> HookEvent:
     """Create a HookEvent with default test fields."""

@@ -54,6 +54,8 @@ fresh safe restart checkpoint from #12261 and other affected sessions.
 `kind: deliverable`
 
 Targets:
+- `.gobby/test-types-baseline.json`
+- `tests/hooks/_event_handler_helpers.py::*` — scope-reason: type event payload dictionaries used by shutdown tests
 - `.gobby/python-suppressions-baseline.json`
 - `src/gobby/hooks/inbox.py::*` — scope-reason: bound replay barrier waits and extract quarantine retention
 - `src/gobby/hooks/quarantine_retention.py::*` — scope-reason: own diagnostic quarantine pruning and periodic retention
@@ -328,3 +330,21 @@ uv run pytest tests/hooks/test_inbox_barrier_deadline.py tests/hooks/test_inbox.
 production files. New test quality/type audits and suppression ratchet recorded
 in the session. Foreign session/storage edits appeared during validation;
 project restart coordination requested before loading those changes.
+
+
+## V5 Shutdown test typing cleanup (#22146)
+`kind: verification`
+
+The found-work stop directive requested immediate repair. Claiming #22146 was
+rejected because #22028 remains this session's open claim; changes therefore
+belong to #22028 until its smoke gate permits closure. #22146 will link the same
+repair commit and close after that ownership restriction clears.
+
+All 63 shutdown-test typing errors are repaired with annotated fixtures,
+explicit mock types, typed partial-stub boundaries, optional-value assertions,
+and direct os patching. The shared event helper's two missing dictionary type
+parameters surfaced by the direct mypy check are also repaired. No suppressions
+were added. The test-type baseline is reduced by the supported audit writer.
+Mypy on both test files reports zero errors; test-quality audit reports zero
+findings across 33 tests. Focused protected shutdown tests provide behavioral
+verification; exact final results and commands are retained in this session.

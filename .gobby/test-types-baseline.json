@@ -2561,16 +2561,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/_event_handler_helpers.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 33,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 2,
-      "path": "tests/hooks/_event_handler_helpers.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/conftest.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 126,
@@ -10127,66 +10117,6 @@
       "message": "Returning Any from function declared to return \"int\"",
       "occurrences": 1,
       "path": "tests/test_runner_model_metadata_refresh.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 929,
-      "message": "Argument 1 to \"shutdown_daemon_services\" has incompatible type \"SimpleNamespace\"; expected \"GobbyRunner\"",
-      "occurrences": 9,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:assignment",
-      "issue_code": "mypy:assignment",
-      "line": 953,
-      "message": "Incompatible types in assignment (expression has type \"SimpleNamespace\", variable has type \"HTTPServer\")",
-      "occurrences": 1,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 114,
-      "message": "\"Callable[[], None]\" has no attribute \"called\"",
-      "occurrences": 19,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 288,
-      "message": "Cannot assign to a method",
-      "occurrences": 3,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 67,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 30,
-      "path": "tests/test_runner_shutdown.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/test_runner_shutdown.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 1005,
-      "message": "Item \"None\" of \"_Call | None\" has no attribute \"kwargs\"",
-      "occurrences": 1,
-      "path": "tests/test_runner_shutdown.py",
       "severity": "high",
       "test_name": ""
     },
