@@ -399,7 +399,11 @@ Objective-C sibling, then passed both normally and in a child process with
 misleading ambient headers and sibling files. The combined focused Rust selection
 passed 216 tests; clippy and the test-quality audit passed.
 
-Independent review still requires corrections to ordinary import-scanner read
-amplification and safe Cargo workspace members beginning with `./`. These are
-assigned to the active correction worker. Full native attempt 12 and all 14
-cohort questions remain unrun; the results above are focused regression evidence.
+Worker correction `836f693bf6` restores extension filtering before live scanner
+reads. Its bounded FIFO regression observed seven irrelevant reads before the fix
+and zero afterward. The parent independently passed all 18 context-loading tests
+and integrated it through managed merge `c832eb879d`. The parent also extended
+safe Cargo prefix normalization to repeated leading `./` components after the
+corresponding regression failed. Parent/absolute/backslash escape rejection stays
+in place. Full native attempt 12 and all 14 cohort questions remain unrun; these
+results are focused regression evidence.

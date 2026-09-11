@@ -508,7 +508,7 @@ fn captured_context_uses_only_inventory_bytes_and_rejects_cargo_escapes() {
         (
             "Cargo.toml".to_string(),
             br#"[workspace]
-members = ["./crates/*", "../outside", "/absolute", "crates\\*"]
+members = ["././crates/*", "../outside", "/absolute", "crates\\*"]
 "#
             .to_vec(),
         ),

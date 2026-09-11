@@ -264,7 +264,7 @@ fn rust_manifest_paths_from_sources(
         return manifests;
     };
     for member in members.iter().filter_map(toml::Value::as_str) {
-        let member = member.strip_prefix("./").unwrap_or(member);
+        let member = member.trim_start_matches("./");
         if !crate::index::captured_sources::is_valid_logical_path(member) {
             continue;
         }
