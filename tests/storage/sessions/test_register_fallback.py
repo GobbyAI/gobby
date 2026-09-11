@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any, cast
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import Cursor, HubDatabase, LockTarget, Transaction
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -401,10 +401,10 @@ def test_register_raises_on_storage_failure(
     original_transaction = session_mgr.db.transaction_immediate
 
     class FailingConnection:
-        def __init__(self, conn):
+        def __init__(self, conn: Transaction) -> None:
             self._conn = conn
 
-        def execute(self, sql: str, params: object = ()) -> object:
+        def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Cursor:
             if "INSERT INTO sessions" in sql:
                 raise RuntimeError("boom")
             return self._conn.execute(sql, params)
@@ -413,7 +413,7 @@ def test_register_raises_on_storage_failure(
             return getattr(self._conn, name)
 
     @contextmanager
-    def transaction_with_insert_failure(lock: object | None = None):
+    def transaction_with_insert_failure(lock: LockTarget) -> Iterator[FailingConnection]:
         with original_transaction(lock) as conn:
             yield FailingConnection(conn)
 
