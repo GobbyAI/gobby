@@ -23,10 +23,10 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Implement readiness gating for startup terminal monitors after real missing-terminal run c132c69d falsely completed and emitted subscriber warnings; 39 focused tests pass.
 - [x] Update stale eligible-session status assertion found by lifecycle tests.
 - [x] Commit readiness repair f9e41419b0 after 203 focused tests and clean audits; restart and repeat 20 live hook checks.
-- [ ] Gate tmux maintenance on startup readiness: run b0fe2983 parked correctly, but maintenance expired its session before resume preflight. Verify, commit, restart, and repeat native resume.
+- [x] Gate tmux maintenance on startup readiness: commit 1189323508; 184 focused tests passed.
 - [x] Align five stale tmux maintenance test status lists with existing interrupted/input/approval states.
 - [x] Real native resume dcffee01 to 350a7c32 preserved session and exact grant after restart23:37:57 UTC.
-- [ ] Preserve resumed claims from cancelled-original recovery: sweep released #12738's claim twice, blocking resumed writes. Fix shared recovery, verify, and repeat affected live gate.
+- [x] Preserve resumed claims from cancelled-original recovery: commit 316041f7bf; 161 focused tests and actual resumed writes passed.
 - [x] Repair two existing untyped task-recovery fixture signatures encountered by audit.
 - [ ] Resolve shared editable-environment interference with owner #12261; daemon startup recovered after main uv invocation restored main imports.
 - [x] Materialize and validate this plan (base validation passed).
@@ -37,8 +37,9 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Coordinator repaired grant inspection and run-local zsh heredoc temporary paths (622ef8c992; 73 focused tests pass).
 - [x] Coordinator extracted sandbox run environment (efe1644; policy 812 lines, new module 49 lines; 84 focused tests pass).
 - [x] File deeper security review #22103.
-- [ ] Commit both fixes and coordinate integration and restart.
-- [ ] Complete real managed runtime, delegation, resume and sandbox probes.
+- [x] Commit both fixes and coordinate integration and restart.
+- [x] Complete real managed runtime, delegation, resume and sandbox probes.
+- [ ] Repair ASGI chat shutdown ordering and missing standalone-listener cleanup, verify focused lifecycle tests, coordinate restart with browser repairs, and repeat affected live gate.
 - [ ] Record five continuous clean minutes after all smoke work completes.
 - [ ] Close both tasks with linked commits after the combined live gate passes.
 
@@ -64,6 +65,9 @@ Targets:
 - `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: wire existing startup readiness into terminal monitors
 - `src/gobby/runner_maintenance/isolation.py::*` — scope-reason: defer missing-terminal expiration until restart recovery finishes
 - `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: wire startup readiness into tmux maintenance
+- `src/gobby/runner_lifecycle_shutdown.py::*` — scope-reason: stop ASGI chat sessions before HTTP lifespan closes hook workers
+- `tests/test_asgi_chat_shutdown.py::*` — scope-reason: verify ASGI cleanup without a standalone listener and lifecycle ordering
+- `tests/test_runner_shutdown.py::*` — scope-reason: align shutdown fixtures with initialized drain state and empty HTTP connection sets
 - `src/gobby/agents/task_recovery.py::*` — scope-reason: preserve claims belonging to parked and resumed daemon-stop runs
 - `tests/agents/test_task_recovery.py::*` — scope-reason: verify repeated recovery preserves resumed task ownership and mutex
 - `tests/test_runner_maintenance_tmux_repair.py::*` — scope-reason: verify missing sockets survive startup recovery
@@ -175,3 +179,59 @@ findings cannot be classified away. Commit before close; link evidence and
 commits when closing both existing tasks. File a deeper security review covering
 process evasion, same-user credentials, UI automation, approval provenance and
 policy tampering.
+
+## V2 Live execution evidence
+`kind: verification`
+
+Installed direct-launch rule `2c26ef1c-810d-4e12-9859-4a719c31e4ce` was enabled
+after the September 10 restart at 23:51:02 UTC. Live hook checks passed all 20
+cases (12 blocked, 8 allowed) during 23:52:54–23:55:08 UTC. Exact commands and
+results: `/tmp/gobby-grant-smoke-wECAsK/live_hook_probe.py` and adjacent JSON.
+Prohibited provider commands were never executed.
+
+Managed worktree `842deb44-49ac-46bd-85e0-c7d5ea20c0f6` is at
+`/Users/josh/.gobby/worktrees/gobby/sandbox-grant-final-smoke`. External grant:
+`/private/tmp/gobby-grant-smoke-wECAsK/granted`. Narrowed child
+`5d1aaa72-db31-4212-bf73-ee93f0a1477a` and omitted-root child
+`957d8c87-fabc-42c7-b36e-db5945c41c0e` passed; exact evidence messages are
+`cd793dab-051f-424f-a68a-c79828f774a1` and
+`608afb58-f92a-45f1-ab90-b8335fac2e34`.
+
+Actual native resume used these operator commands from main:
+
+```sh
+UV_NO_SYNC=1 uv run gobby stop --wait
+tmux -L gobby kill-session -t '=gobby-49fba611-c75b-476d-aa20-f81a9cf880a5'
+UV_NO_SYNC=1 uv run gobby start --verbose
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:60889/
+```
+
+Stop succeeded after 11.4 seconds; startup health passed and HTTP returned 200.
+Successor started September 11 at 00:06:10.715085 UTC:
+`d039f166-87af-44b6-819f-64f958971b20` became
+`650cfdb5-2cda-4389-9cec-0c8ac8d126cc`. Both retain child session
+`5ef3b16c-4002-4ba5-aed3-20064666df44` (#12742), native session
+`01a08dbd-477e-7c81-885a-52481ce0ef2e`, and identical external grant metadata.
+HTTP run inspection verified `resumed_from_run_id` and SRT enforcement.
+Runtime policy hashes differ because run-local paths are renewed.
+
+Initial exact script/results: message `9f66641e-030f-41ad-99f0-895fdbc2b7d5`.
+Resumed exact script/results: message `f80cc6a2-5407-4e2d-afe7-241dd3113221`.
+The identical login-zsh Python heredoc used fresh UUID filenames, exclusive
+creation, JSON readback, and cleanup. Worktree and grant/.vite-temp succeeded.
+Ungranted sibling, grant/escape symlink, ~/.ssh, and direct ~/.gobby writes
+all failed EPERM. TMPPREFIX equaled TMPDIR + '/zsh'; resumed temp directory
+was `gobby-5s5muzpu`. The script's hardcoded native ID had a 4776/477e typo,
+corrected by the worker and verified against run metadata. Successor completed
+with dirty_paths=[]; final handoff `265584a8-a596-4459-9cc5-60b9dd988d67`.
+Both tasks remained open.
+
+FAILED log window: September 11 00:08:18 UTC for 300.006 seconds, 978,319
+appended bytes. Raw logs and per-file offsets/inodes/SHA256 are retained in
+`/tmp/gobby-grant-smoke-wECAsK/observation-000818/summary.json` and adjacent
+captures. Capture 18 contains a browser-disconnect ASGI exception; this interval
+does not satisfy the clean-log gate. Session #12736 owns handshake and wake
+repairs under #22142. Root owns shutdown ordering: ASGI mode skipped chat
+cleanup and Uvicorn could close the hook worker before chat SESSION_END.
+Two focused tests reproduced skipped cleanup before repair. No clean-log claim
+is made yet.

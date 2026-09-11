@@ -144,7 +144,7 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
         except Exception as e:
             logger.warning("WebSocket startup task failed during shutdown: %s", e)
 
-    if websocket_server and getattr(websocket_server, "_server", None) is not None:
+    if websocket_server is not None:
         logger.debug("Stopping WebSocket server before HTTP shutdown")
         try:
             await asyncio.wait_for(websocket_server.stop(), timeout=timeout)
@@ -563,6 +563,12 @@ async def _run_graceful_shutdown_sequence(
             timeout=5.0,
         )
 
+    # ASGI chat SESSION_END must finish before HTTP lifespan closes the hook worker.
+    await _best_effort(
+        lambda: shutdown_websocket_server(runner),
+        "WebSocket server shutdown",
+    )
+
     await _best_effort(
         lambda: begin_uvicorn_http_shutdown(
             server,
@@ -571,11 +577,6 @@ async def _run_graceful_shutdown_sequence(
             request_cancel_timeout_seconds=_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS,
         ),
         "HTTP connection drain",
-    )
-
-    await _best_effort(
-        lambda: shutdown_websocket_server(runner),
-        "WebSocket server shutdown",
     )
 
     await _best_effort(
