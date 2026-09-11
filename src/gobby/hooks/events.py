@@ -290,6 +290,9 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "qwen": "Stop",
         "codex": "Stop",
     },
+    # Only Codex has a dedicated hook; the other adapters derive INTERRUPT
+    # from their stop/failure payloads.
+    HookEventType.INTERRUPT: {"claude": None, "qwen": None, "codex": "Interrupt"},
     HookEventType.BEFORE_TOOL: {
         "claude": "PreToolUse",
         "qwen": "PreToolUse",

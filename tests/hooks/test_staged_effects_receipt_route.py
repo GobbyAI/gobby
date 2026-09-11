@@ -155,6 +155,16 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
         )
 
 
+# set_handoff is also gated by require-handoff-discipline and by the
+# current-epoch survey (require-handoff-feedback-before-authoring); these tests
+# exercise only the memory-review gate, so every session arrives with both
+# satisfied.
+_OTHER_HANDOFF_GATES_SATISFIED: dict[str, Any] = {
+    "loaded_skills": ["handoff-discipline"],
+    "_gobby_feedback_epoch_submitted": True,
+}
+
+
 def _post_set_handoff(
     client: TestClient,
     session_id: str,
@@ -260,7 +270,7 @@ def test_delivered_gate_clears_itself_once_its_receipt_is_acknowledged(
     variables = SessionVariableManager(receipts_db)
     variables.merge_variables(
         session_id,
-        {"_memory_pending_task_reviews": [{"task_ref": "#42"}]},
+        {**_OTHER_HANDOFF_GATES_SATISFIED, "_memory_pending_task_reviews": [{"task_ref": "#42"}]},
     )
 
     body = _post_set_handoff(hook_client, session_id, f"n-{uuid4()}")
@@ -324,7 +334,7 @@ def test_one_sessions_staged_gate_never_reaches_another_session(
     _create_session(receipts_db, blocked_session)
     variables.merge_variables(
         blocked_session,
-        {"_memory_pending_task_reviews": [{"task_ref": "#42"}]},
+        {**_OTHER_HANDOFF_GATES_SATISFIED, "_memory_pending_task_reviews": [{"task_ref": "#42"}]},
     )
 
     # This one already acknowledged the survey, so the gate cannot fire for it
@@ -335,7 +345,7 @@ def test_one_sessions_staged_gate_never_reaches_another_session(
     _create_session(receipts_db, quiet_session)
     variables.merge_variables(
         quiet_session,
-        {"task_claimed": True, ACK_VARIABLE: True},
+        {**_OTHER_HANDOFF_GATES_SATISFIED, "task_claimed": True, ACK_VARIABLE: True},
     )
 
     first = _post_set_handoff(hook_client, blocked_session, f"n-{uuid4()}")
@@ -364,6 +374,7 @@ def test_route_stages_nothing_when_the_gate_does_not_fire(
     SessionVariableManager(receipts_db).merge_variables(
         session_id,
         {
+            **_OTHER_HANDOFF_GATES_SATISFIED,
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
             ACK_VARIABLE: True,
         },
