@@ -486,3 +486,25 @@ the unchanged controller budget. The recurrent MCP Git-status timeout also
 reappeared after macOS recovery while direct Git status took 0.04 seconds; its
 cause remains unresolved. No further full probe is scheduled before the required
 correction and independent review.
+
+## Separate Ask and controller deadlines
+
+The implementation plan specifies a configurable default of 600 seconds for each
+Ask run, including preparation, agents, review, repair, and publication. It does
+not require two distinct runs and controller setup to share that same budget.
+The harness incorrectly used the remaining controller time as each new Ask
+request's timeout, coupling independent runs and making its 600-second controller
+too short for two observed full-repository preparations.
+
+The controller now defaults to 1,500 seconds, while each new Ask request uses the
+public 600-second default. Recovery continues to attach to the existing durable
+run and keeps its original deadline. The full integration repository remains the
+probe source; reducing the repository merely to fit the former controller limit
+is unnecessary. The frozen cohort still uses 600 seconds per question, and
+attempts 1–12 retain their original commands and outcomes.
+
+The parser and independent-request budget regressions failed before the change
+and passed afterward. All 100 focused harness, cleanup, and provenance tests
+passed in 5.23 seconds. Ruff, test quality, test types, and the suppression ratchet
+passed. This corrects the controller contract; another full native probe still
+depends on the product line-range correction and parent review.

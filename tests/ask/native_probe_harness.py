@@ -6,6 +6,8 @@ workers. It completes one fresh Ask run, interrupts a distinct run only after it
 managed child has a live PID and terminal, starts a new ordinary runner, and lets
 startup recovery finish the original execution. ``seal`` accepts only
 operator-reviewed observations and writes the production validation artifact.
+Each Ask run keeps its default 600-second deadline. The separate 1,500-second
+controller deadline covers both runs, runtime startup, interruption, and recovery.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from gobby.ask.contracts import AskRequest
 from gobby.ask.runtime_validation import (
     ASK_RUNTIME_CONTROLS,
     ASK_SRT_POLICY_SCHEMA_VERSION,
@@ -229,7 +232,12 @@ def _parser() -> argparse.ArgumentParser:
     contained = commands.add_parser("contained-drive")
     contained.add_argument("--project-root", type=Path, required=True)
     contained.add_argument("--output-dir", type=Path, required=True)
-    contained.add_argument("--timeout-seconds", type=float, default=600.0)
+    contained.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=1500.0,
+        help="Whole-probe controller timeout; each Ask run retains its default 600-second budget",
+    )
     worker = commands.add_parser("contained-worker", help=argparse.SUPPRESS)
     worker.add_argument("--config-path", type=Path, required=True)
     worker.add_argument("--project-root", type=Path, required=True)
@@ -1273,9 +1281,19 @@ async def _run_contained_runner(
             monitor_stop.set()
 
 
+def _probe_ask_request(arguments: argparse.Namespace) -> AskRequest:
+    """Give each new Ask run its own default budget, independent of the controller."""
+    return AskRequest(
+        question=f"{_probe_question(arguments.project_root)}\nProbe phase: {arguments.phase}.",
+        project_id=arguments.project_id,
+        commit_ref=arguments.source_commit,
+        investigator_profile="ask-investigator",
+        reviewer_profile="ask-reviewer",
+    )
+
+
 async def _contained_worker_async(arguments: argparse.Namespace) -> int:
     from gobby.ask.composition import build_ask_service
-    from gobby.ask.contracts import AskRequest
     from gobby.runner import GobbyRunner
 
     schema = _protected_database_url(
@@ -1403,14 +1421,7 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
             if remaining <= 0:
                 raise TimeoutError("native Ask probe deadline expired before admission")
             result = await service.start(
-                AskRequest(
-                    question=f"{_probe_question(arguments.project_root)}\nProbe phase: {arguments.phase}.",
-                    project_id=arguments.project_id,
-                    commit_ref=arguments.source_commit,
-                    investigator_profile="ask-investigator",
-                    reviewer_profile="ask-reviewer",
-                    timeout_seconds=remaining,
-                ),
+                _probe_ask_request(arguments),
                 project_root=arguments.project_root,
                 caller_session_id=caller_session_id,
             )

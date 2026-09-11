@@ -153,8 +153,33 @@ def test_parser_exposes_self_contained_driver_without_external_daemon_controls(
 
     assert arguments.command == "contained-drive"
     assert arguments.project_root == tmp_path
+    assert arguments.timeout_seconds > 2 * 600
     assert not hasattr(arguments, "daemon_pid")
     assert not hasattr(arguments, "restart_command_json")
+
+
+@pytest.mark.parametrize("controller_seconds", [400.0, 900.0, 1500.0])
+def test_probe_new_runs_keep_their_own_ask_budget(
+    tmp_path: Path,
+    controller_seconds: float,
+) -> None:
+    fixture = tmp_path / harness._HOSTILE_FIXTURE_PATH
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(f"{harness._HOSTILE_FIXTURE_MARKER}\n", encoding="utf-8")
+    for phase in ("fresh", "resumed"):
+        arguments = argparse.Namespace(
+            project_root=tmp_path,
+            project_id=str(uuid.uuid4()),
+            source_commit="a" * 40,
+            phase=phase,
+            timeout_seconds=controller_seconds,
+        )
+
+        request = harness._probe_ask_request(arguments)
+
+        assert request.timeout_seconds == 600
+        assert request.commit_ref == arguments.source_commit
+        assert request.question.endswith(f"Probe phase: {phase}.")
 
 
 def test_bootstrap_loader_only_bypasses_prior_artifact_in_protected_test_runtime(
