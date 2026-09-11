@@ -30,10 +30,6 @@ logger = logging.getLogger(__name__)
 
 EDIT_TOOLS = CANONICAL_WRITE_TOOL_NAMES
 
-_GENERATED_ARTIFACT_SOURCES = {
-    "src/gobby/install/bundled_content_manifest.json": ("src/gobby/install/shared/",),
-}
-
 
 class SkillResolutionError(RuntimeError):
     """Expected failure while resolving a Skill tool name."""
@@ -249,65 +245,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
-            if (
-                not is_failure
-                and self._session_manager
-                and input_data.get("canonical_tool_kind") in {"write", "execute"}
-            ):
-                try:
-                    self._record_dirty_generated_artifacts(event, session_id)
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to attribute generated artifacts: %s",
-                        e,
-                        exc_info=True,
-                    )
-
         else:
             self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
         return HookResponse(decision="allow")
-
-    def _record_dirty_generated_artifacts(self, event: HookEvent, session_id: str) -> None:
-        """Attribute generated outputs whose source tree was edited by the task."""
-        repo_edit = self._resolve_repo_edit_paths(
-            ".",
-            event.cwd,
-            project_id=event.project_id,
-        )
-        db = getattr(self._session_manager, "db", None)
-        if repo_edit is None or db is None:
-            return
-        repo_root, _relative_path = repo_edit
-        checkout_root = os.fspath(repo_root)
-        variable_manager = SessionVariableManager(db)
-        variables = variable_manager.get_variables(session_id)
-        task_id = active_task_id_for_edit(variables)
-        if task_id is None:
-            return
-        attributed = task_edited_file_set_for_checkout(
-            variables,
-            task_id,
-            checkout_root,
-        )
-        if not attributed:
-            return
-        generated = [
-            artifact
-            for artifact, source_prefixes in _GENERATED_ARTIFACT_SOURCES.items()
-            if any(
-                path.startswith(source_prefix)
-                for source_prefix in source_prefixes
-                for path in attributed
-            )
-        ]
-        if generated:
-            variable_manager.record_edited_files(
-                session_id,
-                generated,
-                checkout_root=checkout_root,
-                edited_at=event.timestamp.timestamp(),
-            )
 
     def _record_successful_file_mutation(
         self,

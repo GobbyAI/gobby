@@ -24,6 +24,9 @@ TRANSFORM_PATH = (
 
 
 def _load_transform() -> ModuleType:
+    upgrade_dir = str(TRANSFORM_PATH.parent)
+    if upgrade_dir not in sys.path:
+        sys.path.insert(0, upgrade_dir)
     spec = importlib.util.spec_from_file_location("gobby_impeccable_upgrade", TRANSFORM_PATH)
     assert spec is not None
     assert spec.loader is not None
@@ -123,15 +126,6 @@ IMPECCABLE_NODE_MIN_VERSION = \"22.18.0\"
     )
     (install_dir / "impeccable-package-lock.json").write_text(
         "old managed lock\n", encoding="utf-8"
-    )
-    _write_json(
-        install_dir / "bundled_content_manifest.json",
-        {
-            "schema_version": 1,
-            "hash_algorithm": "sha256",
-            "root": "shared",
-            "files": {},
-        },
     )
 
 
@@ -331,16 +325,7 @@ def test_transform_mini_release_idempotent(tmp_path: Path) -> None:
     assert f'lockfile_sha256="{hashlib.sha256(managed_lock).hexdigest()}"' in dependency_text
     assert b'"impeccable": "3.6.0"' in managed_lock
 
-    manifest = json.loads(
-        (repo_root / "src" / "gobby" / "install" / "bundled_content_manifest.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert manifest["files"]
-    assert all(
-        not any(part.startswith(".") for part in Path(relative_path).parts)
-        for relative_path in manifest["files"]
-    )
+    assert not (repo_root / "src" / "gobby" / "install" / "bundled_content_manifest.json").exists()
     assert any("bolder.md" in item for item in report.judgment_needed)
     assert any("Node engine floor" in item for item in report.judgment_needed)
 
