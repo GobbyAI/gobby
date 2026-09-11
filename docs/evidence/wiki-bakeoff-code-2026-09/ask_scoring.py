@@ -963,6 +963,16 @@ def _report_completeness(value: object) -> str:
     return f"{complete}/{len(observations)} complete"
 
 
+def _report_class_accuracy(value: object) -> str:
+    metrics = _mapping(value, name="answer class metrics")
+    return " / ".join(
+        (
+            _report_metric(metrics.get("accuracy")),
+            _report_metric(metrics.get("classification_accuracy")),
+        )
+    )
+
+
 def render_report(result: object) -> str:
     """Materialize the complete human-auditable cohort result from scored JSON."""
     scored = _mapping(result, name="scored result")
@@ -981,17 +991,19 @@ def render_report(result: object) -> str:
         "## Per-question retrieval and answer measurements",
         "",
         "Before/after cells are `supported / reciprocal rank / gold-span recall`.",
+        "Class accuracy cells are `claim accuracy / classification accuracy`.",
         "",
-        "| Q | Primary | Queries | Before | After | Completeness | Answer | Gold | Source | Citation | Exact |",
-        "|---|---|---:|---|---|---|---|---:|---:|---:|---:|",
+        "| Q | Primary | Queries | Before | After | Completeness | Answer | Gold | Source | Citation | Exact | Expected class | Classification | Direct accuracy | Inferred accuracy | Unknown accuracy | Abstention |",
+        "|---|---|---:|---|---|---|---|---:|---:|---:|---:|---|---|---|---|---|---|",
     ]
     for row in rows:
         retrieval = row.get("retrieval")
         answer = row.get("answer_score")
-        values = ["UNSCORED"] * 9
+        values = ["UNSCORED"] * 15
         if isinstance(retrieval, dict) and isinstance(answer, dict):
             before = _mapping(retrieval.get("before"), name="before retrieval")
             after = _mapping(retrieval.get("after"), name="after retrieval")
+            class_accuracy = _mapping(answer.get("accuracy_by_class"), name="class accuracy")
             values = [
                 str(retrieval.get("query_count", "unknown")),
                 _report_window(before),
@@ -1002,6 +1014,12 @@ def render_report(result: object) -> str:
                 _report_metric(answer.get("source_supported_claim_precision")),
                 _report_metric(answer.get("citation_integrity")),
                 _report_metric(answer.get("exact_value_coverage")),
+                str(answer.get("expected_class", "unknown")),
+                str(answer.get("classification_correct", "unknown")),
+                _report_class_accuracy(class_accuracy.get("direct")),
+                _report_class_accuracy(class_accuracy.get("inferred")),
+                _report_class_accuracy(class_accuracy.get("unknown")),
+                str(answer.get("honest_abstention", "unknown")),
             ]
         lines.append(
             f"| {row['question_id']} | {row['disposition']} | " + " | ".join(values) + " |"
@@ -1064,7 +1082,8 @@ def render_report(result: object) -> str:
             f"- {row['question_id']}: unsupported="
             f"{json.dumps(unsupported, sort_keys=True, separators=(',', ':'))}; "
             f"missing_exact={json.dumps(missing, separators=(',', ':'))}"
-            f"{exact_detail}"
+            f"{exact_detail}; ambiguity_reason="
+            f"{json.dumps(answer.get('ambiguity_reason'), separators=(',', ':'))}"
         )
     return "\n".join(lines) + "\n"
 

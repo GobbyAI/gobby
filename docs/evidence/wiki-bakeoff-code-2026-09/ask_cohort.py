@@ -23,7 +23,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
+
+import yaml
 
 BASE_COMMIT = "0216f1e33f05962d49467d95fe84609041c6dba8"
 CHANGE_COMMIT = "8b24ac26699aac8b24254a647aa70b208287b492"
@@ -256,6 +258,22 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
         raise PreparationError(f"bootstrap is unavailable: {error}") from error
     if observed_bootstrap_hash != bootstrap_hash:
         raise PreparationError("bootstrap hash changed")
+    try:
+        bootstrap_settings = _mapping(
+            yaml.safe_load(bootstrap_path.read_text(encoding="utf-8")),
+            name="bootstrap settings",
+        )
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise PreparationError(f"bootstrap settings are unavailable: {error}") from error
+    bootstrap_host = _string(bootstrap_settings.get("bind_host"), name="bootstrap bind_host")
+    bootstrap_port = bootstrap_settings.get("daemon_port")
+    if (
+        bootstrap_host != endpoint.hostname
+        or not isinstance(bootstrap_port, int)
+        or isinstance(bootstrap_port, bool)
+        or bootstrap_port != port
+    ):
+        raise PreparationError("bootstrap daemon endpoint does not match isolated daemon_url")
 
     database = _mapping(isolation.get("database"), name="database identity")
     database_public = {
@@ -275,6 +293,35 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
     database_receipt, database_body = _receipt_payload(database.get("receipt"), name="database")
     if database_body != database_public:
         raise PreparationError("database receipt does not match its public identity")
+    database_url = _string(bootstrap_settings.get("database_url"), name="bootstrap database_url")
+    try:
+        database_endpoint = urlsplit(database_url)
+        database_port = database_endpoint.port
+    except ValueError as error:
+        raise PreparationError("bootstrap database_url is invalid") from error
+    option_values = [
+        item
+        for name, item in parse_qsl(database_endpoint.query, keep_blank_values=True)
+        if name == "options"
+    ]
+    options = option_values[0] if len(option_values) == 1 else ""
+    search_paths = [
+        option.removeprefix("-csearch_path=")
+        for option in options.split()
+        if option.startswith("-csearch_path=")
+    ]
+    bootstrap_database = {
+        "host": database_endpoint.hostname,
+        "port": database_port,
+        "name": unquote(database_endpoint.path.removeprefix("/")),
+        "schema": search_paths[0] if len(search_paths) == 1 else None,
+    }
+    if (
+        database_endpoint.scheme not in {"postgres", "postgresql"}
+        or database_endpoint.fragment
+        or bootstrap_database != database_public
+    ):
+        raise PreparationError("bootstrap database identity does not match database receipt")
 
     service = _mapping(isolation.get("service"), name="service identity")
     service_public = {
@@ -615,6 +662,44 @@ def _verified_execution_environment(manifest: Mapping[str, Any]) -> dict[str, st
     return _command_environment(isolation)
 
 
+def _verify_live_runtime_service(
+    manifest: Mapping[str, Any],
+    command_runner: CommandRunner,
+    environment: Mapping[str, str],
+) -> None:
+    """Bind the sealed endpoint/home to the expected live project before native Ask."""
+    status_argv = (
+        str(manifest["gcode"]["path"]),
+        "--project",
+        str(manifest["source"]["project_root"]),
+        "--format",
+        "json",
+        "status",
+    )
+    try:
+        status = _mapping(
+            json.loads(
+                _require_success(
+                    command_runner(status_argv, 30, environment),
+                    operation="contained runtime service preflight",
+                )
+            ),
+            name="contained runtime service status",
+        )
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise PreparationError("contained runtime service status is invalid") from error
+    expected_project = manifest["runtime_identity"]["project_id"]
+    observed_project = status.get("id", status.get("project_id"))
+    if observed_project != expected_project:
+        raise PreparationError("live runtime service project identity does not match receipt")
+    observed_root = status.get("root_path")
+    if (
+        not isinstance(observed_root, str)
+        or Path(observed_root).resolve() != Path(manifest["source"]["project_root"]).resolve()
+    ):
+        raise PreparationError("live runtime service project root does not match prepared source")
+
+
 def load_prepared_manifest(path: Path) -> dict[str, Any]:
     """Load a prepared manifest only when its detached hash and contract match."""
     payload = path.read_bytes()
@@ -854,6 +939,7 @@ def _execute_attempt(
         expected_binary_hash = manifest["gcode"]["executable_sha256"]
         if _sha256_file(Path(manifest["gcode"]["path"])) != expected_binary_hash:
             raise PreparationError("gcode executable hash differs from installed CLI acceptance")
+        _verify_live_runtime_service(manifest, command_runner, environment)
         command = command_runner(argv, CLIENT_TIMEOUT_SECONDS, environment)
     except (Exception, KeyboardInterrupt) as error:
         contract_error = isinstance(error, CohortError)
@@ -879,6 +965,7 @@ def _execute_attempt(
     disposition = "interrupted" if command.interruption else "invocation_error"
     interruption = command.interruption
     export: dict[str, Any] | None = None
+    export_command: dict[str, Any] | None = None
     fatal_error: PreparationError | None = None
     stdout_artifact = {
         "path": "stdout.bin",
@@ -911,6 +998,7 @@ def _execute_attempt(
                     raise AttemptError("completed Ask result returned a nonzero exit code")
                 stage = "export"
                 environment = _verified_execution_environment(manifest)
+                _verify_live_runtime_service(manifest, command_runner, environment)
                 export_dir = attempt_dir / "export"
                 export_argv = (
                     str(manifest["gcode"]["path"]),
@@ -925,20 +1013,60 @@ def _execute_attempt(
                     str(export_dir),
                 )
                 export_result = command_runner(export_argv, 120, environment)
+                export_stdout = {
+                    "path": "export.stdout.bin",
+                    "sha256": _sha256_bytes(export_result.stdout),
+                    "persisted": False,
+                }
+                export_stderr = {
+                    "path": "export.stderr.bin",
+                    "sha256": _sha256_bytes(export_result.stderr),
+                    "persisted": False,
+                }
+                export_command = {
+                    "exit_code": export_result.exit_code,
+                    "termination_signal": export_result.termination_signal,
+                    "interruption": export_result.interruption,
+                    "wall_seconds": export_result.wall_seconds,
+                    "stdout": export_stdout,
+                    "stderr": export_stderr,
+                }
                 _write_new(attempt_dir / "export.stdout.bin", export_result.stdout)
+                export_stdout["persisted"] = True
                 _write_new(attempt_dir / "export.stderr.bin", export_result.stderr)
-                export_body = _result_object(
-                    _require_success(export_result, operation="Ask publication export")
-                )
-                export_path = Path(_string(export_body.get("output"), name="Ask export output"))
-                if export_path.parent.resolve() != export_dir.resolve():
-                    raise AttemptError("Ask export path escaped its attempt directory")
-                export = _verify_export(
-                    export_path,
-                    result=result,
-                    manifest=manifest,
-                    question=question,
-                )
+                export_stderr["persisted"] = True
+                detail = export_result.stderr.decode(errors="replace").strip()
+                if export_result.interruption:
+                    disposition = "interrupted"
+                    interruption = export_result.interruption
+                    error_body = {
+                        "type": "CommandInterrupted",
+                        "message": (
+                            "Ask publication export interrupted: "
+                            f"{detail or export_result.interruption}"
+                        ),
+                        "stage": "export",
+                    }
+                elif export_result.exit_code != 0:
+                    disposition = "export_error"
+                    error_body = {
+                        "type": "CommandError",
+                        "message": (
+                            f"Ask publication export failed: {detail or export_result.exit_code}"
+                        ),
+                        "stage": "export",
+                    }
+                else:
+                    export_body = _result_object(export_result.stdout)
+                    export_path = Path(_string(export_body.get("output"), name="Ask export output"))
+                    if export_path.parent.resolve() != export_dir.resolve():
+                        raise AttemptError("Ask export path escaped its attempt directory")
+                    export = _verify_export(
+                        export_path,
+                        result=result,
+                        manifest=manifest,
+                        question=question,
+                    )
     except (Exception, KeyboardInterrupt) as error:
         if isinstance(error, KeyboardInterrupt):
             disposition = "interrupted"
@@ -964,6 +1092,7 @@ def _execute_attempt(
         "result": result,
         "usage": (result.get("usage") if result and result.get("usage") is not None else "unknown"),
         "export": export,
+        "export_command": export_command,
     }
     _write_json_new(attempt_dir / "outcome.json", outcome)
     if fatal_error is not None:

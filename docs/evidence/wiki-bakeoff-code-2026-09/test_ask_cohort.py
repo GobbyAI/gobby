@@ -143,15 +143,27 @@ def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
     gobby_home = root / "contained-gobby-home"
     gobby_home.mkdir(mode=0o700)
     bootstrap = gobby_home / "bootstrap.yaml"
-    bootstrap.write_text("daemon_port: 61999\nbind_host: 127.0.0.1\n", encoding="utf-8")
-    bootstrap.chmod(0o600)
-    daemon_url = "http://127.0.0.1:61999"
     database = {
         "host": "127.0.0.1",
         "port": 60892,
         "name": "gobby_test",
         "schema": "gobby_test_askcohort_unit",
     }
+    bootstrap.write_text(
+        yaml.safe_dump(
+            {
+                "daemon_port": 61999,
+                "bind_host": "127.0.0.1",
+                "database_url": (
+                    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+                    "?options=-csearch_path%3Dgobby_test_askcohort_unit"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+    daemon_url = "http://127.0.0.1:61999"
     service = {"identity": "ask-daemon-unit", "daemon_url": daemon_url}
     return {
         "schema_version": 1,
@@ -190,6 +202,25 @@ def _runtime_identity(gcode_bytes: bytes, root: Path) -> dict[str, object]:
             },
         },
     }
+
+
+def _runtime_status(
+    argv: tuple[str, ...], environment: Mapping[str, str] | None = None
+) -> CommandResult:
+    assert argv[-1] == "status"
+    project_root = argv[argv.index("--project") + 1]
+    if environment is not None:
+        assert environment["GOBBY_DAEMON_URL"] == "http://127.0.0.1:61999"
+        assert environment["GOBBY_TEST_PROTECT"] == "1"
+        assert Path(environment["GOBBY_HOME"]).name == "contained-gobby-home"
+    return CommandResult(
+        exit_code=0,
+        stdout=json.dumps(
+            {"id": "project-frozen-ask", "root_path": project_root, "indexed": True}
+        ).encode(),
+        stderr=b"",
+        wall_seconds=0.01,
+    )
 
 
 def _contract() -> dict[str, object]:
@@ -490,6 +521,106 @@ def test_prepare_refuses_unaccepted_final_prerequisite(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("bootstrap_update", "message"),
+    [
+        pytest.param({"daemon_port": 60887}, "bootstrap daemon endpoint", id="daemon-port"),
+        pytest.param(
+            {
+                "database_url": (
+                    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/non_test_fixture"
+                    "?options=-csearch_path%3Dgobby_test_askcohort_unit"
+                )
+            },
+            "bootstrap database identity",
+            id="database-name",
+        ),
+        pytest.param(
+            {
+                "database_url": (
+                    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+                    "?options=-csearch_path%3Dforeign"
+                    "&options=-csearch_path%3Dgobby_test_askcohort_unit"
+                )
+            },
+            "bootstrap database identity",
+            id="duplicate-search-path",
+        ),
+    ],
+)
+def test_runtime_isolation_binds_bootstrap_endpoint_and_database(
+    tmp_path: Path, bootstrap_update: dict[str, object], message: str
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    gcode = tmp_path / "gcode"
+    gcode_bytes = b"fake-gcode-binary"
+    gcode.write_bytes(gcode_bytes)
+    runtime_identity = _runtime_identity(gcode_bytes, tmp_path)
+    isolation = cast(dict[str, object], runtime_identity["isolation"])
+    bootstrap_receipt = cast(dict[str, object], isolation["bootstrap"])
+    bootstrap_path = Path(cast(str, bootstrap_receipt["path"]))
+    bootstrap = cast(dict[str, object], yaml.safe_load(bootstrap_path.read_text()))
+    bootstrap.update(bootstrap_update)
+    bootstrap_path.write_text(yaml.safe_dump(bootstrap), encoding="utf-8")
+    bootstrap_path.chmod(0o600)
+    bootstrap_receipt["sha256"] = _sha256(bootstrap_path.read_bytes())
+    identity_path = tmp_path / "runtime-identity.json"
+    identity_path.write_text(json.dumps(runtime_identity), encoding="utf-8")
+
+    def never_run(
+        _argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        pytest.fail("bootstrap drift must fail before a subprocess")
+
+    with pytest.raises(PreparationError, match=message):
+        prepare_cohort(
+            runtime_identity_path=identity_path,
+            gcode_binary=gcode,
+            project_root=source_root,
+            output_root=tmp_path / "cohort",
+            command_runner=never_run,
+        )
+
+
+@pytest.mark.parametrize(
+    ("status_update", "message"),
+    [
+        pytest.param({"id": "foreign-project"}, "live runtime service project", id="project"),
+        pytest.param({"root_path": "foreign"}, "live runtime service project root", id="root"),
+    ],
+)
+def test_primary_binds_live_service_to_expected_project_and_root(
+    tmp_path: Path, status_update: dict[str, str], message: str
+) -> None:
+    manifest_path = _prepare(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    def wrong_service(
+        argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        calls.append(argv)
+        assert argv[-1] == "status"
+        assert timeout == 30
+        status = {
+            "id": "project-frozen-ask",
+            "root_path": str(tmp_path / "source"),
+        }
+        status.update(status_update)
+        return CommandResult(
+            exit_code=0,
+            stdout=json.dumps(status).encode(),
+            stderr=b"",
+            wall_seconds=0.01,
+        )
+
+    with pytest.raises(PreparationError, match=message):
+        run_primary(manifest_path, command_runner=wrong_service)
+
+    assert len(calls) == 1
+    assert "ask" not in calls[0]
+
+
 def test_runtime_isolation_drift_is_recorded_before_primary_and_export(tmp_path: Path) -> None:
     manifest_path = _prepare(tmp_path)
     manifest = cast(dict[str, object], json.loads(manifest_path.read_bytes()))
@@ -518,6 +649,8 @@ def test_runtime_isolation_drift_is_recorded_before_primary_and_export(tmp_path:
     def drift_after_primary(
         argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         assert "--export" not in argv
         receipt_path.write_text('{"identity":"different-service"}', encoding="utf-8")
         return CommandResult(
@@ -553,6 +686,9 @@ def test_primary_runner_is_serial_exact_and_append_only(
     def invoke(
         argv: tuple[str, ...], timeout: float, environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            assert timeout == 30
+            return _runtime_status(argv, environment)
         assert timeout == 630
         assert environment["GOBBY_DAEMON_URL"] == "http://127.0.0.1:61999"
         assert {
@@ -617,6 +753,8 @@ def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Pat
     def replace_after_first(
         argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         assert timeout == 630
         calls.append(argv)
         binary.write_bytes(b"replaced-gcode-binary")
@@ -649,6 +787,8 @@ def test_primary_rechecks_installed_binary_before_every_invocation(tmp_path: Pat
     def resume(
         argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         resumed_calls.append(argv)
         question_index = len(resumed_calls) + 1
         question_id = f"Q{question_index + 1:02d}"
@@ -727,6 +867,8 @@ def test_interruption_and_retry_are_separate_from_primary(tmp_path: Path) -> Non
     def interrupted(
         argv: tuple[str, ...], timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         assert argv
         assert timeout == 630
         return CommandResult(
@@ -764,6 +906,8 @@ def test_export_oserror_is_typed_and_primary_is_not_replaced_on_resume(tmp_path:
     def export_failure(
         argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         if "--export" in argv:
             raise OSError("export transport unavailable")
         if EXPECTED_QUESTIONS[0][1] in argv:
@@ -801,6 +945,8 @@ def test_export_oserror_is_typed_and_primary_is_not_replaced_on_resume(tmp_path:
     def resume(
         argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         resumed_calls.append(argv)
         return CommandResult(
             exit_code=None,
@@ -816,6 +962,100 @@ def test_export_oserror_is_typed_and_primary_is_not_replaced_on_resume(tmp_path:
     assert primary.joinpath("outcome.json").read_bytes() == outcome_bytes
 
 
+@pytest.mark.parametrize(
+    ("export_result", "expected_disposition", "expected_interruption"),
+    [
+        pytest.param(
+            CommandResult(
+                exit_code=7,
+                stdout=b'{"partial":true}',
+                stderr=b"export rejected",
+                wall_seconds=0.25,
+            ),
+            "export_error",
+            None,
+            id="nonzero",
+        ),
+        pytest.param(
+            CommandResult(
+                exit_code=-15,
+                stdout=b"partial export",
+                stderr=b"",
+                wall_seconds=120.0,
+                termination_signal="SIGTERM",
+                interruption="runner_timeout",
+            ),
+            "interrupted",
+            "runner_timeout",
+            id="timeout",
+        ),
+        pytest.param(
+            CommandResult(
+                exit_code=-15,
+                stdout=b"partial export",
+                stderr=b"",
+                wall_seconds=1.0,
+                termination_signal="SIGTERM",
+                interruption="operator_interrupt",
+            ),
+            "interrupted",
+            "operator_interrupt",
+            id="operator-interrupt",
+        ),
+    ],
+)
+def test_export_command_result_failures_preserve_completed_primary(
+    tmp_path: Path,
+    export_result: CommandResult,
+    expected_disposition: str,
+    expected_interruption: str | None,
+) -> None:
+    manifest_path = _prepare(tmp_path)
+    export_calls = 0
+
+    def invoke(
+        argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
+    ) -> CommandResult:
+        nonlocal export_calls
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
+        if "--export" in argv:
+            export_calls += 1
+            return export_result
+        if EXPECTED_QUESTIONS[0][1] in argv:
+            return CommandResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    _completed_result("Q01", "0216f1e33f05962d49467d95fe84609041c6dba8")
+                ).encode(),
+                stderr=b"",
+                wall_seconds=1.0,
+            )
+        return CommandResult(
+            exit_code=None,
+            stdout=b"",
+            stderr=b"",
+            wall_seconds=0.1,
+            interruption="operator_interrupt",
+        )
+
+    run_primary(manifest_path, command_runner=invoke)
+
+    primary = manifest_path.parent / "attempts" / "Q01" / "primary"
+    outcome = cast(dict[str, object], json.loads(primary.joinpath("outcome.json").read_bytes()))
+    assert export_calls == 1
+    assert outcome["disposition"] == expected_disposition
+    assert outcome["interruption"] == expected_interruption
+    assert cast(dict[str, object], outcome["result"])["status"] == "completed"
+    assert cast(dict[str, object], outcome["error"])["stage"] == "export"
+    export_command = cast(dict[str, object], outcome["export_command"])
+    assert export_command["exit_code"] == export_result.exit_code
+    assert export_command["termination_signal"] == export_result.termination_signal
+    assert export_command["interruption"] == export_result.interruption
+    assert primary.joinpath("export.stdout.bin").read_bytes() == export_result.stdout
+    assert primary.joinpath("export.stderr.bin").read_bytes() == export_result.stderr
+
+
 def test_keyboard_interrupt_during_export_is_persisted_and_stops_cohort(tmp_path: Path) -> None:
     manifest_path = _prepare(tmp_path)
     calls: list[tuple[str, ...]] = []
@@ -823,6 +1063,8 @@ def test_keyboard_interrupt_during_export_is_persisted_and_stops_cohort(tmp_path
     def interrupt_export(
         argv: tuple[str, ...], _timeout: float, _environment: Mapping[str, str]
     ) -> CommandResult:
+        if argv[-1] == "status":
+            return _runtime_status(argv, _environment)
         calls.append(argv)
         if "--export" in argv:
             raise KeyboardInterrupt
@@ -1216,6 +1458,33 @@ def test_report_materializes_measurements_raw_hashes_and_missing_values() -> Non
                     },
                     "answer_score": {
                         "answer_correct": False,
+                        "expected_class": "direct",
+                        "classification_correct": False,
+                        "honest_abstention": True,
+                        "ambiguity_reason": None,
+                        "accuracy_by_class": {
+                            "direct": {
+                                "claim_count": 2,
+                                "correct_count": 1,
+                                "classification_correct_count": 2,
+                                "accuracy": 0.5,
+                                "classification_accuracy": 1.0,
+                            },
+                            "inferred": {
+                                "claim_count": 0,
+                                "correct_count": 0,
+                                "classification_correct_count": 0,
+                                "accuracy": None,
+                                "classification_accuracy": None,
+                            },
+                            "unknown": {
+                                "claim_count": 1,
+                                "correct_count": 1,
+                                "classification_correct_count": 1,
+                                "accuracy": 1.0,
+                                "classification_accuracy": 1.0,
+                            },
+                        },
                         "gold_key_coverage": 0.75,
                         "source_supported_claim_precision": 0.5,
                         "citation_integrity": 1.0,
@@ -1252,6 +1521,9 @@ def test_report_materializes_measurements_raw_hashes_and_missing_values() -> Non
     assert "case_sensitive" in report
     assert "longer named prefix wins" in report
     assert "changed_paths" in report
+    assert "Expected class | Classification | Direct accuracy | Inferred accuracy" in report
+    assert "direct | False | 0.500 / 1.000 | unknown / unknown | 1.000 / 1.000 | True" in report
+    assert "ambiguity_reason=null" in report
 
 
 def test_review_packet_preserves_unrun_primary_accounting(tmp_path: Path) -> None:

@@ -46,11 +46,15 @@ second daemon framework. Paths must be absolute, owner-only, non-symlink artifac
 
 The database receipt JSON contains exactly `host`, `port`, `name`, and `schema`.
 The service receipt JSON contains exactly `identity` and `daemon_url`. No credentials
-or database URL enter the cohort manifest. Before preparation, every primary, and
-every export, the runner revalidates private ownership and all three receipt hashes.
-It supplies `GOBBY_DAEMON_URL`, `GOBBY_HOME`, and `GOBBY_TEST_PROTECT=1` explicitly
-to each subprocess. Only a small allowlist of non-secret OS process variables is
-inherited; ambient DB, daemon-port, session, task, provider-token, cloud-credential,
+or database URL enter the cohort manifest. The runner parses the sealed bootstrap and
+requires its bind host/daemon port and database URL target/search path to match those
+public receipts. Before preparation, every primary, and every export, it revalidates
+private ownership and all three receipt hashes. Immediately before each Ask and export,
+an authenticated `gcode status` through the sealed home and endpoint must return the
+expected project identity and source root; a missing or foreign service fails closed.
+The runner supplies `GOBBY_DAEMON_URL`, `GOBBY_HOME`, and `GOBBY_TEST_PROTECT=1`
+explicitly to each subprocess. Only a small allowlist of non-secret OS process variables
+is inherited; ambient DB, daemon-port, session, task, provider-token, cloud-credential,
 and managed-execution variables are excluded.
 
 ## Prepared commands
