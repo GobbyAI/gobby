@@ -7,8 +7,11 @@ import io
 import json
 import socket
 import tarfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Literal, cast
 
 import pytest
@@ -18,7 +21,9 @@ from ask_cohort import (
     AttemptError,
     CommandResult,
     PreparationError,
+    _daemon_json,
     cohort_contract,
+    load_prepared_manifest,
     prepare_cohort,
     primary_accounting,
 )
@@ -44,6 +49,67 @@ from gobby.ask.contracts import ProfileSnapshot
 from gobby.ask.publication import publish_answer
 from gobby.ask.validation import validate_claims, validate_review
 from gobby.workflows.agent_models import AgentDefinitionBody
+
+_SENSITIVE_HEADERS = (
+    "Authorization",
+    "X-Gobby-Caller-Project-Id",
+    "X-Gobby-Project-Id",
+    "X-Gobby-Runtime-Grant",
+)
+_Response = tuple[int, Mapping[str, str], bytes]
+_Responder = Callable[[str, Mapping[str, str]], _Response]
+
+
+class _RecordingHTTPServer(ThreadingHTTPServer):
+    def __init__(self, server_address: tuple[str, int], responder: _Responder) -> None:
+        self.requests: list[tuple[str, dict[str, str]]] = []
+        self.responder = responder
+        super().__init__(server_address, _RecordingHandler)
+
+
+class _IPv6RecordingHTTPServer(_RecordingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+class _RecordingHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        server = cast(_RecordingHTTPServer, self.server)
+        headers = {name: self.headers.get(name, "") for name in _SENSITIVE_HEADERS}
+        server.requests.append((self.path, headers))
+        status, response_headers, body = server.responder(self.path, headers)
+        self.send_response(status)
+        for name, value in response_headers.items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        pass
+
+
+@contextmanager
+def _http_server(
+    responder: _Responder, *, host: str = "127.0.0.1"
+) -> Iterator[tuple[str, _RecordingHTTPServer]]:
+    server_class = _IPv6RecordingHTTPServer if host == "::1" else _RecordingHTTPServer
+    server = server_class((host, 0), responder)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url_host = f"[{host}]" if host == "::1" else host
+    try:
+        yield f"http://{url_host}:{server.server_port}", server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _authorized_response(path: str, headers: Mapping[str, str]) -> _Response:
+    if path != "/api/runtime/config" or headers.get("Authorization") != "Bearer secret":
+        return 401, {}, b"{}"
+    return 200, {"Content-Type": "application/json"}, b'{"config_revision": 7}'
+
 
 EXPECTED_QUESTIONS = (
     ("Q01", "What is the shared platform, and which systems remain standalone?"),
@@ -145,7 +211,11 @@ def _receipt(path: Path, payload: object) -> dict[str, str]:
 
 
 def _runtime_identity(
-    gcode_bytes: bytes, root: Path, *, daemon_port: int = 61999
+    gcode_bytes: bytes,
+    root: Path,
+    *,
+    daemon_port: int = 61999,
+    trailing_slash: bool = False,
 ) -> dict[str, object]:
     gobby_home = root / "contained-gobby-home"
     gobby_home.mkdir(mode=0o700)
@@ -170,7 +240,7 @@ def _runtime_identity(
         encoding="utf-8",
     )
     bootstrap.chmod(0o600)
-    daemon_url = f"http://127.0.0.1:{daemon_port}"
+    daemon_url = f"http://127.0.0.1:{daemon_port}{'/' if trailing_slash else ''}"
     deployment_token = "a" * 16
     service_identity = {"identity": deployment_token, "daemon_url": daemon_url}
     service = {**service_identity, "receipt": _receipt(root / "service.json", service_identity)}
@@ -385,7 +455,7 @@ def _contract() -> dict[str, object]:
     }
 
 
-def _prepare(tmp_path: Path, *, daemon_port: int = 61999) -> Path:
+def _prepare(tmp_path: Path, *, daemon_port: int = 61999, trailing_slash: bool = False) -> Path:
     source_root = tmp_path / "source"
     source_root.mkdir()
     gcode = tmp_path / "gcode"
@@ -393,7 +463,14 @@ def _prepare(tmp_path: Path, *, daemon_port: int = 61999) -> Path:
     gcode.write_bytes(gcode_bytes)
     identity = tmp_path / "runtime-identity.json"
     identity.write_text(
-        json.dumps(_runtime_identity(gcode_bytes, tmp_path, daemon_port=daemon_port)),
+        json.dumps(
+            _runtime_identity(
+                gcode_bytes,
+                tmp_path,
+                daemon_port=daemon_port,
+                trailing_slash=trailing_slash,
+            )
+        ),
         encoding="utf-8",
     )
     trees = {
@@ -488,6 +565,100 @@ def _completed_result(question_id: str, commit: str) -> dict[str, object]:
         }
     )
     return result
+
+
+def test_daemon_json_uses_direct_auth_and_refuses_every_redirect() -> None:
+    target_response = (200, {"Content-Type": "application/json"}, b'{"stolen": true}')
+    with _http_server(lambda _path, _headers: target_response) as (target_url, target):
+
+        def origin_response(path: str, headers: Mapping[str, str]) -> _Response:
+            if path == "/api/runtime/config":
+                return _authorized_response(path, headers)
+            if path == "/cross-port-302":
+                return 302, {"Location": f"{target_url}/stolen"}, b""
+            if path.startswith("/same-origin-"):
+                return int(path.rsplit("-", 1)[1]), {"Location": "/stolen"}, b""
+            return 200, {"Content-Type": "application/json"}, b'{"stolen": true}'
+
+        with _http_server(origin_response) as (origin_url, origin):
+            headers = {
+                "Authorization": "Bearer secret",
+                "X-Gobby-Caller-Project-Id": "project-id",
+                "X-Gobby-Project-Id": "project-id",
+                "X-Gobby-Runtime-Grant": "full-runtime-grant",
+            }
+            assert _daemon_json(origin_url + "/", "/api/runtime/config", headers) == {
+                "config_revision": 7
+            }
+            for status in (301, 302, 303, 307, 308):
+                with pytest.raises(PreparationError, match="refused redirect"):
+                    _daemon_json(origin_url, f"/same-origin-{status}", headers)
+            with pytest.raises(PreparationError, match="refused redirect"):
+                _daemon_json(origin_url, "/cross-port-302", headers)
+
+        paths = [path for path, _headers in origin.requests]
+        assert paths == [
+            "/api/runtime/config",
+            "/same-origin-301",
+            "/same-origin-302",
+            "/same-origin-303",
+            "/same-origin-307",
+            "/same-origin-308",
+            "/cross-port-302",
+        ]
+        assert origin.requests[0][1] == headers
+        assert "/stolen" not in paths
+        assert target.requests == []
+
+
+def test_daemon_json_disables_ambient_http_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy_response = (200, {"Content-Type": "application/json"}, b'{"proxied": true}')
+    with _http_server(lambda _path, _headers: proxy_response) as (proxy_url, proxy):
+        with _http_server(_authorized_response) as (origin_url, origin):
+            monkeypatch.setenv("http_proxy", proxy_url)
+            monkeypatch.setenv("HTTP_PROXY", proxy_url)
+            monkeypatch.delenv("no_proxy", raising=False)
+            monkeypatch.delenv("NO_PROXY", raising=False)
+            monkeypatch.setattr("urllib.request.proxy_bypass", lambda _host: False)
+            monkeypatch.setattr("urllib.request._opener", None)
+
+            assert _daemon_json(
+                origin_url,
+                "/api/runtime/config",
+                {"Authorization": "Bearer secret"},
+            ) == {"config_revision": 7}
+
+        assert [path for path, _headers in origin.requests] == ["/api/runtime/config"]
+        assert proxy.requests == []
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
+def test_daemon_json_supports_loopback_explicit_ports_and_trailing_slashes(host: str) -> None:
+    try:
+        server_context = _http_server(_authorized_response, host=host)
+        with server_context as (daemon_url, server):
+            result = _daemon_json(
+                daemon_url + "/",
+                "/api/runtime/config",
+                {"Authorization": "Bearer secret"},
+            )
+    except OSError as error:
+        if host == "::1":
+            pytest.skip(f"IPv6 loopback unavailable: {error}")
+        raise
+
+    assert result == {"config_revision": 7}
+    assert [path for path, _headers in server.requests] == ["/api/runtime/config"]
+
+
+def test_prepare_normalizes_trailing_slash_daemon_endpoint(tmp_path: Path) -> None:
+    manifest = load_prepared_manifest(_prepare(tmp_path, trailing_slash=True))
+    identity = cast(dict[str, object], manifest["runtime_identity"])
+    isolation = cast(dict[str, object], identity["isolation"])
+    service = cast(dict[str, object], isolation["service"])
+
+    assert isolation["daemon_url"] == "http://127.0.0.1:61999"
+    assert service["daemon_url"] == "http://127.0.0.1:61999"
 
 
 def test_frozen_cohort_and_scoring_contract() -> None:

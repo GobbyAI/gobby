@@ -106,6 +106,22 @@ class PreparationError(CohortError):
     """Runtime identity or native CLI preflight was not accepted."""
 
 
+class _RejectRedirects(urllib_request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: urllib_request.Request,
+        response: Any,
+        _code: int,
+        _message: str,
+        _headers: Any,
+        _redirect_url: str,
+    ) -> urllib_request.Request | None:
+        response.close()
+        raise PreparationError(
+            f"daemon-backed runtime identity probe refused redirect for {request.selector}"
+        )
+
+
 class AttemptError(CohortError):
     """An append-only attempt cannot be created safely."""
 
@@ -229,6 +245,10 @@ def _string(value: object, *, name: str) -> str:
     return value
 
 
+def _normalize_daemon_url(value: str) -> str:
+    return value.strip().rstrip("/")
+
+
 def _digest(value: object, *, name: str) -> str:
     digest = _string(value, name=name)
     if not _SHA256.fullmatch(digest):
@@ -324,7 +344,8 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
     isolation = _mapping(value, name="runtime isolation")
     if isolation.get("mode") != "contained":
         raise PreparationError("runtime isolation mode must be contained")
-    daemon_url = _string(isolation.get("daemon_url"), name="isolated daemon_url")
+    raw_daemon_url = _string(isolation.get("daemon_url"), name="isolated daemon_url")
+    daemon_url = _normalize_daemon_url(raw_daemon_url)
     try:
         endpoint = urlsplit(daemon_url)
         port = endpoint.port
@@ -404,12 +425,18 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
     service = _mapping(isolation.get("service"), name="service identity")
     service_public = {
         "identity": _string(service.get("identity"), name="service identity"),
-        "daemon_url": _string(service.get("daemon_url"), name="service daemon_url"),
+        "daemon_url": _normalize_daemon_url(
+            _string(service.get("daemon_url"), name="service daemon_url")
+        ),
     }
     if service_public["daemon_url"] != daemon_url:
         raise PreparationError("service receipt endpoint does not match isolated daemon_url")
     service_receipt, service_body = _receipt_payload(service.get("receipt"), name="service")
-    if service_body != service_public:
+    normalized_service_body = dict(service_body)
+    normalized_service_body["daemon_url"] = _normalize_daemon_url(
+        _string(service_body.get("daemon_url"), name="service receipt daemon_url")
+    )
+    if normalized_service_body != service_public:
         raise PreparationError("service receipt does not match its public identity")
     if not re.fullmatch(r"[0-9a-f]{16}", service_public["identity"]):
         raise PreparationError("service identity must be the 16-character deployment token")
@@ -419,7 +446,11 @@ def _runtime_isolation(value: object) -> dict[str, Any]:
         "gobby_home": str(gobby_home),
         "bootstrap": {"path": str(bootstrap_path), "sha256": bootstrap_hash},
         "database": {**database_public, "receipt": database_receipt},
-        "service": {**service_public, "receipt": service_receipt},
+        "service": {
+            "identity": service_public["identity"],
+            "daemon_url": daemon_url,
+            "receipt": service_receipt,
+        },
     }
 
 
@@ -781,9 +812,15 @@ def _cached_runtime_grant(
 
 
 def _daemon_json(daemon_url: str, path: str, headers: Mapping[str, str]) -> dict[str, Any]:
-    request = urllib_request.Request(f"{daemon_url}{path}", headers=dict(headers), method="GET")
+    request = urllib_request.Request(
+        f"{_normalize_daemon_url(daemon_url)}{path}", headers=dict(headers), method="GET"
+    )
+    opener = urllib_request.build_opener(
+        urllib_request.ProxyHandler({}),
+        _RejectRedirects(),
+    )
     try:
-        with urllib_request.urlopen(request, timeout=10) as response:
+        with opener.open(request, timeout=10) as response:
             return _mapping(json.load(response), name="daemon-backed runtime identity response")
     except urllib_error.HTTPError as error:
         raise PreparationError(
