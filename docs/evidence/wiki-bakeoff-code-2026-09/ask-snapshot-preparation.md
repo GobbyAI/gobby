@@ -672,3 +672,33 @@ outstanding. Git and gcode sharing a Gatekeeper root cause is still unproved.
 
 Attempts 1–14 remain immutable failures. Attempt 15 and the all14 cohort are
 unrun. No parent service restart or shared binary installation occurred here.
+
+## Parser correction QA and release-build launch failure
+
+Correction `ef2d583374ec494416fd97c3e31dcd1f27b8c977` converts tree-sitter's
+exclusive definition end position to an inclusive source line. A node ending
+at column zero immediately after LF uses the preceding line; byte bounds,
+content hashes, and symbol-ID inputs remain unchanged. The independent reviewer
+covered all three changed files and reported no material findings. The worker's
+two broader corpus audits timed out, so no full-corpus result is claimed.
+
+Parent independently ran the parser and evidence tests in the correction tree:
+
+```sh
+env -u DEVELOPER_DIR -u DATABASE_URL GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-code -E 'test(index::parser::tests) | test(evidence)'
+```
+
+All 145 selected tests passed in 8.177 seconds after compilation. Managed merge
+was then blocked by the live Git-status preflight. A release build from the
+reviewed correction tree, using the integration target directory, stalled in
+`gobby-code`'s build-script executable before `main`. Parent sampled owned PID
+27408: only `_dyld_start`, with a 96 KB footprint. Evidence is retained at
+`/tmp/gobby-12261-parser-release-build-sample.txt`. Parent terminated that owned
+child with SIGTERM and consumed Cargo's exit 101. No new release pin was created.
+
+The separate direct fake-Git reproduction also stalled before `/bin/sh` entered
+`main`; `/tmp/gobby-12261-direct-fake-git-sample.txt` records `_dyld_start` and a
+96 KB footprint. The user-authorized graceful syspolicyd restart request is
+still awaiting macOS administrator authentication at this checkpoint. No service
+restart has completed. The reviewed parser commit remains isolated for managed
+landing after recovery, and attempt 15 remains unrun.
