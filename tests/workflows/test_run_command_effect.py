@@ -175,7 +175,7 @@ async def test_skill_command_revalidates_script_while_spawn_guard_is_held(
     )
 
     with patch(
-        "gobby.workflows.engine.effects.resolve_materialized_skill_script",
+        "gobby.workflows.engine.run_command_effects.resolve_materialized_skill_script",
         side_effect=tracked_resolve,
     ):
         await mixin._apply_effect(
@@ -259,12 +259,23 @@ class TestRunCommandInline:
         effect = _effect(command=["/nonexistent/gobby-test-binary"])
         assert await _apply(effect, _event()) == []
 
-    async def test_timeout_kills_process_and_fails_open(self) -> None:
+    async def test_timeout_kills_process_and_fails_open_with_diagnostics(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         effect = _effect(
             command=[sys.executable, "-c", "import time; time.sleep(30)"],
             timeout_seconds=0.2,
         )
-        assert await _apply(effect, _event()) == []
+        with caplog.at_level(
+            logging.WARNING,
+            logger="gobby.workflows.engine.run_command_effects",
+        ):
+            assert await _apply(effect, _event()) == []
+
+        warning = next(record.message for record in caplog.records if "fail-open" in record.message)
+        assert "timeout=0.200s" in warning
+        assert "elapsed=" in warning
 
     async def test_non_json_stdout_fails_open(self) -> None:
         effect = _effect(command=[sys.executable, "-c", "print('plain text')"])
@@ -281,7 +292,9 @@ class TestRunCommandBackground:
     async def test_background_schedules_task_and_injects_nothing_inline(self) -> None:
         effect = _effect(background=True)
         context_parts: list[str] = []
-        with patch("gobby.workflows.engine.effects.create_background_task") as mock_create:
+        with patch(
+            "gobby.workflows.engine.run_command_effects.create_background_task"
+        ) as mock_create:
             await EffectsMixin()._apply_effect(
                 effect, _ROW, {}, {"event": _event()}, {}, context_parts, [], {}
             )
@@ -398,10 +411,23 @@ class TestRunCommandBackground:
 
 @pytest.mark.asyncio
 class TestRunCommandDeadlines:
-    async def test_inline_timeout_uses_remaining_aggregate_deadline(self) -> None:
+    async def test_historical_short_budget_reserves_one_second_and_injects_finding(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "hook.mjs").write_text("")
+        mixin = EffectsMixin()
+        mixin.skill_script_materializer = cast(
+            Any,
+            _materializer(
+                AsyncMock(return_value=_materialized_result(scripts_dir, tmp_path / "browser"))
+            ),
+        )
         result = RunCommandResult(
             status="success",
-            context=None,
+            context="Impeccable finding",
             duration_ms=1.0,
             exit_code=0,
             stdout_bytes=0,
@@ -415,14 +441,19 @@ class TestRunCommandDeadlines:
         )
         execute = AsyncMock(return_value=result)
         context_parts: list[str] = []
-        with patch("gobby.workflows.engine.effects.execute_run_command", execute):
-            await EffectsMixin()._apply_effect(
-                _effect(timeout_seconds=5.0),
+        with patch("gobby.workflows.engine.run_command_effects.execute_run_command", execute):
+            await mixin._apply_effect(
+                _effect(
+                    command=["node"],
+                    skill="impeccable",
+                    script="hook.mjs",
+                    timeout_seconds=5.0,
+                ),
                 _ROW,
                 {},
                 {
                     "event": _event(),
-                    "_blocking_deadline": BlockingEffectDeadline(time.monotonic() + 0.2),
+                    "_blocking_deadline": BlockingEffectDeadline(time.monotonic() + 0.147),
                 },
                 {},
                 context_parts,
@@ -432,17 +463,35 @@ class TestRunCommandDeadlines:
 
         await_args = execute.await_args
         assert await_args is not None
-        timeout = await_args.kwargs["timeout_seconds"]
-        assert 0 < timeout <= 0.2
+        assert await_args.kwargs["timeout_seconds"] == pytest.approx(1.0)
+        assert context_parts == ["Impeccable finding"]
 
-    async def test_exhausted_deadline_skips_spawn_and_is_audited(self) -> None:
+    async def test_exhausted_deadline_still_reserves_preparation_and_execution(self) -> None:
         mixin = EffectsMixin()
-        context_parts: list[str] = []
+        result = RunCommandResult(
+            status="success",
+            context=None,
+            duration_ms=1.0,
+            exit_code=0,
+            stdout_bytes=0,
+            stderr_bytes=0,
+            timeout_seconds=1.0,
+            overflow_stream=None,
+            background=False,
+            phase="execution",
+            skill=None,
+            script=None,
+        )
         with (
+            patch.object(
+                mixin,
+                "_prepare_run_command",
+                wraps=mixin._prepare_run_command,
+            ) as prepare,
             patch(
-                "gobby.workflows.engine.effects.execute_run_command", new_callable=AsyncMock
+                "gobby.workflows.engine.run_command_effects.execute_run_command",
+                AsyncMock(return_value=result),
             ) as run,
-            patch.object(mixin, "_audit_run_command", new_callable=AsyncMock) as audit,
         ):
             await mixin._apply_effect(
                 _effect(),
@@ -453,16 +502,112 @@ class TestRunCommandDeadlines:
                     "_blocking_deadline": BlockingEffectDeadline(time.monotonic() - 1),
                 },
                 {},
-                context_parts,
+                [],
                 [],
                 {},
             )
 
-        run.assert_not_awaited()
-        audit_call = audit.await_args
-        assert audit_call is not None
-        assert audit_call.args[0].status == "deadline_exhausted"
-        assert audit_call.args[0].timeout_seconds == 0.0
+        prepare_args = prepare.await_args
+        run_args = run.await_args
+        assert prepare_args is not None
+        assert run_args is not None
+        assert prepare_args.kwargs["timeout"] == pytest.approx(1.0)
+        assert run_args.kwargs["timeout_seconds"] == pytest.approx(1.0)
+
+    async def test_slow_preparation_cannot_consume_execution_floor(self) -> None:
+        mixin = EffectsMixin()
+        result = RunCommandResult(
+            status="success",
+            context=None,
+            duration_ms=1.0,
+            exit_code=0,
+            stdout_bytes=0,
+            stderr_bytes=0,
+            timeout_seconds=1.0,
+            overflow_stream=None,
+            background=False,
+            phase="execution",
+            skill=None,
+            script=None,
+        )
+        with (
+            patch(
+                "gobby.workflows.engine.run_command_effects.time.perf_counter",
+                side_effect=[10.0, 10.9],
+            ),
+            patch(
+                "gobby.workflows.engine.run_command_effects.execute_run_command",
+                AsyncMock(return_value=result),
+            ) as run,
+        ):
+            await mixin._apply_effect(
+                _effect(),
+                _ROW,
+                {},
+                {
+                    "event": _event(),
+                    "_blocking_deadline": BlockingEffectDeadline(time.monotonic() - 1),
+                },
+                {},
+                [],
+                [],
+                {},
+            )
+
+        run_args = run.await_args
+        assert run_args is not None
+        assert run_args.kwargs["timeout_seconds"] == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(
+        ("effect_timeout", "deadline_seconds", "minimum", "maximum"),
+        [
+            pytest.param(5.0, 3.0, 2.5, 3.0, id="healthy-shared-budget"),
+            pytest.param(0.05, None, 0.05, 0.05, id="explicit-subsecond-cap"),
+        ],
+    )
+    async def test_inline_timeout_stays_within_healthy_or_explicit_cap(
+        self,
+        effect_timeout: float,
+        deadline_seconds: float | None,
+        minimum: float,
+        maximum: float,
+    ) -> None:
+        result = RunCommandResult(
+            status="success",
+            context=None,
+            duration_ms=1.0,
+            exit_code=0,
+            stdout_bytes=0,
+            stderr_bytes=0,
+            timeout_seconds=effect_timeout,
+            overflow_stream=None,
+            background=False,
+            phase="execution",
+            skill=None,
+            script=None,
+        )
+        ctx: dict[str, Any] = {"event": _event()}
+        if deadline_seconds is not None:
+            ctx["_blocking_deadline"] = BlockingEffectDeadline(time.monotonic() + deadline_seconds)
+        with patch(
+            "gobby.workflows.engine.run_command_effects.execute_run_command",
+            AsyncMock(return_value=result),
+        ) as run:
+            await EffectsMixin()._apply_effect(
+                _effect(timeout_seconds=effect_timeout),
+                _ROW,
+                {},
+                ctx,
+                {},
+                [],
+                [],
+                {},
+            )
+
+        run_args = run.await_args
+        assert run_args is not None
+        timeout = run_args.kwargs["timeout_seconds"]
+        assert minimum <= timeout <= maximum
 
     async def test_skill_resolution_timeout_fails_open_with_safe_status(self) -> None:
         mixin = EffectsMixin()
@@ -476,7 +621,8 @@ class TestRunCommandDeadlines:
         )
         with (
             patch(
-                "gobby.workflows.engine.effects.execute_run_command", new_callable=AsyncMock
+                "gobby.workflows.engine.run_command_effects.execute_run_command",
+                new_callable=AsyncMock,
             ) as run,
             patch.object(mixin, "_audit_run_command", new_callable=AsyncMock) as audit,
         ):
@@ -516,7 +662,7 @@ class TestRunCommandDeadlines:
             _materializer(AsyncMock(side_effect=failure)),
         )
 
-        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.engine.effects"):
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.engine.run_command_effects"):
             result = await mixin._prepare_run_command(
                 ["node"],
                 project_id=None,
@@ -620,6 +766,64 @@ class TestRunCommandBounds:
         assert result.status == "timeout"
         with pytest.raises(ProcessLookupError):
             os.kill(int(pid_path.read_text()), 0)
+
+    async def test_stalled_execution_guard_times_out_without_spawning(self, tmp_path: Path) -> None:
+        entered = asyncio.Event()
+
+        @asynccontextmanager
+        async def stalled_guard() -> AsyncIterator[None]:
+            entered.set()
+            await asyncio.Event().wait()
+            yield
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as spawn:
+            result = await execute_run_command(
+                [sys.executable, "-c", "print('unused')"],
+                cwd=str(tmp_path),
+                stdin_payload=b"{}",
+                timeout_seconds=0.01,
+                background=False,
+                spawn_guard=stalled_guard(),
+            )
+
+        assert entered.is_set()
+        assert result.status == "timeout"
+        spawn.assert_not_awaited()
+
+    async def test_external_cancellation_kills_and_reaps_child(self, tmp_path: Path) -> None:
+        spawned = asyncio.Event()
+        processes: list[asyncio.subprocess.Process] = []
+        create_subprocess = asyncio.create_subprocess_exec
+
+        async def tracked_spawn(
+            program: str,
+            *args: str,
+            **kwargs: Any,
+        ) -> asyncio.subprocess.Process:
+            process = await create_subprocess(program, *args, **kwargs)
+            processes.append(process)
+            spawned.set()
+            return process
+
+        with patch("asyncio.create_subprocess_exec", side_effect=tracked_spawn):
+            task = asyncio.create_task(
+                execute_run_command(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    cwd=str(tmp_path),
+                    stdin_payload=b"{}",
+                    timeout_seconds=5,
+                    background=False,
+                )
+            )
+            await asyncio.wait_for(spawned.wait(), timeout=2)
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert len(processes) == 1
+        with pytest.raises(ProcessLookupError):
+            os.kill(processes[0].pid, 0)
 
 
 def test_run_command_payload_preserves_provider_fields_and_normalizes_edits() -> None:
