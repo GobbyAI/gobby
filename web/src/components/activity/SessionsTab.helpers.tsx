@@ -158,21 +158,6 @@ export function renderBadges(entry: WatchingSessionEntry) {
       <Chip tone="accent" uppercase className={chipIdentityClasses}>
         {kindBadge.label}
       </Chip>
-      {(entry.blockedCount ?? 0) > 0 && (
-        <Chip
-          tone="warning"
-          uppercase
-          className="gap-1 border border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[var(--color-warning-soft)]"
-          aria-label={[
-            `Blocked attention: ${entry.blockedCount}`,
-            ...(entry.attentionReasons ?? []),
-          ].join("; ")}
-          title={entry.attentionReasons?.join("; ")}
-        >
-          <span aria-hidden="true">!</span>
-          blocked {entry.blockedCount}
-        </Chip>
-      )}
       {modeBadges.map((badge) => (
         <Chip
           key={badge.label}

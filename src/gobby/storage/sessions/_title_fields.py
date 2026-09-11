@@ -44,10 +44,10 @@ class _TitleFieldMixin:
         for row in rows:
             title = row["title"] or ""
             project = str(row["project_name"] or "").strip() or str(row["project_id"])
-            prefix = re.match(r"^\([^)]*#\d+\):", title)
+            prefix = re.match(r"^(?:\([^)]*#\d+\)|[^\s:()]+#\d+):", title)
             if prefix is None:
                 continue
-            normalized = f"({project}#{row['seq_num']}):" + title[prefix.end() :]
+            normalized = f"{project}#{row['seq_num']}:" + title[prefix.end() :]
             if normalized == title:
                 continue
             with self.db.transaction() as conn:

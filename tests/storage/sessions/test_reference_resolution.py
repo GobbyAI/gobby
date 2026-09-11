@@ -30,7 +30,7 @@ class TestSessionManagerReferenceResolution:
     def test_find_parent_no_awaiting_handoff(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test find_parent returns None when no awaiting_handoff session."""
         # Create an active session (not awaiting_handoff)
@@ -51,7 +51,7 @@ class TestSessionManagerReferenceResolution:
     def test_find_parent_without_source_filter(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test find_parent without source filter finds any source."""
         session = session_manager.register(
@@ -80,7 +80,7 @@ class TestProjectScopedSeqNum:
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
-        temp_db,
+        temp_db: HubDatabase,
     ) -> None:
         """Test that seq_num is assigned per project, not globally."""
         from gobby.storage.projects import LocalProjectManager
@@ -122,7 +122,7 @@ class TestProjectScopedSeqNum:
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
-        temp_db,
+        temp_db: HubDatabase,
     ) -> None:
         """Test resolving #N format with project_id parameter."""
         from gobby.storage.projects import LocalProjectManager
@@ -150,7 +150,7 @@ class TestProjectScopedSeqNum:
     def test_resolve_session_reference_requires_project_id_for_seq_num(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that resolve_session_reference raises ValueError for #N without project_id."""
         session = session_manager.register(
@@ -167,7 +167,7 @@ class TestProjectScopedSeqNum:
     def test_resolve_session_reference_uuid_format(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that UUID format still works with project-scoped resolution."""
         session = session_manager.register(
@@ -184,7 +184,7 @@ class TestProjectScopedSeqNum:
     def test_resolve_session_reference_not_found(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test ValueError raised when session not found."""
         with pytest.raises(ValueError, match="not found"):
@@ -280,7 +280,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_by_external_id_full_uuid(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """An external_id UUID resolves to the platform id."""
         import uuid as _uuid
@@ -298,7 +298,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_by_external_id_full_uuid_no_project_scope(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """External_id UUID resolves with project_id=None too."""
         import uuid as _uuid
@@ -313,7 +313,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_by_external_id_prefix(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """A prefix of an external_id resolves to the platform id."""
         import uuid as _uuid
@@ -335,7 +335,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_treats_like_wildcards_as_literals(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
         literal: str,
         wildcard_match: str,
     ) -> None:
@@ -362,7 +362,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_prefers_id_match_over_external_id_match(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If an id prefix matches, it wins regardless of external_id matches."""
@@ -389,7 +389,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_ambiguous_external_id_in_project_raises(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Two rows with the same external_id in a project → ValueError."""
         import uuid as _uuid
@@ -418,7 +418,7 @@ class TestResolveReferenceExternalId:
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
-        temp_db,
+        temp_db: HubDatabase,
     ) -> None:
         """Same external_id across two projects with project_id=None → ValueError.
 
@@ -463,7 +463,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_ambiguous_external_id_prefix_raises(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Multiple external_ids sharing a prefix → ValueError."""
         shared_prefix = "deadbeef-0000"
@@ -487,7 +487,7 @@ class TestResolveReferenceExternalId:
     def test_resolve_reference_unknown_ref_still_raises(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Unknown UUID → ValueError (not found)."""
         import uuid as _uuid
@@ -568,8 +568,11 @@ def test_canonical_ref_fallbacks_and_serialization(
     assert replace(session, seq_num=None).ref == session.id
 
 
+@pytest.mark.parametrize(
+    "prefix", ["(test-project-S#{seq})", "(test-project#{seq})", "old-project#{seq}"]
+)
 def test_automatic_title_normalization_preserves_suffix_source_and_manual_title(
-    session_manager: SessionManager, sample_project: dict[str, Any]
+    session_manager: SessionManager, sample_project: dict[str, Any], prefix: str
 ) -> None:
     automatic = session_manager.register(
         external_id="automatic-title",
@@ -584,11 +587,11 @@ def test_automatic_title_normalization_preserves_suffix_source_and_manual_title(
         project_id=sample_project["id"],
         title="(old-S#1): My manual title",
     )
-    old = f"(test-project-S#{automatic.seq_num}): Task #42 - Keep: exact suffix"
+    old = prefix.format(seq=automatic.seq_num) + ": Task #42 - Keep: exact suffix"
     session_manager.update_title(automatic.id, old, title_source="task")
     changed: list[tuple[str, str]] = []
     session_manager.register_title_listener(lambda sid, title: changed.append((sid, title)))
-    expected = f"({automatic.ref}): Task #42 - Keep: exact suffix"
+    expected = f"{automatic.ref}: Task #42 - Keep: exact suffix"
     with patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename") as rename:
         assert session_manager.normalize_automatic_title_refs() == 1
         assert session_manager.normalize_automatic_title_refs() == 0

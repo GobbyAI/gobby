@@ -42,3 +42,17 @@ describe("TerminalKeysBar", () => {
     ]);
   });
 });
+
+it("latches Shift for Tab and releases it after the key is sent", async () => {
+  const user = userEvent.setup();
+  const sendInput = vi.fn();
+  render(<TerminalKeysBar sendInput={sendInput} />);
+  const shift = screen.getByRole("button", { name: "Shift" });
+  await user.click(shift);
+  expect(shift).toHaveAttribute("aria-pressed", "true");
+  await user.click(screen.getByRole("button", { name: "Tab" }));
+  expect(sendInput).toHaveBeenLastCalledWith("\x1b[Z");
+  expect(shift).toHaveAttribute("aria-pressed", "false");
+  await user.click(screen.getByRole("button", { name: "Tab" }));
+  expect(sendInput).toHaveBeenLastCalledWith("\t");
+});

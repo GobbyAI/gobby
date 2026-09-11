@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getSessionTitleText } from "../../lib/sessionTitle";
+import { getActivitySessionTitle } from "../../lib/sessionTitle";
 import type { GobbySession } from "../../types/sessions";
 import { getVisibleActivitySessions } from "./activitySessionVisibility";
 import {
@@ -135,7 +135,7 @@ export function useWatchingSessionEntries({
             nextEntries.push({
               id: matchedSession.id,
               type: "agent",
-              label: getSessionTitleText(matchedSession.title),
+              label: getActivitySessionTitle(matchedSession),
               provider: matchedSession.source ?? agent.provider,
               status: matchedSession.status,
               sessionType: matchedSession.session_type,
@@ -166,7 +166,7 @@ export function useWatchingSessionEntries({
       .map((session) => ({
         id: session.id,
         type: "session" as const,
-        label: getSessionTitleText(session.title),
+        label: getActivitySessionTitle(session),
         provider: session.source,
         status: session.status,
         sessionType: session.session_type,

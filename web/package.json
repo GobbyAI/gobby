@@ -43,6 +43,7 @@
     "@ricky0123/vad-web": "^0.0.21",
     "@wterm/dom": "^0.3.3",
     "@wterm/ghostty": "^0.3.3",
+    "acorn": "^8.18.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "he": "^1.2.0",
@@ -89,7 +90,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/three": "^0.182.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.39.4",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.0-canary-404b38c7-20260408",
@@ -104,7 +105,7 @@
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.58.1",
     "vite": "^6.4.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
     "fsevents@2.3.3": true,

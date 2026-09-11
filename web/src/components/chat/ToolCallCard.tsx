@@ -1,3 +1,4 @@
+import { normalizeToolCallForDisplay } from "../../lib/execToolDisplay";
 import { memo, useCallback, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import type { ToolCall } from "../../types/chat";
@@ -427,7 +428,7 @@ export const ToolCallCards = memo(function ToolCallCards({
   onRespondToApproval,
 }: ToolCallCardProps): ReactElement | null {
   const visibleToolCalls = useMemo(
-    () => toolCalls.filter(hasVisibleToolCall),
+    () => toolCalls.filter(hasVisibleToolCall).map(normalizeToolCallForDisplay),
     [toolCalls],
   );
   const segments = useMemo(

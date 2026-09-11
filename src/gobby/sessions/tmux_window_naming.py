@@ -72,7 +72,7 @@ def _synthesize_fallback_title(session: object) -> str:
     ref = getattr(session, "ref", None)
     if not isinstance(ref, str) or not ref or _contains_unresolved_session_ref(ref):
         ref = getattr(session, "id", None)
-    return f"({ref})" if isinstance(ref, str) and ref else "(gobby)"
+    return ref if isinstance(ref, str) and ref else "gobby"
 
 
 def _contains_unresolved_session_ref(value: Any) -> bool:

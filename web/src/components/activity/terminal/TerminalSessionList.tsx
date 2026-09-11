@@ -168,6 +168,7 @@ export function TerminalSessionList({
             <Button
               type="button"
               variant="ghost"
+              dense
               className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Attach ${session.label}`}
               aria-pressed={selected}

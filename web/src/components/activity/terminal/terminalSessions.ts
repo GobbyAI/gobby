@@ -1,5 +1,5 @@
 import type { TmuxSession } from "../../../hooks/useTmuxSessions";
-import { stripSessionTitlePrefix } from "../../../lib/sessionTitle";
+import { getActivitySessionTitle } from "../../../lib/sessionTitle";
 import type { GobbySession } from "../../../types/sessions";
 
 export interface JoinedTerminalSession {
@@ -48,9 +48,7 @@ function displayLabel(
   gobbySession: GobbySession | null,
 ): string {
   if (gobbySession !== null) {
-    const ref = gobbySession.ref;
-    const title = stripSessionTitlePrefix(gobbySession.title);
-    return title ? `${ref} ${title}` : ref;
+    return getActivitySessionTitle(gobbySession);
   }
   if (tmuxSession.agent_managed) {
     return tmuxSession.name;
@@ -104,7 +102,7 @@ export function joinTmuxSessions(
       gobby,
       label: displayLabel(tmux, gobby),
       provider: providerFor(tmux, gobby),
-      paneRef: `${tmux.socket}:${tmux.name}`,
+      paneRef: tmux.name,
       backendLabel: tmux.backend === "native" ? "gterm" : "tmux",
       dead:
         tmux.pane_dead || tmux.state === "exited" || tmux.state === "orphaned",

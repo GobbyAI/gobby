@@ -122,9 +122,7 @@ export function SessionInteractionModal({
     }
   }, [text, entry.id, fromSessionId, onClose]);
 
-  const displayLabel = entry.sessionRef
-    ? `${entry.sessionRef}: ${entry.label}`
-    : entry.label;
+  const displayLabel = entry.label;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

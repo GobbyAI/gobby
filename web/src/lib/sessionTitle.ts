@@ -4,12 +4,11 @@ interface SessionTitleLike {
   title?: string | null;
 }
 
-// Persisted titles carry a parenthesised provenance prefix ("(gobby#11155): ")
-// that the tmux window name needs and the UI already shows as the session ref.
-const PARENTHESISED_PREFIX = /^\s*\([^)]*\)\s*:?\s*/;
+// The UI already shows the session reference separately from the title.
+const SESSION_PREFIX = /^\s*(?:[^\s:()]+#\d+\s*:|\([^)]*\)\s*:?)\s*/;
 
 export function stripSessionTitlePrefix(title?: string | null): string {
-  return (title ?? "").replace(PARENTHESISED_PREFIX, "").trim();
+  return (title ?? "").replace(SESSION_PREFIX, "").trim();
 }
 
 export function getSessionTitleText(title?: string | null): string {
@@ -19,4 +18,17 @@ export function getSessionTitleText(title?: string | null): string {
 
 export function getSessionDisplayTitle(session: SessionTitleLike): string {
   return getSessionTitleText(session.title);
+}
+
+// Activity panels show the provider icon alongside this label.
+export function getActivitySessionTitle(
+  session: SessionTitleLike & {
+    ref: string;
+    title_source?: string | null;
+  },
+): string {
+  const title = stripSessionTitlePrefix(session.title);
+  return session.title_source === "provisional" || !title
+    ? session.ref
+    : `${session.ref}: ${title}`;
 }

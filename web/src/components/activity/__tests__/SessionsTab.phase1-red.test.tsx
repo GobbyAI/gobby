@@ -70,7 +70,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
     render(<SessionsTab sessions={[makeSession({ sandbox_enabled: true })]} />);
 
     await waitFor(() =>
-      expect(screen.getByText("Terminal Session")).toBeInTheDocument(),
+      expect(screen.getByText(/(?:^|: )Terminal Session$/)).toBeInTheDocument(),
     );
 
     expect(screen.getByText("tmux")).toHaveClass(
@@ -117,7 +117,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByText("Local Session")).toBeInTheDocument(),
+      expect(screen.getByText(/(?:^|: )Local Session$/)).toBeInTheDocument(),
     );
 
     const localBadges = screen.getAllByText("LOCAL");
@@ -125,11 +125,13 @@ describe("SessionsTab Phase 1 chip contract", () => {
     const localBadge = localBadges[0];
     expect(localBadge).toHaveClass("rounded-full", "uppercase", "font-mono");
     expect(
-      screen.getByText("Legacy Local Session").closest(".session-entry")
-        ?.textContent,
+      screen
+        .getByText(/(?:^|: )Legacy Local Session$/)
+        .closest(".session-entry")?.textContent,
     ).toContain("LOCAL");
     expect(
-      screen.getByText("Cloud Session").closest(".session-entry")?.textContent,
+      screen.getByText(/(?:^|: )Cloud Session$/).closest(".session-entry")
+        ?.textContent,
     ).not.toContain("LOCAL");
   });
 });

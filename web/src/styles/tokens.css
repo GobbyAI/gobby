@@ -261,7 +261,7 @@
   [data-density="compact"] {
     --control-row-height: 2rem;
     --control-row-height-sm: 1.5rem;
-    --activity-panel-row-height: 2rem;
+    --activity-panel-row-height: 2.25rem;
   }
 }
 

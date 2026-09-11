@@ -485,7 +485,7 @@ export function TerminalTab({
       ) : null}
 
       {/* Terminal list mirrors the sessions-list placement: rows on top,
-          the selected terminal's view below its Watching status bar. */}
+          the selected terminal's view below its status bar. */}
       <div
         className="min-h-0 overflow-y-auto"
         style={{ height: `${listHeight}%` }}
@@ -508,9 +508,6 @@ export function TerminalTab({
 
       <div className="activity-panel-status-bar border-t">
         <span className="activity-panel-status-bar__title">
-          <span className="activity-panel-status-bar__watching-prefix">
-            Watching{" "}
-          </span>
           {selected ? selected.label : "terminal"}
         </span>
       </div>
