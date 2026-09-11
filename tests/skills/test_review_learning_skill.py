@@ -261,7 +261,7 @@ def test_plan_skill_documents_parallel_review_contract() -> None:
 
 
 def test_review_producer_hooks_reference_review_learning() -> None:
-    code_reviewer = (SKILLS_ROOT / "code-reviewer/SKILL.md").read_text(encoding="utf-8")
+    code_reviewer = (SKILLS_ROOT / "code-review/SKILL.md").read_text(encoding="utf-8")
     epic = (SKILLS_ROOT / "epic-review/SKILL.md").read_text(encoding="utf-8")
     qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text(encoding="utf-8")
 

@@ -20,6 +20,10 @@ of them. You do the reviewing. OCR calls no LLM in this mode, so nothing is
 configured on its side.
 
 REQUIRED SKILL: review-learning.
+REQUIRED SKILL: code-index.
+
+Load `code-index` before the first `gcode` or file read; the code-index rules block
+raw reads until it is loaded.
 
 ## Preflight
 
@@ -87,6 +91,12 @@ Fetch rules per batch when the change is large.
 | workspace, tracked | `git diff HEAD -- <path>` |
 | workspace, untracked | read the file; all of it is new |
 
+Diff output can arrive compacted by a shell wrapper (`rtk` on machines with it
+installed). A hunk marker such as `... (N additions truncated)` or a trailing
+`[full diff: rtk git diff --no-compact]` line means hunks are missing:
+rerun the printed full-diff command for that path before judging it. A path
+whose diff stays truncated is marked `skipped` with that reason, never `reviewed`.
+
 ### 4. Review Each File
 
 Build a checklist keyed by `(path, status)`. Workspace mode can list one path
@@ -139,7 +149,8 @@ findings to fill the gap.
   `gobby-review-learning.recall_review_context` with the findings and any
   proposed fix text. Its result fills the memory column. If local memory
   contradicts a generic recommendation, local memory wins unless current code
-  disproves it.
+  disproves it. Pass `language` (and `repo` when known); matching lessons rank
+  first in the result.
 - After a material reusable finding is confirmed by a verified fix or a concrete
   no-fix decision, call `gobby-review-learning.record_review_lesson` with
   `source_kind=agent_review`. Do not record raw leads.
@@ -168,6 +179,10 @@ every later commit in the session; it costs two `ocr` calls.
 5. Retry the commit.
 
 ## Topic Index
+
+Both references load through `get_skill_file`, which is behind the schema gate. Call
+`get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file")` once per
+context before the first load; the lease then covers later loads.
 
 - Adversarial review, or a stop review gate that demands an `ALLOW:`/`BLOCK:`
   verdict: call
