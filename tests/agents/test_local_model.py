@@ -406,6 +406,46 @@ async def test_vllm_served_model_ids_returns_catalog(
 
 
 @pytest.mark.asyncio
+async def test_vllm_context_id_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+    models_url = "http://localhost:8000/v1/models"
+    payload = {
+        "models": [
+            {"id": "model-a", "max_model_len": 32768},
+            {"model": "model-a"},
+            {"name": " model-b ", "max_model_len": "65536"},
+            {"id": ""},
+            None,
+        ]
+    }
+    fake_client = _FakeAsyncClient(
+        {
+            ("GET", models_url): [
+                _FakeResponse("GET", models_url, json_data=payload),
+            ]
+        }
+    )
+    _patch_httpx_client(monkeypatch, fake_client)
+
+    assert local_model._vllm_served_model_ids(payload) == ["model-a", "model-b"]
+    served = await local_model.vllm_served_model_ids("http://localhost:8000/v1", None)
+    assert served == ["model-a", "model-b"]
+    assert local_model.select_vllm_served_model("model-b", served, api_base=models_url) == "model-b"
+    with pytest.raises(local_model.LocalModelError, match="model-a.*model-b"):
+        local_model.select_vllm_served_model("auto", served, api_base=models_url)
+    with pytest.raises(local_model.LocalModelError, match="missing.*model-a, model-b"):
+        local_model.select_vllm_served_model("missing", served, api_base=models_url)
+    assert (
+        local_model.select_vllm_served_model(
+            "auto",
+            local_model._vllm_served_model_ids({"data": [{"id": "model-a"}, {"model": "model-a"}]}),
+            api_base=models_url,
+        )
+        == "model-a"
+    )
+    _assert_vllm_discovery_only(fake_client, models_url)
+
+
+@pytest.mark.asyncio
 async def test_vllm_served_model_ids_maps_transport_errors_to_local_model_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
