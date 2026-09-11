@@ -51,7 +51,7 @@ FEEDBACK_TASK_REF_RE = re.compile(r"#(\d+)")
 _FEEDBACK_MCP_SOURCE_RE = re.compile(r"^gobby-[a-z0-9-]+:[a-z_][a-z0-9_]*$")
 _FEEDBACK_REPOSITORY_PREFIXES = ("src/gobby/", "crates/", "web/src/", "docs/")
 _FEEDBACK_SESSION_REF_RE = re.compile(
-    r"(?:\b[\w.-]+-S#\d+\b|(?<![\w#])#\d+\b|"
+    r"(?:\b[\w.-]+#\d+\b|(?<![\w#])#\d+\b|"
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b)"
 )
@@ -181,7 +181,7 @@ def normalize_feedback_observations(
             _raise_disposition_error(
                 index,
                 "'escalated' requires the active owner session ref "
-                "(#N, UUID, or <project>-S#N) in evidence",
+                "(#N, UUID, or <project>#N) in evidence",
             )
         if disposition in {"filed-task", "fixed"} and resolve_task is not None:
             assert task_match is not None
@@ -191,12 +191,12 @@ def normalize_feedback_observations(
             if disposition == "filed-task":
                 labels = set(task.labels or ())
                 if task.created_in_session_id != session_id or not labels.intersection(
-                    {"needs-decision", "clean-window"}
+                    {"needs-decision", "needs-planning", "clean-window"}
                 ):
                     _raise_disposition_error(
                         index,
                         "'filed-task' is rung 3 only: the referenced task must be created "
-                        "by this session and labeled needs-decision or clean-window",
+                        "by this session and labeled needs-decision, needs-planning, or clean-window",
                     )
             elif (
                 get_claimed_session_id(task) not in fixed_owner_session_ids
@@ -252,7 +252,7 @@ def _raise_disposition_error(index: int, detail: str) -> Never:
         "Use 'fixed' for a referenced task this session claimed or closed; "
         "use 'escalated' after send_message to a referenced active owner session; "
         "use 'filed-task' only for a referenced rung-3 task carrying "
-        "needs-decision or clean-window."
+        "needs-decision, needs-planning, or clean-window."
     )
 
 

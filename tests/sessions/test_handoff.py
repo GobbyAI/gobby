@@ -347,19 +347,20 @@ def test_feedback_enums_reject_unlisted_values() -> None:
         normalize_feedback_observations([_observation(disposition="observed")])
 
 
-def test_filed_task_requires_a_task_ref_and_labeled_current_session_task() -> None:
+@pytest.mark.parametrize("label", ["needs-decision", "needs-planning", "clean-window"])
+def test_filed_task_requires_a_task_ref_and_labeled_current_session_task(label: str) -> None:
     with pytest.raises(ValueError, match=r"observations\[0\]\.disposition: Found-work ladder"):
         normalize_feedback_observations([_observation(disposition="filed-task")])
 
     unlabeled = _feedback_task()
-    with pytest.raises(ValueError, match=r"needs-decision or clean-window"):
+    with pytest.raises(ValueError, match=r"needs-decision, needs-planning, or clean-window"):
         normalize_feedback_observations(
             [_observation(disposition="filed-task", evidence="Filed #21484")],
             resolve_task=lambda _ref: unlabeled,
             session_id="session-current",
         )
 
-    labeled = _feedback_task(labels=["needs-decision"])
+    labeled = _feedback_task(labels=[label])
     [accepted] = normalize_feedback_observations(
         [_observation(disposition="filed-task", evidence="Filed #21484")],
         resolve_task=lambda _ref: labeled,
@@ -1333,7 +1334,7 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
 ) -> None:
     session = _registered_session(session_manager)
     assert session.seq_num is not None
-    assert session.title == f"(handoff-test-S#{session.seq_num}): Codex"
+    assert session.title == f"(handoff-test#{session.seq_num}): Codex"
 
     update_title_for_claim(
         session_manager,
@@ -1341,7 +1342,7 @@ def test_title_lifecycle_is_provisional_task_manual_and_clear_sticky(
         SimpleNamespace(seq_num=42, title="Implement handoffs"),
     )
     assert _title(session_manager, session.id) == (
-        f"(handoff-test-S#{session.seq_num}): Task #42 - Implement handoffs"
+        f"(handoff-test#{session.seq_num}): Task #42 - Implement handoffs"
     )
 
     session_manager.update_title(session.id, "Sticky", title_source="manual")
@@ -1388,7 +1389,7 @@ def test_clear_successor_task_title_uses_successor_session_ref(
         successor_seq_num=99,
     )
 
-    assert title == (f"(handoff-test-S#99): Task #{task.seq_num} - Continue claimed work")
+    assert title == (f"(handoff-test#99): Task #{task.seq_num} - Continue claimed work")
     assert title_source == "task"
 
 
