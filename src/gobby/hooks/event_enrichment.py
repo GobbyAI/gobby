@@ -90,7 +90,7 @@ class EventEnricher:
             platform_session_id: str = event.metadata["_platform_session_id"]
             response.metadata["session_id"] = platform_session_id
 
-            # Look up seq_num for session_ref (#N format)
+            # Read the canonical project-qualified session reference
             # Guard with try/except: during shutdown the DB may already be closed
             if self._session_manager:
                 try:

@@ -36,8 +36,9 @@ def resolve_compact_continuation(
 
     rows = db.fetchall(
         """
-        SELECT s.*, COALESCE(sv.variables ->> 'handoff_source', '') AS compact_marker
+        SELECT s.*, p.name AS project_name, COALESCE(sv.variables ->> 'handoff_source', '') AS compact_marker
         FROM sessions s
+              LEFT JOIN projects p ON p.id = s.project_id
         LEFT JOIN session_variables sv ON sv.session_id = s.id
         WHERE s.source = %s
           AND s.session_type = 'terminal'

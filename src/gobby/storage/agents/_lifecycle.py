@@ -233,9 +233,11 @@ class _AgentRunLifecycleMixin:
             """
             SELECT *
             FROM sessions
+            LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects)
+                AS session_projects USING (project_id)
             WHERE status = ANY(%s)
               AND agent_run_id = %s
-            FOR UPDATE
+            FOR UPDATE OF sessions
             """,
             (list(LIVE_SESSION_STATUS_ORDER), run.id),
         ).fetchall()

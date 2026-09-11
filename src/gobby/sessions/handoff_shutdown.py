@@ -57,8 +57,12 @@ def guard_handoff_shutdown(db: HubDatabase, machine_id: str) -> Iterator[None]:
         ).fetchall()
         if rows:
             attempts = ", ".join(
-                f"{(row['project_name'] or '').strip() or row['project_id']}#{row['seq_num']} "
-                f"({row['attempt_id'] or 'unknown attempt'})"
+                (
+                    f"{(row['project_name'] or '').strip() or row['project_id']}#{row['seq_num']}"
+                    if row["seq_num"] is not None
+                    else str(row["id"])
+                )
+                + f" ({row['attempt_id'] or 'unknown attempt'})"
                 for row in rows
             )
             raise HandoffShutdownBlocked(

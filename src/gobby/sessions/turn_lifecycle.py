@@ -12,6 +12,7 @@ from gobby.storage.attention import (
     session_attention_entry_id,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 
 TurnDisposition = Literal[
     "completed",
@@ -351,6 +352,17 @@ class TurnLifecycleReducer:
                 )
             raw_status = getattr(session, "status", None)
             session_status = raw_status if isinstance(raw_status, str) else "paused"
+            # Terminal ownership/explicit resume must reactivate a session first.
+            # Delayed hook evidence alone cannot reclaim a superseded session.
+            if session_status in TERMINAL_SESSION_STATUSES:
+                return TurnLifecycleTransitionResult(
+                    False,
+                    session_id,
+                    current.generation,
+                    session_status,
+                    current,
+                    "session_terminal",
+                )
             stale_reason = None if allow_new_turn else self._stale_reason(current, evidence)
             if stale_reason:
                 return TurnLifecycleTransitionResult(

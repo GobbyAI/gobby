@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -132,10 +133,12 @@ def test_format_session_status_message_uses_session_fallback_without_title() -> 
         seq_num=None,
         title=None,
         source=transition.source,
-        session_ref=transition.session_ref,
+        session_ref=None,
     )
 
-    assert format_session_status_message(transition) == "Session - Expired"
+    assert (
+        format_session_status_message(transition) == f"{transition.session_id} - Session - Expired"
+    )
 
 
 @pytest.mark.parametrize(
@@ -159,3 +162,18 @@ def test_format_session_status_message_does_not_duplicate_legacy_ref(
     )
 
     assert format_session_status_message(transition) == "gobby#42 - Codex - Paused"
+
+
+def test_automatic_title_contains_reference_once() -> None:
+    transition = replace(
+        make_transition(agent_run_id=None, status="paused"),
+        title="(gobby#42): Task #123 - Description",
+    )
+    assert (
+        format_session_status_message(transition) == "(gobby#42): Task #123 - Description - Paused"
+    )
+
+
+def test_status_notification_uses_project_uuid_when_ref_unavailable() -> None:
+    transition = replace(make_transition(agent_run_id=None, status="paused"), session_ref=None)
+    assert format_session_status_message(transition).startswith(f"{transition.project_id}#42 - ")

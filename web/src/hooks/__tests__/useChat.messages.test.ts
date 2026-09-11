@@ -294,7 +294,7 @@ describe("useChat message and conversation state", () => {
     act(() => {
       ws.simulateMessage({
         type: "session_info",
-        session_ref: "#42",
+        session_ref: "other-project#42",
         agent_name: "developer",
       });
     });

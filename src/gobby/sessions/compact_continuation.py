@@ -303,8 +303,9 @@ def _take_same_terminal_handoff_compact_continuation_pending(
     try:
         rows = db.fetchall(
             """
-            SELECT s.*
+            SELECT s.*, p.name AS project_name
               FROM sessions s
+              LEFT JOIN projects p ON p.id = s.project_id
               JOIN session_variables sv ON sv.session_id = s.id
              WHERE s.id <> %s
                AND s.session_type = 'terminal'

@@ -18,6 +18,7 @@ from gobby.servers.websocket.chat._session_binding import _resolve_web_chat_reas
 from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 from gobby.servers.websocket.chat._streaming import ChatStreamingMixin
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from gobby.utils.daemon_git import GitOk, GitTimeout
 from tests._timing import drain_asyncio_tasks, wait_forever
 
 pytestmark = pytest.mark.unit
@@ -99,44 +100,49 @@ class TestResolveGitBranch:
 
     @pytest.mark.asyncio
     async def test_resolve_git_branch_success(self) -> None:
-        async def mock_communicate():
-            return b"main\n", b""
-
-        proc = MagicMock()
-        proc.communicate = mock_communicate
-
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
+        result = GitOk(
+            status="ok", argv=("git", "branch", "--show-current"), stdout="main\n", stderr=""
+        )
+        with patch(
+            "gobby.servers.websocket.chat._session_runtime.daemon_git.run",
+            new_callable=AsyncMock,
+            return_value=result,
+        ) as run:
             branch, path = await _resolve_git_branch("/test/path")
-            assert branch == "main"
-            assert path == "/test/path"
+        assert (branch, path) == ("main", "/test/path")
+        run.assert_awaited_once_with(["branch", "--show-current"], cwd="/test/path", timeout=5.0)
 
     @pytest.mark.asyncio
     async def test_resolve_git_branch_detached(self) -> None:
-        # First call (branch --show-current) returns empty string (detached HEAD)
-        async def mock_communicate_1():
-            return b"\n", b""
-
-        # Second call (rev-parse --short HEAD) returns sha
-        async def mock_communicate_2():
-            return b"a1b2c3d\n", b""
-
-        # We need a side_effect to return different procs
-        proc1 = MagicMock()
-        proc1.communicate = mock_communicate_1
-        proc2 = MagicMock()
-        proc2.communicate = mock_communicate_2
-
-        with patch("asyncio.create_subprocess_exec", side_effect=[proc1, proc2]):
+        results = [
+            GitOk(status="ok", argv=("git", "branch", "--show-current"), stdout="\n", stderr=""),
+            GitOk(
+                status="ok",
+                argv=("git", "rev-parse", "--short", "HEAD"),
+                stdout="a1b2c3d\n",
+                stderr="",
+            ),
+        ]
+        with patch(
+            "gobby.servers.websocket.chat._session_runtime.daemon_git.run",
+            new_callable=AsyncMock,
+            side_effect=results,
+        ) as run:
             branch, path = await _resolve_git_branch("/test/path")
-            assert branch == "detached:a1b2c3d"
-            assert path == "/test/path"
+        assert (branch, path) == ("detached:a1b2c3d", "/test/path")
+        assert run.await_count == 2
+        run.assert_awaited_with(["rev-parse", "--short", "HEAD"], cwd="/test/path", timeout=5.0)
 
     @pytest.mark.asyncio
     async def test_resolve_git_branch_error(self) -> None:
-        with patch("asyncio.create_subprocess_exec", side_effect=ValueError("git not found")):
+        result = GitTimeout(status="timeout", argv=("git", "branch", "--show-current"), timeout=5.0)
+        with patch(
+            "gobby.servers.websocket.chat._session_runtime.daemon_git.run",
+            new_callable=AsyncMock,
+            return_value=result,
+        ):
             branch, path = await _resolve_git_branch("/test/path")
-            assert branch is None
-            assert path is None
+        assert (branch, path) == (None, None)
 
 
 class TestCancelActiveChat:

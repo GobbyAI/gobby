@@ -75,13 +75,15 @@ def reconcile_compact_session_activity(
             """
             SELECT *
             FROM sessions
+            LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects)
+                AS session_projects USING (project_id)
             WHERE machine_id = %s
               AND session_type = 'terminal'
               AND id != %s
               AND status != 'deleted'
               AND (created_at, id) > (%s, %s)
             ORDER BY created_at, id
-            FOR UPDATE
+            FOR UPDATE OF sessions
             """,
             (current.machine_id, current.id, current.created_at, current.id),
         ).fetchall()
