@@ -407,3 +407,34 @@ safe Cargo prefix normalization to repeated leading `./` components after the
 corresponding regression failed. Parent/absolute/backslash escape rejection stays
 in place. Full native attempt 12 and all 14 cohort questions remain unrun; these
 results are focused regression evidence.
+
+## September 11 integration and executable-launch blocker
+
+Managed merge `86287d573035b50d30c4b9f63ee0687baacfcd3d` incorporates main
+through `a833a68b25`, including the settings-modal and session/activity fixes.
+Main was verified to be an ancestor of the clean integration HEAD. The four
+focused session naming/registration Python files passed 149 tests in 15.26 seconds.
+The merged correction worktree was deleted through the managed tool, and its
+merge commit was linked to coordinator #22021.
+
+The final combined Rust selection did not reach test execution. Cargo launched
+`target/debug/build/gobby-code-1145fe66d7eb26a9/build-script-build`, but a process
+sample showed only `_dyld_start`, with zero CPU time after several minutes.
+Its code signature verified successfully. Replacing that generated executable
+with a new inode reproduced the stall. Independently compiling `crates/gcode/build.rs`
+to `/tmp/gobby-12261-build-script-diagnostic` reproduced the same pre-main stall;
+a separate ad-hoc re-signed copy also stalled. All owned stalled processes were
+terminated, and their command handles returned definitive nonzero exits.
+
+Samples are retained in `/tmp/gobby-12261-build-script-sample.txt` and
+`/tmp/gobby-12261-fresh-build-script-sample.txt`. During the same window, macOS
+`syspolicyd` repeatedly logged `Unable to initialize qtn_proc: 3` and
+`dispatch_mig_server returned 268435459`. These observations implicate executable
+admission but do not establish the underlying cause. Sampling that system process
+was denied for lack of administrator privileges. Active project sessions were
+notified; authorization for a coordinated system-service recovery was requested.
+No system security settings, shared binaries, or daemon were changed.
+
+The release rebuild, immutable binary pin, native attempt 12, installed acceptance,
+and all 14 cohort questions remain pending. Earlier successful focused tests and
+attempts 1–11 remain unchanged; the stalled build is not a native probe attempt.
