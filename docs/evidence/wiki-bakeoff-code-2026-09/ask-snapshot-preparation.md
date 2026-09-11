@@ -801,3 +801,72 @@ Unknown liveness is not proof of successful cleanup.
 Attempts 1–16 remain immutable failures. Attempt 17 and all14 remain unrun.
 The next correction must resolve the actual managed-launch policy mismatch
 while preserving semantic validation and the native evidence requirements.
+
+## Host recovery and timeout observability
+
+Parent sampled a separate test process after eleven minutes at executable
+startup: all 883 samples were in `_dyld_start`, retained at
+`/tmp/gobby-12261-gclient-10996.sample.txt`. Identical Ruff 0.14.13 bytes
+(SHA-256 `97298756073d8e9550bef0bf63545e118e32cd12bd6d5a557aa56d47f9d688cf`)
+started in 0.012 seconds from the main environment, while the cohort
+worktree's executable timed out after eight seconds.
+
+After explicit coordination and administrator authentication, a targeted
+`SIGTERM` to the verified root-owned syspolicyd PID 7443 succeeded. Launchd
+replaced it with PID 51915. The previously stalled cohort Ruff executable
+then started in 0.036 seconds. All coordination holds were lifted. No Gobby
+daemon restart or shared binary installation occurred during this recovery.
+
+This does not establish the cause of Git status timeouts. The separate Git
+PID 9224 sample was already enumerating directories through `getdirentries`;
+its 0.8-second sample does not prove that operation exceeded five seconds.
+Direct Git and fresh Python-helper controls completed successfully. Earlier
+sandboxed `spctl` internal errors were not reproduced by unsandboxed controls
+and are not conclusive host-health evidence.
+
+The requested Claude Fable 5.1 xhigh investigation found that earlier Git
+diagnostic commits were live, but MCP substituted a fixed error message,
+non-stop hooks emitted details only at DEBUG, and the shared Git boundary
+did not log a warning. Integration commit `feb7683e04` adds one warning at
+that boundary with cwd, timeout, PID, phase and timing, omitting raw command
+arguments. Its regression failed before the change, then passed; all 78
+focused Git/workflow tests passed. This logging correction awaits landing
+and coordinated Gobby daemon restart before it is live.
+
+## Attempt 17: pinned config preserved; rendered policy still differs
+
+Independent review allowed the three-file SRT correction `5f42ce6ef9`, and
+parent independently passed all 98 permission/spawn tests in 1.57 seconds.
+The correction uses the immutable Ask sandbox config on fresh launch instead
+of the generic helper that adds registry access and cache/inbox writes.
+It was managed-merged into integration at
+`3f052e1ffd6d6dd28661222d61796040bd5576a7`; its worktree was deleted.
+
+Attempt 17 used that clean commit and the unchanged native binary pins above,
+with the same contained-drive command and a new output directory
+`/tmp/gobby-ask-native-probe-12261-seventeenth` (controller timeout 1500 seconds).
+Ask run `cb993a87-0f56-4ded-8320-51342606f990` retained the absolute deadline
+`2026-09-11T16:13:45.030456Z`. Preparation completed from
+`16:03:45.307643Z` to `16:09:00.637844Z`; seed completed at
+`16:09:34.929894Z`. Investigation failed at `16:09:35.544342Z`.
+
+Agent `2475a764-e674-48ca-934c-a1e6db59678f` still recorded
+`Ask SRT policy semantics changed after validation`, then rollback cancelled
+it without a PID, terminal or child session. The receipt error remained
+`native Ask launch policy is missing or outside the owned runtime`.
+The retained config confirms `allow_package_registries=false` and empty
+extra write paths: removing the generic config widening did not resolve
+the complete rendered-policy mismatch. The next correction must reproduce
+the actual compile/render/launch comparison in a focused executable test.
+
+The command exited 1. Immutable `raw-probe.json` SHA-256 is
+`6bcd9547b16534d303262c4ea76f0f3969298929a5d4e9a8166e86158d33f2aa`;
+`complete=false`, one `IncompleteLaunch` capture error,
+`missing_agent_run_ids=[]`, and no accepted receipts. Cleanup verified
+worker PID 18937 and terminal-host PID 19424 absent. Agent liveness remains
+unknown, so runtime `/private/tmp/gobby-ap-v_t3et1v` and schema
+`gobby_test_askprobe_1c2bbc150042477bbd263db84e864a9e` remain retained.
+The cleanup artifact SHA-256 is
+`00a98570b53866633818b075edf75e010c92d0bccf45b4f62b51b6cfd9e83ce7`.
+
+Attempts 1–17 remain immutable failures. Attempt 18 and all14 remain unrun.
