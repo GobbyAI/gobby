@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from gobby.ask.contracts import AskRequest, AskRunRecord, ProfileSnapshot
+from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.ask.pipeline import parse_ask_pipeline
 from gobby.ask.service import AskService
 from gobby.ask.stages import AskStageStore
@@ -435,13 +436,15 @@ def test_failed_resume_claim_is_atomic_and_preserves_stage_outputs(
     resumed_steps = manager.get_steps_for_execution(record.run_id)
     assert [step.status for step in resumed_steps] == [StepStatus.COMPLETED, StepStatus.PENDING]
     assert {step.step_id: step.output_json for step in resumed_steps} == outputs_before
-    with pytest.raises(ValueError, match="already being resumed"):
+    with pytest.raises(AskLifecycleConflict, match="already being resumed"):
         controller.claim_resume(
             record.run_id,
             project_id=project_id,
             caller_session_id="other-operator",
             decision=stale,
         )
+    with pytest.raises(AskRunNotFound, match="Ask run not found"):
+        controller.inspect("00000000-0000-4000-8000-000000000099", project_id=project_id)
 
     manager.update_execution_status(record.run_id, ExecutionStatus.INTERRUPTED)
     recovered = controller.inspect(record.run_id, project_id=project_id)

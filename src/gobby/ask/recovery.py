@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.ask.stages import (
     AskAttemptCheckpoint,
     AskAttemptStatus,
@@ -63,7 +64,7 @@ class AskRecoveryController:
     ) -> AskRecoveryDecision:
         execution = self.manager.get_execution(run_id)
         if execution is None or execution.project_id != project_id:
-            raise ValueError(f"Ask run not found: {run_id}")
+            raise AskRunNotFound(f"Ask run not found: {run_id}")
         state = self.stages.get(run_id)
         if state is None:
             raise ValueError(f"Ask run has no durable orchestration state: {run_id}")
@@ -73,9 +74,9 @@ class AskRecoveryController:
         if current.astimezone(UTC) >= state.deadline_at:
             raise TimeoutError(AskErrorCode.DEADLINE_EXCEEDED.value)
         if execution.status in {ExecutionStatus.COMPLETED, ExecutionStatus.CANCELLED}:
-            raise ValueError(f"Ask run cannot resume from {execution.status.value}")
+            raise AskLifecycleConflict(f"Ask run cannot resume from {execution.status.value}")
         if execution.status is ExecutionStatus.RUNNING:
-            raise ValueError("Ask run is already running")
+            raise AskLifecycleConflict("Ask run is already running")
 
         current_step_id = self._current_step_id(run_id)
 
@@ -108,7 +109,7 @@ class AskRecoveryController:
                 current_step_id=current_step_id,
                 restart_attempt=active,
             )
-        raise ValueError(f"Ask attempt cannot resume from agent status {agent_status!r}")
+        raise AskLifecycleConflict(f"Ask attempt cannot resume from agent status {agent_status!r}")
 
     def claim_resume(
         self,
@@ -121,7 +122,7 @@ class AskRecoveryController:
         """Atomically reserve one failed/interrupted Ask execution for its executor."""
         expected = decision.execution_status
         if expected not in {ExecutionStatus.FAILED, ExecutionStatus.INTERRUPTED}:
-            raise ValueError("Ask run is already being resumed")
+            raise AskLifecycleConflict("Ask run is already being resumed")
         with self.manager.db.transaction() as connection:
             row = connection.execute(
                 """
@@ -132,9 +133,9 @@ class AskRecoveryController:
                 (run_id, project_id),
             ).fetchone()
             if row is None:
-                raise ValueError(f"Ask run not found: {run_id}")
+                raise AskRunNotFound(f"Ask run not found: {run_id}")
             if str(row["status"]) != expected.value:
-                raise ValueError("Ask run is already being resumed")
+                raise AskLifecycleConflict("Ask run is already being resumed")
             if decision.current_step_id is not None:
                 step_update = connection.execute(
                     """
@@ -152,7 +153,7 @@ class AskRecoveryController:
                     ),
                 )
                 if step_update.rowcount != 1:
-                    raise ValueError("Ask run stage changed before resume")
+                    raise AskLifecycleConflict("Ask run stage changed before resume")
             document = json.loads(row["inputs_json"] or "{}")
             ask = document.get("ask")
             if not isinstance(ask, dict):
@@ -182,7 +183,7 @@ class AskRecoveryController:
                 ),
             ).fetchone()
             if updated is None:
-                raise ValueError("Ask run is already being resumed")
+                raise AskLifecycleConflict("Ask run is already being resumed")
         state = self.stages.get(run_id)
         if state is None:
             raise RuntimeError(f"Ask run has no durable orchestration state: {run_id}")
@@ -197,14 +198,14 @@ class AskRecoveryController:
     ) -> AskOrchestrationState:
         execution = self.manager.get_execution(run_id)
         if execution is None or execution.project_id != project_id:
-            raise ValueError(f"Ask run not found: {run_id}")
+            raise AskRunNotFound(f"Ask run not found: {run_id}")
         state = self.stages.get(run_id)
         if state is None:
             raise ValueError(f"Ask run has no durable orchestration state: {run_id}")
         if execution.status is ExecutionStatus.CANCELLED:
             return state
         if execution.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED}:
-            raise ValueError(f"Ask run cannot cancel from {execution.status.value}")
+            raise AskLifecycleConflict(f"Ask run cannot cancel from {execution.status.value}")
 
         # Submission authority must disappear before any process cleanup begins.
         self.permissions.revoke_for_run(run_id, reason="cancelled")
