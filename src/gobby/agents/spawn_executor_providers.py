@@ -112,11 +112,15 @@ async def _prepare_provider_sandbox(
     env: dict[str, str],
 ) -> SandboxLaunch | SpawnResult:
     try:
-        config = _sandbox_config_for_spawn(
-            request.sandbox_config,
-            env,
-            project_path=request.project_path,
-            resume_metadata_json=request.resume_metadata_json,
+        config = (
+            request.managed_runtime_profile.sandbox_config
+            if request.managed_runtime_profile is not None
+            else _sandbox_config_for_spawn(
+                request.sandbox_config,
+                env,
+                project_path=request.project_path,
+                resume_metadata_json=request.resume_metadata_json,
+            )
         )
         if config is None:
             launch = SandboxLaunch(backend="provider-native", enforced=False)

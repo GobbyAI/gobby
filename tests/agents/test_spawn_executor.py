@@ -1736,13 +1736,13 @@ class TestExecuteSpawnSandbox:
     """Integration tests for sandbox configuration in spawn flow."""
 
     @pytest.mark.asyncio
-    async def test_terminal_spawn_passes_sandbox_config_to_spawner(self) -> None:
+    async def test_terminal_spawn_passes_sandbox_config_to_spawner(self, tmp_path: Path) -> None:
         """Test that sandbox_config is resolved and passed to TmuxSpawner."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test with sandbox",
-            cwd="/path",
+            cwd=str(tmp_path),
             provider="claude",
             session_id="sess",
             run_id="run",
