@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -9,10 +10,12 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.ask.contracts import AskRequest, ProfileSnapshot
+from gobby.ask.contracts import AskRequest, AskRunRecord, ProfileSnapshot
 from gobby.ask.pipeline import parse_ask_pipeline
+from gobby.ask.service import AskService
 from gobby.ask.stages import AskStageStore
 from gobby.ask.storage import AskRunStorage
+from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.pipeline_models import PipelineDefinition
@@ -56,6 +59,31 @@ class _DelayedPipelineExecutor:
         raise RuntimeError("stalled pipeline escaped the Ask deadline")
 
 
+class _CancellingPipelineExecutor:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cleaning_up = asyncio.Event()
+        self.release_cleanup = asyncio.Event()
+
+    async def execute(
+        self,
+        pipeline: PipelineDefinition,
+        inputs: dict[str, Any],
+        project_id: str,
+        execution_id: str | None = None,
+        session_id: str | None = None,
+    ) -> PipelineExecution:
+        del pipeline, inputs, project_id, execution_id, session_id
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cleaning_up.set()
+            await self.release_cleanup.wait()
+            raise
+        raise AssertionError("cancelled executor unexpectedly completed")
+
+
 class _RecordingPipelineExecutor:
     def __init__(self, manager: LocalPipelineExecutionManager) -> None:
         self.manager = manager
@@ -96,6 +124,234 @@ class _NoopAgents:
 
     async def cancel(self, agent_run_id: str) -> None:
         del agent_run_id
+
+
+class _ObservedCompletionRegistry(CompletionEventRegistry):
+    def __init__(self) -> None:
+        super().__init__()
+        self.waiting = asyncio.Event()
+        self.on_register: Callable[[], None] | None = None
+
+    def register(
+        self,
+        completion_id: str,
+        subscribers: list[str],
+        continuation_prompt: str | None = None,
+    ) -> bool:
+        created = super().register(completion_id, subscribers, continuation_prompt)
+        if self.on_register is not None:
+            self.on_register()
+        return created
+
+    async def wait(self, completion_id: str, timeout: float | None = None) -> dict[str, Any]:
+        self.waiting.set()
+        return await super().wait(completion_id, timeout)
+
+
+@pytest.fixture
+def waiting_run(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> tuple[AskService, AskRunRecord, _ObservedCompletionRegistry]:
+    manager = LocalPipelineExecutionManager(temp_db, project_id=str(sample_project["id"]))
+    storage = AskRunStorage(
+        manager,
+        profile_resolver=_profile,
+        commit_resolver=lambda _root, _ref, _timeout: ("a" * 40, "b" * 40),
+        pipeline_snapshot=_pipeline_snapshot(),
+    )
+    record = storage.start(
+        AskRequest(
+            question="Wait for the existing run",
+            project_id=str(sample_project["id"]),
+            investigator_profile="ask-investigator",
+            reviewer_profile="ask-reviewer",
+        ),
+        tmp_path,
+    )
+    stages = AskStageStore(manager)
+    stages.initialize(record)
+    storage.bind_execution_context(
+        record.run_id, project_root=tmp_path, caller_session_id="original-caller"
+    )
+    registry = _ObservedCompletionRegistry()
+    service = AskService(
+        storage=storage,
+        stages=stages,
+        snapshot_manager=cast(Any, object()),
+        agents=cast(Any, _NoopAgents()),
+        permissions=cast(Any, _NoopPermissions()),
+        pipeline_executor=_RecordingPipelineExecutor(manager),
+        state_root=tmp_path / "state",
+        completion_registry=registry,
+    )
+    return service, record, registry
+
+
+@pytest.mark.asyncio
+async def test_wait_without_local_executor_times_out_without_changing_run(
+    waiting_run: tuple[AskService, AskRunRecord, CompletionEventRegistry],
+) -> None:
+    service, record, _registry = waiting_run
+    before = service.get(record.run_id, project_id=record.binding.project_id)
+    with pytest.raises(TimeoutError, match="timed out waiting for Ask run"):
+        await service.wait(record.run_id, project_id=record.binding.project_id, timeout=0.01)
+    after = service.get(record.run_id, project_id=record.binding.project_id)
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_wait_ignores_previous_completion_after_resume_claim_before_enqueue(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    from gobby.ask.recovery import AskRecoveryController
+
+    service, record, registry = waiting_run
+    project_id = record.binding.project_id
+    completion_id = f"ask:{record.run_id}"
+    service.storage.manager.update_execution_status(record.run_id, ExecutionStatus.FAILED)
+    registry.register(completion_id, subscribers=[])
+    await registry.notify(completion_id, {"status": "failed"})
+    recovery = AskRecoveryController(
+        manager=service.storage.manager,
+        stages=service.stages,
+        permissions=service.permissions,
+        agents=service.agents,
+    )
+    decision = recovery.inspect(record.run_id, project_id=project_id)
+    recovery.claim_resume(
+        record.run_id,
+        project_id=project_id,
+        caller_session_id="resume-operator",
+        decision=decision,
+    )
+
+    with pytest.raises(TimeoutError, match="timed out waiting for Ask run"):
+        await service.wait(record.run_id, project_id=project_id, timeout=0.05)
+
+    assert service.get(record.run_id, project_id=project_id).status == "pending"
+    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    result = await service.wait(record.run_id, project_id=project_id, timeout=1)
+    assert result.status == "completed"
+    assert result.binding.deadline_at == record.binding.deadline_at
+
+
+@pytest.mark.asyncio
+async def test_wait_returns_cancelled_run_after_local_executor_cleanup(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, _registry = waiting_run
+    executor = _CancellingPipelineExecutor()
+    service.pipeline_executor = executor
+    project_id = record.binding.project_id
+    assert await service.recover_daemon_execution(record.run_id, project_id=project_id)
+    await asyncio.wait_for(executor.started.wait(), timeout=1)
+    cancellation = asyncio.create_task(
+        service.cancel(record.run_id, project_id=project_id, caller_session_id="operator")
+    )
+    waiter: asyncio.Task[Any] | None = None
+    try:
+        await asyncio.wait_for(executor.cleaning_up.wait(), timeout=1)
+        waiter = asyncio.create_task(service.wait(record.run_id, project_id=project_id, timeout=1))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(waiter), timeout=0.01)
+        executor.release_cleanup.set()
+        cancelled = await asyncio.wait_for(cancellation, timeout=1)
+        result = await waiter
+        assert result.status == "cancelled"
+        assert result == cancelled
+    finally:
+        executor.release_cleanup.set()
+        await asyncio.gather(cancellation, return_exceptions=True)
+        if waiter is not None:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_wait_rechecks_durable_completion_after_registration(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, registry = waiting_run
+
+    def complete_before_notification_can_be_received() -> None:
+        service.storage.manager.update_execution_status(record.run_id, ExecutionStatus.COMPLETED)
+
+    registry.on_register = complete_before_notification_can_be_received
+    result = await service.wait(record.run_id, project_id=record.binding.project_id, timeout=1)
+    assert result.status == "completed"
+    assert not registry.waiting.is_set()
+    assert result.binding.deadline_at == record.binding.deadline_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["timeout", "disconnect"])
+async def test_one_waiter_cannot_interrupt_another_or_the_remote_execution(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+    interruption: str,
+) -> None:
+    service, record, registry = waiting_run
+    project_id = record.binding.project_id
+    surviving_waiter = asyncio.create_task(service.wait(record.run_id, project_id=project_id))
+    try:
+        await asyncio.wait_for(registry.waiting.wait(), timeout=1)
+        registry.waiting.clear()
+        if interruption == "timeout":
+            with pytest.raises(TimeoutError):
+                await service.wait(record.run_id, project_id=project_id, timeout=0.01)
+        else:
+            disconnected = asyncio.create_task(service.wait(record.run_id, project_id=project_id))
+            await asyncio.wait_for(registry.waiting.wait(), timeout=1)
+            disconnected.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await disconnected
+        assert not surviving_waiter.done()
+        assert service.get(record.run_id, project_id=project_id).status == "pending"
+        owner = AskService(
+            storage=service.storage,
+            stages=service.stages,
+            snapshot_manager=service.snapshot_manager,
+            agents=service.agents,
+            permissions=service.permissions,
+            pipeline_executor=service.pipeline_executor,
+            state_root=service.state_root,
+            completion_registry=registry,
+        )
+        assert await owner.recover_daemon_execution(record.run_id, project_id=project_id)
+        result = await asyncio.wait_for(surviving_waiter, timeout=1)
+        assert result.status == "completed"
+        assert result.run_id == record.run_id
+        assert result.binding.deadline_at == record.binding.deadline_at
+        assert await service.wait(record.run_id, project_id=project_id, timeout=1) == result
+    finally:
+        surviving_waiter.cancel()
+        await asyncio.gather(surviving_waiter, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_notification_does_not_finish_wait_before_ask_cleanup(
+    waiting_run: tuple[AskService, AskRunRecord, _ObservedCompletionRegistry],
+) -> None:
+    service, record, registry = waiting_run
+    waiter = asyncio.create_task(service.wait(record.run_id, project_id=record.binding.project_id))
+    try:
+        await asyncio.wait_for(registry.waiting.wait(), timeout=1)
+        # The executor publishes its event before Ask maps errors and releases resources.
+        registry.register(record.run_id, subscribers=[])
+        await registry.notify(record.run_id, {"status": "failed"})
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(waiter), timeout=0.01)
+        await service.cancel(
+            record.run_id,
+            project_id=record.binding.project_id,
+            caller_session_id="original-caller",
+        )
+        result = await asyncio.wait_for(waiter, timeout=1)
+        assert result.status == "cancelled"
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
 
 
 def test_failed_resume_claim_is_atomic_and_preserves_stage_outputs(

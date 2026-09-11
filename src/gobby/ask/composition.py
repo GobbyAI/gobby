@@ -83,6 +83,7 @@ def build_ask_service(
         agents=agents,
         permissions=AskPermissionStore(services.database),
         pipeline_executor=executor,
+        completion_registry=services.completion_registry,
         state_root=None,
     )
 

@@ -40,6 +40,7 @@ from gobby.ask.stages import (
     AskTypedError,
 )
 from gobby.ask.storage import AskRunStorage
+from gobby.events.completion_registry import CompletionEventRegistry, CompletionResultEvictedError
 from gobby.utils.session_context import get_current_agent_run_id
 from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.pipeline_state import ExecutionStatus
@@ -73,6 +74,7 @@ class AskService:
         permissions: AskPermissionRuntime,
         pipeline_executor: AskPipelineExecutor,
         state_root: Path | None,
+        completion_registry: CompletionEventRegistry | None = None,
         evidence_factory: EvidenceFactory | None = None,
         evidence_manifest_factory: EvidenceManifestFactory | None = None,
         fault_injector: FaultInjector | None = None,
@@ -84,6 +86,7 @@ class AskService:
         self.agents = agents
         self.permissions = permissions
         self.pipeline_executor = pipeline_executor
+        self.completion_registry = completion_registry or CompletionEventRegistry()
         self._configured_pipeline = parse_ask_pipeline(storage.pipeline_snapshot)
         self.state_root = state_root
         self.fault_injector = fault_injector
@@ -135,14 +138,33 @@ class AskService:
         project_id: str,
         timeout: float | None = None,
     ) -> AskRunResult:
-        record = self._record(run_id, project_id)
-        task = self._tasks.get(run_id)
-        if task is not None and not task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-            except TimeoutError:
-                raise TimeoutError(f"timed out waiting for Ask run {run_id}") from None
-        return await asyncio.to_thread(self._result, record)
+        record = await asyncio.to_thread(self._record, run_id, project_id)
+        completion_id = f"ask:{run_id}"
+        try:
+            async with asyncio.timeout(timeout):
+                while True:
+                    self.completion_registry.register(completion_id, subscribers=[])
+                    result = await asyncio.to_thread(self._result, record)
+                    if result.status in {"completed", "failed", "cancelled"}:
+                        task = self._tasks.get(run_id)
+                        if task is not None and not task.done():
+                            # Observe cleanup without propagating execution cancellation
+                            # to this caller or caller cancellation to the execution.
+                            await asyncio.wait({task})
+                            continue
+                        return result
+                    if self.completion_registry.get_result(completion_id) is not None:
+                        # A resume claim can precede replacement of the old notification.
+                        self.completion_registry.cleanup(completion_id)
+                        continue
+                    try:
+                        # A caller timeout must not clean up other waiters' subscription.
+                        await self.completion_registry.wait(completion_id)
+                    except CompletionResultEvictedError:
+                        # A resumed execution may replace a completed registration.
+                        continue
+        except TimeoutError:
+            raise TimeoutError(f"timed out waiting for Ask run {run_id}") from None
 
     async def resume(
         self,
@@ -217,6 +239,7 @@ class AskService:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        await self._notify_waiters(record)
         return await asyncio.to_thread(self._result, record)
 
     async def query_evidence(
@@ -355,6 +378,10 @@ class AskService:
         existing = self._tasks.get(record.run_id)
         if existing is not None and not existing.done():
             return
+        completion_id = f"ask:{record.run_id}"
+        if self.completion_registry.get_result(completion_id) is not None:
+            self.completion_registry.cleanup(completion_id)
+        self.completion_registry.register(completion_id, subscribers=[])
         task = asyncio.create_task(
             self._execute_pipeline(record, pipeline, inputs, caller_session_id),
             name=f"native-ask:{record.run_id}",
@@ -407,8 +434,17 @@ class AskService:
         except Exception as error:
             await self._fail(record, AskErrorCode.AGENT_FAILED, str(error))
         finally:
-            if release_resources:
-                await self.stage_runtime.release(record.run_id)
+            try:
+                if release_resources:
+                    await self.stage_runtime.release(record.run_id)
+            finally:
+                await self._notify_waiters(record)
+
+    async def _notify_waiters(self, record: AskRunRecord) -> None:
+        result = await asyncio.to_thread(self._result, record)
+        if result.status in {"completed", "failed", "cancelled"}:
+            # Pipeline completion precedes Ask error mapping and resource cleanup.
+            await self.completion_registry.notify(f"ask:{record.run_id}", {"status": result.status})
 
     async def prepare(
         self,
