@@ -70,6 +70,10 @@ def _run_storage(
     *,
     timeout_seconds: float = 30,
 ) -> tuple[AskRunStorage, str]:
+    project_json = repo / ".gobby" / "project.json"
+    if not project_json.exists():
+        project_json.parent.mkdir(exist_ok=True)
+        project_json.write_text(json.dumps({"id": project_id, "name": "ask-test"}))
     storage = AskRunStorage(
         LocalPipelineExecutionManager(temp_db, project_id=project_id),
         profile_resolver=_profile,
@@ -105,10 +109,12 @@ def _branch_gcode() -> Path:
     return executable
 
 
+@pytest.mark.parametrize("marker_damage", ["deleted", "overlay", "wrong_commit", "foreign_parent"])
 def test_historical_snapshot_isolation_and_recovery(
     temp_db: HubDatabase,
     sample_project: dict[str, object],
     tmp_path: Path,
+    marker_damage: str,
 ) -> None:
     project_id = str(sample_project["id"])
     repo = tmp_path / "caller"
@@ -130,6 +136,11 @@ def test_historical_snapshot_isolation_and_recovery(
     prepared: list[Path] = []
 
     async def prepare_index(path: Path, _deadline: datetime) -> SnapshotIndexRuntime:
+        assert json.loads((path / ".gobby" / "isolation.json").read_bytes()) == {
+            "parent_project_path": str(repo.resolve()),
+            "parent_project_id": project_id,
+            "snapshot_commit": historical,
+        }
         prepared.append(path)
         return SnapshotIndexRuntime(
             executable=Path("/branch/target/debug/gcode"),
@@ -187,11 +198,28 @@ def test_historical_snapshot_isolation_and_recovery(
         manager.recover(run_id=run_id, artifacts=artifacts)
     unexpected.unlink()
 
+    marker_path = snapshot.source_root / ".gobby" / "isolation.json"
+    marker = json.loads(marker_path.read_bytes())
+    if marker_damage == "deleted":
+        marker_path.unlink()
+    else:
+        if marker_damage == "overlay":
+            marker.pop("snapshot_commit")
+        elif marker_damage == "wrong_commit":
+            marker["snapshot_commit"] = caller_head
+        else:
+            marker["parent_project_id"] = str(uuid4())
+            marker["parent_project_path"] = str(tmp_path / "foreign")
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    restored = manager.recover(run_id=run_id, artifacts=artifacts)
+    assert restored.generation == 2
+    assert len(prepared) == 2
+
     shutil.rmtree(snapshot.source_root)
     recovered = manager.recover(run_id=run_id, artifacts=artifacts)
     assert recovered.commit_oid == historical
     assert (recovered.source_root / "source.py").read_text(encoding="utf-8") == "VERSION = 'old'\n"
-    assert len(prepared) == 2
+    assert len(prepared) == 3
 
     manager.release(recovered, artifacts=artifacts)
     assert not recovered.source_root.exists()

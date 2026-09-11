@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -491,6 +492,32 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         harness._seed_contained_machine_identity(private_home, private_machine_id)
 
     previous_execution = UUID(snapshot.runtime.managed_execution_id)
+    marker_path = snapshot.source_root / ".gobby" / "isolation.json"
+    if initial_parent_index:
+        marker_path.unlink()
+    else:
+        marker = json.loads(marker_path.read_bytes())
+        marker.pop("snapshot_commit")
+        marker_path.write_text(json.dumps(marker))
+    rejected = await asyncio.to_thread(
+        subprocess.run,
+        [
+            str(gcode_bin),
+            "index",
+            "--project",
+            str(snapshot.source_root),
+            "--snapshot-commit",
+            historical_merge,
+        ],
+        cwd=snapshot.source_root,
+        env={**os.environ, **snapshot.runtime.env},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "matching sealed snapshot scope" in rejected.stderr
     recovered = await manager.recover_async(run_id=record.run_id, artifacts=artifacts)
     assert recovered.generation == 2
     assert credential_manager.get_live_binding_generation(previous_execution) is None
@@ -512,6 +539,14 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         {"lane": "literal", "query": "pinned_symbol", "paths": [], "limit": 100},
     )
     assert any(item.get("path") == "src/lib.rs" for item in recovered_response["items"])
+    assert (
+        temp_db.fetchone(
+            """SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
+            (isolated.machine_id, project_id, "src/future.rs"),
+        )
+        is not None
+    )
     manager.release(recovered, artifacts=artifacts)
 
     root_record = storage.start(

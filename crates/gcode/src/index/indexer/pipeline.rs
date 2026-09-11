@@ -37,7 +37,9 @@ pub fn index_files(
         anyhow::ensure!(
             request.path_filter.is_none()
                 && request.explicit_files.is_empty()
-                && !request.require_cpp_semantics,
+                && !request.require_cpp_semantics
+                && !request.full
+                && !request.sync_projections,
             "pinned snapshot indexing requires its complete captured inventory"
         );
         return super::index_snapshot(ctx, commit_oid);

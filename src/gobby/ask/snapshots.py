@@ -367,6 +367,7 @@ class AskSnapshotManager:
                 target_root=source_root,
                 timeout=_remaining_seconds(deadline_at),
             )
+            await self._seal_source(record, repository_root, source_root, deadline_at)
         else:
             stale = self.worktree_storage.get(worktree_id)
             if stale is not None:
@@ -621,11 +622,26 @@ class AskSnapshotManager:
             target_root=source_root,
             timeout=_remaining_seconds(deadline_at),
         )
-        _remaining_seconds(deadline_at)
+        await self._seal_source(record, repository_root, source_root, deadline_at)
+
+    async def _seal_source(
+        self,
+        record: AskRunRecord,
+        repository_root: Path,
+        source_root: Path,
+        deadline_at: datetime,
+    ) -> None:
         async with asyncio.timeout(_remaining_seconds(deadline_at)):
             await ensure_project_json_for_isolation(
                 repository_root, source_root, snapshot_commit=record.binding.commit_oid
             )
+            marker = await asyncio.to_thread((source_root / ".gobby" / "isolation.json").read_bytes)
+        if json.loads(marker) != {
+            "parent_project_id": record.binding.project_id,
+            "parent_project_path": str(repository_root.resolve()),
+            "snapshot_commit": record.binding.commit_oid,
+        }:
+            raise SnapshotDriftError("snapshot isolation marker does not match the run binding")
         _remaining_seconds(deadline_at)
 
     async def _publish_lifecycle(
