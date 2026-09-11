@@ -17,20 +17,23 @@ pub(super) struct RestClient {
 }
 
 impl RestClient {
-    pub(super) fn new(base_url: Url, token: String) -> Self {
-        // The client's own connect and total timeouts back the per-call
-        // deadline below; a builder failure (TLS backend) leaves the
-        // deadline as the only bound rather than failing the connect.
+    /// The client's own connect and total timeouts back the per-call
+    /// deadline below. The builder fails only when the TLS backend or the
+    /// resolver cannot start; `Client::default` would hit the same failure
+    /// and panic, so it is reported to the connect instead.
+    pub(super) fn new(base_url: Url, token: String) -> Result<Self, DaemonError> {
         let client = Client::builder()
             .connect_timeout(REQUEST_DEADLINE)
             .timeout(REQUEST_DEADLINE)
             .build()
-            .unwrap_or_default();
-        Self {
+            .map_err(|error| DaemonError::Protocol {
+                detail: format!("HTTP client could not start: {error}"),
+            })?;
+        Ok(Self {
             client,
             base_url,
             token,
-        }
+        })
     }
 
     pub(super) async fn list_terminals(

@@ -40,7 +40,8 @@ async fn one_deadline_spans_send_and_body() {
     let client = RestClient::new(
         Url::parse(&format!("http://{address}")).expect("url"),
         "token".into(),
-    );
+    )
+    .expect("rest client");
     let started = Instant::now();
     let mut call = tokio::spawn(async move { client.projects().await });
 
