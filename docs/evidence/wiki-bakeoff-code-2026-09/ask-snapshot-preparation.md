@@ -367,3 +367,9 @@ separate hermetic boundary and cannot establish captured-source provenance.
 Full native provider/security acceptance and all 14 cohort answers remain
 unvalidated. These focused results do not replace attempts 1–11 or count as a
 successful attempt 12.
+
+The native integration test also passes with no initial parent index. Future
+contained probes therefore omit the obsolete full parent-index preparation;
+Ask prepares its own complete pinned index within the original deadline. The
+helper and receipt export remain available for historical evidence and focused
+parent-mutation tests. No previous attempt artifacts were changed.

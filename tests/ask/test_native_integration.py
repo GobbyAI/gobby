@@ -149,11 +149,13 @@ def test_private_parent_index_records_snapshot_failure_receipt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial_parent_index", [True, False])
 async def test_real_managed_snapshot_queries_branch_native_gcode(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    initial_parent_index: bool,
 ) -> None:
     host_machine_id = machine_identity.require_machine_id()
     private_machine_id = str(uuid4())
@@ -279,63 +281,64 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     schema_row = temp_db.fetchone("SELECT current_schema() AS schema")
     assert schema_row is not None
     database_scope = str(schema_row["schema"])
-    bootstrap = harness._provision_private_parent_index(
-        project_root=repo,
-        manager=credential_manager,
-        database=temp_db,
-        session_id=session_id,
-        project_id=project_id,
-        machine_id=isolated.machine_id,
-        runtime_root=runtime_root / "parent",
-        gcode_bin=gcode_bin,
-        source_commit=historical_merge,
-        deadline_monotonic=time.monotonic() + 600,
-        database_scope=database_scope,
-        evidence_path=tmp_path / "parent-index-bootstrap.json",
-    )
-    assert bootstrap["status"] == "completed"
-    assert bootstrap["source_commit"] == historical_merge
-    assert bootstrap["database_scope"] == database_scope
-    gcode_identity = cast(dict[str, object], bootstrap["gcode"])
-    assert gcode_identity["path"] == str(gcode_bin)
-    with gcode_bin.open("rb") as stream:
-        assert gcode_identity["sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
-    assert bootstrap["credential_project_id"] == project_id
-    assert bootstrap["credential_project_path"] == str(repo.resolve())
-    assert bootstrap["checkout_root_before"] == str(repo.resolve())
-    assert bootstrap["checkout_root_during_index"] == bootstrap["seed_root"]
-    assert bootstrap["checkout_root_after"] == str(repo.resolve())
-    assert bootstrap["indexed_root"] == bootstrap["seed_root"]
-    indexed_file_count = bootstrap["indexed_file_count"]
-    assert isinstance(indexed_file_count, int)
-    assert indexed_file_count > 0
-    assert bootstrap["credential_revoked"] is True
-    commands = cast(list[dict[str, object]], bootstrap["commands"])
-    assert [command["name"] for command in commands] == [
-        "source_status_before",
-        "snapshot_materialize",
-        "status_before",
-        "index",
-        "status_after",
-        "source_status_after",
-    ]
-    assert all(command["returncode"] == 0 for command in commands)
-    assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
-    restored_checkout = LocalProjectCheckoutManager(temp_db).get(
-        isolated.machine_id,
-        project_id,
-    )
-    assert restored_checkout is not None
-    assert Path(restored_checkout.root_path).resolve() == repo.resolve()
-    indexed_parent = temp_db.fetchone(
-        """SELECT root_path FROM code_indexed_project_states
-        WHERE machine_id = %s AND project_id = %s""",
-        (isolated.machine_id, project_id),
-    )
-    assert indexed_parent is not None
-    seed_root = bootstrap["seed_root"]
-    assert isinstance(seed_root, str)
-    assert Path(indexed_parent["root_path"]).resolve() == Path(seed_root)
+    if initial_parent_index:
+        bootstrap = harness._provision_private_parent_index(
+            project_root=repo,
+            manager=credential_manager,
+            database=temp_db,
+            session_id=session_id,
+            project_id=project_id,
+            machine_id=isolated.machine_id,
+            runtime_root=runtime_root / "parent",
+            gcode_bin=gcode_bin,
+            source_commit=historical_merge,
+            deadline_monotonic=time.monotonic() + 600,
+            database_scope=database_scope,
+            evidence_path=tmp_path / "parent-index-bootstrap.json",
+        )
+        assert bootstrap["status"] == "completed"
+        assert bootstrap["source_commit"] == historical_merge
+        assert bootstrap["database_scope"] == database_scope
+        gcode_identity = cast(dict[str, object], bootstrap["gcode"])
+        assert gcode_identity["path"] == str(gcode_bin)
+        with gcode_bin.open("rb") as stream:
+            assert gcode_identity["sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
+        assert bootstrap["credential_project_id"] == project_id
+        assert bootstrap["credential_project_path"] == str(repo.resolve())
+        assert bootstrap["checkout_root_before"] == str(repo.resolve())
+        assert bootstrap["checkout_root_during_index"] == bootstrap["seed_root"]
+        assert bootstrap["checkout_root_after"] == str(repo.resolve())
+        assert bootstrap["indexed_root"] == bootstrap["seed_root"]
+        indexed_file_count = bootstrap["indexed_file_count"]
+        assert isinstance(indexed_file_count, int)
+        assert indexed_file_count > 0
+        assert bootstrap["credential_revoked"] is True
+        commands = cast(list[dict[str, object]], bootstrap["commands"])
+        assert [command["name"] for command in commands] == [
+            "source_status_before",
+            "snapshot_materialize",
+            "status_before",
+            "index",
+            "status_after",
+            "source_status_after",
+        ]
+        assert all(command["returncode"] == 0 for command in commands)
+        assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
+        restored_checkout = LocalProjectCheckoutManager(temp_db).get(
+            isolated.machine_id,
+            project_id,
+        )
+        assert restored_checkout is not None
+        assert Path(restored_checkout.root_path).resolve() == repo.resolve()
+        indexed_parent = temp_db.fetchone(
+            """SELECT root_path FROM code_indexed_project_states
+            WHERE machine_id = %s AND project_id = %s""",
+            (isolated.machine_id, project_id),
+        )
+        assert indexed_parent is not None
+        seed_root = bootstrap["seed_root"]
+        assert isinstance(seed_root, str)
+        assert Path(indexed_parent["root_path"]).resolve() == Path(seed_root)
     manager = AskSnapshotManager(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
