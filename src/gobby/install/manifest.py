@@ -2,21 +2,11 @@
 
 from __future__ import annotations
 
-import argparse
 import hashlib
-import io
 import json
 import string
-import subprocess
-import sys
-import tarfile
-from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, TypedDict
-
-if TYPE_CHECKING:
-    from gobby.utils.daemon_git import GitResult
+from typing import TypedDict
 
 MANIFEST_FILENAME = "bundled_content_manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -30,9 +20,6 @@ _EXCLUDED_DIR_NAMES = {"__pycache__"}
 _HASH_CHUNK_BYTES = 64 * 1024
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = set(string.hexdigits)
-_INSTALL_TREE_PATH = PurePosixPath("src/gobby/install")
-_SHARED_TREE_PATH = _INSTALL_TREE_PATH / MANIFEST_ROOT
-_MANIFEST_TREE_PATH = _INSTALL_TREE_PATH / MANIFEST_FILENAME
 
 
 class BundledContentManifest(TypedDict):
@@ -42,16 +29,6 @@ class BundledContentManifest(TypedDict):
     hash_algorithm: str
     root: str
     files: dict[str, str]
-
-
-@dataclass(frozen=True)
-class CommittedManifestCheck:
-    """Result of comparing committed shared blobs with the committed manifest."""
-
-    ok: bool
-    treeish: str
-    errors: tuple[str, ...]
-    expected_file_count: int
 
 
 def hash_file_bytes(path: Path) -> str:
@@ -107,13 +84,6 @@ def write_bundled_content_manifest(install_dir: Path) -> Path:
     if not shared_dir.is_dir():
         raise FileNotFoundError(f"Shared directory not found: {shared_dir}")
     manifest = build_bundled_content_manifest(shared_dir)
-    return _write_bundled_content_manifest(install_dir, manifest)
-
-
-def _write_bundled_content_manifest(
-    install_dir: Path,
-    manifest: BundledContentManifest,
-) -> Path:
     manifest_path = install_dir / MANIFEST_FILENAME
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -185,207 +155,6 @@ def _is_sha256_hexdigest(value: str) -> bool:
     return len(value) == _SHA256_HEX_LENGTH and all(char in _HEX_DIGITS for char in value)
 
 
-def check_committed_bundled_content_manifest(
-    repo_root: Path,
-    *,
-    treeish: str = "HEAD",
-) -> CommittedManifestCheck:
-    """Compare manifest-eligible blobs and the manifest from one committed Git tree."""
-    try:
-        expected = _build_committed_bundled_content_manifest(repo_root, treeish)
-        raw_manifest = _git_bytes(
-            repo_root,
-            "show",
-            f"{treeish}:{_MANIFEST_TREE_PATH.as_posix()}",
-        )
-        committed = json.loads(raw_manifest.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
-        return CommittedManifestCheck(
-            ok=False,
-            treeish=treeish,
-            errors=(f"Cannot verify committed bundled content manifest: {_git_error_text(exc)}",),
-            expected_file_count=0,
-        )
-
-    if committed == expected:
-        return CommittedManifestCheck(True, treeish, (), len(expected["files"]))
-    return CommittedManifestCheck(
-        ok=False,
-        treeish=treeish,
-        errors=tuple(_manifest_parity_errors(committed, expected)),
-        expected_file_count=len(expected["files"]),
-    )
-
-
-async def check_committed_bundled_content_manifest_async(
-    repo_root: Path,
-    *,
-    treeish: str = "HEAD",
-) -> CommittedManifestCheck:
-    """Async runtime variant backed by the daemon Git service."""
-    try:
-        expected = await _build_committed_bundled_content_manifest_async(repo_root, treeish)
-        raw_manifest = await _git_bytes_async(
-            repo_root,
-            "show",
-            f"{treeish}:{_MANIFEST_TREE_PATH.as_posix()}",
-        )
-        committed = json.loads(raw_manifest.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, tarfile.TarError) as exc:
-        return CommittedManifestCheck(
-            ok=False,
-            treeish=treeish,
-            errors=(f"Cannot verify committed bundled content manifest: {exc}",),
-            expected_file_count=0,
-        )
-
-    if committed == expected:
-        return CommittedManifestCheck(True, treeish, (), len(expected["files"]))
-    return CommittedManifestCheck(
-        ok=False,
-        treeish=treeish,
-        errors=tuple(_manifest_parity_errors(committed, expected)),
-        expected_file_count=len(expected["files"]),
-    )
-
-
-def check_linked_committed_bundled_manifest(
-    repo_root: Path,
-    commit_shas: Iterable[str],
-) -> CommittedManifestCheck | None:
-    """Check HEAD parity only when a prospective linked commit changes shared content."""
-    for sha in commit_shas:
-        try:
-            changed = _git_bytes(
-                repo_root,
-                "diff-tree",
-                "--root",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                "-z",
-                sha,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return CommittedManifestCheck(
-                ok=False,
-                treeish="HEAD",
-                errors=(f"Cannot inspect linked commit {sha}: {_git_error_text(exc)}",),
-                expected_file_count=0,
-            )
-        if any(
-            path.startswith(f"{_SHARED_TREE_PATH.as_posix()}/")
-            for path in changed.decode("utf-8", errors="surrogateescape").split("\0")
-            if path
-        ):
-            return check_committed_bundled_content_manifest(repo_root)
-    return None
-
-
-async def check_linked_committed_bundled_manifest_async(
-    repo_root: Path,
-    commit_shas: Iterable[str],
-) -> CommittedManifestCheck | None:
-    """Runtime linked-commit check backed by the daemon Git service."""
-    for sha in commit_shas:
-        try:
-            changed = await _git_bytes_async(
-                repo_root,
-                "diff-tree",
-                "--root",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                "-z",
-                sha,
-            )
-        except OSError as exc:
-            return CommittedManifestCheck(
-                ok=False,
-                treeish="HEAD",
-                errors=(f"Cannot inspect linked commit {sha}: {exc}",),
-                expected_file_count=0,
-            )
-        if any(
-            path.startswith(f"{_SHARED_TREE_PATH.as_posix()}/")
-            for path in changed.decode("utf-8", errors="surrogateescape").split("\0")
-            if path
-        ):
-            return await check_committed_bundled_content_manifest_async(repo_root)
-    return None
-
-
-def _committed_shared_files(repo_root: Path, treeish: str) -> dict[str, bytes]:
-    raw_archive = _git_bytes(
-        repo_root,
-        "archive",
-        "--format=tar",
-        treeish,
-        _SHARED_TREE_PATH.as_posix(),
-    )
-    return _shared_files_from_archive(raw_archive)
-
-
-async def _committed_shared_files_async(repo_root: Path, treeish: str) -> dict[str, bytes]:
-    raw_archive = await _git_bytes_async(
-        repo_root,
-        "archive",
-        "--format=tar",
-        treeish,
-        _SHARED_TREE_PATH.as_posix(),
-    )
-    return _shared_files_from_archive(raw_archive)
-
-
-def _shared_files_from_archive(raw_archive: bytes) -> dict[str, bytes]:
-    files: dict[str, bytes] = {}
-    with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:") as archive:
-        for member in archive.getmembers():
-            path = PurePosixPath(member.name)
-            if not member.isfile() or path == _SHARED_TREE_PATH:
-                continue
-            relative = path.relative_to(_SHARED_TREE_PATH)
-            if not _should_include_relative_path(relative):
-                continue
-            handle = archive.extractfile(member)
-            if handle is None:
-                raise OSError(f"Cannot read committed bundled file {member.name}")
-            files[relative.as_posix()] = handle.read()
-    return dict(sorted(files.items()))
-
-
-def _build_committed_bundled_content_manifest(
-    repo_root: Path,
-    treeish: str,
-) -> BundledContentManifest:
-    shared_files = _committed_shared_files(repo_root, treeish)
-    return {
-        "schema_version": MANIFEST_SCHEMA_VERSION,
-        "hash_algorithm": MANIFEST_HASH_ALGORITHM,
-        "root": MANIFEST_ROOT,
-        "files": {
-            relative: hashlib.sha256(content).hexdigest()
-            for relative, content in shared_files.items()
-        },
-    }
-
-
-async def _build_committed_bundled_content_manifest_async(
-    repo_root: Path,
-    treeish: str,
-) -> BundledContentManifest:
-    shared_files = await _committed_shared_files_async(repo_root, treeish)
-    return {
-        "schema_version": MANIFEST_SCHEMA_VERSION,
-        "hash_algorithm": MANIFEST_HASH_ALGORITHM,
-        "root": MANIFEST_ROOT,
-        "files": {
-            relative: hashlib.sha256(content).hexdigest()
-            for relative, content in shared_files.items()
-        },
-    }
-
-
 def _should_include_relative_path(relative: PurePosixPath) -> bool:
     if any(part.startswith(".") for part in relative.parts):
         return False
@@ -394,107 +163,3 @@ def _should_include_relative_path(relative: PurePosixPath) -> bool:
     if relative.name in _EXCLUDED_FILE_NAMES:
         return False
     return relative.suffix not in _EXCLUDED_SUFFIXES
-
-
-def _git_bytes(repo_root: Path, *args: str) -> bytes:
-    return subprocess.run(
-        ["git", "-C", str(repo_root), *args],
-        check=True,
-        capture_output=True,
-        timeout=10,
-    ).stdout
-
-
-async def _git_bytes_async(repo_root: Path, *args: str) -> bytes:
-    from gobby.utils.daemon_git import GitOk, daemon_git
-
-    result = await daemon_git.run(args, cwd=repo_root, timeout=10.0)
-    if not isinstance(result, GitOk):
-        raise OSError(_daemon_git_error_text(result))
-    return result.stdout.encode("utf-8", errors="surrogateescape")
-
-
-def _daemon_git_error_text(result: GitResult) -> str:
-    from gobby.utils.daemon_git import GitFailed, GitTimeout
-
-    if isinstance(result, GitTimeout):
-        return f"git {' '.join(result.argv[1:])} timed out after {result.timeout:g}s"
-    if isinstance(result, GitFailed):
-        return result.stderr.strip() or f"git exited {result.returncode}"
-    return "git returned no usable output"
-
-
-def _git_error_text(exc: BaseException) -> str:
-    if isinstance(exc, subprocess.CalledProcessError):
-        stderr = exc.stderr
-        if isinstance(stderr, bytes):
-            text = stderr.decode("utf-8", errors="replace").strip()
-            if text:
-                return text
-        elif isinstance(stderr, str) and stderr.strip():
-            return stderr.strip()
-    return str(exc)
-
-
-def _manifest_parity_errors(
-    committed: object,
-    expected: BundledContentManifest,
-) -> list[str]:
-    errors = ["Committed bundled content manifest is stale."]
-    if not isinstance(committed, dict) or not isinstance(committed.get("files"), dict):
-        return [*errors, "The committed manifest does not have the expected schema."]
-    actual_files = committed["files"]
-    expected_files = expected["files"]
-    missing = sorted(set(expected_files) - set(actual_files))
-    extra = sorted(set(actual_files) - set(expected_files))
-    changed = sorted(
-        path
-        for path in set(expected_files) & set(actual_files)
-        if expected_files[path] != actual_files[path]
-    )
-    for label, paths in (("missing", missing), ("extra", extra), ("changed", changed)):
-        if paths:
-            errors.append(f"{label.title()} entries: {', '.join(paths[:10])}")
-    if not missing and not extra and not changed:
-        errors.append("Manifest metadata differs from the committed schema.")
-    return errors
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check or write the bundled-content manifest.")
-    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--treeish")
-    parser.add_argument("--write", action="store_true")
-    args = parser.parse_args(argv)
-    if args.write:
-        install_dir = args.repo_root / _INSTALL_TREE_PATH
-        try:
-            if args.treeish is None:
-                manifest_path = write_bundled_content_manifest(install_dir)
-            else:
-                manifest = _build_committed_bundled_content_manifest(
-                    args.repo_root,
-                    args.treeish,
-                )
-                manifest_path = _write_bundled_content_manifest(install_dir, manifest)
-        except (OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
-            print(f"Cannot write bundled content manifest: {_git_error_text(exc)}", file=sys.stderr)
-            return 1
-        print(manifest_path)
-        return 0
-
-    treeish = args.treeish or "HEAD"
-    result = check_committed_bundled_content_manifest(args.repo_root, treeish=treeish)
-    if result.ok:
-        print(
-            f"Committed bundled content manifest matches {result.treeish} "
-            f"({result.expected_file_count} files)."
-        )
-        return 0
-    for error in result.errors:
-        print(error, file=sys.stderr)
-    return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

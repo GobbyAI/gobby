@@ -192,8 +192,6 @@ def _sync_git_inventory() -> list[SyncGitUse]:
 
 _SYNC_GIT_FACADES = {
     "_init_no_marker",
-    "check_committed_bundled_content_manifest",
-    "check_linked_committed_bundled_manifest",
     "clone_skill_repo",
     "committable_task_paths",
     "get_dirty_files",
@@ -285,7 +283,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/cli/sessions.py", "summarize_session"),
     ("src/gobby/cli/tasks/commits.py", "link_commit"),
     ("src/gobby/cli/tasks/commits.py", "unlink_commit"),
-    ("src/gobby/install/manifest.py", "_git_bytes"),
     ("src/gobby/plans/evidence.py", "_run_git"),
     ("src/gobby/sync/integrity.py", "verify_bundled_integrity"),
     ("src/gobby/utils/project_init.py", "_init_no_marker"),
@@ -302,16 +299,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {
-    (
-        "src/gobby/install/manifest.py",
-        "check_linked_committed_bundled_manifest",
-        "check_committed_bundled_content_manifest",
-    ),
-    (
-        "src/gobby/install/manifest.py",
-        "main",
-        "check_committed_bundled_content_manifest",
-    ),
     ("src/gobby/skills/loader.py", "SkillLoader.load_from_github", "clone_skill_repo"),
     (
         "src/gobby/skills/updater.py",
