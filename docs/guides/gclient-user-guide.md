@@ -109,8 +109,8 @@ then press the second key.
 
 The client detects tmux by asking the tmux server for its identity, not by the
 `TMUX` variable alone, so a stale variable does not switch prefixes. Inside tmux
-the outer tmux keeps `ctrl+b`, and the status line shows `prefix ctrl+]` as a
-reminder. Override either default with a `prefix = "..."` line in the keymap file
+the outer tmux keeps `ctrl+b`. The status line always names the active prefix
+(`prefix ctrl+b`, or `prefix ctrl+]` inside tmux). Override either default with a `prefix = "..."` line in the keymap file
 (see [Customising the keymap](#customising-the-keymap)).
 
 Pressing the prefix twice sends a literal prefix chord to the focused terminal.
