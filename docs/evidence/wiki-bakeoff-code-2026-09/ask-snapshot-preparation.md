@@ -561,3 +561,52 @@ preflight setting did not unblock a coordination message. No diagnostic worker
 was created. Direct integration Git status completed in 0.09 seconds. Both the
 OS launch recovery and the Git-status failure remain owned, unresolved work.
 Attempt 13 and the all14 cohort have not run; attempts 1–12 remain unchanged.
+
+## Attempt 13: snapshot preparation passed; credential admission rejected seed
+
+The same pinned gcode subsequently executed `--version` successfully without a
+service restart. A complete rerun of `tests/ask/test_native_integration.py`
+passed all four tests in 10.32 seconds. The pending administrator-authentication
+request was cancelled; syspolicyd remained PID 7443. The earlier stalled run is
+retained above. These observations establish recovery, not that the version
+invocation caused it. A read-only worker is investigating the recurring native
+launch and Git-status failures.
+
+Attempt 13 ran from clean source `13e9597cc1f1b6fa2ddf9bb2c36bf154d2bb9129`
+with the unchanged immutable gcode/gterm pin described above:
+
+```sh
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/target/ask-probe-07255f62 uv run --no-sync python tests/ask/native_probe_harness.py contained-drive --project-root /Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask --output-dir /tmp/gobby-ask-native-probe-12261-thirteenth --timeout-seconds 1500
+```
+
+Fresh Ask run `0f3dd685-f7bf-4637-9f49-4cb474d6d182` retained its own
+600-second budget, with deadline `2026-09-11T09:04:12.250681Z`. Preparation
+completed between `2026-09-11T08:54:12.533543Z` and
+`2026-09-11T08:59:49.198114Z` (336.665 seconds). Seed failed at
+`2026-09-11T09:00:01.710662Z` with `invalid gcode evidence response: response
+contains credential-bearing content`. No provider agents or launch receipts
+were created. The resumed phase did not run.
+
+The raw export at `/tmp/gobby-ask-native-probe-12261-thirteenth/raw-probe.json`
+has SHA-256 `b851f5cfacb5aca19b659c63458ce444fa5aa272a7bd51c0f99dc3c356a69ca0`.
+It reports complete capture with no capture errors or missing agent IDs.
+Cleanup reports `errors=[]`, the owned schema dropped, runtime removed,
+worker exited, terminal host absent, and empty owned process groups. This is a
+failed primary attempt; it does not satisfy native acceptance.
+
+Parent diagnosis reproduced two false positives in Python's admission check:
+an ordinary home-directory path and `token = runtime_token_reference` both
+return true from `_contains_credential`, as does a real credential-bearing URI.
+The check compares terminal-output redaction against serialized JSON; that
+redactor also rewrites the operator home and bare source references. Rust's
+snapshot classifier already distinguishes source references from literal
+assignments. An exact committed-blob scan found 262 Python-rejected blobs among
+8,027 Rust-eligible entries, including 41 with the operator home path. This is
+classifier disagreement, not a finding that all 262 are harmless. The path-only
+diagnostic report is `/tmp/gobby-12261-credential-parity-candidates.json`; native
+inventory is `/tmp/gobby-12261-attempt13-inventory.json`.
+
+A scoped #22018 worker is correcting admission semantics while preserving real
+secret rejection, audit redaction, sensitive-path exclusions, response identity,
+and citation bytes. Attempts 1–13 remain unchanged. Attempt 14 and the all14
+cohort remain unrun; full native and installed acceptance remain unproved.
