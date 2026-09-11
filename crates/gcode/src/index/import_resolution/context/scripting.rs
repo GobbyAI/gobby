@@ -112,6 +112,9 @@ pub(in crate::index::import_resolution) fn build_php_symbol_files(
     let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("php") {
+                return None;
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             observe_php_source(&rel_str, &std::fs::read(path).ok()?)
@@ -162,6 +165,10 @@ pub(super) fn build_ruby_constant_files(
     let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str())?;
+            if !matches!(ext, "rb" | "rake") {
+                return None;
+            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
             observe_ruby_source(&rel_str, &std::fs::read(path).ok()?)

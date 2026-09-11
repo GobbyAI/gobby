@@ -429,6 +429,63 @@ fn path_derived_names_for_files_inverts_declaration_maps_once() {
     assert_eq!(names.len(), 3);
 }
 
+#[cfg(unix)]
+#[test]
+fn live_context_skips_irrelevant_candidate_reads() {
+    use std::ffi::CString;
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::mpsc::{self, TryRecvError};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    let tempdir = TempDir::new().expect("tempdir");
+    let irrelevant = tempdir.path().join("irrelevant.txt");
+    let fifo_path = CString::new(irrelevant.as_os_str().as_bytes()).expect("fifo path");
+    // SAFETY: `fifo_path` is a valid, NUL-terminated path owned for this call.
+    assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+
+    let root = tempdir.path().to_path_buf();
+    let candidate = irrelevant.clone();
+    let (tx, rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        tx.send(build_import_resolution_context(&root, &[candidate]))
+            .expect("context receiver");
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut observed_reads = 0;
+    let context = loop {
+        match rx.try_recv() {
+            Ok(context) => break context,
+            Err(TryRecvError::Disconnected) => panic!("context builder disconnected"),
+            Err(TryRecvError::Empty) => {}
+        }
+        match fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&irrelevant)
+        {
+            Ok(mut writer) => {
+                observed_reads += 1;
+                writer.write_all(b"irrelevant").expect("unblock FIFO read");
+                thread::yield_now();
+            }
+            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                thread::yield_now();
+            }
+            Err(error) => panic!("open FIFO writer: {error}"),
+        }
+        assert!(Instant::now() < deadline, "context builder timed out");
+    };
+    worker.join().expect("context builder");
+
+    assert_eq!(observed_reads, 0, "irrelevant candidate was read");
+    assert!(context.java_class_files.is_empty());
+    assert!(context.php_symbol_files.is_empty());
+}
+
 #[test]
 fn captured_context_uses_only_inventory_bytes_and_rejects_cargo_escapes() {
     let live = TempDir::new().expect("live tempdir");
@@ -451,7 +508,7 @@ fn captured_context_uses_only_inventory_bytes_and_rejects_cargo_escapes() {
         (
             "Cargo.toml".to_string(),
             br#"[workspace]
-members = ["crates/*", "../outside", "/absolute"]
+members = ["./crates/*", "../outside", "/absolute", "crates\\*"]
 "#
             .to_vec(),
         ),
