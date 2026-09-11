@@ -18,10 +18,6 @@ impl<'a> CapturedSources<'a> {
         self.by_path.get(rel_path).map(Vec::as_slice)
     }
 
-    pub(crate) fn contains(&self, rel_path: &str) -> bool {
-        self.by_path.contains_key(rel_path)
-    }
-
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&'a str, &'a [u8])> + 'a {
         self.by_path
             .iter()

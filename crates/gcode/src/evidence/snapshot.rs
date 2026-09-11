@@ -411,36 +411,55 @@ fn load_inventory(repo_root: &Path, tree_oid: &str) -> Result<Vec<InventoryEntry
         if size_bytes.is_some_and(|size| size > MAX_EVIDENCE_FILE_BYTES) {
             exclusion = Some(ExclusionReason::Oversized);
         }
-        let mut content_hash = None;
-        let mut language = crate::index::languages::detect_language(&path).map(str::to_string);
-        if exclusion.is_none()
-            && let Some(oid) = &blob_oid
-        {
-            let content = blobs.read(oid)?;
-            exclusion = if content.contains(&0) {
-                Some(ExclusionReason::Binary)
-            } else if std::str::from_utf8(&content).is_err() {
-                Some(ExclusionReason::UnsupportedEncoding)
-            } else if crate::index::security::contains_known_credential(&path, &content) {
-                Some(ExclusionReason::SensitiveContent)
-            } else {
-                content_hash = Some(gobby_core::indexing::content_hash(&content));
-                language = crate::index::languages::detect_language_from_content(&path, &content)
-                    .map(str::to_string);
-                None
-            };
-        }
         entries.push(InventoryEntry {
-            path: path.clone(),
+            path,
             mode,
             kind,
             object_oid,
             blob_oid,
             size_bytes,
-            content_hash,
-            language,
+            content_hash: None,
+            language: None,
             exclusion,
         });
+    }
+    let paths = entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.kind,
+                TrackedFileKind::File | TrackedFileKind::Executable
+            ) && entry.exclusion != Some(ExclusionReason::UnsafePath)
+        })
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    for entry in &mut entries {
+        let language = |content: &[u8]| {
+            crate::index::languages::detect_language_from_content_with_paths(
+                &entry.path,
+                content,
+                |path| paths.contains(path),
+            )
+            .map(str::to_string)
+        };
+        // Excluded blobs get path-only metadata; never consult ambient files.
+        entry.language = language(&[]);
+        if entry.exclusion.is_none()
+            && let Some(oid) = &entry.blob_oid
+        {
+            let content = blobs.read(oid)?;
+            entry.exclusion = if content.contains(&0) {
+                Some(ExclusionReason::Binary)
+            } else if std::str::from_utf8(&content).is_err() {
+                Some(ExclusionReason::UnsupportedEncoding)
+            } else if crate::index::security::contains_known_credential(&entry.path, &content) {
+                Some(ExclusionReason::SensitiveContent)
+            } else {
+                entry.content_hash = Some(gobby_core::indexing::content_hash(&content));
+                entry.language = language(&content);
+                None
+            };
+        }
     }
     blobs.finish()?;
     Ok(entries)

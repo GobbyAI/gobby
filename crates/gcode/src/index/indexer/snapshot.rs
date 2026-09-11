@@ -13,7 +13,7 @@ use crate::db;
 use crate::evidence::Snapshot;
 use crate::index::captured_sources::CapturedSources;
 use crate::index::import_resolution::build_import_resolution_context_from_sources;
-use crate::index::{api, languages, parser, walker};
+use crate::index::{api, parser, walker};
 
 use super::file::{write_content_only_file_facts, write_parsed_file_facts};
 use super::lifecycle::{get_orphan_files, refresh_project_stats};
@@ -63,10 +63,7 @@ pub(crate) fn index_snapshot(ctx: &Context, commit_oid: &str) -> anyhow::Result<
             .content_hash
             .as_deref()
             .context("eligible snapshot blob has no hash")?;
-        let language =
-            languages::detect_language_from_content_with_paths(&entry.path, &source, |path| {
-                captured_sources.contains(path)
-            });
+        let language = entry.language.as_deref();
         // Retain the verified bytes for content indexing when this language has
         // no parser. Never reread the mutable path to write its content facts.
         let parsed = match language {

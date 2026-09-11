@@ -144,6 +144,79 @@ fn snapshot_blob_reads_use_bounded_git_processes() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn snapshot_language_uses_committed_inventory() -> anyhow::Result<()> {
+    if let Ok(repo) = std::env::var("GOBBY_TEST_HEADER_REPO") {
+        let commit_oid = std::env::var("GOBBY_TEST_HEADER_COMMIT")?;
+        return assert_snapshot_header_languages(Path::new(&repo), &commit_oid);
+    }
+    let repo = tempfile::tempdir()?;
+    initialize_repo(repo.path())?;
+    for (path, content) in [
+        ("paired.h", "int pair(void);\n"),
+        (
+            "paired.m",
+            "postgresql://worker:excluded-secret@127.0.0.1/db\n",
+        ),
+        ("plain.h", "#define PLAIN 1\n"),
+        ("modern.h", "namespace example { class Modern {}; }\n"),
+        ("binary.h", "\0binary\n"),
+    ] {
+        std::fs::write(repo.path().join(path), content)?;
+    }
+    git(repo.path(), &["add", "."])?;
+    let commit_oid = commit(repo.path(), "captured headers")?;
+    assert_snapshot_header_languages(repo.path(), &commit_oid)?;
+
+    // A child process varies CWD without changing the test runner's global CWD.
+    let hostile_cwd = tempfile::tempdir()?;
+    for path in ["plain.h", "plain.m", "binary.h", "binary.m"] {
+        std::fs::write(hostile_cwd.path().join(path), "@interface Ambient\n@end\n")?;
+    }
+    let child = Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "evidence::tests::snapshot_language_uses_committed_inventory",
+            "--nocapture",
+        ])
+        .env("GOBBY_TEST_HEADER_REPO", repo.path())
+        .env("GOBBY_TEST_HEADER_COMMIT", &commit_oid)
+        .current_dir(hostile_cwd.path())
+        .output()?;
+    anyhow::ensure!(
+        child.status.success(),
+        "header classification changed with CWD: {} {}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+    Ok(())
+}
+
+fn assert_snapshot_header_languages(repo: &Path, commit_oid: &str) -> anyhow::Result<()> {
+    let snapshot = Snapshot::prepare(repo, "header-inventory", commit_oid)?;
+    for (path, expected) in [
+        ("paired.h", "objc"),
+        ("plain.h", "c"),
+        ("modern.h", "cpp"),
+        ("binary.h", "c"),
+    ] {
+        assert_eq!(
+            snapshot.entry(path)?.language.as_deref(),
+            Some(expected),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        snapshot.entry("paired.m")?.exclusion,
+        Some(ExclusionReason::SensitiveContent)
+    );
+    assert_eq!(
+        snapshot.entry("binary.h")?.exclusion,
+        Some(ExclusionReason::Binary)
+    );
+    Ok(())
+}
+
 fn request(binding: &SnapshotBinding, operation: EvidenceOperation) -> EvidenceRequest {
     EvidenceRequest {
         schema_version: EVIDENCE_SCHEMA_VERSION,

@@ -373,3 +373,33 @@ contained probes therefore omit the obsolete full parent-index preparation;
 Ask prepares its own complete pinned index within the original deadline. The
 helper and receipt export remain available for historical evidence and focused
 parent-mutation tests. No previous attempt artifacts were changed.
+
+## Recovery sealing and captured language inputs
+
+Coordinator commit `fdac191ebb` restores the isolation marker during recovery
+of an existing source tree and validates it against the persisted run binding.
+Snapshot indexing rejects Single, ordinary Overlay, and mismatched commit scopes
+before Git or database access. Its API also rejects all flags incompatible with
+complete snapshot indexing. Four damaged-marker cases failed before the fix and
+passed afterward. The rebuilt native CLI rejects deleted and ordinary-overlay
+markers; recovery succeeds and preserves the parent's newer index row.
+The focused snapshot/native selection passed 16 Python tests.
+
+Managed merge `0880dd560f` integrates the captured parser/import inputs and the
+wait/resume correction. The parent independently passed 201 focused Rust tests,
+then resolved the indexer conflict by retaining the strict snapshot scope and
+captured-source parser. The semantic-resolver regression now uses a bound
+Snapshot context; it and both scope/option tests pass together.
+
+Inventory language metadata uses verified eligible bytes and the full captured
+regular-file path inventory, including content-excluded sibling paths. Excluded
+blobs receive deterministic path-only language metadata. Indexing consumes that
+same inventory classification. A regression failed for a committed header's
+Objective-C sibling, then passed both normally and in a child process with
+misleading ambient headers and sibling files. The combined focused Rust selection
+passed 216 tests; clippy and the test-quality audit passed.
+
+Independent review still requires corrections to ordinary import-scanner read
+amplification and safe Cargo workspace members beginning with `./`. These are
+assigned to the active correction worker. Full native attempt 12 and all 14
+cohort questions remain unrun; the results above are focused regression evidence.
