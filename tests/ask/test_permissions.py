@@ -15,10 +15,11 @@ from uuid import UUID
 
 import pytest
 
-from gobby.agents import resume_executor
+from gobby.agents import resume_executor, srt_runtime
 from gobby.agents.isolation import IsolationContext
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
+from gobby.ask import runtime_profile
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.permissions import (
     ASK_PIPELINE_NAME,
@@ -34,6 +35,7 @@ from gobby.ask.permissions import (
 from gobby.ask.runtime_validation import (
     ASK_SRT_POLICY_SCHEMA_VERSION,
     ask_runtime_control_digest,
+    ask_sandbox_config,
     normalized_ask_srt_policy_digest,
 )
 from gobby.ask.stages import AskStage, AskStageStore
@@ -1146,6 +1148,134 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
     assert prepared_sandbox_configs == [profile.sandbox_config]
     assert resume_metadata["sandbox_config"] == profile.sandbox_config.model_dump(mode="json")
     directory_approval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ask_true_managed_launch_policy_matches_pinned_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform="darwin"))
+    gobby_home = tmp_path / "gobby-home"
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    runtime_root = tmp_path / "srt"
+    provider = tmp_path / "claude"
+    source_root.mkdir()
+    scratch_root.mkdir()
+    runtime_root.mkdir()
+    provider.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider.chmod(0o755)
+    node = runtime_root / "node"
+    runner = runtime_root / "runner.mjs"
+    package_json = runtime_root / "package.json"
+    for path in (node, runner, package_json):
+        path.write_text("test", encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setattr(
+        srt_runtime,
+        "verify_srt_installation",
+        lambda **_context: SrtInstallation(runtime_root, node, runner, package_json),
+    )
+
+    async def preflight(_launch: SandboxLaunch, _cwd: str, _env: dict[str, str]) -> None:
+        return None
+
+    monkeypatch.setattr(srt_runtime, "_preflight_srt", preflight)
+    monkeypatch.setattr(
+        srt_runtime,
+        "_resolve_provider_executable",
+        lambda _provider, _env: str(provider.resolve()),
+    )
+    monkeypatch.setattr(runtime_profile, "probe_native_bin_version", lambda _path: "test-version")
+
+    sandbox = ask_sandbox_config(str(source_root), str(scratch_root))
+    bootstrap = await prepare_sandbox_launch(
+        config=sandbox,
+        provider="claude",
+        workspace_path=str(scratch_root),
+        run_id="bootstrap",
+        resolver=None,
+        daemon_port=60887,
+        websocket_port=60888,
+        api_base=None,
+        env={"PATH": ""},
+        allow_run_unix_sockets=True,
+    )
+    bootstrap_policy = json.loads(Path(bootstrap.policy_path or "").read_bytes())
+    validation = replace(
+        _runtime_validation(),
+        provider_executable=str(provider.resolve()),
+        provider_executable_sha256=hashlib.sha256(provider.read_bytes()).hexdigest(),
+        provider_version="test-version",
+        srt_policy_digest=normalized_ask_srt_policy_digest(
+            bootstrap_policy,
+            source_root=str(source_root),
+            scratch_root=str(scratch_root),
+            policy_path=bootstrap.policy_path or "",
+            run_tmp_root=bootstrap.provider_env["CLAUDE_CODE_TMPDIR"],
+            require_registered_run_tmp=True,
+        ),
+    )
+    profile = compile_ask_runtime_profile(
+        provider="claude",
+        source_root=source_root,
+        scratch_root=scratch_root,
+        agent_profile_digest="e" * 64,
+        model="claude-test",
+        reasoning_effort="high",
+        endpoint_api_base=None,
+        validation=validation,
+    )
+
+    grant_path = gobby_home / "runtime" / "managed-executions" / "managed" / "grant.json"
+    grant_path.parent.mkdir(parents=True)
+    grant_path.write_text("{}", encoding="utf-8")
+    launch_env = {
+        "PATH": "",
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
+    }
+    launch = await prepare_sandbox_launch(
+        config=profile.sandbox_config,
+        provider="claude",
+        workspace_path=str(scratch_root),
+        run_id="managed",
+        resolver=None,
+        daemon_port=60887,
+        websocket_port=60888,
+        api_base=None,
+        env=launch_env,
+        allow_run_unix_sockets=True,
+    )
+    launch_policy = json.loads(Path(launch.policy_path or "").read_bytes())
+    assert str(grant_path.resolve()) in launch_policy["filesystem"]["allowRead"]
+
+    profile.validate_launch(
+        backend=launch.backend,
+        enforced=launch.enforced,
+        provider_executable=launch.provider_executable,
+        runtime_version=launch.runtime_version,
+        policy_schema_version=launch.policy_schema_version,
+        policy_hash=launch.policy_hash,
+        policy_path=launch.policy_path,
+        environment={**launch_env, **launch.provider_env},
+    )
+    with pytest.raises(UnsupportedAskRuntime, match="policy could not be verified"):
+        profile.validate_launch(
+            backend=launch.backend,
+            enforced=launch.enforced,
+            provider_executable=launch.provider_executable,
+            runtime_version=launch.runtime_version,
+            policy_schema_version=launch.policy_schema_version,
+            policy_hash=launch.policy_hash,
+            policy_path=launch.policy_path,
+            environment={
+                **launch_env,
+                **launch.provider_env,
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(tmp_path / "foreign" / "grant.json"),
+            },
+        )
 
 
 @pytest.mark.asyncio

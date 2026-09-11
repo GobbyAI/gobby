@@ -186,6 +186,7 @@ class AskRuntimeProfile:
                 policy_path=policy_path,
                 run_tmp_root=run_tmp_root,
                 require_registered_run_tmp=run_tmp_root is not None,
+                managed_bootstrap_path=environment.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
             )
         except (OSError, ValueError, json.JSONDecodeError) as error:
             raise UnsupportedAskRuntime("Ask SRT policy could not be verified") from error

@@ -479,8 +479,9 @@ def normalized_ask_srt_policy_digest(
     policy_path: str,
     run_tmp_root: str | None = None,
     require_registered_run_tmp: bool = False,
+    managed_bootstrap_path: str | None = None,
 ) -> str:
-    """Hash rendered SRT semantics while replacing only per-run Ask roots."""
+    """Hash rendered SRT semantics across equivalent managed launch roots."""
     _validate_srt_policy_schema(policy)
     policy_file = Path(policy_path).expanduser().resolve(strict=False)
     if tuple(policy_file.parts[-len(SRT_SETTINGS_RELATIVE_PATH.parts) :]) != tuple(
@@ -526,6 +527,14 @@ def normalized_ask_srt_policy_digest(
     filesystem = normalized["filesystem"]
     for key in ("denyRead", "allowRead", "allowWrite", "denyWrite"):
         filesystem[key] = [normalize_path(value) for value in filesystem[key]]
+    if managed_bootstrap_path is not None:
+        bootstrap = Path(managed_bootstrap_path).expanduser().resolve(strict=False)
+        if bootstrap.name != "grant.json" or bootstrap.parent != run_root:
+            raise ValueError("Ask runtime managed grant is outside its launch root")
+        normalized_bootstrap = normalize_path(str(bootstrap))
+        if filesystem["allowRead"].count(normalized_bootstrap) != 1:
+            raise ValueError("Ask runtime managed grant is not uniquely readable")
+        filesystem["allowRead"].remove(normalized_bootstrap)
     network = normalized["network"]
     network["allowUnixSockets"] = [normalize_path(value) for value in network["allowUnixSockets"]]
     return _fingerprint(normalized)
