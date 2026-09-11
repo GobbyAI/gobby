@@ -9,6 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.degradation import (
@@ -158,6 +159,24 @@ class BaseAdapter(ABC):
         if isinstance(platform_session_id, str) and platform_session_id:
             metadata["_platform_session_id"] = platform_session_id
         return metadata
+
+    @staticmethod
+    def _hook_event_timestamp(native_event: dict[str, Any]) -> datetime:
+        """Return when the hook fired: the envelope's enqueue time, else now.
+
+        An outage-queued envelope replays minutes after its hook fired; ordering
+        decisions (edit attribution against later commits) need the original time,
+        so the ingress route forwards ``enqueued_at`` as ``_enqueued_at``.
+        """
+        enqueued_at = native_event.get("_enqueued_at")
+        if isinstance(enqueued_at, str) and enqueued_at:
+            try:
+                parsed = datetime.fromisoformat(enqueued_at)
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+        return datetime.now(UTC)
 
     @abstractmethod
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:

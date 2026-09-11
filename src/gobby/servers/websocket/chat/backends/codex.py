@@ -407,6 +407,7 @@ class CodexWebChatBackend:
             session._app_client = client
         if not self._health.available or client is None:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
+        client.register_approval_handler(self.handle_approval_request)
         if not client.is_connected:
             try:
                 await client.start()

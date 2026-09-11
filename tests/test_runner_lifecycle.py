@@ -487,7 +487,7 @@ class TestInitSubsystems:
             ),
             patch(
                 "gobby.adapters.codex_impl.client.CodexAppServerClient", return_value=fake_client
-            ),
+            ) as codex_factory,
             patch("gobby.runner_init.servers.HTTPServer", FakeHTTPServer),
             patch("gobby.runner_init.servers.WebChatRuntimeManager", FakeWebChatRuntimeManager),
             patch(
@@ -521,6 +521,14 @@ class TestInitSubsystems:
             patch("gobby.runner_init.servers.set_app_context"),
         ):
             init_servers(runner)
+            codex_factory.assert_called_once_with()
+            web_factory = web_chat_init["codex_client_factory"]
+            assert callable(web_factory)
+            assert web_factory(config_overrides=['model="web-model"']) is fake_client
+            web_overrides = codex_factory.call_args.kwargs["config_overrides"]
+            assert web_overrides[0] == 'model="web-model"'
+            assert "mcp_servers.gobby.required=true" in web_overrides
+            assert "mcp_servers.gobby.enabled=true" in web_overrides
             assert coverage_factory.call_args is not None
             excluded_providers = cast(
                 Callable[[], frozenset[str]],

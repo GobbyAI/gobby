@@ -18,6 +18,7 @@ from gobby.hooks.event_handlers._agent import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged_receipt
+from gobby.sessions.turn_lifecycle import TurnDisposition
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -33,8 +34,9 @@ def _make_event(
     event_type: HookEventType = HookEventType.BEFORE_AGENT,
     session_id: str = "ext-123",
     source: SessionSource = SessionSource.CLAUDE,
-    data: dict | None = None,
-    metadata: dict | None = None,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    turn_disposition: TurnDisposition = "unknown",
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
@@ -43,6 +45,7 @@ def _make_event(
         timestamp=datetime.now(),
         data=data or {},
         metadata=metadata or {},
+        turn_disposition=turn_disposition,
     )
 
 
@@ -90,6 +93,9 @@ class _TestHandler(AgentEventHandlerMixin):
         self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value="proj-1")
         self._handler_map = {}
+        # Session status transitions belong to the TurnLifecycleReducer; tests
+        # that assert a transition install a MagicMock here.
+        self._turn_lifecycle = None
 
 
 # ---------------------------------------------------------------------------
@@ -129,22 +135,22 @@ class TestHandleBeforeAgent:
             project_id="project-a",
         )
 
-    def test_updates_status_to_active(self) -> None:
+    def test_begins_a_turn_through_the_lifecycle_reducer(self) -> None:
         handler = _TestHandler()
         handler._skill_manager = None
+        handler._turn_lifecycle = MagicMock()
         event = _make_event(
             data={"prompt": "hello"},
             metadata={"_platform_session_id": "sess-1"},
         )
 
         handler.handle_before_agent(event)
-        handler._session_manager.update_session_status.assert_called_with(
-            "sess-1",
-            "active",
-            activity_confirmed=True,
-        )
-        assert handler._session_manager.update_session_status.call_count >= 1
-        assert handler._session_manager.update_session_status.call_args is not None
+
+        handler._turn_lifecycle.begin_turn.assert_called_once()
+        assert handler._turn_lifecycle.begin_turn.call_args.args[0] == "sess-1"
+        # The reducer owns the paused/active transition; the handler never
+        # writes session status directly.
+        handler._session_manager.update_session_status.assert_not_called()
 
     def test_resets_subagent_count_at_start_of_parent_turn(self) -> None:
         handler = _TestHandler()
@@ -372,6 +378,7 @@ class TestHandleBeforeAgent:
     ) -> None:
         handler = _TestHandler()
         handler._skill_manager = None
+        handler._turn_lifecycle = MagicMock()
         handler._session_manager.get.return_value = MagicMock(
             project_id="proj-1",
             message_count=186,
@@ -401,11 +408,8 @@ class TestHandleBeforeAgent:
         assert result.decision == "allow"
         assert result.context is None
         assert "## Role" not in (result.context or "")
-        handler._session_manager.update_session_status.assert_called_once_with(
-            "sess-1",
-            "active",
-            activity_confirmed=True,
-        )
+        handler._turn_lifecycle.begin_turn.assert_called_once()
+        handler._session_manager.update_session_status.assert_not_called()
         handler._session_manager.reset_transcript_processed.assert_not_called()
         handler._session_manager.get.assert_called_once_with("sess-1")
         mock_resolve_agent.assert_not_called()
@@ -998,6 +1002,23 @@ class TestHandleAfterAgent:
     def test_with_session(self) -> None:
         handler = _TestHandler()
         handler._apply_debug_echo = MagicMock()
+        handler._turn_lifecycle = MagicMock()
+        event = _make_event(
+            event_type=HookEventType.AFTER_AGENT,
+            metadata={"_platform_session_id": "sess-1"},
+            turn_disposition="completed",
+        )
+
+        result = handler.handle_after_agent(event)
+        assert result.decision == "allow"
+        handler._turn_lifecycle.end_turn.assert_called_once()
+        assert handler._turn_lifecycle.end_turn.call_args.args[:2] == ("sess-1", "completed")
+        handler._session_manager.update_session_status.assert_not_called()
+        handler._apply_debug_echo.assert_called_once_with(result)
+
+    def test_unknown_disposition_never_settles_the_turn(self) -> None:
+        handler = _TestHandler()
+        handler._turn_lifecycle = MagicMock()
         event = _make_event(
             event_type=HookEventType.AFTER_AGENT,
             metadata={"_platform_session_id": "sess-1"},
@@ -1005,12 +1026,7 @@ class TestHandleAfterAgent:
 
         result = handler.handle_after_agent(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_called_with(
-            "sess-1",
-            "paused",
-            activity_confirmed=True,
-        )
-        handler._apply_debug_echo.assert_called_once_with(result)
+        handler._turn_lifecycle.end_turn.assert_not_called()
 
     def test_without_session(self) -> None:
         handler = _TestHandler()
@@ -1033,18 +1049,18 @@ class TestHandleStop:
 
     def test_with_session(self) -> None:
         handler = _TestHandler()
+        handler._turn_lifecycle = MagicMock()
         event = _make_event(
             event_type=HookEventType.STOP,
             metadata={"_platform_session_id": "sess-1"},
+            turn_disposition="completed",
         )
 
         result = handler.handle_stop(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_called_with(
-            "sess-1",
-            "paused",
-            activity_confirmed=True,
-        )
+        handler._turn_lifecycle.end_turn.assert_called_once()
+        assert handler._turn_lifecycle.end_turn.call_args.args[:2] == ("sess-1", "completed")
+        handler._session_manager.update_session_status.assert_not_called()
 
     def test_stop_retires_session_hook_effects(self) -> None:
         assert callable(getattr(agent_mod, "retire_session_hook_effects", None))

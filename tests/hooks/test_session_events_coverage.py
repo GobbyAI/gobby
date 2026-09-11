@@ -67,6 +67,7 @@ def _make_session(
     session.summary_markdown = summary_markdown
     session.parent_session_id = parent_session_id
     session.seq_num = seq_num
+    session.ref = f"{project_id}#{seq_num}" if seq_num is not None else session_id
     session.project_id = project_id
     session.agent_run_id = agent_run_id
     session.agent_depth = agent_depth

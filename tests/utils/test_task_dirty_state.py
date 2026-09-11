@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
@@ -212,3 +216,35 @@ async def test_task_dirty_paths_async_treats_malformed_status_as_unavailable(
     monkeypatch.setattr(daemon_git, "status", fake_status)
 
     assert await task_dirty_state.task_dirty_paths_async({"first.py"}, "/repo") is None
+
+
+def test_paths_committed_after_reports_only_strictly_later_commits(tmp_path: Path) -> None:
+    """Only a commit in a later second than the edit proves the edit was already landed;
+    same-second and older commits, and never-committed paths, stay attributable."""
+    committed_at = 1_776_340_810  # 2026-04-16T12:00:10Z
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "landed.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "never.py").write_text("y = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "--", "landed.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=tests@gobby.local",
+            "-c",
+            "user.name=Gobby Tests",
+            "commit",
+            "-qm",
+            "land",
+        ],
+        cwd=tmp_path,
+        check=True,
+        env={**os.environ, "GIT_COMMITTER_DATE": f"@{committed_at} +0000"},
+    )
+    paths = {"landed.py", "never.py"}
+
+    assert task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at - 5.0) == {
+        "landed.py"
+    }
+    assert task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 0.9) == set()
+    assert task_dirty_state.paths_committed_after(paths, str(tmp_path), committed_at + 5.0) == set()

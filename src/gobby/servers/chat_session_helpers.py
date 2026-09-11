@@ -6,6 +6,7 @@ response converters. All functions are pure/stateless with no dependency
 on ChatSession.
 """
 
+import json
 import logging
 import os
 import re
@@ -136,6 +137,19 @@ def _build_gobby_mcp_entry() -> McpStdioServerConfig:
     if gobby_path:
         return {"command": gobby_path, "args": ["mcp-server"]}
     return {"command": "gobby", "args": ["mcp-server"]}
+
+
+def build_codex_web_chat_mcp_overrides() -> list[str]:
+    """Require daemon-owned Gobby tools before Codex can start a web-chat turn."""
+    entry = _build_gobby_mcp_entry()
+    return [
+        f"mcp_servers.gobby.command={json.dumps(entry['command'])}",
+        f"mcp_servers.gobby.args={json.dumps(entry['args'])}",
+        "mcp_servers.gobby.enabled=true",
+        "mcp_servers.gobby.required=true",
+        "mcp_servers.gobby.startup_timeout_sec=120",
+        "mcp_servers.gobby.tool_timeout_sec=360",
+    ]
 
 
 def _response_to_prompt_output(

@@ -240,10 +240,15 @@ def init_servers(runner: GobbyRunner) -> None:
 
     if CodexAdapter.is_codex_available():
         from gobby.adapters.codex_impl.client import CodexAppServerClient
+        from gobby.servers.chat_session_helpers import build_codex_web_chat_mcp_overrides
 
         codex_client = CodexAppServerClient()
 
         def _web_chat_codex_factory(**kwargs: Any) -> CodexAppServerClient:
+            kwargs["config_overrides"] = [
+                *kwargs.get("config_overrides", ()),
+                *build_codex_web_chat_mcp_overrides(),
+            ]
             return CodexAppServerClient(**kwargs)
 
         web_chat_codex_factory = _web_chat_codex_factory

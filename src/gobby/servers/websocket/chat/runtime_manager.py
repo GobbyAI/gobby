@@ -29,6 +29,7 @@ from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.chat_session_helpers import build_codex_web_chat_mcp_overrides
 from gobby.servers.websocket.chat.backends import (
     AgyManagedChatSession,
     AgyWebChatBackend,
@@ -98,19 +99,20 @@ class WebChatRuntimeManager:
             if endpoint.wire_api == "responses" or strategy == "config-override":
                 try:
                     endpoint_client = CodexAppServerClient(
-                        config_overrides=codex_endpoint_config_overrides(
-                            endpoint_name,
-                            endpoint,
-                        ),
+                        config_overrides=[
+                            *codex_endpoint_config_overrides(endpoint_name, endpoint),
+                            *build_codex_web_chat_mcp_overrides(),
+                        ],
                         env_overrides=codex_endpoint_app_server_env(endpoint_name, endpoint),
                     )
                 except ValueError:
                     continue
             elif strategy == "oss":
                 endpoint_client = CodexAppServerClient(
+                    config_overrides=build_codex_web_chat_mcp_overrides(),
                     global_args=codex_oss_launch_args(
                         codex_oss_provider_for_local_endpoint(endpoint)
-                    )
+                    ),
                 )
             else:
                 continue

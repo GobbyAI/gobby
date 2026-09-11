@@ -21,7 +21,7 @@ Key differences from Claude Code:
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.acp_tool_names import ACP_TOOL_NAME_MAP, normalize_acp_tool_name
@@ -209,9 +209,9 @@ class ACPHookAdapter(BaseAdapter):
             try:
                 timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                timestamp = datetime.now(UTC)
+                timestamp = self._hook_event_timestamp(native_event)
         else:
-            timestamp = datetime.now(UTC)
+            timestamp = self._hook_event_timestamp(native_event)
 
         # Get machine_id from payload (base adapter injects if missing)
         machine_id = input_data.get("machine_id")

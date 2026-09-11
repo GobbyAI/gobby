@@ -1,6 +1,7 @@
 """Tests for chat_session_helpers."""
 
 import sys
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from gobby.servers.chat_session_helpers import (
     _response_to_prompt_output,
     _response_to_stop_output,
     _response_to_subagent_output,
+    build_codex_web_chat_mcp_overrides,
     build_compaction_context,
 )
 
@@ -25,6 +27,22 @@ pytestmark = pytest.mark.unit
 
 
 class TestFinders:
+    def test_codex_mcp_overrides_are_valid_toml_and_require_daemon_tools(self) -> None:
+        command = '/tmp/Gobby "dev"/bin/gobby'
+        with patch(
+            "gobby.servers.chat_session_helpers._build_gobby_mcp_entry",
+            return_value={"command": command, "args": ["mcp-server"]},
+        ):
+            config = tomllib.loads("\n".join(build_codex_web_chat_mcp_overrides()))
+        assert config["mcp_servers"]["gobby"] == {
+            "command": command,
+            "args": ["mcp-server"],
+            "enabled": True,
+            "required": True,
+            "startup_timeout_sec": 120,
+            "tool_timeout_sec": 360,
+        }
+
     def test_find_cli_path(self) -> None:
         with (
             patch("shutil.which", return_value="/bin/claude"),

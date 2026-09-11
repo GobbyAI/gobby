@@ -26,6 +26,7 @@ from gobby.hooks.receipt_effects import (
 )
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
+from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class ChatLifecycleMixin:
             metadata=metadata,
             cwd=project_path,
             project_id=project_id,
+            machine_id=get_machine_id(),
         )
         correlate_hook_lifecycle(event)
         if event_type is HookEventType.STOP:

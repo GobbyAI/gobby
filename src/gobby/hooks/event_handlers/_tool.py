@@ -21,6 +21,7 @@ from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
     task_edited_file_set_for_checkout,
 )
+from gobby.workflows.task_dirty_state import paths_committed_after
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -305,6 +306,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 session_id,
                 generated,
                 checkout_root=checkout_root,
+                edited_at=event.timestamp.timestamp(),
             )
 
     def _record_successful_file_mutation(
@@ -372,14 +374,57 @@ class ToolEventHandlerMixin(EventHandlersBase):
         db = getattr(self._session_manager, "db", None)
         if db is not None:
             variable_manager = SessionVariableManager(db)
+            edited_at = event.timestamp.timestamp()
+            variables = variable_manager.get_variables(session_id)
+            task_id = active_task_id_for_edit(variables)
             for checkout_root, paths in paths_by_checkout.items():
-                variable_manager.record_edited_files(
-                    session_id,
-                    paths,
-                    checkout_root=checkout_root,
-                )
+                if task_id is not None:
+                    landed = self._paths_landed_before_edit(
+                        variables, task_id, checkout_root, paths, edited_at
+                    )
+                    if landed:
+                        self.logger.info(
+                            "Skipping edit attribution for paths committed after the edit "
+                            "event (replayed envelope)",
+                            extra={
+                                "event": "file_mutation_attribution_stale",
+                                "session_id": session_id,
+                                "task_id": task_id,
+                                "checkout_root": checkout_root,
+                                "paths": sorted(landed),
+                            },
+                        )
+                        paths = [path for path in paths if path not in landed]
+                if paths:
+                    variable_manager.record_edited_files(
+                        session_id,
+                        paths,
+                        checkout_root=checkout_root,
+                        edited_at=edited_at,
+                    )
 
         self._mark_session_had_edits_if_claimed(session_id)
+
+    @staticmethod
+    def _paths_landed_before_edit(
+        variables: dict[str, Any],
+        task_id: str,
+        checkout_root: str,
+        paths: list[str],
+        edited_at: float,
+    ) -> set[str]:
+        """Return unattributed paths whose last commit postdates the edit event.
+
+        An edit hook observed after a later commit touching the path is a replayed
+        outage-queued envelope: its content is already landed, so attributing it
+        would re-open the task ledger for committed work. Paths the task already
+        holds are left to ``record_edited_files``, which keeps the newest stamp.
+        """
+        attributed = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
+        candidates = {path for path in paths if path not in attributed}
+        if not candidates:
+            return set()
+        return paths_committed_after(candidates, checkout_root, edited_at)
 
     def _notify_code_index(self, repo_root: Path, repo_relative_path: str) -> None:
         if self._code_index_trigger is None:

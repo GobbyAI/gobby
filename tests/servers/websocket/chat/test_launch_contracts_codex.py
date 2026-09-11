@@ -53,6 +53,9 @@ class _SeamCodexClient:
         self.resumed_threads: list[str] = []
         registry.append(self)
 
+    def register_approval_handler(self, handler: Any) -> None:
+        self.approval_handler = handler
+
     async def start(self) -> None:
         self.starts += 1
         if self.fail_start:

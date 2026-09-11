@@ -277,7 +277,7 @@ def test_terminal_session_status_skips_reconciliation(
     activate_agent.assert_not_called()
 
 
-def test_expired_session_resumes_across_turn_start_and_end(
+def test_expired_session_resumes_only_after_ownership_revival(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
@@ -289,6 +289,18 @@ def test_expired_session_resumes_across_turn_start_and_end(
     session_manager.mark_transcript_processed(session_id)
     before_agent = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
     before_agent.data["prompt"] = "resume work"
+
+    # Hook evidence alone never reclaims a terminal session: the lifecycle
+    # reducer refuses the transition until the lookup's ownership revival
+    # (session_lookup.resolve) has reactivated the row.
+    handlers.handle_before_agent(before_agent)
+    still_expired = session_manager.get(session_id)
+    assert still_expired is not None
+    assert still_expired.status == "expired"
+
+    revived = session_manager.revive_expired_terminal_session(session_id)
+    assert revived is not None
+    assert revived.status == "active"
 
     handlers.handle_before_agent(before_agent)
 

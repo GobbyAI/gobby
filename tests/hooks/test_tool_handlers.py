@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -425,6 +426,141 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             [str(manifest_path)],
             checkout_root=checkout_root,
+            edited_at=event.timestamp.timestamp(),
+        )
+
+    @staticmethod
+    def _land_file(repo: Path, rel_path: str) -> None:
+        """Commit ``rel_path`` in a fresh repo at ``repo``."""
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        target = repo / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("landed = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "--", rel_path], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=tests@gobby.local",
+                "-c",
+                "user.name=Gobby Tests",
+                "commit",
+                "-qm",
+                "land",
+            ],
+            cwd=repo,
+            check=True,
+        )
+
+    @staticmethod
+    def _claimed(task_id: str, **extra: Any) -> dict[str, Any]:
+        return {"claimed_tasks": {task_id: "#123"}, "active_task_id": task_id, **extra}
+
+    def test_replayed_edit_predating_a_later_commit_is_not_attributed(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """An outage-queued edit envelope replayed after the owner commit landed the
+        path must not re-attribute committed work to the task (feedback 54fc2391)."""
+        rel_path = "tests/test_landed.py"
+        self._land_file(tmp_path, rel_path)
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / rel_path)}},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+        event.timestamp = datetime.now(UTC) - timedelta(minutes=5)
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                return_value=self._claimed("task-123"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            ) as record_files,
+        ):
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        record_files.assert_not_called()
+
+    def test_edit_newer_than_last_commit_is_attributed_with_event_time(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """A live edit observed after the path's last commit is attributed and stamped
+        with the hook's own time rather than the wall clock at recording."""
+        rel_path = "tests/test_landed.py"
+        self._land_file(tmp_path, rel_path)
+        (tmp_path / rel_path).write_text("landed = False\n", encoding="utf-8")
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / rel_path)}},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                return_value=self._claimed("task-123"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            ) as record_files,
+        ):
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        record_files.assert_called_once_with(
+            "sess-123",
+            [rel_path],
+            checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
+        )
+
+    def test_stale_edit_of_an_attributed_path_leaves_the_ledger_to_record(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """A path the task already holds skips the commit check; the ledger keeps the
+        newest stamp itself, so the replay is recorded with its original time."""
+        rel_path = "tests/test_landed.py"
+        self._land_file(tmp_path, rel_path)
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / rel_path)}},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+        event.timestamp = datetime.now(UTC) - timedelta(minutes=5)
+        variables = self._claimed(
+            "task-123",
+            task_edited_files={"task-123": [rel_path]},
+            task_edited_file_checkouts={"task-123": {str(tmp_path): [rel_path]}},
+        )
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                return_value=variables,
+            ),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            ) as record_files,
+            patch("gobby.hooks.event_handlers._tool.paths_committed_after") as commit_check,
+        ):
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        commit_check.assert_not_called()
+        record_files.assert_called_once_with(
+            "sess-123",
+            [rel_path],
+            checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
         )
 
     @pytest.mark.parametrize(
@@ -490,6 +626,7 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             ["target/output.bin"],
             checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -520,6 +657,7 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             ["src/main.py"],
             checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -561,6 +699,7 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             ["src/first.py", "docs/plan.md"],
             checkout_root=str(tmp_path),
+            edited_at=event.timestamp.timestamp(),
         )
         assert response.decision == "allow"
         assert notify_code_index.call_count == 2
@@ -688,6 +827,7 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             ["src/owned.py"],
             checkout_root=str(worktree_root.resolve()),
+            edited_at=event.timestamp.timestamp(),
         )
 
     def test_cp_from_primary_to_worktree_attributes_only_destination(
@@ -738,6 +878,7 @@ class TestToolHandlerEdgeCases:
             "sess-123",
             ["src/destination.py"],
             checkout_root=str(worktree_root.resolve()),
+            edited_at=event.timestamp.timestamp(),
         )
 
     def test_after_tool_notifies_code_index_with_project_root_path(

@@ -353,8 +353,14 @@ def _web_chat_session(
 class TestWebChatLifecycle:
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_fire_lifecycle_adds_web_chat_session_type_metadata(self) -> None:
+    @pytest.mark.parametrize("event_type", [HookEventType.SESSION_START, HookEventType.AFTER_TOOL])
+    async def test_fire_lifecycle_adds_web_chat_session_type_metadata(
+        self, monkeypatch: pytest.MonkeyPatch, event_type: HookEventType
+    ) -> None:
         """Firing lifecycle for a web chat session adds session_type "web_chat" metadata."""
+        monkeypatch.setattr(
+            "gobby.servers.websocket.chat._lifecycle.get_machine_id", lambda: "web-machine"
+        )
         host = _LifecycleHost()
         host._chat_sessions["conv-1"] = _web_chat_session()
 
@@ -370,12 +376,13 @@ class TestWebChatLifecycle:
 
         result = await host._fire_lifecycle(
             "conv-1",
-            HookEventType.AFTER_TOOL,
+            event_type,
             {"tool_name": "mcp__gobby__call_tool"},
         )
 
         assert result is not None
         assert captured[0].metadata["session_type"] == "web_chat"
+        assert captured[0].machine_id == "web-machine"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
