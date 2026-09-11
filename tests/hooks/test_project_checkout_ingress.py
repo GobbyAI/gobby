@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -157,3 +158,29 @@ def test_marker_refresh_oserror_is_logged_not_raised(
     checkout = LocalProjectCheckoutManager(temp_db).get(machine_id, project.id)
     assert checkout is not None
     assert checkout.root_path == str(root)
+
+
+def test_registered_cargo_checkout_links_shared_target(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ingress_logger: logging.Logger,
+) -> None:
+    machine_id = insert_isolated_machine(temp_db)
+    patch_local_machine_id(monkeypatch, machine_id)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    project = LocalProjectManager(temp_db).create(name="ingress-cargo")
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_project_marker(root, project_id=project.id, name=project.name)
+    (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+
+    register_cwd_marker_checkout(
+        temp_db, _context(root, project.id, project.name), logger=ingress_logger
+    )
+
+    checkout = LocalProjectCheckoutManager(temp_db).get(machine_id, project.id)
+    assert checkout is not None
+    link = root / "target"
+    assert link.is_symlink()
+    assert os.readlink(link) == str(tmp_path / "home" / "cache" / "cargo-target" / project.id)

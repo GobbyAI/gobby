@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+# CARGO_TARGET_DIR is deliberately absent: the cargo build directory is shared
+# per project (gobby.agents.cargo_target), never privatized per run.
 RUN_CACHE_ENV_VARS = (
     "UV_CACHE_DIR",
     "CARGO_HOME",

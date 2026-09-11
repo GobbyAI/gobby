@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.cargo_target import link_checkout_cargo_target
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import Project
 
@@ -95,6 +96,7 @@ def register_cwd_marker_checkout(
             root,
         )
         return
+    link_checkout_cargo_target(Path(root), project_id)
     _refresh_stale_marker(cwd, project, project_context, logger)
 
 

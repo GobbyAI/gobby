@@ -10,6 +10,7 @@ import pytest
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
     CARGO_HOME,
+    CARGO_TARGET_DIR,
     GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_DEPTH,
     GOBBY_AGENT_RUN_ID,
@@ -66,7 +67,7 @@ class TestEnvironmentVariableConstants:
     def test_constants_start_with_gobby(self) -> None:
         """All Gobby-owned constants are prefixed with GOBBY_."""
         for var in ALL_TERMINAL_ENV_VARS:
-            if var in {UV_CACHE_DIR, CARGO_HOME}:
+            if var in {UV_CACHE_DIR, CARGO_HOME, CARGO_TARGET_DIR}:
                 continue
             assert var.startswith("GOBBY_"), f"{var} should start with GOBBY_"
 
@@ -86,6 +87,7 @@ class TestEnvironmentVariableConstants:
             GOBBY_PROMPT_FILE,
             UV_CACHE_DIR,
             CARGO_HOME,
+            CARGO_TARGET_DIR,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
 
@@ -93,8 +95,11 @@ class TestEnvironmentVariableConstants:
 class TestGetTerminalEnvVars:
     """Tests for get_terminal_env_vars function."""
 
-    def test_returns_all_required_vars(self) -> None:
+    def test_returns_all_required_vars(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """Function returns all required environment variables."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
         result = get_terminal_env_vars(
             session_id="sess-child",
             parent_session_id="sess-parent",
@@ -116,6 +121,9 @@ class TestGetTerminalEnvVars:
         assert cargo_home_parts[-1].startswith("sess-child-")
         assert _HASH_SUFFIX_RE.fullmatch(cargo_home_parts[-1])
         assert cargo_home_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
+        shared_target = tmp_path / "cache" / "cargo-target" / "proj-abc"
+        assert result[CARGO_TARGET_DIR] == str(shared_target)
+        assert shared_target.is_dir()
 
     def test_includes_run_bound_agent_token(
         self,
