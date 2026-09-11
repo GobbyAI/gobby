@@ -135,7 +135,7 @@ pub const BINDINGS: &[BindingSpec] = &[
     spec("navigate_pane_down", "Focus the pane below", &["j"]),
     spec("navigate_pane_up", "Focus the pane above", &["k"]),
     spec("navigate_pane_right", "Focus the pane to the right", &["l"]),
-    spec("detach", "Detach from the daemon", &["prefix+q"]),
+    spec("detach", "Release control", &["prefix+q"]),
     spec(
         "reload_config",
         "Reload client preferences",

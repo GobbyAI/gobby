@@ -196,7 +196,7 @@ the focused terminal.
 | `prefix+?` | Keybinding help | `help` |
 | `prefix+s` | Settings | `settings` |
 | `prefix+shift+r` | Reload `prefs.toml` and the keymap file | `reload_config` |
-| `prefix+q` | Detach: releases control of the focused terminal | `detach` |
+| `prefix+q` | Release control of the focused terminal (same as `release_control`; it does not exit) | `detach` |
 | `prefix+shift+q` | Quit the client | `quit` |
 
 `prefix+m` is reserved for a future command menu. It does nothing today and
@@ -402,7 +402,7 @@ to keep a gesture for the client instead.
 | Project card | rename, close, new worktree, open worktree…, collapse / expand |
 | Worktree row | rename, close, delete worktree checkout… |
 | Agent row | focus, open in new tab, respond (when blocked), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
-| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach |
+| Empty tab bar, empty sidebar, or the `menu` button | new terminal, new tab, new project, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
 
 `send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane

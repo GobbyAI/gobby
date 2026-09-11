@@ -40,8 +40,8 @@
 18 : -/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*18 text/panel_bg*20 overlay1/panel_bg*18 -/panel_bg*2 subtext0/panel_bg+b*18 text/panel_bg*31 overlay1/panel_bg*7 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 19 | n│ l                Focus the pane to the right (navigate_   prefix+tab       Cycle to the next pane (cycle_pane_nex│ │|
 19 : overlay0/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*18 text/panel_bg*27 overlay1/panel_bg*11 -/panel_bg*2 subtext0/panel_bg+b*18 text/panel_bg*22 overlay1/panel_bg*16 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
-20 |──│ prefix+q         Detach from the daemon (detach)          prefix+shift+tab Cycle to the previous pane (cycle_pane│ │|
-20 : surface_dim/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*18 text/panel_bg*22 overlay1/panel_bg*9 -/panel_bg*9 subtext0/panel_bg+b*18 text/panel_bg*26 overlay1/panel_bg*12 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
+20 |──│ prefix+q         Release control (detach)                 prefix+shift+tab Cycle to the previous pane (cycle_pane│ │|
+20 : surface_dim/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*18 text/panel_bg*15 overlay1/panel_bg*9 -/panel_bg*16 subtext0/panel_bg+b*18 text/panel_bg*26 overlay1/panel_bg*12 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 21 | a│ prefix+shift+r   Reload client preferences (reload_conf   unset            Focus the last focused pane (last_pane│ │|
 21 : overlay0/panel_bg+bd*2 accent/panel_bg*1 subtext0/panel_bg+b*18 text/panel_bg*25 overlay1/panel_bg*13 -/panel_bg*2 subtext0/panel_bg+b*18 text/panel_bg*27 overlay1/panel_bg*11 accent/panel_bg*1 -/panel_bg+d*1 accent/panel_bg+d*1
 22 |  │ prefix+o         Focus the notification target (open_no   prefix+v         Split side by side (split_vertical)   │ │|
