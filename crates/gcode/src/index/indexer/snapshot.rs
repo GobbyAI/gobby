@@ -1,5 +1,8 @@
 //! Complete indexing of eligible immutable Git snapshot blobs.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -15,25 +18,21 @@ use crate::index::{api, languages, parser, walker};
 use super::file::{write_content_only_file_facts, write_parsed_file_facts};
 use super::lifecycle::{get_orphan_files, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
-use super::overlay::write_tombstone;
 use super::sink::PostgresCodeFactSink;
-use super::types::{IndexOutcome, IndexTarget, OverlayIndexMetadata};
+use super::types::{IndexOutcome, IndexTarget};
 
 pub(crate) fn index_snapshot(ctx: &Context, commit_oid: &str) -> anyhow::Result<IndexOutcome> {
+    anyhow::ensure!(
+        matches!(&ctx.index_scope, ProjectIndexScope::Snapshot { commit_oid: pinned } if pinned == commit_oid),
+        "snapshot indexing requires a matching sealed snapshot scope"
+    );
     let start = Instant::now();
     let root = &ctx.project_root;
     let snapshot = Snapshot::prepare(root, &ctx.project_id, commit_oid)?;
     snapshot.verify_materialized(root)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    let (project_id, mode) = match &ctx.index_scope {
-        ProjectIndexScope::Overlay {
-            overlay_project_id, ..
-        } => {
-            crate::config::validate_parent_code_index(&mut conn, &ctx.index_scope)?;
-            (overlay_project_id.as_str(), api::IndexWriteMode::Overlay)
-        }
-        _ => (ctx.project_id.as_str(), api::IndexWriteMode::Primary),
-    };
+    let project_id = ctx.project_id.as_str();
+    let mode = api::IndexWriteMode::Overlay;
     let target = IndexTarget {
         project_id,
         root_path: root,
@@ -42,20 +41,6 @@ pub(crate) fn index_snapshot(ctx: &Context, commit_oid: &str) -> anyhow::Result<
     let machine_id = gobby_core::machine::read_local_machine_id()?;
     api::upsert_project_seed(&mut conn, &machine_id, project_id, root, mode)?;
     let mut outcome = IndexOutcome::new(project_id);
-    if let ProjectIndexScope::Overlay {
-        overlay_project_id,
-        overlay_root,
-        parent_project_id,
-        parent_root,
-    } = &ctx.index_scope
-    {
-        outcome.overlay = Some(OverlayIndexMetadata {
-            overlay_project_id: overlay_project_id.clone(),
-            overlay_root: overlay_root.to_string_lossy().into_owned(),
-            parent_project_id: parent_project_id.clone(),
-            parent_root: parent_root.to_string_lossy().into_owned(),
-        });
-    }
     let present = snapshot
         .eligible_entries()
         .map(|entry| entry.path.clone())
@@ -125,18 +110,6 @@ pub(crate) fn index_snapshot(ctx: &Context, commit_oid: &str) -> anyhow::Result<
 
     for orphan in get_orphan_files(&mut conn, &machine_id, project_id, &present)? {
         api::delete_file_state(&mut conn, &machine_id, project_id, &orphan, root, mode)?;
-    }
-    if let ProjectIndexScope::Overlay {
-        parent_project_id, ..
-    } = &ctx.index_scope
-    {
-        // Hide parent-only, excluded, and later-added files from overlay reads.
-        for path in db::list_indexed_file_paths(&mut conn, parent_project_id)? {
-            if !present.contains(&path) {
-                write_tombstone(&mut conn, project_id, root, &path)?;
-                outcome.tombstones_indexed += 1;
-            }
-        }
     }
     resolve_local_import_calls(&mut conn, project_id, &outcome.indexed_file_paths)?;
     let promoted =

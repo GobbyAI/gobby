@@ -20,6 +20,7 @@ from gobby.ask.contracts import (
     AskRunRecord,
     AskRunResult,
 )
+from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.ask.evidence_runtime import (
     AskSnapshotManager,
     EvidenceFactory,
@@ -575,7 +576,7 @@ class AskService:
         self._record(run_id, project_id)
         state = self._required_state(run_id)
         if state.status != ExecutionStatus.COMPLETED.value or state.publication is None:
-            raise ValueError("Ask run has no completed publication")
+            raise AskLifecycleConflict("Ask run has no completed publication")
         root_value = state.publication.get("root")
         expected_hash = state.publication.get("manifest_sha256")
         if not isinstance(root_value, str) or not isinstance(expected_hash, str):
@@ -630,7 +631,7 @@ class AskService:
     def _record(self, run_id: str, project_id: str) -> AskRunRecord:
         record = self.storage.get(run_id)
         if record is None or record.binding.project_id != project_id:
-            raise ValueError(f"Ask run not found: {run_id}")
+            raise AskRunNotFound(f"Ask run not found: {run_id}")
         return record
 
     def _result(self, record: AskRunRecord) -> AskRunResult:

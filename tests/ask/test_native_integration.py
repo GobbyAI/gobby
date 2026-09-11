@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from gobby.agents.code_index import ensure_isolation_code_index
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
@@ -148,11 +150,13 @@ def test_private_parent_index_records_snapshot_failure_receipt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial_parent_index", [True, False])
 async def test_real_managed_snapshot_queries_branch_native_gcode(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    initial_parent_index: bool,
 ) -> None:
     host_machine_id = machine_identity.require_machine_id()
     private_machine_id = str(uuid4())
@@ -278,63 +282,64 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     schema_row = temp_db.fetchone("SELECT current_schema() AS schema")
     assert schema_row is not None
     database_scope = str(schema_row["schema"])
-    bootstrap = harness._provision_private_parent_index(
-        project_root=repo,
-        manager=credential_manager,
-        database=temp_db,
-        session_id=session_id,
-        project_id=project_id,
-        machine_id=isolated.machine_id,
-        runtime_root=runtime_root / "parent",
-        gcode_bin=gcode_bin,
-        source_commit=historical_merge,
-        deadline_monotonic=time.monotonic() + 600,
-        database_scope=database_scope,
-        evidence_path=tmp_path / "parent-index-bootstrap.json",
-    )
-    assert bootstrap["status"] == "completed"
-    assert bootstrap["source_commit"] == historical_merge
-    assert bootstrap["database_scope"] == database_scope
-    gcode_identity = cast(dict[str, object], bootstrap["gcode"])
-    assert gcode_identity["path"] == str(gcode_bin)
-    with gcode_bin.open("rb") as stream:
-        assert gcode_identity["sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
-    assert bootstrap["credential_project_id"] == project_id
-    assert bootstrap["credential_project_path"] == str(repo.resolve())
-    assert bootstrap["checkout_root_before"] == str(repo.resolve())
-    assert bootstrap["checkout_root_during_index"] == bootstrap["seed_root"]
-    assert bootstrap["checkout_root_after"] == str(repo.resolve())
-    assert bootstrap["indexed_root"] == bootstrap["seed_root"]
-    indexed_file_count = bootstrap["indexed_file_count"]
-    assert isinstance(indexed_file_count, int)
-    assert indexed_file_count > 0
-    assert bootstrap["credential_revoked"] is True
-    commands = cast(list[dict[str, object]], bootstrap["commands"])
-    assert [command["name"] for command in commands] == [
-        "source_status_before",
-        "snapshot_materialize",
-        "status_before",
-        "index",
-        "status_after",
-        "source_status_after",
-    ]
-    assert all(command["returncode"] == 0 for command in commands)
-    assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
-    restored_checkout = LocalProjectCheckoutManager(temp_db).get(
-        isolated.machine_id,
-        project_id,
-    )
-    assert restored_checkout is not None
-    assert Path(restored_checkout.root_path).resolve() == repo.resolve()
-    indexed_parent = temp_db.fetchone(
-        """SELECT root_path FROM code_indexed_project_states
-        WHERE machine_id = %s AND project_id = %s""",
-        (isolated.machine_id, project_id),
-    )
-    assert indexed_parent is not None
-    seed_root = bootstrap["seed_root"]
-    assert isinstance(seed_root, str)
-    assert Path(indexed_parent["root_path"]).resolve() == Path(seed_root)
+    if initial_parent_index:
+        bootstrap = harness._provision_private_parent_index(
+            project_root=repo,
+            manager=credential_manager,
+            database=temp_db,
+            session_id=session_id,
+            project_id=project_id,
+            machine_id=isolated.machine_id,
+            runtime_root=runtime_root / "parent",
+            gcode_bin=gcode_bin,
+            source_commit=historical_merge,
+            deadline_monotonic=time.monotonic() + 600,
+            database_scope=database_scope,
+            evidence_path=tmp_path / "parent-index-bootstrap.json",
+        )
+        assert bootstrap["status"] == "completed"
+        assert bootstrap["source_commit"] == historical_merge
+        assert bootstrap["database_scope"] == database_scope
+        gcode_identity = cast(dict[str, object], bootstrap["gcode"])
+        assert gcode_identity["path"] == str(gcode_bin)
+        with gcode_bin.open("rb") as stream:
+            assert gcode_identity["sha256"] == hashlib.file_digest(stream, "sha256").hexdigest()
+        assert bootstrap["credential_project_id"] == project_id
+        assert bootstrap["credential_project_path"] == str(repo.resolve())
+        assert bootstrap["checkout_root_before"] == str(repo.resolve())
+        assert bootstrap["checkout_root_during_index"] == bootstrap["seed_root"]
+        assert bootstrap["checkout_root_after"] == str(repo.resolve())
+        assert bootstrap["indexed_root"] == bootstrap["seed_root"]
+        indexed_file_count = bootstrap["indexed_file_count"]
+        assert isinstance(indexed_file_count, int)
+        assert indexed_file_count > 0
+        assert bootstrap["credential_revoked"] is True
+        commands = cast(list[dict[str, object]], bootstrap["commands"])
+        assert [command["name"] for command in commands] == [
+            "source_status_before",
+            "snapshot_materialize",
+            "status_before",
+            "index",
+            "status_after",
+            "source_status_after",
+        ]
+        assert all(command["returncode"] == 0 for command in commands)
+        assert bootstrap["source_status_before"] == bootstrap["source_status_after"]
+        restored_checkout = LocalProjectCheckoutManager(temp_db).get(
+            isolated.machine_id,
+            project_id,
+        )
+        assert restored_checkout is not None
+        assert Path(restored_checkout.root_path).resolve() == repo.resolve()
+        indexed_parent = temp_db.fetchone(
+            """SELECT root_path FROM code_indexed_project_states
+            WHERE machine_id = %s AND project_id = %s""",
+            (isolated.machine_id, project_id),
+        )
+        assert indexed_parent is not None
+        seed_root = bootstrap["seed_root"]
+        assert isinstance(seed_root, str)
+        assert Path(indexed_parent["root_path"]).resolve() == Path(seed_root)
     manager = AskSnapshotManager(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
@@ -364,6 +369,54 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         artifacts=artifacts,
         storage=storage,
     )
+    # A parent file first indexed after capture must not enter snapshot reads.
+    (repo / "src" / "future.rs").write_text("pub fn future_parent_only() {}\n")
+    _commit(repo, "parent changed after snapshot capture")
+    parent_session = SessionManager(temp_db).register(
+        external_id="ask-native-parent-refresh",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=project_id,
+        workspace_path=str(repo),
+    )
+    parent_credential = credential_manager.issue_tool_request(
+        session_id=UUID(parent_session.id),
+        requested_project_path=str(repo),
+        expires_at=record.binding.deadline_at,
+    )
+    try:
+        await ensure_isolation_code_index(
+            str(repo),
+            gcode_bin=gcode_bin,
+            credential=parent_credential.credential,
+            principal_kind="tool_chat",
+            runtime_root=runtime_root / "parent-after-capture",
+            identity_env={
+                "GOBBY_AGENT_RUN_ID": str(parent_credential.credential.managed_execution_id),
+                "GOBBY_MACHINE_ID": isolated.machine_id,
+                "GOBBY_PROJECT_ID": project_id,
+                "GOBBY_SESSION_ID": parent_session.id,
+            },
+        )
+    finally:
+        credential_manager.revoke(
+            parent_credential.credential.managed_execution_id,
+            generation=parent_credential.credential.credential_generation,
+            reason="test_parent_refresh_complete",
+        )
+    assert (
+        temp_db.fetchone(
+            """SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
+            (isolated.machine_id, project_id, "src/future.rs"),
+        )
+        is not None
+    )
+    future_parent = await admission.query(
+        "search",
+        {"lane": "literal", "query": "future_parent_only", "paths": [], "limit": 100},
+    )
+    assert future_parent["items"] == []
     response = await admission.query(
         "search",
         {"lane": "literal", "query": "pinned_symbol", "paths": [], "limit": 100},
@@ -439,6 +492,32 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         harness._seed_contained_machine_identity(private_home, private_machine_id)
 
     previous_execution = UUID(snapshot.runtime.managed_execution_id)
+    marker_path = snapshot.source_root / ".gobby" / "isolation.json"
+    if initial_parent_index:
+        marker_path.unlink()
+    else:
+        marker = json.loads(marker_path.read_bytes())
+        marker.pop("snapshot_commit")
+        marker_path.write_text(json.dumps(marker))
+    rejected = await asyncio.to_thread(
+        subprocess.run,
+        [
+            str(gcode_bin),
+            "index",
+            "--project",
+            str(snapshot.source_root),
+            "--snapshot-commit",
+            historical_merge,
+        ],
+        cwd=snapshot.source_root,
+        env={**os.environ, **snapshot.runtime.env},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "matching sealed snapshot scope" in rejected.stderr
     recovered = await manager.recover_async(run_id=record.run_id, artifacts=artifacts)
     assert recovered.generation == 2
     assert credential_manager.get_live_binding_generation(previous_execution) is None
@@ -460,6 +539,14 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         {"lane": "literal", "query": "pinned_symbol", "paths": [], "limit": 100},
     )
     assert any(item.get("path") == "src/lib.rs" for item in recovered_response["items"])
+    assert (
+        temp_db.fetchone(
+            """SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
+            (isolated.machine_id, project_id, "src/future.rs"),
+        )
+        is not None
+    )
     manager.release(recovered, artifacts=artifacts)
 
     root_record = storage.start(

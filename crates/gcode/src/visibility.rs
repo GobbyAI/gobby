@@ -34,7 +34,9 @@ pub fn is_tombstone_language(language: &str) -> bool {
 
 pub fn visible_project_ids(ctx: &Context) -> Vec<String> {
     match &ctx.index_scope {
-        ProjectIndexScope::Single => vec![ctx.project_id.clone()],
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+            vec![ctx.project_id.clone()]
+        }
         ProjectIndexScope::Overlay {
             overlay_project_id,
             parent_project_id,
@@ -141,7 +143,7 @@ pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) ->
         return false;
     };
     match &ctx.index_scope {
-        ProjectIndexScope::Single => {
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
             let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
                 return false;
             };
@@ -224,7 +226,7 @@ pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -
         return false;
     };
     match &ctx.index_scope {
-        ProjectIndexScope::Single => {
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
             let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
                 return false;
             };
@@ -344,7 +346,7 @@ pub fn project_path_is_visible(
     file_path: &str,
 ) -> bool {
     match &ctx.index_scope {
-        ProjectIndexScope::Single => {
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
             project_id == ctx.project_id
                 && project_file_is_visible(conn, &ctx.project_id, file_path)
         }
@@ -544,7 +546,7 @@ pub(crate) fn visible_graph_paths(
         return Ok(HashSet::new());
     };
     let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => {
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
             let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
                 return Ok(HashSet::new());
             };
@@ -709,7 +711,7 @@ fn symbol_visible_from_file_states(
     file_states: &HashMap<(String, String), IndexedFileState>,
 ) -> bool {
     match &ctx.index_scope {
-        ProjectIndexScope::Single => {
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
             symbol.project_id == ctx.project_id
                 && indexed_state_matches_symbol(
                     file_states.get(&(ctx.project_id.clone(), symbol.file_path.clone())),
@@ -760,7 +762,9 @@ pub fn visible_symbols_for_files(
     }
 
     match &ctx.index_scope {
-        ProjectIndexScope::Single => query_symbols_for_files(conn, &ctx.project_id, file_paths),
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+            query_symbols_for_files(conn, &ctx.project_id, file_paths)
+        }
         ProjectIndexScope::Overlay {
             overlay_project_id,
             parent_project_id,

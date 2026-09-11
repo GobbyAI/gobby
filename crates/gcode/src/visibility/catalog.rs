@@ -10,7 +10,7 @@ use crate::db;
 pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<String>> {
     let machine_id = local_machine_uuid()?;
     let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => conn.query(
             "SELECT DISTINCT cs.kind
              FROM code_symbols cs
              JOIN code_indexed_file_states fs
@@ -90,7 +90,7 @@ pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Str
 pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<VisibleFile>> {
     let machine_id = local_machine_uuid()?;
     let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => conn.query(
             "SELECT fs.file_path, f.language, f.symbol_count::BIGINT AS symbol_count,
                     fs.content_hash
              FROM code_indexed_file_states fs

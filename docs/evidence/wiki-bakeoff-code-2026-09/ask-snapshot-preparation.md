@@ -341,3 +341,35 @@ resume acceptance. Attempts 1–11 remain unchanged, attempt 12 must retain its
 original deadline and separate evidence directory, and the all-14 cohort has
 not yet run. No shared binary installation or daemon restart was performed for
 this correction.
+
+## Independent review corrections
+
+Review found that one-time overlay tombstones did not hide files added to the
+parent index after snapshot capture. Ask now writes the pinned commit into the
+isolation sidecar. Native snapshot scope reads only its own complete index,
+retains isolated write authority, and routes refreshes through the same pinned
+commit instead of ordinary checkout discovery. The native integration test
+refreshes the parent through a separate managed session after capture, proves
+the new parent row exists, and verifies snapshot evidence still excludes it.
+The snapshot-marker unit test failed before this change and passed afterward.
+
+The blob capture API now uses one verified `git cat-file --batch` process for
+the complete eligible inventory. The process-count regression failed with the
+empty API stub, then passed with exactly three blob processes across prepare,
+materialize, and capture, independent of file count. This correction is committed
+as `aa3c8fda0d` under coordinator `#22021`.
+
+Focused validation passed 52 Rust tests and 85 Python tests, including native
+snapshot/evidence and recovery. The 62 wait/resume and completion-registry tests
+also passed in the worker's clean checkpoint. Mutable import-context and header
+classification inputs remain under correction; optional clangd reads require a
+separate hermetic boundary and cannot establish captured-source provenance.
+Full native provider/security acceptance and all 14 cohort answers remain
+unvalidated. These focused results do not replace attempts 1–11 or count as a
+successful attempt 12.
+
+The native integration test also passes with no initial parent index. Future
+contained probes therefore omit the obsolete full parent-index preparation;
+Ask prepares its own complete pinned index within the original deadline. The
+helper and receipt export remain available for historical evidence and focused
+parent-mutation tests. No previous attempt artifacts were changed.

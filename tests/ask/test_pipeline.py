@@ -18,6 +18,7 @@ from gobby.ask.agents import AskAgentSpec
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.claims import AnswerDraft, ReviewClaimVerdict, ReviewerResult, canonical_hash
 from gobby.ask.contracts import AskRequest, AskRunRecord, ProfileSnapshot
+from gobby.ask.errors import AskLifecycleConflict, AskRunNotFound
 from gobby.ask.evidence_runtime import AskSnapshotManager, PreparedAskSnapshot
 from gobby.ask.permissions import (
     AskAgentStage,
@@ -688,8 +689,10 @@ async def test_publication_termination_cannot_expose_completed_answer(
 
     assert producer.done()
     assert service.stage_runtime.resources == {}
-    with pytest.raises(ValueError, match="no completed publication"):
+    with pytest.raises(AskLifecycleConflict, match="no completed publication"):
         service.publication_root(started.run_id, project_id=project_id)
+    with pytest.raises(AskRunNotFound, match="Ask run not found"):
+        service.get(started.run_id, project_id="foreign-project")
     publication_root = (
         AskArtifactStore(tmp_path / "state", project_id, started.run_id).run_root / "publication"
     )

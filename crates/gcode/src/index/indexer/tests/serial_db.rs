@@ -1051,7 +1051,9 @@ fn immutable_snapshot_skips_clangd_but_keeps_tree_sitter_facts() {
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         grant_ai: None,
-        index_scope: ProjectIndexScope::Single,
+        index_scope: ProjectIndexScope::Snapshot {
+            commit_oid: commit_oid.clone(),
+        },
     };
 
     let outcome = temp_env::with_vars(
