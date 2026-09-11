@@ -126,20 +126,75 @@ class OwnedWorker:
 async def _await_managed_agent_launch(agent_run_id: str, *, deadline_at: datetime) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
 
+    remaining = (deadline_at - datetime.now(UTC)).total_seconds()
+    if remaining <= 0:
+        raise TimeoutError("deadline expired during native Ask launch")
     prefix = f"{agent_run_id}:"
     tasks = [task for key, task in tuple(_spawn_background_tasks.items()) if key.startswith(prefix)]
     if len(tasks) > 1:
         raise RuntimeError(f"native Ask launch has multiple managed tasks: {agent_run_id}")
     if not tasks:
         return
-    remaining = (deadline_at - datetime.now(UTC)).total_seconds()
-    if remaining <= 0:
-        raise TimeoutError("deadline expired during native Ask launch")
     try:
         async with asyncio.timeout(remaining):
             await asyncio.shield(tasks[0])
     except TimeoutError as error:
         raise TimeoutError("deadline expired during native Ask launch") from error
+
+
+async def _settle_owned_receipt_capture(task: asyncio.Task[bool]) -> BaseException | None:
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except Exception:
+            break
+    if task.cancelled():
+        return asyncio.CancelledError("native Ask receipt capture was cancelled")
+    return task.exception()
+
+
+async def _capture_agent_launch_receipt_owned(
+    database_url: str,
+    agent_run_id: str,
+    *,
+    ask_run_id: str,
+    project_id: str,
+    control_dir: Path,
+    deadline_at: datetime,
+) -> bool:
+    remaining = (deadline_at - datetime.now(UTC)).total_seconds()
+    if remaining <= 0:
+        raise TimeoutError("deadline expired before native Ask receipt capture")
+    capture_task = asyncio.create_task(
+        asyncio.to_thread(
+            _capture_agent_launch_receipt,
+            database_url,
+            agent_run_id,
+            ask_run_id=ask_run_id,
+            project_id=project_id,
+            control_dir=control_dir,
+        ),
+        name=f"native-ask-receipt-{agent_run_id}",
+    )
+    deadline_timeout = asyncio.timeout(remaining)
+    try:
+        async with deadline_timeout:
+            return await asyncio.shield(capture_task)
+    except asyncio.CancelledError as error:
+        capture_error = await _settle_owned_receipt_capture(capture_task)
+        if capture_error is not None:
+            error.add_note(f"native Ask receipt capture also failed: {capture_error}")
+        raise
+    except TimeoutError as error:
+        if not deadline_timeout.expired():
+            raise
+        capture_error = await _settle_owned_receipt_capture(capture_task)
+        deadline_error = TimeoutError("deadline expired during native Ask receipt capture")
+        if capture_error is not None:
+            deadline_error.add_note(f"native Ask receipt capture also failed: {capture_error}")
+        raise deadline_error from error
 
 
 @dataclass
@@ -156,13 +211,13 @@ class ReceiptCapturingAgents:
         if not isinstance(agent_run_id, str) or not agent_run_id:
             raise RuntimeError("native Ask launch returned no agent run ID")
         await _await_managed_agent_launch(agent_run_id, deadline_at=spec.deadline_at)
-        complete = await asyncio.to_thread(
-            _capture_agent_launch_receipt,
+        complete = await _capture_agent_launch_receipt_owned(
             self.database_url,
             agent_run_id,
             ask_run_id=spec.run_id,
             project_id=spec.project_id,
             control_dir=self.control_dir,
+            deadline_at=spec.deadline_at,
         )
         if not complete:
             raise RuntimeError(

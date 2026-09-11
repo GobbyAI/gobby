@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -285,6 +286,138 @@ async def test_receipt_agent_cancellation_never_writes_a_late_launch_receipt(
         release.set()
         await managed_task
         _remove_managed_launch(agent_run_id, managed_task)
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_cancellation_during_capture_waits_for_owned_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_run_id = "capture-cancelled-agent"
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    writes: list[str] = []
+
+    def capture(_database_url: str, run_id: str, **_kwargs: object) -> bool:
+        capture_started.set()
+        if not release_capture.wait(timeout=5):
+            raise RuntimeError("test did not release receipt capture")
+        writes.append(run_id)
+        return True
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value=agent_run_id))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=5),
+    )
+    launch_call = asyncio.create_task(agents.launch(spec, object()))
+    try:
+        assert await asyncio.to_thread(capture_started.wait, 1)
+        launch_call.cancel()
+        await asyncio.sleep(0)
+        assert not launch_call.done()
+        assert writes == []
+
+        release_capture.set()
+        with pytest.raises(asyncio.CancelledError):
+            await launch_call
+        assert writes == [agent_run_id]
+    finally:
+        release_capture.set()
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_deadline_during_capture_waits_for_owned_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_run_id = "capture-deadline-agent"
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    writes: list[str] = []
+
+    def capture(_database_url: str, run_id: str, **_kwargs: object) -> bool:
+        capture_started.set()
+        if not release_capture.wait(timeout=5):
+            raise RuntimeError("test did not release receipt capture")
+        writes.append(run_id)
+        return True
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value=agent_run_id))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) + timedelta(milliseconds=50),
+    )
+    launch_call = asyncio.create_task(agents.launch(spec, object()))
+    observation_due = asyncio.Event()
+    observation_handle = asyncio.get_running_loop().call_later(0.1, observation_due.set)
+    try:
+        assert await asyncio.to_thread(capture_started.wait, 1)
+        await asyncio.wait_for(observation_due.wait(), timeout=1)
+        assert not launch_call.done()
+        assert writes == []
+
+        release_capture.set()
+        with pytest.raises(
+            TimeoutError, match="deadline expired during native Ask receipt capture"
+        ):
+            await launch_call
+        assert writes == [agent_run_id]
+    finally:
+        observation_handle.cancel()
+        release_capture.set()
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_rejects_expired_deadline_without_managed_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captures: list[str] = []
+
+    def capture(_database_url: str, run_id: str, **_kwargs: object) -> bool:
+        captures.append(run_id)
+        return True
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value="already-complete-agent"))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) - timedelta(milliseconds=1),
+    )
+
+    with pytest.raises(TimeoutError, match="deadline expired during native Ask launch"):
+        await agents.launch(spec, object())
+    assert captures == []
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_preserves_capture_timeout_error_before_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def capture(*_args: object, **_kwargs: object) -> bool:
+        raise TimeoutError("receipt source timeout")
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value="capture-timeout-agent"))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=5),
+    )
+
+    with pytest.raises(TimeoutError, match="receipt source timeout"):
+        await agents.launch(spec, object())
 
 
 def test_parser_exposes_self_contained_driver_without_external_daemon_controls(
