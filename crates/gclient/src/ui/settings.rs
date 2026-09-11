@@ -215,12 +215,14 @@ fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     }
 }
 
-/// Rects the settings overlay drew: the popup (border included) and every
-/// row that fit, keyed by its index into `SettingsRow::ALL`.
+/// Rects the settings overlay drew: the popup (border included), every
+/// row that fit, keyed by its index into `SettingsRow::ALL`, and the footer
+/// buttons in drawn order (`done`, `close`), both of which close the popup.
 #[derive(Debug, Clone, Default)]
 pub struct SettingsHits {
     pub dialog: Rect,
     pub rows: Vec<(usize, Rect)>,
+    pub buttons: Vec<Rect>,
 }
 
 /// Draw the settings overlay; `None` when `area` cannot fit the popup.
@@ -230,6 +232,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
     let mut hits = SettingsHits {
         dialog: popup,
         rows: Vec::new(),
+        buttons: Vec::new(),
     };
     let Some(inner) = render_panel_shell(frame, popup, p.accent, p.panel_bg) else {
         return Some(hits);
@@ -313,7 +316,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "apply",
+                label: "done",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
@@ -323,12 +326,13 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
         2,
         inner.height.saturating_sub(1),
     );
-    if let [apply_rect, close_rect] = rects[..] {
+    if let [done_rect, close_rect] = rects[..] {
+        hits.buttons = vec![done_rect, close_rect];
         render_action_button(
             frame,
-            apply_rect,
+            done_rect,
             Some("↵"),
-            "apply",
+            "done",
             Style::default()
                 .fg(panel_contrast_fg(p))
                 .bg(p.accent)

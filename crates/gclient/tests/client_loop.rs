@@ -4604,11 +4604,11 @@ async fn settings_toggle_switches_mouse_capture_and_saves_prefs() {
             tokio::task::yield_now().await;
             send_chord(&input_tx, KeyCode::Char('s'), KeyModifiers::NONE).await;
             send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
-            send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+            send_key(&input_tx, KeyCode::Char(' '), KeyModifiers::NONE).await;
             wait_until(|| !captured.load(Ordering::SeqCst)).await;
             let saved = std::fs::read_to_string(&prefs_file).expect("prefs written on toggle");
             assert!(saved.contains("mouse_capture = false"), "{saved}");
-            send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+            send_key(&input_tx, KeyCode::Char(' '), KeyModifiers::NONE).await;
             wait_until(|| captured.load(Ordering::SeqCst)).await;
             drop(input_tx);
         }

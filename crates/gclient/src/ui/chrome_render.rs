@@ -77,6 +77,11 @@ pub fn render_workspace_with<W: WorkspaceView>(
         Mode::Settings => {
             dim_background(frame, area);
             hits.settings = settings::render_settings(frame, area, chrome);
+            hits.dialog_buttons = hits
+                .settings
+                .as_ref()
+                .map(|settings| settings.buttons.clone())
+                .unwrap_or_default();
         }
         Mode::KeybindHelp => {
             dim_background(frame, area);

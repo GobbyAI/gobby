@@ -416,8 +416,8 @@ fn modal_keys_drive_every_mode() {
     );
     assert_eq!(chrome.mode, Mode::Terminal);
 
-    // Settings: enter toggles the selected row and queues the capture switch;
-    // right steps the sidebar width; esc closes.
+    // Settings: space toggles the selected row and queues the capture switch;
+    // right steps the sidebar width; enter and esc close.
     chrome.mode = Mode::Settings;
     chrome.settings.selected = 0;
     assert_eq!(
@@ -426,7 +426,7 @@ fn modal_keys_drive_every_mode() {
     );
     assert_eq!(chrome.settings.selected, 1);
     assert_eq!(
-        press(&ws, &mut chrome, KeyCode::Enter),
+        press(&ws, &mut chrome, KeyCode::Char(' ')),
         ModalOutcome::Consumed
     );
     assert!(!chrome.prefs.mouse_capture);
@@ -439,6 +439,10 @@ fn modal_keys_drive_every_mode() {
     );
     assert_eq!(chrome.prefs.sidebar_width, width + 1);
     assert_eq!(chrome.sidebar.width, width + 1);
+    assert_eq!(press(&ws, &mut chrome, KeyCode::Enter), ModalOutcome::Close);
+    assert_eq!(chrome.mode, Mode::Terminal);
+    assert_eq!(chrome.prefs.sidebar_width, width + 1);
+    chrome.mode = Mode::Settings;
     assert_eq!(press(&ws, &mut chrome, KeyCode::Esc), ModalOutcome::Close);
     assert_eq!(chrome.mode, Mode::Terminal);
 }
@@ -490,6 +494,23 @@ fn settings_rows_respond_to_clicks() {
     assert_eq!(route_mouse(&ws, &mut chrome, &wheel), MouseOutcome::Handled);
     assert_eq!(chrome.settings.selected, 1);
 
+    // The footer buttons are hit regions: `done` and `close` both dismiss the
+    // popup, and neither touches the highlighted row.
+    let buttons = chrome.view.dialog_button_hit_areas.clone();
+    assert_eq!(buttons.len(), 2, "done and close drawn");
+    let theme_before = chrome.prefs.theme.clone();
+    for button in &buttons {
+        chrome.mode = Mode::Settings;
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &left_click(button.x + 1, button.y)),
+            MouseOutcome::Handled
+        );
+        assert_eq!(chrome.mode, Mode::Terminal);
+        assert_eq!(chrome.prefs.theme, theme_before);
+        assert_eq!(chrome.settings.selected, 1);
+    }
+
+    chrome.mode = Mode::Settings;
     assert_eq!(
         route_mouse(&ws, &mut chrome, &left_click(0, 0)),
         MouseOutcome::Handled
