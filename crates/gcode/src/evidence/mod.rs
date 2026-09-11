@@ -374,9 +374,20 @@ impl EvidenceLibrary {
                     });
                 }
                 None => {
-                    return Err(EvidenceError::IndexIncomplete {
-                        detail: format!("eligible snapshot path is not indexed: {}", entry.path),
-                    });
+                    let is_blank = if entry.size_bytes == Some(0) {
+                        true
+                    } else {
+                        let content = self.snapshot.read_blob(&entry.path)?;
+                        std::str::from_utf8(&content).is_ok_and(|text| text.trim().is_empty())
+                    };
+                    if !is_blank {
+                        return Err(EvidenceError::IndexIncomplete {
+                            detail: format!(
+                                "eligible snapshot path is not indexed: {}",
+                                entry.path
+                            ),
+                        });
+                    }
                 }
             }
         }

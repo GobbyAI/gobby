@@ -108,7 +108,7 @@ fn snapshot_cli_returns_native_canonical_inventory_without_services() -> anyhow:
 
 type LineRangeFixture = (&'static str, &'static [u8], Option<usize>);
 
-const LINE_RANGE_FIXTURES: [LineRangeFixture; 4] = [
+const LINE_RANGE_FIXTURES: [LineRangeFixture; 5] = [
     ("fixtures/trailing.txt", b"line_probe trailing\n", Some(1)),
     (
         "fixtures/unterminated.txt",
@@ -121,6 +121,18 @@ const LINE_RANGE_FIXTURES: [LineRangeFixture; 4] = [
         Some(2),
     ),
     ("fixtures/empty.txt", b"", None),
+    ("fixtures/whitespace.txt", b" \t\r\n\n", None),
+];
+
+#[cfg(gcode_postgres_tests)]
+const INITIAL_CHANGED_PATHS: [&str; 7] = [
+    ".gobby/project.json",
+    "fixtures/crlf.txt",
+    "fixtures/empty.txt",
+    "fixtures/trailing.txt",
+    "fixtures/unterminated.txt",
+    "fixtures/whitespace.txt",
+    "src/lib.rs",
 ];
 
 #[test]
@@ -140,6 +152,35 @@ fn indexed_content_chunk_ranges_match_blob_lines() {
         let expected = expected_line_end.map_or_else(Vec::new, |end| vec![(1, end)]);
         assert_eq!(ranges, expected, "{path}");
     }
+}
+
+#[test]
+fn indexed_content_chunk_ranges_preserve_blank_boundary_lines() {
+    let lines = (1..=101)
+        .map(|line| {
+            if line == 100 {
+                String::new()
+            } else {
+                format!("line {line}")
+            }
+        })
+        .collect::<Vec<_>>();
+    let source = format!("{}\n", lines.join("\n"));
+    let chunks = gobby_code::index::chunker::chunk_file_content(
+        source.as_bytes(),
+        "fixtures/boundary.txt",
+        "line-semantics-project",
+        "fixture-hash",
+        Some("text"),
+    );
+
+    let ranges = chunks
+        .iter()
+        .map(|chunk| (chunk.line_start, chunk.line_end))
+        .collect::<Vec<_>>();
+    assert_eq!(ranges, vec![(1, 100), (91, 101)]);
+    assert!(chunks[0].content.ends_with('\n'));
+    assert!(chunks[1].content.contains("line 99\n\nline 101"));
 }
 
 fn assert_error(output: &std::process::Output, code: &str) -> Value {
@@ -331,25 +372,36 @@ fn database_contract() -> anyhow::Result<()> {
     };
     let metadata = run_success(&project, &home, &connections, &metadata_request)?;
     assert_eq!(metadata.contract.lane, "read_commit_metadata");
-    assert_eq!(metadata.items.len(), 1);
-    let EvidenceItem::CommitMetadata(record) = &metadata.items[0] else {
-        panic!("metadata response must contain commit evidence");
-    };
-    assert_eq!(record.commit_oid, commit_oid);
-    assert_eq!(record.parent_oids, snapshot.binding().commit.parent_oids);
-    assert_eq!(record.changed_path_count, 1);
-    assert_eq!(
-        record
-            .changed_path
-            .as_ref()
-            .and_then(|change| change.new_path.as_deref()),
-        Some(FILE_PATH)
-    );
-    assert_eq!(
-        record.changed_paths_digest,
-        snapshot.binding().commit.changed_paths_digest
-    );
-    assert!(record.evidence_id.starts_with("commit:"));
+    let records = metadata
+        .items
+        .iter()
+        .map(|item| match item {
+            EvidenceItem::CommitMetadata(record) => record,
+            other => panic!("metadata response must contain commit evidence, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), INITIAL_CHANGED_PATHS.len());
+    let changed_paths = records
+        .iter()
+        .map(|record| {
+            record
+                .changed_path
+                .as_ref()
+                .and_then(|change| change.new_path.as_deref())
+                .expect("initial commit record has a new path")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(changed_paths, INITIAL_CHANGED_PATHS);
+    for record in records {
+        assert_eq!(record.commit_oid, commit_oid);
+        assert_eq!(record.parent_oids, snapshot.binding().commit.parent_oids);
+        assert_eq!(record.changed_path_count, INITIAL_CHANGED_PATHS.len());
+        assert_eq!(
+            record.changed_paths_digest,
+            snapshot.binding().commit.changed_paths_digest
+        );
+        assert!(record.evidence_id.starts_with("commit:"));
+    }
 
     let search_request = EvidenceRequest {
         operation: EvidenceOperation::Search {
