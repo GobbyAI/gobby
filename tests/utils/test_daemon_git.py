@@ -329,7 +329,10 @@ async def test_cancelling_one_coalesced_waiter_preserves_the_other(
 
 
 @pytest.mark.asyncio
-async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> None:
+async def test_timeout_kills_process_group_and_reaps_leader(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("WARNING", logger="gobby.utils.daemon_git")
     _write_fake_git(tmp_path)
     pids = tmp_path / "pids"
     service = DaemonGitService()
@@ -347,6 +350,20 @@ async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> N
     assert "spawn_seconds=" in result.stderr
     assert "running_seconds=" in result.stderr
     await _assert_processes_gone(leader, child)
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "gobby.utils.daemon_git" and record.levelname == "WARNING"
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert str(tmp_path) in message
+    assert f"pid={leader}" in message
+    assert "phase=running" in message
+    assert "timeout_seconds=0.500" in message
+    assert "spawn_seconds=" in message
+    assert "running_seconds=" in message
 
 
 @pytest.mark.asyncio
