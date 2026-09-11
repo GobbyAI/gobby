@@ -277,6 +277,27 @@ When detailed progress needs to be retained, keep an optional Markdown progress
 log and include its path in the handoff's `references`; keep the log's contents
 out of the handoff.
 
+Apply the [handoff content policy](../contracts/session-boundary.md#handoff-content-and-incidental-history)
+to every section: retain current state, remaining work, decisions, blockers, and
+relevant final validation. Omit superseded intermediate test counts and historical
+run labels unless they explain an active blocker or next action. Keep detailed
+history in existing task/session records, raw transcripts, or evidence files and
+reference those sources as needed.
+
+Use these bounded review cases from #21887:
+
+- **Superseded test counts:** given earlier 311-pass/29-fail and later
+  375-pass/3-fail runs followed by a relevant 378-pass final result, retain the final
+  result and its evidence reference. Leave intermediate counts and their chronology
+  in the source evidence; do not reproduce them in What Didn't Work or other sections.
+- **Stale coordination wait:** historical run `40f8462f` represented a
+  restart-coordination wait. Do not label it an acceptance run. When implementer
+  acceptance is still required, keep that separate action in Next Steps; omit the
+  stale wait unless it affects continuation.
+- **Active failure:** keep the failing command, useful diagnostics, paths, impact,
+  and evidence reference needed to resolve an active blocker. Removing incidental
+  history must not hide unfinished work or imply that validation passed.
+
 Observation labels are enums: `kind` is `friction`, `bug`, `noise`, `surprise`,
 `missing-affordance`, `useful`, or `other`; `frequency` is `once`, `repeated`, or
 `always`; optional `disposition` is `worked-around`, `filed-task`, `fixed`,
