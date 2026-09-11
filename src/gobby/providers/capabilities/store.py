@@ -10,6 +10,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from gobby.providers.capabilities.local_context import LocalContextObservation
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -359,6 +360,13 @@ def _provenance(value: object) -> dict[str, FactProvenance]:
             source_key=_required_str(provenance.get("source_key"), "source_key"),
             source_url=_optional_str(provenance.get("source_url")),
             observed_at=_required_datetime(provenance.get("observed_at"), "observed_at"),
+            local_context=(
+                LocalContextObservation.from_dict(
+                    _mapping(provenance["local_context"], "local_context")
+                )
+                if provenance.get("local_context") is not None
+                else None
+            ),
         )
     return result
 

@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TypedDict
+from typing import Any, NotRequired, TypedDict
+
+from gobby.providers.capabilities.local_context import LocalContextObservation
 
 
 class ReasoningSupport(StrEnum):
@@ -31,6 +33,7 @@ class FactProvenanceData(TypedDict):
     source_key: str
     source_url: str | None
     observed_at: str
+    local_context: NotRequired[dict[str, Any]]
 
 
 class ModelCapabilityData(TypedDict):
@@ -76,20 +79,30 @@ class FactProvenance:
     source_key: str
     source_url: str | None
     observed_at: datetime
+    local_context: LocalContextObservation | None = None
 
     def to_dict(self) -> FactProvenanceData:
-        return {
+        result: FactProvenanceData = {
             "source_key": self.source_key,
             "source_url": self.source_url,
             "observed_at": self.observed_at.isoformat(),
         }
+        if self.local_context is not None:
+            result["local_context"] = self.local_context.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: FactProvenanceData) -> FactProvenance:
+        local_context = data.get("local_context")
         return cls(
             source_key=data["source_key"],
             source_url=data["source_url"],
             observed_at=datetime.fromisoformat(data["observed_at"]),
+            local_context=(
+                LocalContextObservation.from_dict(local_context)
+                if local_context is not None
+                else None
+            ),
         )
 
 
