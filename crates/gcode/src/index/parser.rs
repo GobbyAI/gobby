@@ -293,6 +293,7 @@ fn extract_symbols(
         let docstring = extract_docstring(&node, source, language);
         let c_hash =
             symbol_content_hash(source, node.start_byte(), node.end_byte()).unwrap_or_default();
+        let (line_start, line_end) = inclusive_node_lines(&node, source)?;
         let symbol_id = Symbol::make_id(
             file.project_id,
             file.rel_path,
@@ -317,8 +318,8 @@ fn extract_symbols(
             language: language.to_string(),
             byte_start: node.start_byte(),
             byte_end: node.end_byte(),
-            line_start: node.start_position().row + 1,
-            line_end: node.end_position().row + 1,
+            line_start,
+            line_end,
             signature: Some(signature),
             docstring,
             parent_symbol_id: None,
@@ -331,6 +332,30 @@ fn extract_symbols(
     }
 
     Ok(symbols)
+}
+
+fn inclusive_node_lines(
+    node: &tree_sitter::Node<'_>,
+    source: &[u8],
+) -> anyhow::Result<(usize, usize)> {
+    anyhow::ensure!(
+        node.start_byte() < node.end_byte() && node.end_byte() <= source.len(),
+        "parser returned invalid definition byte range {}..{} for {} source bytes",
+        node.start_byte(),
+        node.end_byte(),
+        source.len()
+    );
+
+    let start = node.start_position().row + 1;
+    let end_position = node.end_position();
+    let ends_after_line_terminator =
+        end_position.column == 0 && source[node.end_byte() - 1] == b'\n';
+    let end = end_position.row + usize::from(!ends_after_line_terminator);
+    anyhow::ensure!(
+        end >= start,
+        "parser returned invalid definition line range {start}..{end}"
+    );
+    Ok((start, end))
 }
 
 fn truncate_to_char_boundary(text: &mut String, max_bytes: usize) {

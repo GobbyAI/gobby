@@ -8,6 +8,7 @@ mod lua;
 mod objc;
 mod php_ruby_dart_elixir;
 mod python_javascript_typescript;
+mod ranges;
 mod resolution;
 mod scala;
 mod semantic;
