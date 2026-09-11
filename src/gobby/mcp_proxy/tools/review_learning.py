@@ -7,6 +7,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.review_learning.service import (
     MAX_RECALL_FINDINGS,
+    MAX_RECALL_MATCHES_PER_FINDING,
     ReviewLearningService,
 )
 from gobby.utils.session_context import get_current_session_id
@@ -38,7 +39,8 @@ _RECALL_REVIEW_CONTEXT_SCHEMA: dict[str, Any] = {
         "findings": {
             "type": "array",
             "description": (
-                f"Up to {MAX_RECALL_FINDINGS} review findings as structured objects or plain text."
+                f"Up to {MAX_RECALL_FINDINGS} review findings as structured objects or plain text. "
+                f"Each finding returns at most {MAX_RECALL_MATCHES_PER_FINDING} matches."
             ),
             "maxItems": MAX_RECALL_FINDINGS,
             "items": {
@@ -58,8 +60,18 @@ _RECALL_REVIEW_CONTEXT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Interactive session; defaults to the ambient caller session.",
         },
-        "repo": {"type": "string", "description": "Repository identifier."},
-        "language": {"type": "string", "description": "Programming language context."},
+        "repo": {
+            "type": "string",
+            "description": (
+                "Repository identifier; also ranks lessons tagged for this repository first."
+            ),
+        },
+        "language": {
+            "type": "string",
+            "description": (
+                "Programming language context; also ranks lessons tagged for this language first."
+            ),
+        },
     },
     "required": ["findings"],
 }

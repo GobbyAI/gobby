@@ -16,6 +16,7 @@ from gobby.review_learning.service import (
     _CANDIDATE_OVERFETCH,
     MAX_RECALL_FINDINGS,
     MAX_RECALL_FLAT_MATCHES,
+    MAX_RECALL_MATCHES_PER_FINDING,
     ReviewLearningMemoryManager,
     ReviewLearningService,
 )
@@ -309,7 +310,9 @@ async def test_recall_context_caps_fan_out_and_flat_response() -> None:
 
     assert len(manager.search_calls) == MAX_RECALL_FINDINGS * 4
     assert len(result["findings"]) == MAX_RECALL_FINDINGS
-    assert all(len(group["matches"]) == 10 for group in result["findings"])
+    assert all(
+        len(group["matches"]) == MAX_RECALL_MATCHES_PER_FINDING for group in result["findings"]
+    )
     assert len(result["matches"]) == MAX_RECALL_FLAT_MATCHES
 
 
