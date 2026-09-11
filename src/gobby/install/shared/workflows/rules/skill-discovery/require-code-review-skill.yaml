@@ -1,0 +1,23 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-code-review-skill:
+    description: "Block the first repository commit until the code-review skill is loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('code-review')
+      and source != 'pipeline'
+    effects:
+      - type: block
+        tools: [Bash]
+        # Same command-position git commit anchor as
+        # task-enforcement/require-task-before-commit. mask_quoted keeps a
+        # commit message or echo that mentions git from tripping it.
+        mask_quoted: true
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+commit\\b"
+        reason: |
+          {{ skill_fetch_directive("code-review") }}
+          Then run its pre-commit self-review on the staged changes, fix every
+          critical or high finding, and retry the commit.

@@ -109,6 +109,7 @@ DEFAULT_ENGINE_VARIABLES: dict[str, object] = {"is_spawned_agent": True}
 ENGINE_VARIABLE_OVERRIDES: dict[str, dict[str, object]] = {
     "no-push-for-workers": {"_agent_type": "developer"},
     "require-task-before-commit": {"require_task_before_edit": True, "task_claimed": False},
+    "require-code-review-skill": {},
     "require-monolith-resolution-before-commit": {},
     "block-gobby-tasks-cli": {},
     "no-external-github-issues": {},
@@ -339,6 +340,11 @@ RULE_CASES = (
         allowed=('echo "git commit"', "git log --oneline"),
     ),
     RuleCase(
+        "require-code-review-skill",
+        blocked=('git commit -m "[gobby-#1] fix: x"',),
+        allowed=('echo "git commit"', "git log --oneline"),
+    ),
+    RuleCase(
         "require-monolith-resolution-before-commit",
         blocked=("git commit --amend",),
         allowed=('echo "git commit -m msg"',),
@@ -397,13 +403,18 @@ GIT_OPTION_CASES = (
     ("block-git-worktree-mutations-interactive", "worktree prune"),
     ("no-invalid-git-flags", "log --no-stat"),
     ("require-task-before-commit", 'commit -m "[gobby-#20825] chore: x"'),
+    ("require-code-review-skill", 'commit -m "[gobby-#22166] chore: x"'),
     ("require-monolith-resolution-before-commit", "commit"),
 )
 
 # A real `git commit` invocation is what the commit gates exist to block, so a
 # commit message mentioning their trigger is still a genuine commit command.
 COMMIT_PROSE_EXEMPT = frozenset(
-    {"require-task-before-commit", "require-monolith-resolution-before-commit"}
+    {
+        "require-code-review-skill",
+        "require-task-before-commit",
+        "require-monolith-resolution-before-commit",
+    }
 )
 
 
