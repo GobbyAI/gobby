@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -23,18 +22,10 @@ pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> Ha
             if !matches!(ext, "ex" | "exs") {
                 return roots;
             }
-            let Ok(file) = File::open(path) else {
+            let Ok(source) = std::fs::read(path) else {
                 return roots;
             };
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim_start();
-                let Some(rest) = line.strip_prefix("defmodule ") else {
-                    continue;
-                };
-                let module = rest
-                    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
-                    .next()
-                    .unwrap_or_default();
+            for module in elixir_module_names(&source) {
                 if let Some(root) = module.split('.').next()
                     && is_elixir_alias(root)
                 {
@@ -47,6 +38,23 @@ pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> Ha
             all.extend(roots);
             all
         })
+}
+
+pub(super) fn build_elixir_local_module_roots_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashSet<String> {
+    sources
+        .iter()
+        .filter(|(rel, _)| {
+            matches!(
+                Path::new(rel).extension().and_then(|ext| ext.to_str()),
+                Some("ex" | "exs")
+            )
+        })
+        .flat_map(|(_, source)| elixir_module_names(source))
+        .filter_map(|module| module.split('.').next().map(ToOwned::to_owned))
+        .filter(|root| is_elixir_alias(root))
+        .collect()
 }
 
 /// Maps each locally-declared Elixir module's fully-qualified name to the
@@ -67,23 +75,10 @@ pub(in crate::index::import_resolution) fn build_elixir_local_module_files(
             if !matches!(ext, "ex" | "exs") {
                 return None;
             }
-            let file = File::open(path).ok()?;
+            let source = std::fs::read(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path.as_path());
             let rel_str = normalize_storage_path(rel);
-            let mut modules: Vec<String> = Vec::new();
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim_start();
-                let Some(rest) = line.strip_prefix("defmodule ") else {
-                    continue;
-                };
-                let module = rest
-                    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
-                    .next()
-                    .unwrap_or_default();
-                if !module.is_empty() && is_elixir_alias_path(module) {
-                    modules.push(module.to_string());
-                }
-            }
+            let modules = elixir_module_names(&source);
             if modules.is_empty() {
                 return None;
             }
@@ -111,8 +106,61 @@ pub(in crate::index::import_resolution) fn build_elixir_local_module_files(
     module_files
 }
 
+pub(super) fn build_elixir_local_module_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    let mut module_files = HashMap::<String, Vec<String>>::new();
+    for (rel, source) in sources.iter() {
+        if !matches!(
+            Path::new(rel).extension().and_then(|ext| ext.to_str()),
+            Some("ex" | "exs")
+        ) {
+            continue;
+        }
+        for module in elixir_module_names(source) {
+            module_files
+                .entry(module)
+                .or_default()
+                .push(rel.to_string());
+        }
+    }
+    for files in module_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    module_files
+}
+
+fn elixir_module_names(source: &[u8]) -> Vec<String> {
+    BufReader::new(source)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("defmodule ")?;
+            let module = rest
+                .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
+                .next()
+                .unwrap_or_default();
+            (!module.is_empty() && is_elixir_alias_path(module)).then(|| module.to_string())
+        })
+        .collect()
+}
+
 pub(super) fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, String> {
     let deps = load_elixir_dependency_names(root_path);
+    elixir_external_roots(deps)
+}
+
+pub(super) fn load_elixir_external_roots_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, String> {
+    elixir_external_roots(elixir_dependency_names(
+        sources.get("mix.exs"),
+        sources.get("mix.lock"),
+    ))
+}
+
+fn elixir_external_roots(deps: HashSet<String>) -> HashMap<String, String> {
     let mut roots = HashMap::new();
     for dep in deps {
         if let Some(dep_roots) = elixir_dependency_roots(&dep) {
@@ -127,20 +175,26 @@ pub(super) fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, St
 pub(in crate::index::import_resolution) fn load_elixir_dependency_names(
     root_path: &Path,
 ) -> HashSet<String> {
+    let mix_exs = std::fs::read(root_path.join("mix.exs")).ok();
+    let mix_lock = std::fs::read(root_path.join("mix.lock")).ok();
+    elixir_dependency_names(mix_exs.as_deref(), mix_lock.as_deref())
+}
+
+fn elixir_dependency_names(mix_exs: Option<&[u8]>, mix_lock: Option<&[u8]>) -> HashSet<String> {
     let mut deps = HashSet::new();
-    if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.exs")) {
+    if let Some(contents) = mix_exs.and_then(|contents| std::str::from_utf8(contents).ok()) {
         // This is a whole-file manifest heuristic, not an Elixir parser. It catches
         // normal deps entries even when tuple formatting spans lines.
-        for captures in elixir_mix_dependency_regex().captures_iter(&contents) {
+        for captures in elixir_mix_dependency_regex().captures_iter(contents) {
             if let Some(dep) = captures.get(1) {
                 deps.insert(dep.as_str().to_string());
             }
         }
     }
-    if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.lock")) {
+    if let Some(contents) = mix_lock.and_then(|contents| std::str::from_utf8(contents).ok()) {
         // Lockfiles are Elixir maps; quoted dependency keys are enough here. Values
         // may contain package names and repository names that should not be indexed.
-        for captures in elixir_lock_dependency_regex().captures_iter(&contents) {
+        for captures in elixir_lock_dependency_regex().captures_iter(contents) {
             if let Some(dep) = captures.get(1) {
                 deps.insert(dep.as_str().to_string());
             }

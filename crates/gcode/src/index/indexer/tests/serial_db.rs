@@ -1,8 +1,8 @@
 use super::super::file::{index_file, write_parsed_file_facts};
 use super::super::sink::PostgresCodeFactSink;
 use super::super::types::IndexTarget;
-use super::super::{IndexOptions, IndexRequest, index_files};
-use super::fixtures::{git, write_file};
+use super::super::{IndexOptions, IndexRequest, index_files, index_snapshot};
+use super::fixtures::{git, git_output, write_file};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::db;
 use crate::index::semantic::{SemanticCallRequest, SemanticCallResolver, SemanticCallTarget};
@@ -987,6 +987,86 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
         .expect("check symbol parent integrity")
         .get(0);
     assert_eq!(orphan_count, 0);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn immutable_snapshot_skips_clangd_but_keeps_tree_sitter_facts() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let base = tempfile::tempdir().expect("create snapshot base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks directory");
+    let repository = base.path().join("repository");
+    std::fs::create_dir_all(&repository).expect("create repository");
+    let project_root = base.path().join("project");
+    write_file(
+        &repository,
+        "compile_commands.json",
+        br#"[{"directory":".","command":"cc -c src/main.c","file":"src/main.c"}]"#,
+    );
+    write_file(
+        &repository,
+        "src/main.c",
+        b"int helper(void) { return 1; }\nint main(void) { return helper(); }\n",
+    );
+    git(&repository, &hooks, &["init", "-q"]);
+    git(&repository, &hooks, &["add", "."]);
+    git(&repository, &hooks, &["commit", "-q", "-m", "snapshot"]);
+    let project_root_arg = project_root.to_string_lossy();
+    git(
+        &repository,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &project_root_arg,
+            "HEAD",
+        ],
+    );
+    let commit_oid = git_output(&project_root, &hooks, &["rev-parse", "HEAD"]);
+
+    let project_id = unique_test_uuid("gcode-index-snapshot-no-clangd");
+    cleanup_summary_preservation_project(&mut conn, &project_id).expect("pre-clean snapshot rows");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project_id, &project_root).expect("seed snapshot checkout");
+    let ctx = Context {
+        database_url,
+        project_root: project_root.clone(),
+        project_id,
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Snapshot {
+            commit_oid: commit_oid.clone(),
+        },
+    };
+
+    let outcome = temp_env::with_vars(
+        [
+            ("GCODE_REQUIRE_CPP_SEMANTICS", Some("1")),
+            ("GCODE_CLANGD", Some("/definitely/missing/clangd")),
+        ],
+        || index_snapshot(&ctx, &commit_oid),
+    )
+    .expect("index immutable snapshot without launching clangd");
+
+    assert_eq!(outcome.scanned_files, 2);
+    assert!(outcome.symbols_indexed >= 2);
 }
 
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {

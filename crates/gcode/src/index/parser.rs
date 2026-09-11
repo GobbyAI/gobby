@@ -88,21 +88,6 @@ pub(crate) fn parse_source_with_semantic(
     let Some(language) = languages::detect_language(&file_str) else {
         return Ok(None);
     };
-    let Some(spec) = languages::get_spec(language) else {
-        return Ok(None);
-    };
-    let Some(ts_lang) = languages::get_ts_language_for_path(language, &file_str) else {
-        return Ok(None);
-    };
-
-    let mut parser = Parser::new();
-    if parser.set_language(&ts_lang).is_err() {
-        return Ok(None);
-    }
-    let Some(tree) = parser.parse(&source, None) else {
-        return Ok(None);
-    };
-
     let rel_path = file_path
         .canonicalize()
         .ok()
@@ -115,11 +100,86 @@ pub(crate) fn parse_source_with_semantic(
         })
         .unwrap_or_else(|| crate::index::normalize_storage_path(Path::new(file_str.as_ref())));
 
+    parse_source_with_identity(
+        SourceIdentity {
+            rel_path: &rel_path,
+            language,
+            project_id,
+            file_path,
+            root_path,
+        },
+        source,
+        import_context,
+        semantic_resolver,
+    )
+}
+
+pub(crate) fn parse_captured_source(
+    rel_path: &str,
+    language: &str,
+    project_id: &str,
+    source: Vec<u8>,
+    import_context: &ImportResolutionContext,
+) -> anyhow::Result<Option<ParseResult>> {
+    anyhow::ensure!(
+        crate::index::captured_sources::is_valid_logical_path(rel_path),
+        "unsafe captured path: {rel_path}"
+    );
+    parse_source_with_identity(
+        SourceIdentity {
+            rel_path,
+            language,
+            project_id,
+            file_path: Path::new(rel_path),
+            root_path: Path::new(""),
+        },
+        source,
+        import_context,
+        None,
+    )
+}
+
+struct SourceIdentity<'a> {
+    rel_path: &'a str,
+    language: &'a str,
+    project_id: &'a str,
+    file_path: &'a Path,
+    root_path: &'a Path,
+}
+
+fn parse_source_with_identity(
+    identity: SourceIdentity<'_>,
+    source: Vec<u8>,
+    import_context: &ImportResolutionContext,
+    semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
+) -> anyhow::Result<Option<ParseResult>> {
+    let SourceIdentity {
+        rel_path,
+        language,
+        project_id,
+        file_path,
+        root_path,
+    } = identity;
+    let Some(spec) = languages::get_spec(language) else {
+        return Ok(None);
+    };
+    let Some(ts_lang) = languages::get_ts_language_for_path(language, rel_path) else {
+        return Ok(None);
+    };
+
+    let mut parser = Parser::new();
+    if parser.set_language(&ts_lang).is_err() {
+        return Ok(None);
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return Ok(None);
+    };
+
     let file_content_hash = content_hash(&source);
 
     let symbol_file = SymbolFileIdentity {
         project_id,
-        rel_path: &rel_path,
+        rel_path,
         content_hash: &file_content_hash,
     };
     let mut symbols = extract_symbols(&tree, &source, spec, language, &ts_lang, symbol_file)?;
@@ -131,13 +191,13 @@ pub(crate) fn parse_source_with_semantic(
         spec,
         language,
         &ts_lang,
-        &rel_path,
+        rel_path,
         import_context,
     )?;
     let ctx = CallExtractionContext {
         language,
         ts_lang: &ts_lang,
-        rel_path: &rel_path,
+        rel_path,
         symbols: &symbols,
         import_context,
         import_bindings: &extracted_imports.bindings,

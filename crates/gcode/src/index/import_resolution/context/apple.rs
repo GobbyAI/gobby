@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -13,84 +12,80 @@ pub(super) struct ObjcIndex {
     pub(super) file_functions: HashMap<String, Vec<String>>,
 }
 
+type ObjcObservation = (String, Vec<String>, Vec<String>, Vec<String>);
+
 pub(super) fn build_objc_indexes(root_path: &Path, candidate_files: &[PathBuf]) -> ObjcIndex {
-    let (mut import_files, mut file_types, mut file_functions) = candidate_files
+    let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
-            let ext = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or_default();
-            if !matches!(ext, "h" | "m" | "mm") {
-                return None;
-            }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
-            let mut keys = vec![rel_str.clone()];
-            if let Some(file_name) = rel.file_name().and_then(|name| name.to_str()) {
-                keys.push(file_name.to_string());
-            }
-            if let Some(without_ext) = rel_str.strip_suffix(&format!(".{ext}")) {
-                keys.push(without_ext.to_string());
-            }
-
-            let mut types = Vec::new();
-            let mut functions = Vec::new();
-            if let Ok(file) = File::open(path) {
-                for line in BufReader::new(file).lines().map_while(Result::ok) {
-                    let line = line.trim_start();
-                    if let Some(name) = objc_declared_type_name(line) {
-                        types.push(name);
-                    }
-                    if let Some(name) = objc_declared_function_name(line) {
-                        functions.push(name);
-                    }
-                }
-            }
-            types.sort();
-            types.dedup();
-            functions.sort();
-            functions.dedup();
-            Some((rel_str, keys, types, functions))
+            let source = std::fs::read(path).unwrap_or_default();
+            observe_objc_source(&rel_str, &source)
         })
-        .fold(
-            || {
-                (
-                    HashMap::<String, Vec<String>>::new(),
-                    HashMap::<String, Vec<String>>::new(),
-                    HashMap::<String, Vec<String>>::new(),
-                )
-            },
-            |mut acc, (rel, keys, types, functions)| {
-                for key in keys {
-                    acc.0.entry(key).or_default().push(rel.clone());
-                }
-                if !types.is_empty() {
-                    acc.1.insert(rel.clone(), types);
-                }
-                if !functions.is_empty() {
-                    acc.2.insert(rel, functions);
-                }
-                acc
-            },
-        )
-        .reduce(
-            || {
-                (
-                    HashMap::<String, Vec<String>>::new(),
-                    HashMap::<String, Vec<String>>::new(),
-                    HashMap::<String, Vec<String>>::new(),
-                )
-            },
-            |mut acc, map| {
-                for (key, files) in map.0 {
-                    acc.0.entry(key).or_default().extend(files);
-                }
-                acc.1.extend(map.1);
-                acc.2.extend(map.2);
-                acc
-            },
-        );
+        .collect::<Vec<_>>();
+    collect_objc_indexes(observations)
+}
+
+pub(super) fn build_objc_indexes_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> ObjcIndex {
+    collect_objc_indexes(
+        sources
+            .iter()
+            .filter_map(|(rel, source)| observe_objc_source(rel, source)),
+    )
+}
+
+fn observe_objc_source(rel_str: &str, source: &[u8]) -> Option<ObjcObservation> {
+    let rel = Path::new(rel_str);
+    let ext = rel
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default();
+    if !matches!(ext, "h" | "m" | "mm") {
+        return None;
+    }
+    let mut keys = vec![rel_str.to_string()];
+    if let Some(file_name) = rel.file_name().and_then(|name| name.to_str()) {
+        keys.push(file_name.to_string());
+    }
+    if let Some(without_ext) = rel_str.strip_suffix(&format!(".{ext}")) {
+        keys.push(without_ext.to_string());
+    }
+    let mut types = Vec::new();
+    let mut functions = Vec::new();
+    for line in BufReader::new(source).lines().map_while(Result::ok) {
+        let line = line.trim_start();
+        if let Some(name) = objc_declared_type_name(line) {
+            types.push(name);
+        }
+        if let Some(name) = objc_declared_function_name(line) {
+            functions.push(name);
+        }
+    }
+    types.sort();
+    types.dedup();
+    functions.sort();
+    functions.dedup();
+    Some((rel_str.to_string(), keys, types, functions))
+}
+
+fn collect_objc_indexes(observations: impl IntoIterator<Item = ObjcObservation>) -> ObjcIndex {
+    let mut import_files = HashMap::<String, Vec<String>>::new();
+    let mut file_types = HashMap::new();
+    let mut file_functions = HashMap::new();
+    for (rel, keys, types, functions) in observations {
+        for key in keys {
+            import_files.entry(key).or_default().push(rel.clone());
+        }
+        if !types.is_empty() {
+            file_types.insert(rel.clone(), types);
+        }
+        if !functions.is_empty() {
+            file_functions.insert(rel, functions);
+        }
+    }
 
     for files in import_files.values_mut() {
         files.sort();
@@ -268,6 +263,29 @@ pub(in crate::index::import_resolution) fn build_swift_module_files(
             }
             all
         });
+    for files in module_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    module_files
+}
+
+pub(super) fn build_swift_module_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    let mut module_files = HashMap::<String, Vec<String>>::new();
+    for (rel, _) in sources.iter() {
+        let path = Path::new(rel);
+        if path.extension().and_then(|ext| ext.to_str()) != Some("swift") {
+            continue;
+        }
+        for module in swift_modules_for_rel(path) {
+            module_files
+                .entry(module)
+                .or_default()
+                .push(rel.to_string());
+        }
+    }
     for files in module_files.values_mut() {
         files.sort();
         files.dedup();

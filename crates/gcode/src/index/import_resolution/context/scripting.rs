@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -55,6 +54,28 @@ pub(super) fn build_lua_module_files(
     module_files
 }
 
+pub(super) fn build_lua_module_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    let mut module_files = HashMap::<String, Vec<String>>::new();
+    for (rel, _) in sources.iter() {
+        if Path::new(rel).extension().and_then(|ext| ext.to_str()) != Some("lua") {
+            continue;
+        }
+        let Some(without_ext) = rel.strip_suffix(".lua") else {
+            continue;
+        };
+        for module in lua_module_names_for_path(without_ext) {
+            module_files
+                .entry(module)
+                .or_default()
+                .push(rel.to_string());
+        }
+    }
+    sort_file_map(&mut module_files);
+    module_files
+}
+
 fn lua_module_names_for_path(without_ext: &str) -> HashSet<String> {
     let mut modules = HashSet::new();
     add_lua_module_names(&mut modules, without_ext);
@@ -88,132 +109,121 @@ pub(in crate::index::import_resolution) fn build_php_symbol_files(
     root_path: &Path,
     candidate_files: &[PathBuf],
 ) -> HashMap<String, Vec<String>> {
-    let mut symbol_files = candidate_files
+    let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
-            let ext = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or_default();
-            if ext != "php" {
-                return None;
-            }
-            let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
-            // A symbol is keyed under both its bare name and (when the file
-            // declares a namespace) its `namespace\name` qualified form, both
-            // lowercased because PHP class/function names are case-insensitive.
-            let mut namespace = None;
-            let mut names = HashSet::new();
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim();
-                if namespace.is_none() {
-                    namespace = line
-                        .strip_prefix("namespace ")
-                        .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string());
-                }
-                for name in php_declared_symbols(line) {
-                    names.insert(name.to_ascii_lowercase());
-                    if let Some(namespace) = namespace.as_deref()
-                        && !namespace.is_empty()
-                    {
-                        names.insert(format!("{namespace}\\{name}").to_ascii_lowercase());
-                    }
-                }
-            }
-            if names.is_empty() {
-                None
-            } else {
-                Some((rel_str, names))
-            }
+            observe_php_source(&rel_str, &std::fs::read(path).ok()?)
         })
-        .fold(
-            HashMap::<String, Vec<String>>::new,
-            |mut acc, (rel, names)| {
-                for name in names {
-                    acc.entry(name).or_default().push(rel.clone());
-                }
-                acc
-            },
-        )
-        .reduce(HashMap::<String, Vec<String>>::new, |mut all, map| {
-            for (name, files) in map {
-                all.entry(name).or_default().extend(files);
-            }
-            all
-        });
-    for files in symbol_files.values_mut() {
-        files.sort();
-        files.dedup();
+        .collect::<Vec<_>>();
+    collect_named_files(observations)
+}
+
+pub(super) fn build_php_symbol_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    collect_named_files(
+        sources
+            .iter()
+            .filter_map(|(rel, source)| observe_php_source(rel, source)),
+    )
+}
+
+fn observe_php_source(rel: &str, source: &[u8]) -> Option<(String, HashSet<String>)> {
+    if Path::new(rel).extension().and_then(|ext| ext.to_str()) != Some("php") {
+        return None;
     }
-    symbol_files
+    let mut namespace = None;
+    let mut names = HashSet::new();
+    for line in BufReader::new(source).lines().map_while(Result::ok) {
+        let line = line.trim();
+        if namespace.is_none() {
+            namespace = line
+                .strip_prefix("namespace ")
+                .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string());
+        }
+        for name in php_declared_symbols(line) {
+            names.insert(name.to_ascii_lowercase());
+            if let Some(namespace) = namespace.as_deref()
+                && !namespace.is_empty()
+            {
+                names.insert(format!("{namespace}\\{name}").to_ascii_lowercase());
+            }
+        }
+    }
+    (!names.is_empty()).then(|| (rel.to_string(), names))
 }
 
 pub(super) fn build_ruby_constant_files(
     root_path: &Path,
     candidate_files: &[PathBuf],
 ) -> HashMap<String, Vec<String>> {
-    let mut constant_files = candidate_files
+    let observations = candidate_files
         .par_iter()
         .filter_map(|path| {
-            let ext = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or_default();
-            if !matches!(ext, "rb" | "rake" | "gemspec") {
-                return None;
-            }
-            let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
             let rel_str = normalize_storage_path(rel);
-            // A Ruby file can declare several top-level constants, and a
-            // `class`/`module` line can appear anywhere, so scan every line
-            // rather than stopping at the first declaration.
-            let mut roots = HashSet::new();
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                let line = line.trim_start();
-                let Some(rest) = line
-                    .strip_prefix("class ")
-                    .or_else(|| line.strip_prefix("module "))
-                else {
-                    continue;
-                };
-                let name = rest
-                    .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '(' | ';' | '#'))
-                    .next()
-                    .unwrap_or_default()
-                    .trim_start_matches("::");
-                if let Some(root) = name.split("::").next()
-                    && is_ruby_constant_name(root)
-                {
-                    roots.insert(root.to_string());
-                }
-            }
-            if roots.is_empty() {
-                None
-            } else {
-                Some((rel_str, roots))
-            }
+            observe_ruby_source(&rel_str, &std::fs::read(path).ok()?)
         })
-        .fold(
-            HashMap::<String, Vec<String>>::new,
-            |mut acc, (rel, roots)| {
-                for root in roots {
-                    acc.entry(root).or_default().push(rel.clone());
-                }
-                acc
-            },
-        )
-        .reduce(HashMap::<String, Vec<String>>::new, |mut all, map| {
-            for (root, files) in map {
-                all.entry(root).or_default().extend(files);
-            }
-            all
-        });
-    for files in constant_files.values_mut() {
+        .collect::<Vec<_>>();
+    collect_named_files(observations)
+}
+
+pub(super) fn build_ruby_constant_files_from_sources(
+    sources: &crate::index::captured_sources::CapturedSources<'_>,
+) -> HashMap<String, Vec<String>> {
+    collect_named_files(
+        sources
+            .iter()
+            .filter_map(|(rel, source)| observe_ruby_source(rel, source)),
+    )
+}
+
+fn observe_ruby_source(rel: &str, source: &[u8]) -> Option<(String, HashSet<String>)> {
+    let ext = Path::new(rel).extension().and_then(|ext| ext.to_str())?;
+    if !matches!(ext, "rb" | "rake" | "gemspec") {
+        return None;
+    }
+    let mut roots = HashSet::new();
+    for line in BufReader::new(source).lines().map_while(Result::ok) {
+        let line = line.trim_start();
+        let Some(rest) = line
+            .strip_prefix("class ")
+            .or_else(|| line.strip_prefix("module "))
+        else {
+            continue;
+        };
+        let name = rest
+            .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '(' | ';' | '#'))
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches("::");
+        if let Some(root) = name.split("::").next()
+            && is_ruby_constant_name(root)
+        {
+            roots.insert(root.to_string());
+        }
+    }
+    (!roots.is_empty()).then(|| (rel.to_string(), roots))
+}
+
+fn collect_named_files(
+    observations: impl IntoIterator<Item = (String, HashSet<String>)>,
+) -> HashMap<String, Vec<String>> {
+    let mut files_by_name = HashMap::<String, Vec<String>>::new();
+    for (rel, names) in observations {
+        for name in names {
+            files_by_name.entry(name).or_default().push(rel.clone());
+        }
+    }
+    sort_file_map(&mut files_by_name);
+    files_by_name
+}
+
+fn sort_file_map(map: &mut HashMap<String, Vec<String>>) {
+    for files in map.values_mut() {
         files.sort();
         files.dedup();
     }
-    constant_files
 }
