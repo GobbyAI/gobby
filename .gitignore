@@ -240,6 +240,7 @@ __marimo__/
 
 screenshots/
 /reports/
+/output/
 bandit_report.json
 coderabbit.md
 ./*.txt
