@@ -24,6 +24,9 @@ investigating the request.
 2. Inventory independently closeable deliverables and their real dependency
    edges. A deliverable has one outcome, one bounded scope, and criteria that let
    it close without waiting for another deliverable.
+   Apply this boundary inside the plan too: a deliverable section becomes exactly
+   one implementation leaf. Split independently verifiable behaviors before
+   drafting; shared files and a common feature name do not make work atomic.
 3. Route one atomic, independently closeable deliverable expected to fit one
    focused agent session to the existing task workflow. Route multiple dependent
    deliverables to a plan. Apply the same boundary to bugs, maintenance, features,

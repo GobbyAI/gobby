@@ -102,6 +102,16 @@ a new same-extension bare-path Target and says `split` or `move` in the body
 paragraph that names both files; that is what the `production-size-growth` lint
 checks, and it keeps the file below the 1,000-line ceiling.
 
+### 11. Every Leaf Is Atomic
+
+Apply the Task Granularity Guidelines in `references/task-structure.md` to
+every deliverable, including after review revisions, consumer sweeps, and added
+acceptance cases. Check for independently verifiable outcomes, not only the
+numeric review triggers. Confirm triggered sections record their
+**Granularity:** decision. Split separable work and account for every original
+acceptance obligation, dependency, and integration check before presentation.
+Base validation proves grammar and coverage; it does not certify leaf size.
+
 ### Verification Output
 
 Report:
@@ -118,6 +128,7 @@ Plan Verification:
 ✓ Derived carriers included for every triggered contract
 ✓ Shared targets are ordered
 ✓ Production size checked
+✓ Every leaf passed the decomposition check
 
 Ready for review.
 ```
@@ -138,6 +149,7 @@ Plan Verification:
 ✓ Derived carriers included for every triggered contract
 ✓ Shared targets are ordered
 ✓ Production size checked
+✓ Every leaf passed the decomposition check
 
 Plan updated. Ready for review.
 ```

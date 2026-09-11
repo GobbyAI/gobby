@@ -36,8 +36,13 @@ registration, and expansion begin only after materialization.
 
 1. Establish the Plan-Coverage grammar required by the plan.
 2. Inventory targets, consumers, carriers, and ordering constraints.
-3. Draft phases and deliverable tasks with category, goal, targets, implementation, validation, and exclusions.
-4. Run deterministic verification and revise the whole plan after every finding.
+3. Call `get_skill_file(name="plan-draft", path="references/task-structure.md")`
+   and apply its Task Granularity Guidelines to every proposed deliverable before
+   drafting. One section becomes one leaf; expansion does not subdivide oversized
+   sections.
+4. Draft phases and deliverable tasks with category, goal, targets, implementation, validation, and exclusions.
+5. Recheck granularity after adding acceptance cases or consumers, then run
+   deterministic verification and revise the whole plan after every finding.
 
 ## Topic Index
 

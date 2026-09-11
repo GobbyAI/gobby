@@ -345,6 +345,26 @@ is a contract violation and must fail pre-flight validation.
 
 ## Task Manifest
 
+### Leaf Granularity
+
+The plan author owns leaf sizing. Each deliverable must have one independently
+verifiable outcome; the decomposition pass in `plan-draft`'s
+`references/task-structure.md` applies before review and after scope revisions.
+More than 6 acceptance items, more than 6 distinct hand-maintained production
+Target files, or 2 independently testable state machines/lifecycle owners
+trigger a recorded **Granularity:** decision. These are qualitative inspection
+triggers, not parser limits or runtime estimates. Independently closeable parts
+must become separate deliverable sections even below those counts.
+
+Preserve every acceptance obligation, give split items IDs under their new
+owning sections, order shared Targets, and re-derive the manifest through the
+normal approval path. Expansion preserves the 1:1 section/entry/leaf invariant;
+it does not split a section. Deterministic validation checks grammar and
+coverage, while authoring and qualitative review check atomicity. Optional
+review does not exempt the author from the decomposition pass.
+
+### Manifest Format
+
 Implementation plans carry a single `## M1 Task Manifest` section at the end of
 the document. The manifest is the typed bridge between the plan's deliverable
 sections and the leaves the deterministic compiler emits at expansion time. The
