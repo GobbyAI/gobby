@@ -13,6 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use gobby_client::app::run_loop::{
     run_scripted_loop, ReconnectAttempt, ReconnectSupervisor, RECONNECT_DELAYS, RENDER_TICK,
 };
+use gobby_client::app::sidebar_model::GIT_REFRESH_INTERVAL;
 use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
@@ -5560,6 +5561,171 @@ async fn sidebar_model_follows_daemon_events() {
         .close(Instant::now() + Duration::from_secs(1))
         .await
         .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// The git refresh is a job: nothing starts before the interval, a run
+/// that fails reports its error and is not retried before the next
+/// interval, and a run that succeeds changes the sidebar only when applied.
+#[tokio::test]
+async fn git_refresh_runs_as_a_deferred_job() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let gets = |path: &str| {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target.starts_with(path))
+            .count()
+    };
+    assert_eq!(gets(status_path), 1, "reconcile fetched the status once");
+
+    workspace.request_git_refresh_if_due();
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "nothing is due right after a fetch"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    mock.enqueue("GET", status_path, 503, json!({"detail": "git is busy"}));
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed");
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "a started refresh is not queued twice"
+    );
+    let error = job.await.expect_err("the daemon refused the status");
+    assert!(
+        matches!(error, DaemonError::Unavailable { .. }),
+        "{error:?}"
+    );
+    assert_eq!(gets(status_path), 2);
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL / 2).await;
+    tokio::time::resume();
+    workspace.request_git_refresh_if_due();
+    assert!(
+        workspace.start_sidebar_refetch().is_none(),
+        "a failed refresh waits out the interval"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL / 2).await;
+    tokio::time::resume();
+    mock.enqueue(
+        "GET",
+        status_path,
+        200,
+        json!({"current_branch": "gobby-22160-tick", "ahead": 3, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+    );
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the next interval passed");
+    let fetch = job.await.expect("status refetched");
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        None,
+        "the rows land only when applied"
+    );
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("gobby-22160-tick")
+    );
+    assert_eq!(gets(status_path), 3);
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// The render tick starts the due git refresh beside the loop and applies
+/// it when it lands, without a drain or a reconcile.
+#[tokio::test]
+async fn the_render_tick_applies_a_background_git_refresh() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue(
+        "GET",
+        status_path,
+        200,
+        json!({"current_branch": "0.5.0", "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+    );
+    // Every later refresh answers with the new branch, however many ticks
+    // run before the loop exits.
+    for _ in 0..8 {
+        mock.enqueue(
+            "GET",
+            status_path,
+            200,
+            json!({"current_branch": "gobby-22160-tick", "ahead": 3, "behind": 0, "repo_path": "/repo", "worktree_count": 0}),
+        );
+    }
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a"]),
+        );
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let _home = pin_tabs(&mut workspace, "project-1", &["terminal-a"]);
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", status_path, 1).await;
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        tokio::time::pause();
+        tokio::time::advance(GIT_REFRESH_INTERVAL + RENDER_TICK * 2).await;
+        tokio::time::resume();
+        wait_for_http_requests(&mock, "GET", status_path, 2).await;
+        settle_live_event().await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("gobby-22160-tick"),
+        "the tick's refresh reached the sidebar"
+    );
     mock.shutdown().await;
 }
 

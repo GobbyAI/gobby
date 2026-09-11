@@ -26,7 +26,7 @@ use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
 use super::sidebar_model::SidebarModel;
-use super::{PaneId, Workspace};
+use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace};
 
 mod actions;
 mod control;
@@ -190,6 +190,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut prefix_armed = false;
     let mut supervisor = ReconnectSupervisor::new();
     let mut reconnect_job = None;
+    let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut last_snapshot = None;
 
     // Draw once before the first select: input outranks the render tick, so
@@ -317,8 +318,17 @@ pub async fn run_live_loop<B: Backend>(
                     loop_error = Some(error);
                 }
             }
+            result = await_sidebar_job(&mut sidebar_job), if sidebar_job.is_some() => {
+                sidebar_job = None;
+                match result {
+                    Ok(fetch) => workspace.apply_sidebar_fetch(fetch),
+                    Err(error) => chrome.status_message = Some(error.to_string()),
+                }
+            }
             result = await_reconnect_job(&mut reconnect_job), if reconnect_job.is_some() => {
                 reconnect_job = None;
+                // A refetch begun on the old connection has nothing to add.
+                sidebar_job = None;
                 let outcome = supervisor.complete_attempt(result);
                 handle_reconnect_outcome(
                     workspace,
@@ -346,8 +356,9 @@ pub async fn run_live_loop<B: Backend>(
                 if !chrome.sidebar.collapsed {
                     workspace.request_git_refresh_if_due();
                 }
-                if let Err(error) = workspace.flush_sidebar_refetches().await {
-                    chrome.status_message = Some(error.to_string());
+                // The refetch runs beside the loop; its branch above applies it.
+                if sidebar_job.is_none() {
+                    sidebar_job = workspace.start_sidebar_refetch();
                 }
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                     workspace.latch_exit(error.to_string());
@@ -384,6 +395,7 @@ pub async fn run_live_loop<B: Backend>(
         tracing::warn!(%error, "could not save the gclient workspace state");
     }
     drop(reconnect_job.take());
+    drop(sidebar_job.take());
     supervisor.cancel(DaemonError::Protocol {
         detail: workspace
             .exit_reason()
@@ -481,6 +493,15 @@ async fn recv_daemon_event(
 }
 
 async fn await_reconnect_job(job: &mut Option<ReconnectFuture>) -> Result<Generation, DaemonError> {
+    match job {
+        Some(job) => job.as_mut().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn await_sidebar_job(
+    job: &mut Option<SidebarFetchFuture>,
+) -> Result<SidebarFetch, DaemonError> {
     match job {
         Some(job) => job.as_mut().await,
         None => std::future::pending().await,

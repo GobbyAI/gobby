@@ -46,7 +46,9 @@ pub async fn focus_project(
     workspace.restore_project(project_id)?;
     workspace.fetch_roster().await?;
     workspace.attach_ready_panes().await?;
-    workspace.fetch_sidebar_rows().await?;
+    // The new project's sessions and runs arrive from a background
+    // refetch; the switch itself never waits on git status.
+    workspace.request_focused_sessions();
     chrome.project_tabs.focus(project_id);
     sync_live_chrome(workspace, chrome);
     save_client_session(workspace, chrome)?;

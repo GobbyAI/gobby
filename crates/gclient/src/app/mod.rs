@@ -13,6 +13,7 @@ pub mod run_loop;
 pub mod sidebar_model;
 
 pub use attach::AttachState;
+pub use live::{SidebarFetch, SidebarFetchFuture};
 pub use live_loop::menu::{
     item_rects, menu_rect, ContextMenuKind, ContextMenuState, MenuAction, MenuItem,
 };

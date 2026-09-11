@@ -1,6 +1,9 @@
 use super::sidebar_model::GIT_REFRESH_INTERVAL;
 use super::*;
-use crate::daemon::message_kind;
+use crate::daemon::{message_kind, ProjectRow, RunRow, SessionRow, SourceStatus, WorktreeRow};
+use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
 
 impl Workspace<LiveDaemon> {
     pub fn live(daemon: LiveDaemon) -> Self {
@@ -207,18 +210,17 @@ impl Workspace<LiveDaemon> {
 
     /// Fetch every sidebar row: projects, then status and worktrees for each
     /// project checked out here, then the focused project's sessions and runs.
+    /// Reconcile and the dialogs wait on this; the render tick never does.
     pub async fn fetch_sidebar_rows(&mut self) -> Result<(), DaemonError> {
         self.sidebar_rows.projects = self.daemon.projects().await?;
-        let checked_out: Vec<String> = self.checked_out_projects();
         self.sidebar_rows.statuses.clear();
         self.sidebar_rows.worktrees.clear();
-        for project in checked_out {
-            self.fetch_project_rows(&project).await?;
-        }
-        self.fetch_focused_sessions().await?;
-        self.pending_sidebar = PendingSidebar::default();
-        self.rebuild_sidebar();
-        Ok(())
+        self.pending_sidebar = PendingSidebar {
+            projects: false,
+            project_rows: self.checked_out_projects().into_iter().collect(),
+            sessions: true,
+        };
+        self.flush_sidebar_refetches().await
     }
 
     fn checked_out_projects(&self) -> Vec<String> {
@@ -230,62 +232,67 @@ impl Workspace<LiveDaemon> {
             .collect()
     }
 
-    /// Refresh one project's source status and worktrees. A project with no
-    /// checkout here has neither, so it is skipped rather than asked.
-    async fn fetch_project_rows(&mut self, project: &str) -> Result<(), DaemonError> {
-        let checked_out = self
-            .sidebar_rows
-            .projects
-            .iter()
-            .any(|row| row.id == project && row.checkout.is_some());
-        if !checked_out {
-            return Ok(());
-        }
-        let status = self.daemon.source_status(project).await?;
-        let worktrees = self.daemon.worktrees(project).await?;
-        self.sidebar_rows
-            .statuses
-            .insert(project.to_string(), status);
-        self.sidebar_rows
-            .worktrees
-            .retain(|row| row.project_id != project);
-        self.sidebar_rows.worktrees.extend(worktrees);
-        self.git_refreshed_at = Instant::now();
-        Ok(())
+    /// Queue a refetch of the focused project's sessions and runs; the next
+    /// render tick starts it.
+    pub fn request_focused_sessions(&mut self) {
+        self.pending_sidebar.sessions = true;
     }
 
-    async fn fetch_focused_sessions(&mut self) -> Result<(), DaemonError> {
-        let Some(project) = self.project_id.clone() else {
-            return Ok(());
-        };
-        let sessions = self.daemon.sessions(&project).await?;
-        let runs = self.daemon.agent_runs(&project).await?;
-        self.sidebar_rows.sessions.insert(project.clone(), sessions);
-        self.sidebar_rows.runs.insert(project, runs);
-        Ok(())
-    }
-
-    /// Run the refetches live events queued since the last flush, at most
-    /// one per route and project however many events asked for it.
-    pub async fn flush_sidebar_refetches(&mut self) -> Result<(), DaemonError> {
+    /// Start the refetches queued since the last start, at most one per
+    /// route and project however many events asked for it, on a clone of
+    /// the daemon so the loop keeps drawing while they run; `None` when
+    /// nothing is queued. The git rows count as refreshed from this moment,
+    /// so a refresh that fails waits out `GIT_REFRESH_INTERVAL` instead of
+    /// retrying every tick. `apply_sidebar_fetch` installs the result.
+    pub fn start_sidebar_refetch(&mut self) -> Option<SidebarFetchFuture> {
         let pending = std::mem::take(&mut self.pending_sidebar);
-        if pending.projects {
-            self.sidebar_rows.projects = self.daemon.projects().await?;
+        if !pending.projects && !pending.sessions && pending.project_rows.is_empty() {
+            return None;
         }
-        for project in &pending.project_rows {
-            self.fetch_project_rows(project).await?;
+        if !pending.project_rows.is_empty() {
+            self.git_refreshed_at = Instant::now();
         }
-        if pending.sessions {
-            self.fetch_focused_sessions().await?;
+        let request = SidebarRequest {
+            projects: pending.projects,
+            project_rows: pending.project_rows,
+            checked_out: self.checked_out_projects(),
+            sessions: pending.sessions.then(|| self.project_id.clone()).flatten(),
+        };
+        let daemon = self.daemon.clone();
+        Some(Box::pin(async move { request.run(&daemon).await }))
+    }
+
+    /// Install the rows one `start_sidebar_refetch` job produced.
+    pub fn apply_sidebar_fetch(&mut self, fetch: SidebarFetch) {
+        if let Some(projects) = fetch.projects {
+            self.sidebar_rows.projects = projects;
         }
-        if pending.projects || pending.sessions || !pending.project_rows.is_empty() {
-            self.rebuild_sidebar();
+        for (project, status, worktrees) in fetch.project_rows {
+            self.sidebar_rows
+                .worktrees
+                .retain(|row| row.project_id != project);
+            self.sidebar_rows.worktrees.extend(worktrees);
+            self.sidebar_rows.statuses.insert(project, status);
+        }
+        if let Some((project, sessions, runs)) = fetch.sessions {
+            self.sidebar_rows.sessions.insert(project.clone(), sessions);
+            self.sidebar_rows.runs.insert(project, runs);
+        }
+        self.rebuild_sidebar();
+    }
+
+    /// Run the queued refetches inline and install them, for the reconcile
+    /// and drain paths where a stale sidebar would be worse than the wait.
+    pub async fn flush_sidebar_refetches(&mut self) -> Result<(), DaemonError> {
+        if let Some(job) = self.start_sidebar_refetch() {
+            let fetch = job.await?;
+            self.apply_sidebar_fetch(fetch);
         }
         Ok(())
     }
 
     /// Queue a status refresh for every checked-out project once the last
-    /// one is older than `GIT_REFRESH_INTERVAL`; the caller flushes it.
+    /// one is older than `GIT_REFRESH_INTERVAL`; the render tick starts it.
     pub fn request_git_refresh_if_due(&mut self) {
         if self.git_refreshed_at.elapsed() < GIT_REFRESH_INTERVAL {
             return;
@@ -557,18 +564,60 @@ fn is_cursor_error(error: &DaemonError) -> bool {
     detail.contains("cursor_stale") || detail.contains("invalid cursor")
 }
 
-/// Whether a `/api/terminals` row advertises enough to attempt a direct attach.
-///
-/// The row's `attach` block is a flat `AttachLocator` (`asdict`, not
-/// `direct_block`), and identity in it is backend shaped: a native terminal is
-/// named by its `host_terminal_id`, while a tmux pane is named by its physical
-/// locator — socket, pane id, and the server generation that keeps a recycled
-/// pane id unambiguous. The frame host draws the same line: `embed::attach_frame`
-/// ignores `host_terminal_id` outright once a pane locator is present.
-///
-/// The daemon's row producer leaves `host_terminal_id` null for tmux, so
-/// demanding it here matched no real tmux row and silently downgraded every one
-/// of them to proxy.
+/// Rows one background sidebar refetch produced; `apply_sidebar_fetch`
+/// installs them.
+#[derive(Debug, Default)]
+pub struct SidebarFetch {
+    projects: Option<Vec<ProjectRow>>,
+    project_rows: Vec<(String, SourceStatus, Vec<WorktreeRow>)>,
+    sessions: Option<(String, Vec<SessionRow>, Vec<RunRow>)>,
+}
+
+/// A running sidebar refetch; the live loop polls it from a select branch.
+pub type SidebarFetchFuture =
+    Pin<Box<dyn Future<Output = Result<SidebarFetch, DaemonError>> + 'static>>;
+
+/// What one refetch asks the daemon for.
+struct SidebarRequest {
+    projects: bool,
+    project_rows: BTreeSet<String>,
+    /// The projects checked out here when the request was made; a refetched
+    /// project list replaces it. A project with no checkout has no git rows.
+    checked_out: Vec<String>,
+    /// The focused project whose sessions and runs are wanted.
+    sessions: Option<String>,
+}
+
+impl SidebarRequest {
+    async fn run(self, daemon: &LiveDaemon) -> Result<SidebarFetch, DaemonError> {
+        let mut fetch = SidebarFetch::default();
+        let mut checked_out = self.checked_out;
+        if self.projects {
+            let projects = daemon.projects().await?;
+            checked_out = projects
+                .iter()
+                .filter(|row| row.checkout.is_some())
+                .map(|row| row.id.clone())
+                .collect();
+            fetch.projects = Some(projects);
+        }
+        for project in self.project_rows {
+            if !checked_out.contains(&project) {
+                continue;
+            }
+            let status = daemon.source_status(&project).await?;
+            let worktrees = daemon.worktrees(&project).await?;
+            fetch.project_rows.push((project, status, worktrees));
+        }
+        if let Some(project) = self.sessions {
+            let sessions = daemon.sessions(&project).await?;
+            let runs = daemon.agent_runs(&project).await?;
+            fetch.sessions = Some((project, sessions, runs));
+        }
+        Ok(fetch)
+    }
+}
+
 /// The terminal's own name. A `null` title and a `""` title mean the same thing
 /// to the chrome, so both collapse to the empty string `display_name` handles.
 fn row_title(row: &TerminalRow) -> String {
@@ -594,6 +643,18 @@ fn row_is_external(row: &TerminalRow) -> bool {
     row.fields.get("ownership").and_then(Value::as_str) == Some("external")
 }
 
+/// Whether a `/api/terminals` row advertises enough to attempt a direct attach.
+///
+/// The row's `attach` block is a flat `AttachLocator` (`asdict`, not
+/// `direct_block`), and identity in it is backend shaped: a native terminal is
+/// named by its `host_terminal_id`, while a tmux pane is named by its physical
+/// locator — socket, pane id, and the server generation that keeps a recycled
+/// pane id unambiguous. The frame host draws the same line: `embed::attach_frame`
+/// ignores `host_terminal_id` outright once a pane locator is present.
+///
+/// The daemon's row producer leaves `host_terminal_id` null for tmux, so
+/// demanding it here matched no real tmux row and silently downgraded every one
+/// of them to proxy.
 fn row_has_direct_locator(row: &TerminalRow) -> bool {
     let Some(attach) = row.fields.get("attach").and_then(Value::as_object) else {
         return false;

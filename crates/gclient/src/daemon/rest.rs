@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use std::time::Duration;
-use tokio::time::timeout;
+use tokio::time::{timeout_at, Instant};
 
 #[derive(Debug, Clone)]
 pub(super) struct RestClient {
@@ -168,8 +168,11 @@ impl RestClient {
         Ok(url)
     }
 
+    /// One `deadline` bounds the whole call, connecting through reading the
+    /// body, so a slow daemon parks a caller for `REQUEST_DEADLINE` at most.
     async fn send(
         &self,
+        deadline: Instant,
         method: Method,
         url: Url,
         body: Option<Value>,
@@ -178,14 +181,14 @@ impl RestClient {
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = timeout(REQUEST_DEADLINE, request.send())
+        let response = timeout_at(deadline, request.send())
             .await
             .map_err(|_| DaemonError::Timeout)?
             .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
         if response.status().is_success() {
             return Ok(response);
         }
-        Err(status_error(response).await)
+        Err(status_error(deadline, response).await)
     }
 
     async fn json<T: DeserializeOwned>(
@@ -194,8 +197,9 @@ impl RestClient {
         url: Url,
         body: Option<Value>,
     ) -> Result<T, DaemonError> {
-        let response = self.send(method, url, body).await?;
-        timeout(REQUEST_DEADLINE, response.json())
+        let deadline = Instant::now() + REQUEST_DEADLINE;
+        let response = self.send(deadline, method, url, body).await?;
+        timeout_at(deadline, response.json())
             .await
             .map_err(|_| DaemonError::Timeout)?
             .map_err(protocol)
@@ -207,7 +211,8 @@ impl RestClient {
         url: Url,
         body: Option<Value>,
     ) -> Result<(), DaemonError> {
-        self.send(method, url, body).await?;
+        let deadline = Instant::now() + REQUEST_DEADLINE;
+        self.send(deadline, method, url, body).await?;
         Ok(())
     }
 }
@@ -254,7 +259,7 @@ fn protocol(error: impl std::fmt::Display) -> DaemonError {
     }
 }
 
-async fn status_error(response: Response) -> DaemonError {
+async fn status_error(deadline: Instant, response: Response) -> DaemonError {
     let status = response.status();
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         return DaemonError::Unauthorized;
@@ -271,7 +276,7 @@ async fn status_error(response: Response) -> DaemonError {
             .map(Duration::from_secs);
         return DaemonError::Unavailable { retry_after };
     }
-    let detail = timeout(REQUEST_DEADLINE, response.text())
+    let detail = timeout_at(deadline, response.text())
         .await
         .ok()
         .and_then(Result::ok)
@@ -279,3 +284,7 @@ async fn status_error(response: Response) -> DaemonError {
         .unwrap_or_else(|| format!("daemon returned HTTP {status}"));
     DaemonError::Protocol { detail }
 }
+
+#[cfg(test)]
+#[path = "rest/tests.rs"]
+mod tests;
