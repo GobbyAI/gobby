@@ -8,7 +8,8 @@ use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::attention_label;
 use gobby_client::ui::dialogs::Dialog;
-use gobby_client::ui::sidebar::{agents_body_rect, expanded_sections};
+use gobby_client::ui::hit::SidebarSection;
+use gobby_client::ui::sidebar::{expanded_sections, section_body_rect};
 use gobby_client::ui::{render_workspace, Chrome, Mode};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -317,15 +318,18 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .await
         .expect("install initial attachments");
 
-    // Where the loop draws the two agent rows: the blocked session on the
-    // first two body rows of the agents section, the idle shell under it.
-    // Wide enough that the respond dialog leaves the sidebar uncovered.
-    let area = Rect::new(0, 0, 120, 24);
+    // Where the loop draws the two rows: the blocked session on the first
+    // body rows of the sessions section, the idle shell (an agent run) on
+    // the agents section's. Wide enough that the respond dialog leaves the
+    // sidebar uncovered.
+    let area = Rect::new(0, 0, 120, 30);
     let mut probe = Chrome::dark();
     probe.compute_view(&workspace, area);
-    let (_, agents) = expanded_sections(probe.view.sidebar_rect, None);
-    let body = agents_body_rect(agents, false);
-    let (column, blocked_row, idle_row) = (body.x + 1, body.y, body.y + 2);
+    let sections = expanded_sections(probe.view.sidebar_rect, [None; 3]);
+    let body =
+        |section: SidebarSection| section_body_rect(section, sections[section.index()], false);
+    let (sessions, agents) = (body(SidebarSection::Sessions), body(SidebarSection::Agents));
+    let (column, blocked_row, idle_row) = (sessions.x + 1, sessions.y, agents.y);
 
     let mut terminal =
         Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");

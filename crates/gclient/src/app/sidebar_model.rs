@@ -81,6 +81,9 @@ pub struct AgentEntry {
     pub task_ref: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
     pub session_ref: Option<String>,
+    /// An agent run (the roster's `run:` entries), listed under agents;
+    /// every other entry is an interactive session.
+    pub managed: bool,
     pub worktree_id: Option<String>,
     pub lifecycle_status: Option<String>,
     /// The terminal row's daemon state; `orphaned` rows have lost their host.
@@ -190,6 +193,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     .or_else(|| run.and_then(|(_, run)| run.model.clone())),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
+                managed: entry.run_id.is_some() || entry.entry_id.starts_with("run:"),
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),

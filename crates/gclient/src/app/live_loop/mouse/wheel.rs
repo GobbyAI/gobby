@@ -2,8 +2,8 @@
 
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
-use crate::ui::hit::{Hit, SidebarSection};
-use crate::ui::sidebar::section_metrics;
+use crate::ui::hit::{sidebar_section_at, Hit, SidebarSection};
+use crate::ui::sidebar::{agent_section, section_metrics};
 use crate::ui::{Chrome, WorkspaceView};
 
 use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LINES};
@@ -19,9 +19,9 @@ use super::{focus_active_tab, forward, on_roster, MouseOutcome, MOUSE_SCROLL_LIN
 /// wrapping at either end (herdr's tab-bar wheel), and focuses the new tab's
 /// pane the way a click would. Over the sidebar it scrolls the list under
 /// the pointer by `MOUSE_SCROLL_LINES` rows (herdr `scroll_workspace_list`):
-/// a row or scrollbar names its list, anything else goes by which side of
-/// the section rule the pointer is on. A list that fits stays put, and the
-/// collapsed rail has nothing to scroll.
+/// a row or scrollbar names its list, anything else goes by the section
+/// rules above the pointer. A list that fits stays put, and the collapsed
+/// rail has nothing to scroll.
 ///
 /// Over a pane that was not reported to, its border or its scrollbar, the
 /// notch goes by the pane's modes (herdr `forward_pane_wheel`): an
@@ -69,34 +69,33 @@ pub(super) fn wheel<W: WorkspaceView>(
             chrome.tab_scroll_follow_active = true;
             focus_active_tab(chrome, false)
         }
-        Hit::Project(_)
+        Hit::Machine(_)
+        | Hit::Project(_)
         | Hit::Worktree(_)
         | Hit::GroupToggle(_)
         | Hit::ProjectsNew
         | Hit::ProjectsMenu
         | Hit::Agent(_)
-        | Hit::MachineFilter
         | Hit::AgentSort
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarToggle
         | Hit::SidebarDivider
-        | Hit::SidebarSectionDivider => {
+        | Hit::SidebarSectionDivider(_) => {
             if chrome.sidebar.collapsed {
                 return MouseOutcome::Handled;
             }
             let section = match hit {
+                Hit::Machine(_) => SidebarSection::Machines,
                 Hit::Project(_)
                 | Hit::Worktree(_)
                 | Hit::GroupToggle(_)
                 | Hit::ProjectsNew
                 | Hit::ProjectsMenu => SidebarSection::Projects,
-                Hit::Agent(_) | Hit::MachineFilter | Hit::AgentSort => SidebarSection::Agents,
+                Hit::Agent(entry_id) => agent_section(ws, &entry_id),
+                Hit::AgentSort => SidebarSection::Agents,
                 Hit::SidebarScrollbar { section, .. } => section,
-                _ => match chrome.view.sidebar_section_divider_y {
-                    Some(rule) if row >= rule => SidebarSection::Agents,
-                    _ => SidebarSection::Projects,
-                },
+                _ => sidebar_section_at(&chrome.view, row),
             };
             let metrics = section_metrics(ws, chrome, section);
             let max = metrics.max_offset_from_bottom;

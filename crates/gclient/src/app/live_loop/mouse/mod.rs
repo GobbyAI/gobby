@@ -51,8 +51,9 @@ pub enum MouseGesture {
     SplitDrag { border: usize },
     /// The sidebar edge is being dragged to resize the sidebar.
     SidebarDrag,
-    /// The projects/agents divider is being dragged.
-    SectionDrag,
+    /// A section rule is being dragged, as an index into
+    /// `ViewState::sidebar_section_divider_ys`.
+    SectionDrag { divider: usize },
     /// A sidebar section's scrollbar thumb is being dragged.
     SidebarScrollbarDrag {
         section: SidebarSection,

@@ -1,37 +1,58 @@
 // upstream: herdr v0.8.0 src/ui/sidebar.rs
-//! Sidebar: project cards on top, agent rows below, collapsed rail.
+//! Sidebar: the machines, the project cards, the interactive sessions and
+//! the agent runs, top to bottom, plus the collapsed rail.
 //!
 //! herdr geometry kept as is: a `│` separator column on the right, a
-//! two-row projects header with a footer row for the `«` toggle, a
-//! three-row agents header (rule + title), and the collapsed rail split in
-//! half around a `─` divider. The projects section itself is `projects`.
+//! two-row header on the first section (title, blank) and a three-row
+//! header on the others (rule, title, blank), the projects footer row for
+//! `new`/`menu`, the `«` toggle on the last row, and the collapsed rail
+//! stacking the same four lists around `─` rules.
 
 pub mod agents;
+pub mod machines;
 pub mod projects;
 
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, SidebarState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
-use crate::ui::sidebar_rows::{project_rows, RowKind, SidebarRow};
+use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
+use crate::ui::sidebar_rows::{project_rows, row_line, row_second_line, RowKind, SidebarRow};
 use crate::ui::status::state_dot;
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
+use std::ops::RangeInclusive;
 
 pub use agents::{
-    agent_blocked, agent_label, agent_rows, attention_order, machine_filter_label,
-    next_machine_filter, AGENTS_HEADER_ROWS, ALL_MACHINES,
+    agent_blocked, agent_label, agent_rows, agent_section, attention_order, next_machine_filter,
+    ALL_MACHINES,
 };
-pub use projects::{project_list_metrics, projects_body_rect};
+pub use machines::{local_hostname, machine_rows, MACHINES_HEADER_ROWS};
+pub use projects::project_list_metrics;
 
-/// Projects share of the sidebar when `SidebarState::section_split` is unset.
-const DEFAULT_SECTION_SPLIT: f32 = 0.5;
+/// Rows of the machines section while its rule is unset: the header and
+/// two rows.
+const DEFAULT_MACHINES_ROWS: u16 = 4;
+/// Projects share of the rows under the machines section while the
+/// projects/sessions rule is unset (herdr's default section split).
+const DEFAULT_PROJECTS_SHARE: f32 = 0.5;
+/// The least a section keeps while a rule is dragged over it: its header
+/// and one row (herdr's three-row clamp).
+pub const MIN_SECTION_ROWS: u16 = 3;
+/// herdr `AGENT_PANEL_HEADER_ROWS`: the rule, the title row, one blank.
+pub const RULED_HEADER_ROWS: u16 = 3;
+/// Rows the collapsed rail needs before it draws its rules: one machine
+/// row, three rules, one row per list and the toggle row.
+const RAIL_MIN_ROWS: u16 = 8;
 
+/// Rects the sidebar renderers drew, for `ViewState`.
 #[derive(Debug, Clone, Default)]
 pub struct SidebarHits {
+    /// Machine rows, by machine id.
+    pub machines: Vec<(String, Rect)>,
     /// Project cards, by project id (both lines of the card).
     pub projects: Vec<(String, Rect)>,
     /// Worktree rows, by worktree id.
@@ -40,15 +61,11 @@ pub struct SidebarHits {
     pub group_toggles: Vec<(String, Rect)>,
     pub projects_new: Option<Rect>,
     pub projects_menu: Option<Rect>,
-    /// Scrollbar lane beside the projects, when one was drawn.
-    pub projects_scrollbar: Option<Rect>,
-    /// Agent rows, by attention entry id.
+    /// Session and agent rows, by attention entry id.
     pub agents: Vec<(String, Rect)>,
-    /// Scrollbar lane beside the agents, when one was drawn.
-    pub agents_scrollbar: Option<Rect>,
-    /// The machine filter label of the agents header, when more than one
-    /// machine is known.
-    pub machine_filter: Option<Rect>,
+    /// Scrollbar lane beside each section that overflowed, by
+    /// `SidebarSection::index`.
+    pub scrollbars: [Option<Rect>; 4],
     /// The `grouped`/`priority` sort label of the agents header, when the
     /// mouse is captured.
     pub agent_sort: Option<Rect>,
@@ -56,18 +73,29 @@ pub struct SidebarHits {
     pub toggle: Option<Rect>,
 }
 
-/// Screen row of the `─` rule between the projects and agents sections,
-/// when the sidebar draws one (the collapsed rail's divider or the agents
-/// header's rule).
-pub fn section_divider_y(area: Rect, sidebar: &SidebarState) -> Option<u16> {
+/// Screen rows of the `─` rules above the projects, sessions and agents
+/// sections, each drawn only when its section has room for the rule.
+pub fn section_divider_ys(area: Rect, sidebar: &SidebarState) -> [Option<u16>; 3] {
     if sidebar.collapsed {
         return collapsed_sections(area).1;
     }
-    let (_, agents) = expanded_sections(area, sidebar.section_split);
-    (agents.width > 0 && agents.height >= AGENTS_HEADER_ROWS).then_some(agents.y)
+    let sections = expanded_sections(area, sidebar.section_splits);
+    std::array::from_fn(|index| {
+        let section = sections[index + 1];
+        (section.width > 0 && section.height >= RULED_HEADER_ROWS).then_some(section.y)
+    })
 }
 
-/// Expanded sidebar; returns the row hit areas.
+/// Rows of `section`'s header: the title and a blank on the first section,
+/// a rule above them on the others.
+pub fn header_rows(section: SidebarSection) -> u16 {
+    if section == SidebarSection::Machines {
+        MACHINES_HEADER_ROWS
+    } else {
+        RULED_HEADER_ROWS
+    }
+}
+
 pub fn render_sidebar<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
@@ -94,14 +122,19 @@ pub fn render_sidebar<W: WorkspaceView>(
         },
     );
 
-    let (projects_area, agents_area) = expanded_sections(area, chrome.sidebar.section_split);
-    projects::render_projects(frame, projects_area, ws, chrome, is_navigating, &mut hits);
-    agents::render_agents(frame, agents_area, ws, chrome, &mut hits);
+    let sections = expanded_sections(area, chrome.sidebar.section_splits);
+    machines::render_machines(frame, sections[0], ws, chrome, &mut hits);
+    projects::render_projects(frame, sections[1], ws, chrome, is_navigating, &mut hits);
+    for section in [SidebarSection::Sessions, SidebarSection::Agents] {
+        let area = sections[section.index()];
+        agents::render_agents(frame, area, section, ws, chrome, &mut hits);
+    }
     hits.toggle = render_toggle(frame, expanded_toggle_rect(area), "«", p);
     hits
 }
 
-/// Collapsed rail (`COLLAPSED_WIDTH` columns): state dots and indexes only.
+/// The collapsed rail: a dot per machine, then the numbered project cards,
+/// sessions and agent runs, each list under a `─` rule.
 pub fn render_collapsed_sidebar<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
@@ -128,80 +161,31 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
         },
     );
 
-    let (projects_area, divider_y, agents_area) = collapsed_sections(area);
-    if projects_area == Rect::default() {
-        hits.toggle = render_toggle(frame, collapsed_toggle_rect(area), "»", p);
-        return hits;
-    }
-
-    let cards = project_rows(ws, chrome)
-        .into_iter()
-        .filter(|row| row.kind == RowKind::Project);
-    for (index, row) in cards.enumerate() {
-        let y = projects_area.y + index as u16;
-        if y >= projects_area.y + projects_area.height {
-            break;
+    let (sections, dividers) = collapsed_sections(area);
+    for section in SidebarSection::ALL {
+        let rect = sections[section.index()];
+        if rect == Rect::default() {
+            continue;
         }
-        let (icon, icon_color) = state_dot(row.state, p);
-        let selected = row.selected && is_navigating;
-        let active = row.active;
-        let (row_style, num_style) = if selected {
-            (
-                Style::default().bg(p.surface1),
-                Style::default().fg(p.overlay1).bg(p.surface1),
-            )
-        } else if active {
-            (
-                Style::default().bg(p.surface_dim),
-                Style::default().fg(p.text).bg(p.surface_dim),
-            )
-        } else {
-            (Style::default(), Style::default().fg(p.overlay0))
-        };
-        let rect = Rect::new(projects_area.x, y, projects_area.width, 1);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                // herdr pads single digits and keeps the dot at column 2 for
-                // two-digit positions (`10·`) instead of clipping it.
-                Span::styled(format!("{:<2}", index + 1), num_style),
-                Span::styled(icon, Style::default().fg(icon_color)),
-            ]))
-            .style(row_style),
-            rect,
-        );
-        hits.projects.push((row.id, rect));
+        let mut rows = section_rows(ws, chrome, section);
+        let cards = section == SidebarSection::Projects;
+        if cards {
+            // The rail numbers the cards; worktree rows stay behind them.
+            rows.retain(|row| row.kind == RowKind::Project);
+        }
+        let numbered = section != SidebarSection::Machines;
+        let drawn = render_rail_list(frame, rect, &rows, numbered, cards, is_navigating, p);
+        match section {
+            SidebarSection::Machines => hits.machines = drawn,
+            SidebarSection::Projects => hits.projects = drawn,
+            SidebarSection::Sessions | SidebarSection::Agents => hits.agents.extend(drawn),
+        }
     }
-
-    if let Some(divider_y) = divider_y {
-        let buf = frame.buffer_mut();
-        for x in projects_area.x..projects_area.x + projects_area.width {
+    let buf = frame.buffer_mut();
+    for divider_y in dividers.into_iter().flatten() {
+        for x in area.x..area.x + area.width.saturating_sub(1) {
             buf[(x, divider_y)].set_symbol("─");
             buf[(x, divider_y)].set_style(Style::default().fg(p.surface_dim));
-        }
-    }
-
-    let content = Rect::new(
-        agents_area.x,
-        agents_area.y,
-        agents_area.width,
-        agents_area.height.saturating_sub(1),
-    );
-    if content != Rect::default() {
-        for (index, row) in agent_rows(ws, chrome).iter().enumerate() {
-            let y = content.y + index as u16;
-            if y >= content.y + content.height {
-                break;
-            }
-            let (icon, icon_color) = state_dot(row.state, p);
-            let rect = Rect::new(content.x, y, content.width, 1);
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(format!("{:<2}", index + 1), Style::default().fg(p.overlay0)),
-                    Span::styled(icon, Style::default().fg(icon_color)),
-                ])),
-                rect,
-            );
-            hits.agents.push((row.id.clone(), rect));
         }
     }
 
@@ -209,7 +193,61 @@ pub fn render_collapsed_sidebar<W: WorkspaceView>(
     hits
 }
 
-/// herdr `workspace_list_scroll_metrics` for fixed one-line rows.
+/// One rail row per entry of `rows`, as far as `rect` reaches: the list
+/// position when `numbered` (herdr pads single digits and keeps the dot at
+/// column 2 for two-digit positions, `10·`, instead of clipping it) and the
+/// state dot. `highlight` paints the active card row, and the selected one
+/// while `navigating`.
+fn render_rail_list(
+    frame: &mut Frame,
+    rect: Rect,
+    rows: &[SidebarRow],
+    numbered: bool,
+    highlight: bool,
+    navigating: bool,
+    p: &Palette,
+) -> Vec<(String, Rect)> {
+    let mut drawn = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let y = rect.y + index as u16;
+        if y >= rect.bottom() {
+            break;
+        }
+        let (icon, icon_color) = state_dot(row.state, p);
+        let (row_style, num_style) = if highlight && navigating && row.selected {
+            (
+                Style::default().bg(p.surface1),
+                Style::default().fg(p.overlay1).bg(p.surface1),
+            )
+        } else if highlight && row.active {
+            (
+                Style::default().bg(p.surface_dim),
+                Style::default().fg(p.text).bg(p.surface_dim),
+            )
+        } else {
+            (Style::default(), Style::default().fg(p.overlay0))
+        };
+        let number = if numbered {
+            format!("{:<2}", index + 1)
+        } else {
+            "  ".to_string()
+        };
+        let row_rect = Rect::new(rect.x, y, rect.width, 1);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(number, num_style),
+                Span::styled(icon, Style::default().fg(icon_color)),
+            ]))
+            .style(row_style),
+            row_rect,
+        );
+        drawn.push((row.id.clone(), row_rect));
+    }
+    drawn
+}
+
+/// Scroll metrics for a list of `len` one-row entries in a `viewport`-row
+/// body, clamping the requested top row to the last page.
 pub fn list_metrics(len: usize, viewport: u16, requested: usize) -> ScrollMetrics {
     let viewport = usize::from(viewport);
     let max_scroll = len.saturating_sub(viewport);
@@ -221,42 +259,129 @@ pub fn list_metrics(len: usize, viewport: u16, requested: usize) -> ScrollMetric
     }
 }
 
-/// Scroll metrics of one list section as the last frame laid it out: the
-/// rows it holds against the body rows `chrome.view.sidebar_rect` gives it.
-/// The mouse reads these to scroll the list the renderer will draw next.
+/// The rows `section` lists: the machines, the project cards with their
+/// worktrees, the interactive sessions or the agent runs.
+pub fn section_rows<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    section: SidebarSection,
+) -> Vec<SidebarRow> {
+    match section {
+        SidebarSection::Machines => machine_rows(ws, chrome),
+        SidebarSection::Projects => project_rows(ws, chrome),
+        SidebarSection::Sessions | SidebarSection::Agents => agent_rows(ws, chrome, section),
+    }
+}
+
+/// Scroll metrics of `section` as the last frame laid it out: its rows
+/// against its body height and the section's scroll position.
 pub fn section_metrics<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
     section: SidebarSection,
 ) -> ScrollMetrics {
-    let (projects, agents) =
-        expanded_sections(chrome.view.sidebar_rect, chrome.sidebar.section_split);
-    match section {
-        SidebarSection::Projects => {
-            let heights: Vec<u16> = project_rows(ws, chrome)
-                .iter()
-                .map(SidebarRow::height)
-                .collect();
-            project_list_metrics(
-                &heights,
-                projects_body_rect(projects, false).height,
-                chrome.sidebar.scroll,
-            )
-        }
-        SidebarSection::Agents => {
-            let heights: Vec<u16> = agent_rows(ws, chrome)
-                .iter()
-                .map(SidebarRow::height)
-                .collect();
-            project_list_metrics(
-                &heights,
-                agents_body_rect(agents, false).height,
-                chrome.sidebar.agents_scroll,
-            )
-        }
-    }
+    let area =
+        expanded_sections(chrome.view.sidebar_rect, chrome.sidebar.section_splits)[section.index()];
+    let heights: Vec<u16> = section_rows(ws, chrome, section)
+        .iter()
+        .map(SidebarRow::height)
+        .collect();
+    project_list_metrics(
+        &heights,
+        section_body_rect(section, area, false).height,
+        chrome.sidebar.scroll(section),
+    )
 }
 
+/// Draw `section`'s header into the top of `area`: the `─` rule on every
+/// section but the first, then the bold title. `None` when the area is
+/// too short for the header, in which case the section draws nothing.
+fn render_header(
+    frame: &mut Frame,
+    area: Rect,
+    section: SidebarSection,
+    p: &Palette,
+) -> Option<Rect> {
+    if area.width == 0 || area.height < header_rows(section) {
+        return None;
+    }
+    let mut y = area.y;
+    if section != SidebarSection::Machines {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "─".repeat(usize::from(area.width)),
+                Style::default().fg(p.surface_dim),
+            )),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        y += 1;
+    }
+    let title_row = Rect::new(area.x, y, area.width, 1);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            section.title(),
+            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+        )),
+        title_row,
+    );
+    Some(title_row)
+}
+
+/// Draw `rows` as `section`'s list under its header, packed from the
+/// section's scroll position and clipped to whole rows, with the scrollbar
+/// lane when they overflow. Returns the row rects by id and the lane.
+fn render_section_rows(
+    frame: &mut Frame,
+    area: Rect,
+    section: SidebarSection,
+    rows: &[SidebarRow],
+    chrome: &Chrome,
+) -> (Vec<(String, Rect)>, Option<Rect>) {
+    let p = &chrome.palette;
+    let heights: Vec<u16> = rows.iter().map(SidebarRow::height).collect();
+    let viewport = section_body_rect(section, area, false).height;
+    let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.scroll(section));
+    let has_scrollbar = should_show_scrollbar(metrics);
+    let body = section_body_rect(section, area, has_scrollbar);
+    let mut drawn = Vec::new();
+    if body.width > 0 && body.height > 0 {
+        let scroll = metrics
+            .max_offset_from_bottom
+            .saturating_sub(metrics.offset_from_bottom);
+        let mut y = body.y;
+        for row in rows.iter().skip(scroll) {
+            let height = row.height();
+            if y + height > body.bottom() {
+                break;
+            }
+            let row_style = if row.active {
+                Style::default().bg(p.surface_dim)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(row_line(row, body.width, chrome)).style(row_style),
+                Rect::new(body.x, y, body.width, 1),
+            );
+            if height > 1 {
+                frame.render_widget(
+                    Paragraph::new(row_second_line(row, body.width, chrome)).style(row_style),
+                    Rect::new(body.x, y + 1, body.width, 1),
+                );
+            }
+            drawn.push((row.id.clone(), Rect::new(body.x, y, body.width, height)));
+            y += height;
+        }
+    }
+    let lane = has_scrollbar.then(|| {
+        let track = scrollbar_track(area, body);
+        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+        track
+    });
+    (drawn, lane)
+}
+
+/// The scrollbar lane: the section's last column beside `body`.
 fn scrollbar_track(area: Rect, body: Rect) -> Rect {
     Rect::new(
         area.x + area.width.saturating_sub(1),
@@ -266,72 +391,138 @@ fn scrollbar_track(area: Rect, body: Rect) -> Rect {
     )
 }
 
-/// herdr `sidebar_section_heights`; `split` overrides the ratio with an
-/// explicit projects row count, clamped the same way.
-fn section_heights(total_h: u16, split: Option<u16>) -> (u16, u16) {
-    if total_h == 0 {
-        return (0, 0);
+/// Where each section starts in a `total_h`-row sidebar, as row offsets
+/// with the total last: `bounds[i]..bounds[i + 1]` is section `i`. A
+/// dragged rule (`splits[i]`, the first row of section `i + 1`) is kept
+/// within `MIN_SECTION_ROWS` of its neighbours; an unset one takes the
+/// default share. Under four times the minimum the rows are shared evenly,
+/// the remainder to the top.
+pub fn section_bounds(total_h: u16, splits: [Option<u16>; 3]) -> [u16; 5] {
+    let count = SidebarSection::ALL.len() as u16;
+    let mut bounds = [0, 0, 0, 0, total_h];
+    if total_h < MIN_SECTION_ROWS * count {
+        let (share, extra) = (total_h / count, total_h % count);
+        for index in 0..usize::from(count) {
+            bounds[index + 1] = bounds[index] + share + u16::from((index as u16) < extra);
+        }
+        return bounds;
     }
-    if total_h < 6 {
-        let projects_h = total_h.div_ceil(2);
-        return (projects_h, total_h.saturating_sub(projects_h));
+    for divider in 0..3 {
+        let default = match divider {
+            0 => DEFAULT_MACHINES_ROWS,
+            1 => {
+                let rest = f32::from(total_h - bounds[1]);
+                bounds[1] + (rest * DEFAULT_PROJECTS_SHARE).round() as u16
+            }
+            _ => bounds[2] + (total_h - bounds[2]) / 2,
+        };
+        let (low, high) = divider_limits(&bounds, total_h, divider);
+        bounds[divider + 1] = splits[divider].unwrap_or(default).clamp(low, high);
     }
-    let projects_h =
-        split.unwrap_or_else(|| (f32::from(total_h) * DEFAULT_SECTION_SPLIT).round() as u16);
-    let projects_h = projects_h.clamp(3, total_h.saturating_sub(3));
-    (projects_h, total_h.saturating_sub(projects_h))
+    bounds
 }
 
-/// herdr `expanded_sidebar_sections`: content excludes the separator column.
-pub fn expanded_sections(area: Rect, split: Option<u16>) -> (Rect, Rect) {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
-    if content.width == 0 || content.height == 0 {
-        return (Rect::default(), Rect::default());
-    }
-    let (projects_h, agents_h) = section_heights(content.height, split);
+/// The rows rule `divider` may start its section on, given the rules
+/// above it: past the section above's minimum and leaving every section
+/// below its own.
+fn divider_limits(bounds: &[u16; 5], total_h: u16, divider: usize) -> (u16, u16) {
+    let below = 3 - divider as u16;
     (
-        Rect::new(content.x, content.y, content.width, projects_h),
-        Rect::new(content.x, content.y + projects_h, content.width, agents_h),
+        bounds[divider] + MIN_SECTION_ROWS,
+        total_h - MIN_SECTION_ROWS * below,
     )
 }
 
-/// herdr `collapsed_sidebar_sections`: projects, divider row, agents.
-pub fn collapsed_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
-    if content.width == 0 || content.height == 0 {
-        return (Rect::default(), None, Rect::default());
+/// Where rule `divider` may be dragged to in a `total_h`-row sidebar, as
+/// row offsets; `None` while the sidebar is too short to drag its rules.
+pub fn split_range(
+    total_h: u16,
+    splits: [Option<u16>; 3],
+    divider: usize,
+) -> Option<RangeInclusive<u16>> {
+    if total_h < MIN_SECTION_ROWS * SidebarSection::ALL.len() as u16 {
+        return None;
     }
-    if content.height < 7 {
-        return (content, None, Rect::default());
-    }
-    let projects_h = content.height.div_ceil(2);
-    let agents_h = content.height.saturating_sub(projects_h + 1);
-    if agents_h == 0 {
-        return (content, None, Rect::default());
-    }
-    let divider_y = content.y + projects_h;
-    (
-        Rect::new(content.x, content.y, content.width, projects_h),
-        Some(divider_y),
-        Rect::new(content.x, divider_y + 1, content.width, agents_h),
-    )
+    let (low, high) = divider_limits(&section_bounds(total_h, splits), total_h, divider);
+    Some(low..=high)
 }
 
-/// herdr `agent_panel_body_rect`.
-pub fn agents_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
-    if area.width == 0 || area.height <= AGENTS_HEADER_ROWS {
+/// The four section rects of the expanded sidebar, top to bottom, without
+/// the separator column.
+pub fn expanded_sections(area: Rect, splits: [Option<u16>; 3]) -> [Rect; 4] {
+    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    if content.width == 0 || content.height == 0 {
+        return [Rect::default(); 4];
+    }
+    let bounds = section_bounds(content.height, splits);
+    std::array::from_fn(|index| {
+        Rect::new(
+            content.x,
+            content.y + bounds[index],
+            content.width,
+            bounds[index + 1] - bounds[index],
+        )
+    })
+}
+
+/// The rail's four lists and the rules between them: one row of machine
+/// dots, then the cards, sessions and agent runs sharing the rest, the
+/// remainder to the cards, above the toggle row. Under `RAIL_MIN_ROWS` the
+/// cards take every row and no rule is drawn.
+pub fn collapsed_sections(area: Rect) -> ([Rect; 4], [Option<u16>; 3]) {
+    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    let mut rects = [Rect::default(); 4];
+    let mut dividers = [None; 3];
+    if content.width == 0 || content.height == 0 {
+        return (rects, dividers);
+    }
+    if content.height < RAIL_MIN_ROWS {
+        rects[SidebarSection::Projects.index()] = content;
+        return (rects, dividers);
+    }
+    // The machine row, three rules and the toggle row come off the top.
+    let rest = content.height - 5;
+    let (share, extra) = (rest / 3, rest % 3);
+    let heights = [
+        1,
+        share + u16::from(extra > 0),
+        share + u16::from(extra > 1),
+        share,
+    ];
+    let mut y = content.y;
+    for (index, height) in heights.into_iter().enumerate() {
+        if index > 0 {
+            dividers[index - 1] = Some(y);
+            y += 1;
+        }
+        rects[index] = Rect::new(content.x, y, content.width, height);
+        y += height;
+    }
+    (rects, dividers)
+}
+
+/// The rows `section`'s list draws into inside its `area`: under the
+/// header and, for the projects, above the footer row.
+pub fn section_body_rect(section: SidebarSection, area: Rect, has_scrollbar: bool) -> Rect {
+    let header = header_rows(section);
+    if area.width == 0 || area.height <= header {
         return Rect::default();
     }
-    let body_y = area.y + AGENTS_HEADER_ROWS;
+    let body_y = area.y + header;
+    let bottom = if section == SidebarSection::Projects {
+        area.bottom().saturating_sub(1)
+    } else {
+        area.bottom()
+    };
     Rect::new(
         area.x,
         body_y,
         area.width.saturating_sub(u16::from(has_scrollbar)),
-        (area.y + area.height).saturating_sub(body_y),
+        bottom.saturating_sub(body_y),
     )
 }
 
-/// herdr `expanded_sidebar_toggle_rect`.
+/// The `«` cell: last row, just left of the separator column.
 pub fn expanded_toggle_rect(area: Rect) -> Rect {
     if area.width <= 1 || area.height == 0 {
         return Rect::default();
@@ -344,7 +535,7 @@ pub fn expanded_toggle_rect(area: Rect) -> Rect {
     )
 }
 
-/// herdr `collapsed_sidebar_toggle_rect`.
+/// The `»` cell: last row, centred in the rail's content columns.
 pub fn collapsed_toggle_rect(area: Rect) -> Rect {
     let content_w = area.width.saturating_sub(1);
     if content_w == 0 || area.height == 0 {
@@ -358,7 +549,6 @@ pub fn collapsed_toggle_rect(area: Rect) -> Rect {
     )
 }
 
-/// Draw the collapse toggle and return its cell, if there was room for one.
 fn render_toggle(frame: &mut Frame, rect: Rect, icon: &str, p: &Palette) -> Option<Rect> {
     if rect == Rect::default() {
         return None;
@@ -371,11 +561,11 @@ fn render_toggle(frame: &mut Frame, rect: Rect, icon: &str, p: &Palette) -> Opti
 }
 
 fn draw_separator_column(frame: &mut Frame, area: Rect, color: Color) {
-    let sep_x = area.x + area.width.saturating_sub(1);
+    let x = area.x + area.width.saturating_sub(1);
     let buf = frame.buffer_mut();
     for y in area.y..area.y + area.height {
-        buf[(sep_x, y)].set_symbol("│");
-        buf[(sep_x, y)].set_style(Style::default().fg(color));
+        buf[(x, y)].set_symbol("│");
+        buf[(x, y)].set_style(Style::default().fg(color));
     }
 }
 
@@ -384,7 +574,6 @@ mod tests {
     use super::*;
     use crate::app::Workspace;
     use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
-    use crate::ui::scrollbar::should_show_scrollbar;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use serde_json::json;
@@ -459,17 +648,43 @@ mod tests {
     }
 
     #[test]
-    fn section_heights_follow_herdr_clamps() {
-        assert_eq!(section_heights(0, None), (0, 0));
-        assert_eq!(section_heights(5, None), (3, 2));
-        assert_eq!(section_heights(40, None), (20, 20));
-        assert_eq!(section_heights(40, Some(30)), (30, 10));
-        assert_eq!(section_heights(40, Some(50)), (37, 3));
-        assert_eq!(section_heights(40, Some(0)), (3, 37));
+    fn section_bounds_follow_herdr_clamps() {
+        // Too short for four headers: even shares, the remainder on top.
+        assert_eq!(section_bounds(0, [None; 3]), [0, 0, 0, 0, 0]);
+        assert_eq!(section_bounds(5, [None; 3]), [0, 2, 3, 4, 5]);
+        assert_eq!(section_bounds(11, [Some(9); 3]), [0, 3, 6, 9, 11]);
+        // Defaults: four machine rows, half the rest to the cards, the
+        // remainder halved between sessions and agents.
+        assert_eq!(section_bounds(40, [None; 3]), [0, 4, 22, 31, 40]);
+        assert_eq!(section_bounds(16, [None; 3]), [0, 4, 10, 13, 16]);
+        // Exactly four minimums: every section gets its three rows.
+        assert_eq!(section_bounds(12, [None; 3]), [0, 3, 6, 9, 12]);
+        // A dragged rule holds its row; the ones under it keep their share
+        // of what is left and every section its header and one row.
+        assert_eq!(
+            section_bounds(40, [Some(6), None, None]),
+            [0, 6, 23, 31, 40]
+        );
+        assert_eq!(
+            section_bounds(40, [None, Some(30), None]),
+            [0, 4, 30, 35, 40]
+        );
+        assert_eq!(
+            section_bounds(40, [None, Some(50), Some(50)]),
+            [0, 4, 34, 37, 40]
+        );
+        assert_eq!(
+            section_bounds(40, [Some(0), Some(0), Some(0)]),
+            [0, 3, 6, 9, 40]
+        );
+        assert_eq!(split_range(40, [None; 3], 0), Some(3..=31));
+        assert_eq!(split_range(40, [None; 3], 1), Some(7..=34));
+        assert_eq!(split_range(40, [None, Some(30), None], 2), Some(33..=37));
+        assert_eq!(split_range(11, [None; 3], 0), None);
     }
 
     #[test]
-    fn expanded_sidebar_lists_projects_and_agents_with_hits() {
+    fn expanded_sidebar_lists_the_four_sections_with_hits() {
         let ws = scripted_workspace();
         let mut chrome = Chrome::dark();
         chrome.mode = Mode::Navigate;
@@ -482,11 +697,14 @@ mod tests {
             .unwrap();
         let text = screen(&terminal);
         for needle in [
+            " machines",
+            "· local",
             " projects",
             "● alpha",
             "   main ↑2",
             "feature · #123",
             "○ beta",
+            " sessions",
             " agents",
             "term-alpha",
             "blocked",
@@ -496,30 +714,41 @@ mod tests {
             assert!(text.contains(needle), "missing {needle:?}:\n{text}");
         }
         assert!(!text.contains('!'), "{text}");
+        // The machine row carries its blocked agent's state and the local
+        // mark; its label is this host's name.
+        assert_eq!(hits.machines.len(), 1, "{:?}", hits.machines);
+        assert_eq!(hits.machines[0].1, Rect::new(0, 2, 25, 1));
         assert_eq!(
             hits.projects,
             vec![
-                ("proj-alpha".to_string(), Rect::new(0, 2, 25, 2)),
-                ("proj-beta".to_string(), Rect::new(0, 5, 25, 2)),
+                ("proj-alpha".to_string(), Rect::new(0, 7, 25, 2)),
+                ("proj-beta".to_string(), Rect::new(0, 10, 25, 2)),
             ]
         );
         assert_eq!(
             hits.worktrees,
-            vec![("wt-1".to_string(), Rect::new(0, 4, 25, 1))]
+            vec![("wt-1".to_string(), Rect::new(0, 9, 25, 1))]
         );
         assert_eq!(
             hits.group_toggles,
-            vec![("proj-alpha".to_string(), Rect::new(24, 2, 1, 1))]
+            vec![("proj-alpha".to_string(), Rect::new(24, 7, 1, 1))]
         );
-        assert_eq!(hits.projects_new, Some(Rect::new(0, 19, 4, 1)));
-        assert_eq!(hits.projects_menu, Some(Rect::new(21, 19, 4, 1)));
+        assert_eq!(hits.projects_new, Some(Rect::new(0, 21, 4, 1)));
+        assert_eq!(hits.projects_menu, Some(Rect::new(21, 21, 4, 1)));
+        // The `run:` entry is an agent run: the sessions list stays empty.
         assert_eq!(
             hits.agents,
-            vec![("run:term-alpha".to_string(), Rect::new(0, 23, 25, 2))]
+            vec![("run:term-alpha".to_string(), Rect::new(0, 34, 25, 2))]
         );
+        assert_eq!(hits.scrollbars, [None; 4]);
         let lines: Vec<&str> = text.lines().collect();
-        assert!(lines[2].ends_with("▾│"), "{:?}", lines[2]);
-        assert!(lines[4].starts_with("▸  └─ ○ feature"), "{:?}", lines[4]);
+        assert!(lines[2].starts_with(" ● "), "{:?}", lines[2]);
+        for rule in [4, 22, 31] {
+            assert!(lines[rule].starts_with("────"), "{:?}", lines[rule]);
+        }
+        assert!(lines[7].ends_with("▾│"), "{:?}", lines[7]);
+        assert!(lines[9].starts_with("▸  └─ ○ feature"), "{:?}", lines[9]);
+        assert_eq!(lines[32], " agents           grouped│");
     }
 
     #[test]
@@ -534,19 +763,50 @@ mod tests {
             .unwrap();
         let text = screen(&terminal);
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "1 ●│");
-        assert_eq!(lines[1], "2 ○│");
-        assert_eq!(lines[2], "   │");
-        assert_eq!(lines[6], "───│");
-        assert_eq!(lines[7], "1 ●│");
+        // The machine dot, then the cards, sessions and agent runs under
+        // their rules, and the toggle on the last row.
+        assert_eq!(lines[0], "  ●│");
+        assert_eq!(lines[1], "───│");
+        assert_eq!(lines[2], "1 ●│");
+        assert_eq!(lines[3], "2 ○│");
+        assert_eq!(lines[4], "   │");
+        assert_eq!(lines[5], "───│");
+        assert_eq!(lines[6], "   │");
+        assert_eq!(lines[8], "───│");
+        assert_eq!(lines[9], "1 ●│");
         assert_eq!(lines[11], " » │");
+        assert_eq!(hits.machines.len(), 1);
         assert_eq!(hits.projects.len(), 2);
         assert!(hits.worktrees.is_empty());
         assert_eq!(hits.agents.len(), 1);
+        assert_eq!(hits.agents[0].1, Rect::new(0, 9, 3, 1));
     }
 
     #[test]
-    fn agents_scroll_clamps_to_the_last_page() {
+    fn rail_sections_share_the_rows_under_the_machine_dot() {
+        let (rects, dividers) = collapsed_sections(Rect::new(0, 0, 4, 12));
+        assert_eq!(dividers, [Some(1), Some(5), Some(8)]);
+        assert_eq!(
+            rects,
+            [
+                Rect::new(0, 0, 3, 1),
+                Rect::new(0, 2, 3, 3),
+                Rect::new(0, 6, 3, 2),
+                Rect::new(0, 9, 3, 2),
+            ]
+        );
+        // Under eight rows the cards take everything and no rule is drawn.
+        let (rects, dividers) = collapsed_sections(Rect::new(0, 0, 4, 7));
+        assert_eq!(dividers, [None; 3]);
+        assert_eq!(
+            rects[SidebarSection::Projects.index()],
+            Rect::new(0, 0, 3, 7)
+        );
+        assert_eq!(rects[SidebarSection::Agents.index()], Rect::default());
+    }
+
+    #[test]
+    fn list_scroll_clamps_to_the_last_page() {
         let metrics = list_metrics(10, 4, 99);
         assert_eq!(metrics.max_offset_from_bottom, 6);
         assert_eq!(metrics.offset_from_bottom, 0);

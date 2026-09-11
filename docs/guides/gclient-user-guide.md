@@ -48,12 +48,17 @@ Logs go to `~/.gobby/logs/gclient.log`.
 
 ```text
 ┌ sidebar ──────┬ tab bar: 1  2  build Z  +  ─────────────────────┐
-│ projects      │ ┌ ▸ zsh ─────────────┐┌ claude ────────────────┐ │
-│ ● gobby    ▾  │ │                    ││                        │ │
-│   0.5.0 ↑2    │ │   pane (focused)   ││   pane                 │ │
-│   ├─ feat-x   │ │                    ││                        │ │
-│   └─ fix-y    │ └────────────────────┘└────────────────────────┘ │
+│ machines      │ ┌ ▸ zsh ─────────────┐┌ claude ────────────────┐ │
+│ ● mbp   local │ │                    ││                        │ │
+│───────────────│ │   pane (focused)   ││   pane                 │ │
+│ projects      │ │                    ││                        │ │
+│ ● gobby    ▾  │ └────────────────────┘└────────────────────────┘ │
+│   0.5.0 ↑2    │                                                  │
+│   └─ fix-y    │                                                  │
 │  new   menu   │                                                  │
+│───────────────│                                                  │
+│ sessions      │                                                  │
+│ ○ zsh %3      │                                                  │
 │───────────────│                                                  │
 │ agents grouped│                                                  │
 │ ● claude #123 │                                                  │
@@ -63,21 +68,30 @@ Logs go to `~/.gobby/logs/gclient.log`.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Sidebar.** Two sections split by a draggable rule.
+**Sidebar.** Four sections split by draggable rules.
 
+- *Machines* lists this machine (by host name) first, then every other machine
+  the daemon knows, each with the most urgent state of the terminals running
+  there. The rows are the machine filter for the two lists below: clicking a
+  remote machine shows that machine's terminals, clicking it again returns to
+  `local`; clicking the local row toggles `all`. The current filter is marked
+  on the row (`local` or `all`).
 - *Projects* lists each registered project as a card: a state dot, the name, a
   second line with the branch and ahead/behind counts, and worktree rows indented
   under the card. Cards with worktrees carry a `▸`/`▾` fold toggle at the right
   edge. The footer has ` new` (register a project) and `menu` (the global menu).
-- *Agents* lists the focused project's terminals that run a Gobby session, each
-  with a state label: `blocked` (an attention prompt is waiting), `orphaned`
-  (the terminal's host is gone; see *Orphaned terminals*), `working`, `done`
-  (new output since you last looked), or `idle`. The header shows the sort
-  order (`grouped` or `priority`) and, when more than one machine is registered,
-  the machine filter (`local`, `all`, or a machine id).
+- *Sessions* lists the focused project's interactive terminals: the sessions
+  you drive yourself, with the same state labels as the agents.
+- *Agents* lists the focused project's autonomous runs (the sessions the web UI
+  labels agent-managed), each with a state label: `blocked` (an attention
+  prompt is waiting), `orphaned` (the terminal's host is gone; see *Orphaned
+  terminals*), `working`, `done` (new output since you last looked), or `idle`.
+  The header shows the sort order (`grouped` or `priority`), which orders both
+  lists.
 
 Collapse the sidebar with `prefix+b` or the `«` toggle. Collapsed, it becomes a
-narrow rail of numbered project dots.
+narrow rail: a dot per machine, then numbered dots for the projects, sessions,
+and agents.
 
 **Tab bar.** One row of tabs for the focused project; each project keeps its own
 tab set. Auto-named tabs show their index, renamed tabs their name, and a zoomed
@@ -183,7 +197,7 @@ and only work after you bind them; every action also appears in the help popup
 | *unset* | Focus the next / previous project | `next_project` / `previous_project` |
 | *unset* | Focus project 1–9 | `switch_project` |
 | *unset* | Collapse or expand the project's worktrees | `toggle_group` |
-| *unset* | Cycle the agents section's machine filter | `cycle_machine_filter` |
+| *unset* | Cycle the machine filter (`local`, `all`, each machine) | `cycle_machine_filter` |
 | *unset* | Toggle grouped / priority agent order | `toggle_agent_sort` |
 
 `up`, `down`, `h`, `j`, `k`, and `l` are direct chords: they act only when the
@@ -321,7 +335,7 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 | hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
 | sidebar width | 26 | Columns; also set by dragging the sidebar edge |
 | right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
-| agent sort | `grouped` | `grouped` or `priority` order in the agents section |
+| agent sort | `grouped` | `grouped` or `priority` order in the sessions and agents sections |
 
 The file is optional and every key in it is optional; an unknown key is a
 startup error that names the line.
@@ -394,7 +408,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Click a `▸`/`▾` toggle | Fold or unfold the card's worktrees |
 | Click an agent row | Focus its pane (a blocked row's question is already on screen) |
 | Click the control indicator | Take, release, or take back control |
-| Drag the sidebar edge, the section rule, or a split border | Resize |
+| Drag the sidebar edge, a section rule, or a split border | Resize |
 | Click or drag a scrollbar | Jump or scroll |
 | Right-click | Context menu for the target (see below) |
 
@@ -429,7 +443,7 @@ The client saves its layout as it changes and restores it on the next launch.
 | File | Contents |
 | --- | --- |
 | `~/.gobby/client/<project-id>/workspace.json` | That project's tabs, split layout, focused pane, and worktree tags |
-| `~/.gobby/client/session.json` | The focused project, sidebar width and collapse, section split, machine filter, project order, and project labels |
+| `~/.gobby/client/session.json` | The focused project, sidebar width and collapse, section rules, machine filter, project order, and project labels |
 | `~/.gobby/client/prefs.toml` | Settings, as above |
 
 On launch the client restores the focused project's tabs to the terminals that

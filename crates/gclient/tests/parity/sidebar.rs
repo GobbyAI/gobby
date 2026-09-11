@@ -30,9 +30,9 @@ use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::scrollbar::scrollbar_thumb_grab_offset;
 use gobby_client::ui::settings::AgentSort;
 use gobby_client::ui::sidebar::{
-    agent_rows, agents_body_rect, collapsed_sections, expanded_sections, expanded_toggle_rect,
-    next_machine_filter, project_list_metrics, projects_body_rect, render_collapsed_sidebar,
-    render_sidebar, section_metrics, SidebarHits, ALL_MACHINES,
+    agent_rows, collapsed_sections, expanded_sections, expanded_toggle_rect, next_machine_filter,
+    project_list_metrics, render_collapsed_sidebar, render_sidebar, section_body_rect,
+    section_metrics, split_range, SidebarHits, ALL_MACHINES, MIN_SECTION_ROWS,
 };
 use gobby_client::ui::sidebar_rows::{
     fitted_spans, project_rows, row_line, row_second_line, RowKind, SidebarRow,
@@ -317,14 +317,14 @@ fn style_at(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> Style {
     cell(terminal, x, y).style()
 }
 
-/// Project cards body (herdr workspace-list body) of a sidebar area.
-fn projects_body(area: Rect, split: Option<u16>) -> Rect {
-    projects_body_rect(expanded_sections(area, split).0, false)
-}
-
-/// Agent rows body (herdr agent-panel body) of a sidebar area.
-fn agents_body(area: Rect, split: Option<u16>) -> Rect {
-    agents_body_rect(expanded_sections(area, split).1, false)
+/// The list body of `section` (herdr's workspace-list or agent-panel body)
+/// in a sidebar area whose rules sit at `splits`.
+fn section_body(area: Rect, splits: [Option<u16>; 3], section: SidebarSection) -> Rect {
+    section_body_rect(
+        section,
+        expanded_sections(area, splits)[section.index()],
+        false,
+    )
 }
 
 fn spans_text(spans: &[Span<'_>]) -> String {
@@ -363,9 +363,9 @@ parity_tests! {
             board.set_state("one", RowState::Working);
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "one");
-            let area = Rect::new(0, 0, 26, 20);
+            let area = Rect::new(0, 0, 26, 24);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = agents_body(area, None);
+            let body = section_body(area, [None; 3], SidebarSection::Sessions);
             let p = palette();
 
             let first = row_str(&terminal, body.y, 25);
@@ -399,9 +399,9 @@ parity_tests! {
             let mut board = Board::new(&[]);
             board.add("one", "pi");
             let chrome = chrome();
-            let area = Rect::new(0, 0, 26, 20);
+            let area = Rect::new(0, 0, 26, 24);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = agents_body(area, None);
+            let body = section_body(area, [None; 3], SidebarSection::Sessions);
             let p = palette();
             let workspace = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "o"), body.y);
             let agent = style_at(&terminal, find_symbol_x(&terminal, body.y + 1, body.width, "p"), body.y + 1);
@@ -450,7 +450,7 @@ parity_tests! {
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "HI");
             chrome.mode = Mode::Terminal;
-            let (terminal, hits) = draw_sidebar(&board, &chrome, 26, 20);
+            let (terminal, hits) = draw_sidebar(&board, &chrome, 26, 24);
             let row = hits.agents[0].1.y;
             let p = palette();
             let h = style_at(&terminal, find_symbol_x(&terminal, row, 25, "H"), row);
@@ -500,11 +500,16 @@ parity_tests! {
             board.add("claude", "claude");
             let mut chrome = chrome();
             // herdr's 20x5 agent panel has a two-row body; gclient's two-line
-            // rows need the four rows under a three-row projects section.
-            chrome.sidebar.section_split = Some(3);
-            let area = Rect::new(0, 0, 20, 10);
-            let body = agents_body(area, chrome.sidebar.section_split);
-            let metrics = project_list_metrics(&[2, 2], body.height, chrome.sidebar.agents_scroll);
+            // rows need the four rows a seven-row sessions section leaves
+            // under its header.
+            chrome.sidebar.section_splits = [Some(3), Some(6), Some(13)];
+            let area = Rect::new(0, 0, 20, 16);
+            let body = section_body(area, chrome.sidebar.section_splits, SidebarSection::Sessions);
+            let metrics = project_list_metrics(
+                &[2, 2],
+                body.height,
+                chrome.sidebar.scroll(SidebarSection::Sessions),
+            );
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
 
             assert_eq!(metrics.viewport_rows, 2);
@@ -524,9 +529,9 @@ parity_tests! {
             let mut board = Board::new(&[]);
             board.add("修复🙂标题很长", "claude");
             let chrome = chrome();
-            let area = Rect::new(0, 0, 10, 12);
+            let area = Rect::new(0, 0, 10, 24);
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
-            let body = agents_body(area, None);
+            let body = section_body(area, [None; 3], SidebarSection::Sessions);
             let rendered = row_str(&terminal, body.y, 9);
 
             assert!(!rendered.contains('⠋'));
@@ -550,16 +555,16 @@ parity_tests! {
             // geometry.
             let board = Board::new(&["one", "two", "three"]);
             let mut chrome = chrome();
-            chrome.sidebar.section_split = Some(3);
-            let area = Rect::new(0, 0, 20, 10);
-            let body = agents_body(area, chrome.sidebar.section_split);
+            chrome.sidebar.section_splits = [Some(3), Some(6), Some(13)];
+            let area = Rect::new(0, 0, 20, 16);
+            let body = section_body(area, chrome.sidebar.section_splits, SidebarSection::Sessions);
             assert_eq!(body.height, 4);
 
             let metrics = project_list_metrics(&[2, 2, 2], body.height, 0);
             assert_eq!(metrics.max_offset_from_bottom, 1);
             // herdr: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
             // scrolling one row reveals the target row the packed layout hid.
-            chrome.sidebar.agents_scroll = 1;
+            *chrome.sidebar.scroll_mut(SidebarSection::Sessions) = 1;
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
             let ids: Vec<&str> = hits.agents.iter().map(|(id, _)| id.as_str()).collect();
             assert_eq!(ids, ["agent:two", "agent:three"]);
@@ -567,15 +572,19 @@ parity_tests! {
 
         fn oversized_space_layout_is_clipped_to_the_section_body() {
             // herdr's six-row space cards overflow a one-row body; gclient's
-            // two-line cards overflow the two-row body a five-row projects
+            // two-line cards overflow the two-row body a six-row projects
             // section leaves under its header and footer.
             let board = Board::new(&["one", "two"]);
             let mut chrome = chrome();
-            chrome.sidebar.section_split = Some(5);
-            let area = Rect::new(0, 0, 20, 10);
-            let body = projects_body(area, chrome.sidebar.section_split);
+            chrome.sidebar.section_splits = [Some(3), Some(9), None];
+            let area = Rect::new(0, 0, 20, 16);
+            let body = section_body(area, chrome.sidebar.section_splits, SidebarSection::Projects);
 
-            let metrics = project_list_metrics(&[2, 2], body.height, chrome.sidebar.scroll);
+            let metrics = project_list_metrics(
+                &[2, 2],
+                body.height,
+                chrome.sidebar.scroll(SidebarSection::Projects),
+            );
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
 
             assert_eq!(metrics.viewport_rows, 1);
@@ -591,13 +600,18 @@ parity_tests! {
             board.add("one", "claude");
             board.set_state("one", RowState::Attention);
             let mut chrome = chrome();
-            chrome.sidebar.section_split = Some(5);
-            let area = Rect::new(0, 0, 20, 10);
-            let panel = expanded_sections(area, chrome.sidebar.section_split).1;
+            chrome.sidebar.section_splits = [Some(3), Some(6), Some(11)];
+            let area = Rect::new(0, 0, 20, 16);
+            let panel = expanded_sections(area, chrome.sidebar.section_splits)
+                [SidebarSection::Sessions.index()];
             assert_eq!(panel.height, 5);
-            let body = agents_body_rect(panel, false);
+            let body = section_body_rect(SidebarSection::Sessions, panel, false);
 
-            let metrics = project_list_metrics(&[2], body.height, chrome.sidebar.agents_scroll);
+            let metrics = project_list_metrics(
+                &[2],
+                body.height,
+                chrome.sidebar.scroll(SidebarSection::Sessions),
+            );
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
 
             assert_eq!(metrics.viewport_rows, 1);
@@ -642,7 +656,7 @@ parity_tests! {
             chrome.open_tab(board.pane_id("multi"), "1");
             chrome.open_tab(board.pane_id("multi-logs"), "logs");
 
-            let entries = agent_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome, SidebarSection::Sessions);
             let rows: Vec<(&str, RowKind, &[String])> = entries
                 .iter()
                 .map(|entry| (entry.label.as_str(), entry.kind, entry.tokens.as_slice()))
@@ -674,14 +688,14 @@ parity_tests! {
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "one");
 
-            let entries = agent_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome, SidebarSection::Sessions);
             let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
             assert_eq!(labels, ["one", "two", "three", "four"]);
             assert_eq!(entries[3].state, RowState::Attention);
             assert_eq!(entries[0].state, RowState::Working);
 
             chrome.prefs.agent_sort = AgentSort::Priority;
-            let entries = agent_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome, SidebarSection::Sessions);
             let labels: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
             assert_eq!(labels, ["four", "two", "one", "three"]);
         }
@@ -694,7 +708,7 @@ parity_tests! {
             let area = Rect::new(0, 0, 4, 12);
             // herdr numbers its grouped workspaces; gclient's rail numbers
             // the project cards.
-            let (projects_area, _, _) = collapsed_sections(area);
+            let projects_area = collapsed_sections(area).0[SidebarSection::Projects.index()];
             let (terminal, _) = draw_collapsed(&board, &chrome, area.width, area.height);
 
             assert_eq!(cell(&terminal, projects_area.x, projects_area.y).symbol(), "1");
@@ -707,8 +721,9 @@ parity_tests! {
                 board.add(&format!("workspace-{idx}"), "claude");
             }
             let chrome = chrome();
-            let area = Rect::new(0, 0, 4, 25);
-            let (projects_area, _, _) = collapsed_sections(area);
+            // Ten cards need a ten-row cards list: a third of the rail.
+            let area = Rect::new(0, 0, 4, 34);
+            let projects_area = collapsed_sections(area).0[SidebarSection::Projects.index()];
             let (terminal, _) = draw_collapsed(&board, &chrome, area.width, area.height);
 
             let tenth_row = projects_area.y + 9;
@@ -734,21 +749,23 @@ parity_tests! {
             board.set_state("two-2", RowState::Attention);
             let chrome = chrome();
 
-            let agents = agent_rows(&board, &chrome);
+            let agents = agent_rows(&board, &chrome, SidebarSection::Sessions);
             assert_eq!(agents[2].label, "two-2");
             assert_eq!(agents[2].state, RowState::Attention);
 
             let area = Rect::new(0, 0, 4, 16);
-            let (projects_area, _, agents_area) = collapsed_sections(area);
+            let rects = collapsed_sections(area).0;
+            let projects_area = rects[SidebarSection::Projects.index()];
+            let sessions_area = rects[SidebarSection::Sessions.index()];
             let (terminal, _) = draw_collapsed(&board, &chrome, area.width, area.height);
 
             assert_eq!(cell(&terminal, projects_area.x, projects_area.y).symbol(), "1");
             assert_eq!(cell(&terminal, projects_area.x, projects_area.y + 1).symbol(), "2");
             assert_eq!(cell(&terminal, projects_area.x, projects_area.y + 2).symbol(), "3");
-            let blocked_row = agents_area.y + 2;
-            assert_eq!(cell(&terminal, agents_area.x + 2, blocked_row).symbol(), "●");
+            let blocked_row = sessions_area.y + 2;
+            assert_eq!(cell(&terminal, sessions_area.x + 2, blocked_row).symbol(), "●");
             assert_eq!(
-                style_at(&terminal, agents_area.x + 2, blocked_row).fg,
+                style_at(&terminal, sessions_area.x + 2, blocked_row).fg,
                 Some(palette().red)
             );
         }
@@ -803,26 +820,34 @@ parity_tests! {
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "bridge");
 
-            let entries = agent_rows(&board, &chrome);
+            let entries = agent_rows(&board, &chrome, SidebarSection::Sessions);
             assert_eq!(entries[0].label, "bridge");
             assert_eq!(entries[0].tokens[0], "planner");
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
-            // herdr's 0.9 ratio of five rows is a four-row projects request.
-            let (ws_area, detail_area) = expanded_sections(Rect::new(0, 0, 20, 5), Some(4));
+            // herdr's 0.9 ratio of five rows is a four-row projects request;
+            // under twelve rows gclient shares the rows evenly, the remainder
+            // on top, and the dragged rule is ignored.
+            let sections = expanded_sections(Rect::new(0, 0, 20, 5), [Some(4), None, None]);
 
-            assert_eq!(ws_area, Rect::new(0, 0, 19, 3));
-            assert_eq!(detail_area, Rect::new(0, 3, 19, 2));
+            assert_eq!(
+                sections,
+                [
+                    Rect::new(0, 0, 19, 2),
+                    Rect::new(0, 2, 19, 1),
+                    Rect::new(0, 3, 19, 1),
+                    Rect::new(0, 4, 19, 1),
+                ]
+            );
         }
 
         fn sidebar_section_divider_is_hidden_for_tiny_heights() {
             // herdr `sidebar_section_divider_rect(20x5, 0.5) == Rect::default()`:
-            // gclient draws the agents rule only with a three-row header,
-            // and the collapsed rail drops its divider under seven rows.
+            // gclient draws a section's rule only with its three-row header,
+            // and the collapsed rail drops its rules under eight rows.
             let area = Rect::new(0, 0, 20, 5);
-            let (_, divider, _) = collapsed_sections(area);
-            assert_eq!(divider, None);
+            assert_eq!(collapsed_sections(area).1, [None; 3]);
 
             let board = Board::new(&["one"]);
             let (terminal, _) = draw_sidebar(&board, &chrome(), area.width, area.height);
@@ -853,10 +878,10 @@ parity_tests! {
             focus(&mut chrome, &mut board, "repo");
             chrome.mode = Mode::Terminal;
             // herdr draws the list straight into a 15x6 rect; gclient's
-            // five-row projects section leaves a two-row body for one card.
-            chrome.sidebar.section_split = Some(5);
+            // six-row projects section leaves a two-row body for one card.
+            chrome.sidebar.section_splits = [Some(3), Some(9), None];
 
-            let (terminal, hits) = draw_sidebar(&board, &chrome, 15, 8);
+            let (terminal, hits) = draw_sidebar(&board, &chrome, 15, 16);
             assert_eq!(hits.projects.len(), 1);
             let card = hits.projects[0].1;
             assert!(row_str(&terminal, card.y, 14).contains("repo"));
@@ -881,9 +906,9 @@ parity_tests! {
         fn compact_space_group_scroll_clamps_when_all_entries_fit() {
             let board = Board::new(&["main", "one", "two"]);
             let mut chrome = chrome();
-            let area = Rect::new(0, 0, 30, 20);
-            chrome.sidebar.scroll = 2;
-            let body = projects_body(area, None);
+            let area = Rect::new(0, 0, 30, 30);
+            *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 2;
+            let body = section_body(area, [None; 3], SidebarSection::Projects);
 
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
             let cards = &hits.projects;
@@ -909,10 +934,10 @@ parity_tests! {
             let board = Board::new(&["main", "notes"]);
             let mut chrome = chrome();
             chrome.mode = Mode::Terminal;
-            chrome.sidebar.section_split = Some(5);
-            chrome.sidebar.scroll = 1;
+            chrome.sidebar.section_splits = [Some(3), Some(9), None];
+            *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 1;
 
-            let (_, hits) = draw_sidebar(&board, &chrome, 30, 12);
+            let (_, hits) = draw_sidebar(&board, &chrome, 30, 16);
             let cards = &hits.projects;
 
             assert_eq!(cards.len(), 1);
@@ -936,7 +961,7 @@ parity_tests! {
             // herdr: `[main, issue (indented), scratch]`; a project that is
             // no worktree of `main` stays its own card in list order.
             let board = Board::new(&["main", "scratch", "issue"]);
-            let (_, hits) = draw_sidebar(&board, &chrome(), 30, 20);
+            let (_, hits) = draw_sidebar(&board, &chrome(), 30, 24);
             let entries: Vec<(&str, u16)> = hits
                 .projects
                 .iter()
@@ -1040,11 +1065,11 @@ parity_tests! {
             board.add("repo", "renamed pi");
             let chrome = chrome();
 
-            let rows = agent_rows(&board, &chrome);
+            let rows = agent_rows(&board, &chrome, SidebarSection::Sessions);
             assert_eq!(rows[0].tokens, ["renamed pi"]);
 
             board.set_state("repo", RowState::Unknown);
-            let rows = agent_rows(&board, &chrome);
+            let rows = agent_rows(&board, &chrome, SidebarSection::Sessions);
             assert_eq!(rows[0].tokens, ["renamed pi"]);
             assert_eq!(rows[0].label, "repo");
             assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
@@ -1175,7 +1200,7 @@ fn agent_row_click_focuses_the_terminal() {
     chrome.open_tab(pane(&ws, 0), "0");
     chrome.open_tab(pane(&ws, 1), "1");
     chrome.tabs_mut().active_tab = 0;
-    let area = Rect::new(0, 0, 80, 20);
+    let area = Rect::new(0, 0, 80, 40);
     draw_with_hits(&ws, &mut chrome, area);
 
     let (col, row) = row_cell(&chrome.view.agent_hit_areas, "run:term-1");
@@ -1225,7 +1250,7 @@ fn agent_rows_follow_project_and_machine_filter() {
     let mut chrome = chrome();
     focus(&mut chrome, &mut board, "alpha");
     let labels = |board: &Board, chrome: &Chrome| -> Vec<String> {
-        agent_rows(board, chrome)
+        agent_rows(board, chrome, SidebarSection::Sessions)
             .iter()
             .map(|row| row.label.clone())
             .collect()
@@ -1240,7 +1265,7 @@ fn agent_rows_follow_project_and_machine_filter() {
     assert_eq!(labels(&board, &chrome), ["alpha-remote"]);
     chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
     assert_eq!(labels(&board, &chrome), ["alpha", "beta", "alpha-remote"]);
-    let rows = agent_rows(&board, &chrome);
+    let rows = agent_rows(&board, &chrome, SidebarSection::Sessions);
     assert_eq!(second_text(&rows[0], 40, &chrome), "   claude");
     assert_eq!(second_text(&rows[2], 40, &chrome), "   native · b2f7c0de");
 
@@ -1260,33 +1285,46 @@ fn agent_rows_follow_project_and_machine_filter() {
     chrome.prefs.agent_sort = AgentSort::Priority;
     assert_eq!(labels(&board, &chrome), ["alpha-remote", "alpha", "beta"]);
 
-    // The header: title, filter label, sort label; the labels are hits the
-    // mouse turns into the keymap actions.
+    // The agents header carries the sort label, a hit the mouse turns into
+    // the keymap action; the machines section lists this machine first and
+    // the remote one under it, and a click on a row sets the filter.
     let area = Rect::new(0, 0, 30, 20);
     let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
-    let (_, agents_area) = expanded_sections(area, None);
+    let agents_area = expanded_sections(area, [None; 3])[SidebarSection::Agents.index()];
     assert_eq!(
         row_str(&terminal, agents_area.y + 1, 29),
-        " agents          all priority"
+        " agents              priority"
     );
+    let machines: Vec<&str> = hits.machines.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(machines, [LOCAL_MACHINE, REMOTE]);
     let sort = hits.agent_sort.expect("sort label hit");
-    let filter = hits.machine_filter.expect("filter label hit");
+    let local_row = hits.machines[0].1;
+    let remote_row = hits.machines[1].1;
     chrome.view.sidebar_rect = area;
     chrome.view.agent_sort_hit_area = hits.agent_sort;
-    chrome.view.machine_filter_hit_area = hits.machine_filter;
+    chrome.view.machine_hit_areas = hits.machines.clone();
     assert_eq!(
         route(&board, &mut chrome, LEFT_DOWN, sort.x, sort.y),
         MouseOutcome::Action(Action::ToggleAgentSort)
     );
+    // A remote row filters to that machine and a second click returns to
+    // local; the local row toggles `all`.
     assert_eq!(
-        route(&board, &mut chrome, LEFT_DOWN, filter.x, filter.y),
-        MouseOutcome::Action(Action::CycleMachineFilter)
+        route(&board, &mut chrome, LEFT_DOWN, remote_row.x, remote_row.y),
+        MouseOutcome::Handled
     );
+    assert_eq!(chrome.sidebar.machine_filter.as_deref(), Some(REMOTE));
+    route(&board, &mut chrome, LEFT_DOWN, remote_row.x, remote_row.y);
+    assert_eq!(chrome.sidebar.machine_filter, None);
+    route(&board, &mut chrome, LEFT_DOWN, local_row.x, local_row.y);
+    assert_eq!(chrome.sidebar.machine_filter.as_deref(), Some(ALL_MACHINES));
+    route(&board, &mut chrome, LEFT_DOWN, local_row.x, local_row.y);
+    assert_eq!(chrome.sidebar.machine_filter, None);
 
-    // One known machine: nothing to filter by, so no filter label.
+    // One known machine: the local row alone.
     let local = Board::new(&["alpha"]);
     let (_, hits) = draw_sidebar(&local, &chrome, area.width, area.height);
-    assert_eq!(hits.machine_filter, None);
+    assert_eq!(hits.machines.len(), 1);
     assert!(hits.agent_sort.is_some());
 }
 
@@ -1295,9 +1333,11 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     // herdr workspace-list drag reorder, `set_manual_sidebar_width`,
     // `set_sidebar_section_split`, `scroll_workspace_list` and the list
     // scrollbar's thumb drag and track jump.
+    // Twelve cards overflow the projects section by more than a wheel
+    // notch; the five roster entries overflow the agents list by less.
     let mut ws = sidebar_workspace(8);
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
-        projects: (0..8)
+        projects: (0..12)
             .map(|index| scripted_project(&format!("proj-{index}"), &format!("project-{index}")))
             .collect(),
         ..SidebarRows::default()
@@ -1306,7 +1346,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     set_attention(&mut ws, 5);
     let mut chrome = chrome();
     chrome.open_pane(pane(&ws, 0), "0");
-    let area = Rect::new(0, 0, 60, 24);
+    let area = Rect::new(0, 0, 60, 40);
     draw_with_hits(&ws, &mut chrome, area);
     let sidebar = chrome.view.sidebar_rect;
 
@@ -1332,8 +1372,9 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         chrome.gesture,
         Some(MouseGesture::ProjectDrag { moved: true, .. })
     ));
-    let reordered: Vec<String> = [1, 2, 0, 3, 4, 5, 6, 7]
-        .iter()
+    let reordered: Vec<String> = [1, 2, 0]
+        .into_iter()
+        .chain(3..12)
         .map(|index| format!("proj-{index}"))
         .collect();
     assert_eq!(
@@ -1392,7 +1433,10 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         ),
         MouseOutcome::Handled
     );
-    assert_eq!(chrome.sidebar.scroll, 0, "the rail has nothing to scroll");
+    assert_eq!(
+        chrome.sidebar.scrolls, [0; 4],
+        "the rail has nothing to scroll"
+    );
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, toggle.x, toggle.y),
         MouseOutcome::Handled
@@ -1442,23 +1486,26 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     chrome.sidebar.width = 26;
     draw_with_hits(&ws, &mut chrome, area);
 
-    // The section rule follows the pointer, each section keeping its header.
-    let rule = chrome
-        .view
-        .sidebar_section_divider_y
-        .expect("section rule drawn");
+    // A section rule follows the pointer, every section keeping its header
+    // and a row: the projects rule stays under the machines list and above
+    // the sessions and agents lists, which move down with it.
+    let rule = chrome.view.sidebar_section_divider_ys[1].expect("projects rule drawn");
+    let range = split_range(sidebar.height, [None; 3], 1).expect("draggable rules");
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, sidebar.x + 1, rule),
         MouseOutcome::Handled
     );
-    assert_eq!(chrome.gesture, Some(MouseGesture::SectionDrag));
-    assert_eq!(chrome.sidebar.section_split, Some(rule - sidebar.y));
-    route(&ws, &mut chrome, LEFT_DRAG, sidebar.x + 1, sidebar.y + 4);
-    assert_eq!(chrome.sidebar.section_split, Some(4));
+    assert_eq!(
+        chrome.gesture,
+        Some(MouseGesture::SectionDrag { divider: 1 })
+    );
+    assert_eq!(chrome.sidebar.section_splits[1], Some(rule - sidebar.y));
+    route(&ws, &mut chrome, LEFT_DRAG, sidebar.x + 1, sidebar.y + 8);
+    assert_eq!(chrome.sidebar.section_splits[1], Some(8));
     route(&ws, &mut chrome, LEFT_DRAG, sidebar.x + 1, sidebar.y);
     assert_eq!(
-        chrome.sidebar.section_split,
-        Some(3),
+        chrome.sidebar.section_splits[1],
+        Some(*range.start()),
         "the projects section keeps its header"
     );
     route(
@@ -1469,9 +1516,9 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         sidebar.y + sidebar.height,
     );
     assert_eq!(
-        chrome.sidebar.section_split,
-        Some(sidebar.height - 3),
-        "the agents list keeps its header"
+        chrome.sidebar.section_splits[1],
+        Some(*range.end()),
+        "the sessions and agents lists keep their headers"
     );
     assert_eq!(
         route(
@@ -1486,10 +1533,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     assert_eq!(chrome.gesture, None);
     draw_with_hits(&ws, &mut chrome, area);
     assert_eq!(
-        chrome.view.sidebar_section_divider_y,
-        Some(sidebar.y + sidebar.height - 3)
+        chrome.view.sidebar_section_divider_ys[1],
+        Some(sidebar.y + *range.end())
     );
-    chrome.sidebar.section_split = None;
+    assert_eq!(
+        chrome.view.sidebar_section_divider_ys[2],
+        Some(sidebar.y + *range.end() + MIN_SECTION_ROWS),
+        "the sessions rule moved down with it"
+    );
+    chrome.sidebar.section_splits = [None; 3];
     draw_with_hits(&ws, &mut chrome, area);
 
     // A wheel notch moves the list under the pointer three entries, clamped.
@@ -1504,13 +1556,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row),
         MouseOutcome::Handled
     );
-    assert_eq!(chrome.sidebar.scroll, MOUSE_SCROLL_LINES);
+    let projects_scroll = |chrome: &Chrome| chrome.sidebar.scroll(SidebarSection::Projects);
+    let agents_scroll = |chrome: &Chrome| chrome.sidebar.scroll(SidebarSection::Agents);
+    assert_eq!(projects_scroll(&chrome), MOUSE_SCROLL_LINES);
     route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
-    assert_eq!(chrome.sidebar.scroll, projects_max, "clamped at the end");
+    assert_eq!(projects_scroll(&chrome), projects_max, "clamped at the end");
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
-    assert_eq!(chrome.sidebar.scroll, projects_max - MOUSE_SCROLL_LINES);
+    assert_eq!(projects_scroll(&chrome), projects_max - MOUSE_SCROLL_LINES);
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
-    assert_eq!(chrome.sidebar.scroll, 0, "clamped at the top");
+    assert_eq!(projects_scroll(&chrome), 0, "clamped at the top");
     let agents_max = section_metrics(&ws, &chrome, SidebarSection::Agents).max_offset_from_bottom;
     assert!(
         agents_max > 0 && agents_max < MOUSE_SCROLL_LINES,
@@ -1518,43 +1572,45 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     );
     let (col, row) = row_cell(&chrome.view.agent_hit_areas, "run:term-0");
     route(&ws, &mut chrome, MouseEventKind::ScrollDown, col, row);
-    assert_eq!(chrome.sidebar.agents_scroll, agents_max);
+    assert_eq!(agents_scroll(&chrome), agents_max);
     assert_eq!(
-        chrome.sidebar.scroll, 0,
+        projects_scroll(&chrome),
+        0,
         "the cards are not the list under the pointer"
     );
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
-    assert_eq!(chrome.sidebar.agents_scroll, 0);
+    assert_eq!(agents_scroll(&chrome), 0);
+    let agents_rule = chrome.view.sidebar_section_divider_ys[2].expect("agents rule drawn");
     route(
         &ws,
         &mut chrome,
         MouseEventKind::ScrollDown,
         sidebar.x + 1,
-        rule,
+        agents_rule,
     );
     assert_eq!(
-        chrome.sidebar.agents_scroll, agents_max,
-        "the section rule belongs to the agents list"
+        agents_scroll(&chrome),
+        agents_max,
+        "a section rule belongs to the list under it"
     );
+    let projects_rule = chrome.view.sidebar_section_divider_ys[0].expect("projects rule drawn");
     route(
         &ws,
         &mut chrome,
         MouseEventKind::ScrollDown,
         sidebar.x + 1,
-        sidebar.y,
+        projects_rule + 1,
     );
     assert_eq!(
-        chrome.sidebar.scroll, MOUSE_SCROLL_LINES,
+        projects_scroll(&chrome),
+        MOUSE_SCROLL_LINES,
         "the projects header belongs to the cards"
     );
-    chrome.sidebar.scroll = 0;
-    chrome.sidebar.agents_scroll = 0;
+    chrome.sidebar.scrolls = [0; 4];
     draw_with_hits(&ws, &mut chrome, area);
 
     // The scrollbar track jumps the list; the thumb drags it.
-    let track = chrome
-        .view
-        .projects_scrollbar_hit_area
+    let track = chrome.view.sidebar_scrollbar_hit_areas[SidebarSection::Projects.index()]
         .expect("projects scrollbar drawn");
     let bottom = track.y + track.height - 1;
     let metrics = section_metrics(&ws, &chrome, SidebarSection::Projects);
@@ -1568,13 +1624,14 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         MouseOutcome::Handled
     );
     assert_eq!(
-        chrome.sidebar.scroll, projects_max,
+        projects_scroll(&chrome),
+        projects_max,
         "a track click jumps there"
     );
     assert_eq!(chrome.gesture, None);
     draw_with_hits(&ws, &mut chrome, area);
     route(&ws, &mut chrome, LEFT_DOWN, track.x, track.y);
-    assert_eq!(chrome.sidebar.scroll, 0);
+    assert_eq!(projects_scroll(&chrome), 0);
     draw_with_hits(&ws, &mut chrome, area);
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, track.x, track.y),
@@ -1588,13 +1645,14 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         }),
         "a thumb press starts a drag"
     );
-    assert_eq!(chrome.sidebar.scroll, 0, "a thumb press does not jump");
+    assert_eq!(projects_scroll(&chrome), 0, "a thumb press does not jump");
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DRAG, track.x, bottom),
         MouseOutcome::Handled
     );
     assert_eq!(
-        chrome.sidebar.scroll, projects_max,
+        projects_scroll(&chrome),
+        projects_max,
         "the thumb follows the pointer"
     );
     assert_eq!(
@@ -1662,7 +1720,7 @@ fn project_board() -> (Workspace, Chrome, Rect) {
     let mut chrome = chrome();
     chrome.project_tabs.focus("proj-alpha");
     chrome.open_tab(pane(&ws, 0), "0");
-    let area = Rect::new(0, 0, 80, 20);
+    let area = Rect::new(0, 0, 80, 40);
     draw_with_hits(&ws, &mut chrome, area);
     assert_eq!(
         drawn_ids(&chrome.view.project_hit_areas),

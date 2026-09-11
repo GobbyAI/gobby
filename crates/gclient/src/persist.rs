@@ -97,7 +97,10 @@ impl WorkspaceSnapshot {
 pub struct SidebarSnapshot {
     pub collapsed: bool,
     pub width: u16,
-    pub section_split: Option<u16>,
+    /// Rows from the top where the projects, sessions and agents sections
+    /// start, for the rules the user dragged.
+    #[serde(default)]
+    pub section_splits: [Option<u16>; 3],
     pub machine_filter: Option<String>,
     /// Project ids in the order the user dragged them into.
     #[serde(default)]

@@ -10,6 +10,7 @@ use gobby_client::ui::chrome_render::{
     copy_feedback_offset_for_toast, render_workspace, render_workspace_with,
 };
 use gobby_client::ui::dialogs::Dialog;
+use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::keybind_help::{filter_help_entries, help_lines};
 use gobby_client::ui::keymap::{HelpEntry, Keymap, HERDR_PREFIX};
 use gobby_client::ui::pane_layout;
@@ -18,6 +19,7 @@ use gobby_client::ui::scrollbar::{
     scrollbar_thumb, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
 use gobby_client::ui::settings::{SettingsRow, SETTINGS_POPUP_HEIGHT, SETTINGS_POPUP_WIDTH};
+use gobby_client::ui::sidebar::{collapsed_sections, expanded_sections, section_body_rect};
 use gobby_client::ui::status::{
     render_copy_feedback, render_status_line, render_toast_notification, toast_notification_rect,
     Toast, ToastKind,
@@ -248,20 +250,6 @@ fn runtime_size(chrome: &Chrome, tab_idx: usize) -> (u16, u16) {
     );
     let inner = infos.first().expect("pane info").inner_rect;
     (inner.height, inner.width)
-}
-
-/// herdr `collapsed_sidebar_sections` (gclient keeps its copy private):
-/// roster rows on top of a `─` divider at the half-way row.
-fn collapsed_sidebar_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
-    let roster_h = content.height.div_ceil(2);
-    let attention_h = content.height.saturating_sub(roster_h + 1);
-    let divider_y = content.y + roster_h;
-    (
-        Rect::new(content.x, content.y, content.width, roster_h),
-        Some(divider_y),
-        Rect::new(content.x, divider_y + 1, content.width, attention_h),
-    )
 }
 
 /// herdr `frame_digest` over gclient's rendered cells: symbol, colours, and
@@ -691,7 +679,9 @@ parity_tests! {
             chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
             let terminal = render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
 
-            let (ws_area, _, _) = collapsed_sidebar_sections(chrome.view.sidebar_rect);
+            // herdr `collapsed_sidebar_sections`: the cards under the machine dot.
+            let (rail, _) = collapsed_sections(chrome.view.sidebar_rect);
+            let ws_area = rail[SidebarSection::Projects.index()];
             let active_row = ws_area.y + 1;
             let active_style = cell(&terminal, ws_area.x, active_row).style();
 
@@ -709,10 +699,16 @@ parity_tests! {
             chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
             let terminal = render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
 
-            // herdr `workspace_card_areas[0]`: the first roster row sits below
-            // the two-row roster header, left of the separator column.
+            // herdr `workspace_card_areas[0]`: the first card sits below the
+            // projects header, left of the separator column.
             let sidebar = chrome.view.sidebar_rect;
-            let card = Rect::new(sidebar.x, sidebar.y + 2, sidebar.width - 1, 1);
+            let projects = SidebarSection::Projects;
+            let body = section_body_rect(
+                projects,
+                expanded_sections(sidebar, [None; 3])[projects.index()],
+                false,
+            );
+            let card = Rect::new(sidebar.x, body.y, sidebar.width - 1, 1);
             let line1 = buffer_row_text(&terminal, card, card.y);
             let line2 = buffer_row_text(&terminal, card, card.y + 1);
 
@@ -1217,12 +1213,13 @@ switch_project = "ctrl+1..9"
                     // project cards over agent rows (3.1), and again when the
                     // agents header gained its sort label over two-line rows
                     // (3.2), and again when the status line began naming the
-                    // prefix outside tmux: 4.1.3 requires a glyph change to
-                    // fail here, so this digest moves only alongside a
-                    // deliberate render change.
+                    // prefix outside tmux, and again when the sidebar split
+                    // into machines, projects, sessions and agents: 4.1.3
+                    // requires a glyph change to fail here, so this digest
+                    // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "0149ac6b1f2d2d5f0bff10afd98f8b060f737b4539287b891d767f5815d7898d"
+                        "b9c1888d0dd85a9cc24b9ef35f929811e9b4e67fa987cbaf0cf559ce6037bf0b"
                     );
                 });
         }
@@ -1268,8 +1265,9 @@ fn hit_text(terminal: &Terminal<TestBackend>, rect: Rect) -> String {
 
 #[test]
 fn rendered_hits_match_drawn_cells() {
-    // Twenty roster terminals overflow an 18-row sidebar, and twelve tabs
-    // overflow a 74-column bar, so every scroll affordance is drawn.
+    // Twenty project cards overflow a 24-row screen's projects section, and
+    // twelve tabs overflow a 74-column bar, so every scroll affordance is
+    // drawn.
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
@@ -1293,7 +1291,7 @@ fn rendered_hits_match_drawn_cells() {
         add_tab(&mut chrome, &format!("tab-{n:02}"));
     }
     chrome.tabs_mut().active_tab = chrome.tabs().tabs.len() - 1;
-    let terminal = render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 18));
+    let terminal = render_with_hits(&ws, &mut chrome, Rect::new(0, 0, 100, 24));
     let view = &chrome.view;
 
     assert!(
@@ -1327,11 +1325,13 @@ fn rendered_hits_match_drawn_cells() {
         cell(&terminal, divider_x, view.sidebar_rect.y).symbol(),
         "│"
     );
-    let section_y = view.sidebar_section_divider_y.expect("section divider");
-    assert_eq!(
-        cell(&terminal, view.sidebar_rect.x, section_y).symbol(),
-        "─"
-    );
+    for section_y in view.sidebar_section_divider_ys {
+        let section_y = section_y.expect("section rule");
+        assert_eq!(
+            cell(&terminal, view.sidebar_rect.x, section_y).symbol(),
+            "─"
+        );
+    }
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
     assert_eq!(cell(&terminal, toggle.x, toggle.y).symbol(), "«");
     assert!(!view.project_hit_areas.is_empty());
@@ -1344,10 +1344,12 @@ fn rendered_hits_match_drawn_cells() {
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     assert!(hit_text(&terminal, *rect).contains("term-alpha"));
-    let lane = view
-        .projects_scrollbar_hit_area
+    let lane = view.sidebar_scrollbar_hit_areas[SidebarSection::Projects.index()]
         .expect("projects scrollbar");
-    assert_eq!(view.agents_scrollbar_hit_area, None);
+    assert_eq!(
+        view.sidebar_scrollbar_hit_areas[SidebarSection::Agents.index()],
+        None
+    );
     for y in lane.y..lane.bottom() {
         assert_eq!(cell(&terminal, lane.x, y).symbol(), "▕", "lane row {y}");
     }

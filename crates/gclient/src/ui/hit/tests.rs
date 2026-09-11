@@ -105,14 +105,21 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, new_tab.x, new_tab.y), Hit::NewTab);
     assert_eq!(at(view, bar.right() - 1, bar.y), Hit::TabBarEmpty);
 
-    // Sidebar: divider column, section rule, toggle, rows, then bare cells.
+    // Sidebar: divider column, section rules, toggle, rows, then bare cells.
     let sidebar = view.sidebar_rect;
     let divider_x = view.sidebar_divider_x.expect("sidebar divider");
     assert_eq!(at(view, divider_x, sidebar.y), Hit::SidebarDivider);
-    let section_y = view.sidebar_section_divider_y.expect("section divider");
-    assert_eq!(at(view, sidebar.x, section_y), Hit::SidebarSectionDivider);
+    for (divider, section_y) in view.sidebar_section_divider_ys.iter().enumerate() {
+        let section_y = section_y.expect("section rule");
+        assert_eq!(
+            at(view, sidebar.x, section_y),
+            Hit::SidebarSectionDivider(divider)
+        );
+    }
     let toggle = view.sidebar_toggle_hit_area.expect("toggle drawn");
     assert_eq!(at(view, toggle.x, toggle.y), Hit::SidebarToggle);
+    let (id, rect) = view.machine_hit_areas.first().expect("machine row");
+    assert_eq!(at(view, rect.x, rect.y), Hit::Machine(id.clone()));
     let (id, rect) = view.project_hit_areas.first().expect("project card");
     assert_eq!(id, "proj-alpha");
     assert_eq!(at(view, rect.x, rect.y), Hit::Project(id.clone()));
@@ -196,12 +203,11 @@ fn sidebar_scrollbar_lane_hits_by_section() {
     rendered(&ws, &mut chrome);
     // One project card never overflows a 40-row sidebar, so no lane is drawn
     // and the cells beside the rows stay plain sidebar.
-    assert_eq!(chrome.view.projects_scrollbar_hit_area, None);
-    assert_eq!(chrome.view.agents_scrollbar_hit_area, None);
+    assert_eq!(chrome.view.sidebar_scrollbar_hit_areas, [None; 4]);
 
     // A lane the renderer reports maps to its section, row by row.
-    let lane = Rect::new(24, 2, 1, 3);
-    chrome.view.projects_scrollbar_hit_area = Some(lane);
+    let lane = Rect::new(24, 7, 1, 3);
+    chrome.view.sidebar_scrollbar_hit_areas[SidebarSection::Projects.index()] = Some(lane);
     let hit = Hit::SidebarScrollbar {
         section: SidebarSection::Projects,
         row: lane.y + 2,

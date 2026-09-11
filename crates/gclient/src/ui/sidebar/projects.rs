@@ -1,23 +1,22 @@
 // upstream: none (herdr src/client/shell/sidebar.rs workspace cards)
-//! The projects section of the expanded sidebar: a two-row header, one
+//! The projects section of the expanded sidebar: a three-row header, one
 //! two-line card per project with its worktree rows under it, a footer row
 //! with the `new` and `menu` controls, and the variable-height scroll
 //! metrics the cards need.
 
-use super::{scrollbar_track, SidebarHits};
+use super::{header_rows, render_header, scrollbar_track, section_body_rect, SidebarHits};
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, WorkspaceView};
+use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
 use crate::ui::sidebar_rows::{project_rows, row_line, row_second_line, RowKind, SidebarRow};
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::Style;
+use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-/// herdr `WORKSPACE_SECTION_HEADER_ROWS`.
-pub const PROJECTS_HEADER_ROWS: u16 = 2;
 const NEW_LABEL: &str = " new";
 const MENU_LABEL: &str = "menu";
 /// Columns the footer needs before it draws: both labels and a gap.
@@ -34,16 +33,9 @@ pub(super) fn render_projects<W: WorkspaceView>(
     hits: &mut SidebarHits,
 ) {
     let p = &chrome.palette;
-    if area.width == 0 || area.height == 0 {
+    if render_header(frame, area, SidebarSection::Projects, p).is_none() {
         return;
     }
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            " projects",
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        ))),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
     let mut rows = project_rows(ws, chrome);
     if !is_navigating {
         for row in &mut rows {
@@ -51,14 +43,15 @@ pub(super) fn render_projects<W: WorkspaceView>(
         }
     }
     let heights: Vec<u16> = rows.iter().map(SidebarRow::height).collect();
-    let viewport = projects_body_rect(area, false).height;
-    let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.scroll);
-    let body = projects_body_rect(area, should_show_scrollbar(metrics));
+    let section = SidebarSection::Projects;
+    let viewport = section_body_rect(section, area, false).height;
+    let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.scroll(section));
+    let body = section_body_rect(section, area, should_show_scrollbar(metrics));
     render_cards(frame, body, &rows, metrics, chrome, hits);
     if should_show_scrollbar(metrics) {
         let track = scrollbar_track(area, body);
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
-        hits.projects_scrollbar = Some(track);
+        hits.scrollbars[section.index()] = Some(track);
     }
     if chrome.prefs.mouse_capture {
         render_footer(frame, area, p, hits);
@@ -121,7 +114,7 @@ fn render_cards(
 
 /// The footer row: ` new` at the left edge, `menu` at the right.
 fn render_footer(frame: &mut Frame, area: Rect, p: &Palette, hits: &mut SidebarHits) {
-    if area.width < FOOTER_MIN_WIDTH || area.height <= PROJECTS_HEADER_ROWS {
+    if area.width < FOOTER_MIN_WIDTH || area.height <= header_rows(SidebarSection::Projects) {
         return;
     }
     let y = area.bottom().saturating_sub(1);
@@ -133,21 +126,6 @@ fn render_footer(frame: &mut Frame, area: Rect, p: &Palette, hits: &mut SidebarH
     let menu_rect = Rect::new(menu_x, y, MENU_LABEL.len() as u16, 1);
     frame.render_widget(Paragraph::new(Span::styled(MENU_LABEL, style)), menu_rect);
     hits.projects_menu = Some(menu_rect);
-}
-
-/// herdr `workspace_list_body_rect`: below the header, above the footer row.
-pub fn projects_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
-    if area.width == 0 || area.height <= PROJECTS_HEADER_ROWS {
-        return Rect::default();
-    }
-    let body_y = area.y + PROJECTS_HEADER_ROWS;
-    let footer_y = area.y + area.height.saturating_sub(1);
-    Rect::new(
-        area.x,
-        body_y,
-        area.width.saturating_sub(u16::from(has_scrollbar)),
-        footer_y.saturating_sub(body_y),
-    )
 }
 
 /// `list_metrics` for entries of varying `heights`: the largest scroll is

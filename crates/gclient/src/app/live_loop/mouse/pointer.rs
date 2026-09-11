@@ -11,7 +11,7 @@ use crate::ui::pane_layout::metrics_for;
 use crate::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
 };
-use crate::ui::sidebar::section_metrics;
+use crate::ui::sidebar::{section_metrics, ALL_MACHINES};
 use crate::ui::sidebar_rows::displayed_project_ids;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
@@ -203,7 +203,21 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::MachineFilter => MouseOutcome::Action(Action::CycleMachineFilter),
+        Hit::Machine(machine) => {
+            // The row's filter: this machine alone, or every machine from
+            // the local row; a second click returns to local.
+            let is_local = machine == ws.sidebar().local_machine;
+            let target = if is_local {
+                ALL_MACHINES
+            } else {
+                machine.as_str()
+            };
+            chrome.sidebar.machine_filter = match chrome.sidebar.machine_filter.as_deref() {
+                Some(current) if current == target => None,
+                _ => Some(target.to_string()),
+            };
+            MouseOutcome::Handled
+        }
         Hit::AgentSort => MouseOutcome::Action(Action::ToggleAgentSort),
         Hit::Agent(entry_id) => {
             // Another project's row focuses that project first: its panes
@@ -249,9 +263,11 @@ pub(super) fn down<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
-        Hit::SidebarSectionDivider if !chrome.sidebar.collapsed => {
-            chrome.gesture = Some(MouseGesture::SectionDrag);
-            chrome.sidebar.set_split_from_row(sidebar_area, mouse.row);
+        Hit::SidebarSectionDivider(divider) if !chrome.sidebar.collapsed => {
+            chrome.gesture = Some(MouseGesture::SectionDrag { divider });
+            chrome
+                .sidebar
+                .set_split_from_row(sidebar_area, divider, mouse.row);
             MouseOutcome::Handled
         }
         Hit::SidebarScrollbar { section, row } => {
@@ -380,8 +396,10 @@ pub(super) fn drag<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
-        Some(MouseGesture::SectionDrag) => {
-            chrome.sidebar.set_split_from_row(sidebar_area, mouse.row);
+        Some(MouseGesture::SectionDrag { divider }) => {
+            chrome
+                .sidebar
+                .set_split_from_row(sidebar_area, *divider, mouse.row);
             MouseOutcome::Handled
         }
         Some(MouseGesture::SidebarScrollbarDrag {
@@ -489,7 +507,7 @@ pub(super) fn up<W: WorkspaceView>(
         Some(
             MouseGesture::TabDrag { .. }
             | MouseGesture::ProjectDrag { .. }
-            | MouseGesture::SectionDrag
+            | MouseGesture::SectionDrag { .. }
             | MouseGesture::SidebarScrollbarDrag { .. }
             | MouseGesture::SplitDrag { .. }
             | MouseGesture::ScrollbarDrag { .. },
@@ -535,10 +553,7 @@ fn reordered_projects<W: WorkspaceView>(
 
 /// The scrollbar lane the last frame drew beside `section`, if it showed one.
 fn scrollbar_track(chrome: &Chrome, section: SidebarSection) -> Option<Rect> {
-    match section {
-        SidebarSection::Projects => chrome.view.projects_scrollbar_hit_area,
-        SidebarSection::Agents => chrome.view.agents_scrollbar_hit_area,
-    }
+    chrome.view.sidebar_scrollbar_hit_areas[section.index()]
 }
 
 /// The scrollbar lane the last frame drew beside `slot`, with the pane it

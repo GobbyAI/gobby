@@ -23,8 +23,10 @@ pub enum RowKind {
     Project,
     /// A worktree row indented under its project card.
     Worktree,
-    /// An agent row in the agents section.
+    /// A session or agent row: two lines.
     Agent,
+    /// A machine row: one line.
+    Machine,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -33,7 +35,7 @@ pub struct SidebarRow {
     pub label: String,
     pub kind: RowKind,
     pub state: RowState,
-    /// The task ref of a worktree row.
+    /// The task ref of a worktree row; a machine row's `local`/`all` mark.
     pub detail: String,
     /// An agent row's second line: provider, model, task ref, tab, and
     /// remote machine, empties already elided.
@@ -60,7 +62,7 @@ impl SidebarRow {
     pub fn height(&self) -> u16 {
         match self.kind {
             RowKind::Project | RowKind::Agent => 2,
-            RowKind::Worktree => 1,
+            RowKind::Worktree | RowKind::Machine => 1,
         }
     }
 }
@@ -255,6 +257,15 @@ pub fn row_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a
                 budget.saturating_sub(display_width(prefix)),
             ));
         }
+        RowKind::Machine => {
+            spans.extend(fitted_spans(
+                glyph,
+                (&row.label, title_style),
+                &[(row.detail.as_str(), detail_style)],
+                p,
+                budget,
+            ));
+        }
         RowKind::Agent => {
             let label_style = Style::default()
                 .fg(state_label_color(row.state, p))
@@ -373,6 +384,7 @@ mod tests {
     use super::*;
     use crate::app::Workspace;
     use crate::daemon::{Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow};
+    use crate::ui::hit::SidebarSection;
     use crate::ui::sidebar::agent_rows;
     use serde_json::json;
 
@@ -471,7 +483,9 @@ mod tests {
     #[test]
     fn agent_rows_point_at_their_terminal() {
         let ws = scripted_workspace();
-        let rows = agent_rows(&ws, &Chrome::dark());
+        let chrome = Chrome::dark();
+        assert!(agent_rows(&ws, &chrome, SidebarSection::Sessions).is_empty());
+        let rows = agent_rows(&ws, &chrome, SidebarSection::Agents);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "run:term-alpha");
         assert_eq!(rows[0].label, "term-alpha");

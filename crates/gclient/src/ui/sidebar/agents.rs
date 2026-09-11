@@ -1,23 +1,26 @@
 // upstream: herdr v0.8.0 src/client/shell/agent_sidebar.rs
-//! The agents section: one two-line row per agent the machine filter admits,
-//! in tab order or by urgency (`agent_sort`), under a three-row header that
-//! carries the filter and sort labels.
+//! The sessions and agents sections: one two-line row per roster entry the
+//! machine filter admits, the interactive sessions in one list and the
+//! agent runs (the daemon's `run:` entries, agent-managed in the web UI) in
+//! the other, in tab order or by urgency (`agent_sort`), each under a
+//! three-row header; the agents header carries the sort label.
 //!
 //! herdr lists every workspace's agents and marks the view with a label in
 //! the header; gclient's filter is the machine axis instead: the focused
-//! project's local agents by default, one remote machine, or every agent of
-//! every project and machine (`ALL_MACHINES`).
+//! project's local entries by default, one remote machine, or every entry
+//! of every project and machine (`ALL_MACHINES`), chosen in the machines
+//! section.
 
 use std::cmp::Reverse;
 
-use super::{agents_body_rect, project_list_metrics, scrollbar_track, SidebarHits};
+use super::{render_header, render_section_rows, SidebarHits};
 use crate::app::project_tabs::TabSet;
 use crate::app::short_terminal_id;
 use crate::app::sidebar_model::{agent_row_state, urgency, AgentEntry, SidebarModel};
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
-use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
+use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
-use crate::ui::sidebar_rows::{row_line, row_second_line, RowKind, SidebarRow};
+use crate::ui::sidebar_rows::{RowKind, SidebarRow};
 use crate::ui::text::display_width;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -25,12 +28,8 @@ use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-/// herdr `AGENT_PANEL_HEADER_ROWS`: the rule, the title row, one blank.
-pub const AGENTS_HEADER_ROWS: u16 = 3;
-/// `SidebarState::machine_filter` value that admits every agent.
+/// `SidebarState::machine_filter` value that admits every entry.
 pub const ALL_MACHINES: &str = "all";
-/// Header label of the default filter.
-const LOCAL_LABEL: &str = "local";
 
 /// What the row calls the agent: its name with the session ref (`planner
 /// #12217`) when a session row joined, else with the tmux address that keeps
@@ -49,8 +48,8 @@ pub fn agent_label<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> String {
     }
 }
 
-/// The filter after `current` in the cycle `local -> all -> each remote
-/// machine -> local`; a machine the model no longer knows wraps to local.
+/// The filter after `current`: local, then every machine, then each remote
+/// machine the model knows, then local again.
 pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Option<String> {
     let remote: Vec<&String> = model
         .machines
@@ -68,30 +67,37 @@ pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Optio
     }
 }
 
-/// Header text of a filter: `local`, `all`, or the machine's short id.
-pub fn machine_filter_label(current: Option<&str>) -> &str {
-    match current {
-        None => LOCAL_LABEL,
-        Some(ALL_MACHINES) => ALL_MACHINES,
-        Some(machine) => short_terminal_id(machine),
-    }
-}
-
-/// The agent's state as the chrome shows it: the pane's live flags when one
-/// shows the terminal, else what the roster said.
-fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
+/// The row state: the pane's live state where one is attached, else the
+/// roster's.
+pub(super) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
     ws.pane_for_terminal(&agent.terminal_id)
         .map_or(agent.state, |pane| agent_row_state(agent, ws.pane(pane)))
 }
 
-/// Whether a jump to `entry_id` should open the response dialog: the agent
-/// waits on attention, or no agent row backs the entry (a prompt-only entry).
+/// Whether the entry is waiting on an attention prompt; an entry the model
+/// no longer lists counts as blocked, so a stale row still opens respond.
 pub fn agent_blocked<W: WorkspaceView>(ws: &W, entry_id: &str) -> bool {
     ws.sidebar()
         .agents
         .iter()
         .find(|agent| agent.entry_id == entry_id)
         .is_none_or(|agent| agent_state(ws, agent) == RowState::Attention)
+}
+
+/// The section that lists `entry_id`: agent runs under agents, everything
+/// else (an entry the model no longer lists included) under sessions.
+pub fn agent_section<W: WorkspaceView>(ws: &W, entry_id: &str) -> SidebarSection {
+    let managed = ws
+        .sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.entry_id == entry_id)
+        .is_some_and(|agent| agent.managed);
+    if managed {
+        SidebarSection::Agents
+    } else {
+        SidebarSection::Sessions
+    }
 }
 
 fn admits<W: WorkspaceView>(ws: &W, chrome: &Chrome, agent: &AgentEntry) -> bool {
@@ -105,8 +111,8 @@ fn admits<W: WorkspaceView>(ws: &W, chrome: &Chrome, agent: &AgentEntry) -> bool
     }
 }
 
-/// The tab set that shows `project`'s panes: the tab bar for the focused
-/// project (or while no project is focused), else the project's own set.
+/// The tab set the agent's project shows: the active set for the focused
+/// project, the stored one for any other.
 fn tab_set<'a>(chrome: &'a Chrome, project: &str) -> Option<&'a TabSet> {
     match chrome.project_tabs.focused.as_deref() {
         Some(focused) if focused != project => chrome.project_tabs.sets.get(project),
@@ -114,8 +120,8 @@ fn tab_set<'a>(chrome: &'a Chrome, project: &str) -> Option<&'a TabSet> {
     }
 }
 
-/// Index of the tab showing the agent's pane in its project's set, with the
-/// tab's title when the set has more than one tab.
+/// The tab that shows the agent's pane in its project's set, and its title
+/// when the set has more than one tab (the row's tab token).
 fn tab_of<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
@@ -134,10 +140,9 @@ fn tab_of<W: WorkspaceView>(
     (index, title)
 }
 
-/// The agents the filter admits, in the order the sort pref asks for:
-/// `grouped` follows the tabs (rows no tab shows last, roster order within),
-/// `priority` puts the most urgent first and the latest activity before the
-/// rest (herdr `ordered_agent_pane_ids`).
+/// The entries the filter admits, of both sections, with their live state
+/// and tab token, in the `agent_sort` order: by tab (entries without one
+/// last) or by urgency then last activity.
 fn visible_agents<'a, W: WorkspaceView>(
     ws: &'a W,
     chrome: &Chrome,
@@ -169,13 +174,20 @@ fn visible_agents<'a, W: WorkspaceView>(
         .collect()
 }
 
-/// One row per visible agent: the label and state on the first line, the
-/// provider, model, task, tab, and remote machine tokens on the second.
-pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> {
+/// The rows of `section`: the agent runs for the agents section, the
+/// interactive sessions for any other. Each is the entry's label and state
+/// over its provider, model, task ref, tab and remote machine tokens.
+pub fn agent_rows<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    section: SidebarSection,
+) -> Vec<SidebarRow> {
+    let managed = section == SidebarSection::Agents;
     let focused = chrome.focused_pane();
     let local_machine = ws.sidebar().local_machine.as_str();
     visible_agents(ws, chrome)
         .into_iter()
+        .filter(|(agent, _, _)| agent.managed == managed)
         .map(|(agent, state, tab_title)| {
             let pane = ws.pane_for_terminal(&agent.terminal_id);
             let machine = (!agent.machine_id.is_empty() && agent.machine_id != local_machine)
@@ -204,7 +216,8 @@ pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> 
         .collect()
 }
 
-/// Entry ids the attention chords walk: the visible rows, blocked first.
+/// Entry ids of both sections in attention-walk order: the blocked ones
+/// first, then the rest, each in the sections' row order.
 pub fn attention_order<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<String> {
     let agents = visible_agents(ws, chrome);
     let blocked = agents
@@ -219,128 +232,46 @@ pub fn attention_order<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<String>
         .collect()
 }
 
-/// Draw the section into `area` (the content rect, without the separator
-/// column) and record its hits.
+/// Draw `section` (sessions or agents) into `area` (the content rect,
+/// without the separator column) and record its hits.
 pub(super) fn render_agents<W: WorkspaceView>(
     frame: &mut Frame,
     area: Rect,
+    section: SidebarSection,
     ws: &W,
     chrome: &Chrome,
     hits: &mut SidebarHits,
 ) {
     let p = &chrome.palette;
-    if area.width == 0 || area.height < AGENTS_HEADER_ROWS {
+    let Some(title_row) = render_header(frame, area, section, p) else {
         return;
-    }
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            "─".repeat(usize::from(area.width)),
-            Style::default().fg(p.surface_dim),
-        )),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    let title_row = Rect::new(area.x, area.y + 1, area.width, 1);
-    let title = " agents";
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            title,
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        )),
-        title_row,
-    );
-    let mut labels_x = area.right();
-    let sort_label = chrome.prefs.agent_sort.label();
-    if let Some(rect) = label_rect(title_row, &mut labels_x, sort_label, title) {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                sort_label,
-                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-            )),
-            rect,
-        );
-        hits.agent_sort = chrome.prefs.mouse_capture.then_some(rect);
-    }
-    if ws.sidebar().machines.len() > 1 {
-        let filter = chrome.sidebar.machine_filter.as_deref();
-        let label = machine_filter_label(filter);
-        if let Some(rect) = label_rect(title_row, &mut labels_x, label, title) {
-            let color = if filter.is_some() {
-                p.accent
-            } else {
-                p.overlay0
-            };
+    };
+    if section == SidebarSection::Agents {
+        let sort_label = chrome.prefs.agent_sort.label();
+        if let Some(rect) = label_rect(title_row, area.right(), sort_label, section.title()) {
             frame.render_widget(
-                Paragraph::new(Span::styled(label, Style::default().fg(color))),
+                Paragraph::new(Span::styled(
+                    sort_label,
+                    Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+                )),
                 rect,
             );
-            hits.machine_filter = chrome.prefs.mouse_capture.then_some(rect);
+            hits.agent_sort = chrome.prefs.mouse_capture.then_some(rect);
         }
     }
-
-    let rows = agent_rows(ws, chrome);
-    let heights: Vec<u16> = rows.iter().map(SidebarRow::height).collect();
-    let viewport = agents_body_rect(area, false).height;
-    let metrics = project_list_metrics(&heights, viewport, chrome.sidebar.agents_scroll);
-    let body = agents_body_rect(area, should_show_scrollbar(metrics));
-    render_rows(frame, body, &rows, metrics, chrome, hits);
-    if should_show_scrollbar(metrics) {
-        let track = scrollbar_track(area, body);
-        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
-        hits.agents_scrollbar = Some(track);
-    }
+    let rows = agent_rows(ws, chrome, section);
+    let (drawn, lane) = render_section_rows(frame, area, section, &rows, chrome);
+    hits.agents.extend(drawn);
+    hits.scrollbars[section.index()] = lane;
 }
 
-/// The cell run for a header label packed against the right edge, one
-/// blank left of the label placed before it; `None` once it would overlap
-/// the title.
-fn label_rect(row: Rect, right: &mut u16, label: &str, title: &str) -> Option<Rect> {
+/// Where a header label ending at `right` sits on the title row, unless it
+/// would run into the title.
+fn label_rect(row: Rect, right: u16, label: &str, title: &str) -> Option<Rect> {
     let width = u16::try_from(display_width(label)).ok()?;
     let x = right.checked_sub(width)?;
     if x < row.x + u16::try_from(display_width(title)).ok()? + 1 {
         return None;
     }
-    *right = x.saturating_sub(1);
     Some(Rect::new(x, row.y, width, 1))
-}
-
-/// Rows from the scroll offset down while they fit whole; the focused
-/// pane's row sits on `surface_dim` (herdr `render_agent_row`).
-fn render_rows(
-    frame: &mut Frame,
-    body: Rect,
-    rows: &[SidebarRow],
-    metrics: gobby_terminal::layout::ScrollMetrics,
-    chrome: &Chrome,
-    hits: &mut SidebarHits,
-) {
-    let p = &chrome.palette;
-    if body.width == 0 || body.height == 0 {
-        return;
-    }
-    let scroll = metrics
-        .max_offset_from_bottom
-        .saturating_sub(metrics.offset_from_bottom);
-    let mut y = body.y;
-    for row in rows.iter().skip(scroll) {
-        let height = row.height();
-        if y + height > body.bottom() {
-            break;
-        }
-        let row_style = if row.active {
-            Style::default().bg(p.surface_dim)
-        } else {
-            Style::default()
-        };
-        frame.render_widget(
-            Paragraph::new(row_line(row, body.width, chrome)).style(row_style),
-            Rect::new(body.x, y, body.width, 1),
-        );
-        frame.render_widget(
-            Paragraph::new(row_second_line(row, body.width, chrome)).style(row_style),
-            Rect::new(body.x, y + 1, body.width, 1),
-        );
-        hits.agents
-            .push((row.id.clone(), Rect::new(body.x, y, body.width, height)));
-        y += height;
-    }
 }

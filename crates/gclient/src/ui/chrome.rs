@@ -227,10 +227,12 @@ pub struct SidebarState {
     pub width: u16,
     pub min_width: u16,
     pub max_width: u16,
-    /// Rows given to the projects section before the agents panel.
-    pub section_split: Option<u16>,
-    pub scroll: usize,
-    pub agents_scroll: usize,
+    /// Rows from the top where the projects, sessions and agents sections
+    /// start once their rule was dragged; an unset rule takes the default
+    /// share (`sidebar::section_bounds`).
+    pub section_splits: [Option<u16>; 3],
+    /// Scroll position of each section, by `SidebarSection::index`.
+    pub scrolls: [usize; 4],
     /// Selected project-section row, worktree rows included (navigate mode).
     pub selected: usize,
     /// Project ids in the order the user dragged them into; projects the
@@ -256,9 +258,8 @@ impl Default for SidebarState {
             width: 26,
             min_width: 18,
             max_width: 36,
-            section_split: None,
-            scroll: 0,
-            agents_scroll: 0,
+            section_splits: [None; 3],
+            scrolls: [0; 4],
             selected: 0,
             project_order: Vec::new(),
             collapsed_projects: BTreeSet::new(),
@@ -270,11 +271,12 @@ impl Default for SidebarState {
 
 impl SidebarState {
     /// The scroll position of one list section.
+    pub fn scroll(&self, section: SidebarSection) -> usize {
+        self.scrolls[section.index()]
+    }
+
     pub fn scroll_mut(&mut self, section: SidebarSection) -> &mut usize {
-        match section {
-            SidebarSection::Projects => &mut self.scroll,
-            SidebarSection::Agents => &mut self.agents_scroll,
-        }
+        &mut self.scrolls[section.index()]
     }
 
     /// Collapse `project_id`'s worktree rows, or expand them again.
@@ -292,15 +294,17 @@ impl SidebarState {
     }
 
     /// herdr `set_sidebar_section_split`: the pointer row becomes the first
-    /// agents row, so the projects keep the rows above it and each section
-    /// keeps at least its header. A sidebar under six rows keeps its fixed
-    /// halves.
-    pub fn set_split_from_row(&mut self, area: Rect, row: u16) {
-        if area.height < 6 {
+    /// row of the section under rule `divider`, the sections above keeping
+    /// the rows above it and every section its header and one row. A
+    /// sidebar too short to drag its rules keeps its fixed shares.
+    pub fn set_split_from_row(&mut self, area: Rect, divider: usize, row: u16) {
+        let Some(range) = sidebar::split_range(area.height, self.section_splits, divider) else {
             return;
-        }
-        let split = row.saturating_sub(area.y).clamp(3, area.height - 3);
-        self.section_split = Some(split);
+        };
+        let split = row
+            .saturating_sub(area.y)
+            .clamp(*range.start(), *range.end());
+        self.section_splits[divider] = Some(split);
     }
 }
 
@@ -379,17 +383,19 @@ pub struct ViewState {
     pub group_toggle_hit_areas: Vec<(String, Rect)>,
     pub projects_new_hit_area: Option<Rect>,
     pub projects_menu_hit_area: Option<Rect>,
-    /// Agent rows drawn in the sidebar, by entry id.
+    /// Session and agent rows drawn in the sidebar, by entry id.
     pub agent_hit_areas: Vec<(String, Rect)>,
-    pub machine_filter_hit_area: Option<Rect>,
+    /// Machine rows drawn in the sidebar, by machine id.
+    pub machine_hit_areas: Vec<(String, Rect)>,
     pub agent_sort_hit_area: Option<Rect>,
     /// The `│` column between the sidebar and the content column.
     pub sidebar_divider_x: Option<u16>,
-    /// The `─` row between the projects and agents sections.
-    pub sidebar_section_divider_y: Option<u16>,
+    /// The `─` rules above the projects, sessions and agents sections,
+    /// each when its section had room for it.
+    pub sidebar_section_divider_ys: [Option<u16>; 3],
     pub sidebar_toggle_hit_area: Option<Rect>,
-    pub projects_scrollbar_hit_area: Option<Rect>,
-    pub agents_scrollbar_hit_area: Option<Rect>,
+    /// Scrollbar lane beside each section, by `SidebarSection::index`.
+    pub sidebar_scrollbar_hit_areas: [Option<Rect>; 4],
     /// Leading control-state span of the status line.
     pub control_indicator_hit_area: Option<Rect>,
     /// Settings popup including its border, while the overlay is drawn.
@@ -426,10 +432,9 @@ impl ViewState {
         self.projects_new_hit_area = sidebar.projects_new;
         self.projects_menu_hit_area = sidebar.projects_menu;
         self.agent_hit_areas = sidebar.agents;
-        self.machine_filter_hit_area = sidebar.machine_filter;
+        self.machine_hit_areas = sidebar.machines;
         self.agent_sort_hit_area = sidebar.agent_sort;
-        self.projects_scrollbar_hit_area = sidebar.projects_scrollbar;
-        self.agents_scrollbar_hit_area = sidebar.agents_scrollbar;
+        self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
         self.sidebar_toggle_hit_area = sidebar.toggle;
         self.control_indicator_hit_area = control_indicator;
         self.toast_hit_area = toast;
@@ -731,7 +736,7 @@ impl Chrome {
         }
         let sidebar_divider_x =
             (sidebar_rect.width > 0).then(|| sidebar_rect.x + sidebar_rect.width - 1);
-        let sidebar_section_divider_y = sidebar::section_divider_y(sidebar_rect, &self.sidebar);
+        let sidebar_section_divider_ys = sidebar::section_divider_ys(sidebar_rect, &self.sidebar);
         self.view = ViewState {
             sidebar_rect,
             tab_bar_rect,
@@ -740,7 +745,7 @@ impl Chrome {
             pane_infos,
             split_borders,
             sidebar_divider_x,
-            sidebar_section_divider_y,
+            sidebar_section_divider_ys,
             ..ViewState::default()
         };
     }
