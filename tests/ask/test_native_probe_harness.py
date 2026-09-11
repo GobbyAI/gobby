@@ -14,6 +14,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -34,6 +35,26 @@ from gobby.config.app import DaemonConfig
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from tests.ask import native_probe_harness as harness
+
+
+async def _pending_managed_launch(agent_run_id: str) -> tuple[asyncio.Task[None], asyncio.Event]:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    release = asyncio.Event()
+
+    async def launch() -> None:
+        await release.wait()
+
+    task = asyncio.create_task(launch())
+    _spawn_background_tasks[f"{agent_run_id}:{id(task)}"] = task
+    return task, release
+
+
+def _remove_managed_launch(agent_run_id: str, task: asyncio.Task[None]) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    _spawn_background_tasks.pop(f"{agent_run_id}:{id(task)}", None)
+
 
 pytestmark = pytest.mark.unit
 
@@ -138,6 +159,134 @@ def _observations(executable: Path, tmp_path: Path) -> list[dict[str, Any]]:
     return observations
 
 
+@pytest.mark.asyncio
+async def test_receipt_agent_waits_for_managed_launch_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_run_id = "agent-run"
+    managed_task, release = await _pending_managed_launch(agent_run_id)
+    captured: list[str] = []
+
+    def capture(_database_url: str, captured_run_id: str, **_kwargs: object) -> bool:
+        captured.append(captured_run_id)
+        return True
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value=agent_run_id))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=5),
+    )
+    launch_call = asyncio.create_task(agents.launch(spec, object()))
+    try:
+        await asyncio.sleep(0)
+        assert not launch_call.done()
+        assert captured == []
+
+        release.set()
+        assert await launch_call == agent_run_id
+        assert captured == [agent_run_id]
+    finally:
+        release.set()
+        await managed_task
+        _remove_managed_launch(agent_run_id, managed_task)
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_rejects_completed_background_launch_without_process_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_run_id = "failed-agent"
+    managed_task, release = await _pending_managed_launch(agent_run_id)
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", lambda *_args, **_kwargs: False)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value=agent_run_id))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=5),
+    )
+    release.set()
+    try:
+        with pytest.raises(RuntimeError, match="did not produce a complete process receipt"):
+            await agents.launch(spec, object())
+    finally:
+        await managed_task
+        _remove_managed_launch(agent_run_id, managed_task)
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_preserves_original_deadline_during_managed_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_run_id = "deadline-agent"
+    managed_task, release = await _pending_managed_launch(agent_run_id)
+    captures: list[str] = []
+
+    def capture(_database_url: str, run_id: str, **_kwargs: object) -> bool:
+        captures.append(run_id)
+        return True
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value=agent_run_id))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) - timedelta(milliseconds=1),
+    )
+    try:
+        with pytest.raises(TimeoutError, match="deadline expired during native Ask launch"):
+            await agents.launch(spec, object())
+        assert captures == []
+    finally:
+        release.set()
+        await managed_task
+        _remove_managed_launch(agent_run_id, managed_task)
+
+
+@pytest.mark.asyncio
+async def test_receipt_agent_cancellation_never_writes_a_late_launch_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_run_id = "cancelled-agent"
+    managed_task, release = await _pending_managed_launch(agent_run_id)
+    captures: list[str] = []
+
+    def capture(_database_url: str, run_id: str, **_kwargs: object) -> bool:
+        captures.append(run_id)
+        return True
+
+    monkeypatch.setattr(harness, "_capture_agent_launch_receipt", capture)
+    delegate = SimpleNamespace(launch=AsyncMock(return_value=agent_run_id))
+    agents = harness.ReceiptCapturingAgents(delegate, _SCOPED_TEST_DATABASE_URL, tmp_path)
+    spec = SimpleNamespace(
+        run_id="ask-run",
+        project_id="project-id",
+        deadline_at=datetime.now(UTC) + timedelta(seconds=5),
+    )
+    launch_call = asyncio.create_task(agents.launch(spec, object()))
+    try:
+        await asyncio.sleep(0)
+        launch_call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await launch_call
+        release.set()
+        await managed_task
+        await asyncio.sleep(0)
+        assert captures == []
+    finally:
+        release.set()
+        await managed_task
+        _remove_managed_launch(agent_run_id, managed_task)
+
+
 def test_parser_exposes_self_contained_driver_without_external_daemon_controls(
     tmp_path: Path,
 ) -> None:
@@ -187,6 +336,10 @@ def test_bootstrap_loader_only_bypasses_prior_artifact_in_protected_test_runtime
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = _provider(tmp_path / "claude")
+    monkeypatch.setattr(
+        "gobby.ask.runtime_validation.probe_native_bin_version",
+        lambda _path: "2.1.265",
+    )
     marker_path = tmp_path / "bootstrap.json"
     artifact = harness._write_bootstrap_marker(marker_path)
     identity = harness.BootstrapPolicyIdentity(
@@ -1417,7 +1570,7 @@ def test_raw_export_hashes_owned_receipt_bytes_and_strips_secret_fields(
         superseded=[],
         include_publish=True,
     )
-    agent_rows = [
+    agent_rows: list[dict[str, object]] = [
         {
             "agent": {
                 "id": "agent-run",
@@ -1549,12 +1702,84 @@ def test_launch_receipt_captures_policy_before_runtime_reap(
     assert captured_policy.read_bytes() == b'{"policy":"pre-reap"}\n'
     assert manifest["agent_run_id"] == "agent-run"
     assert manifest["ask_run_id"] == "ask-run"
+    assert manifest["launch_complete"] is True
     assert manifest["start_identity"] == "os-start"
     assert manifest["pgid"] == 4321
     assert manifest["process_group"][0]["pid"] == 4321
     assert manifest["violation"]["retained_path"].endswith(
         "/gobby/logs/sandbox-violations/agent-run.jsonl"
     )
+
+
+def test_incomplete_launch_receipt_preserves_identity_without_process_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    control_dir = runtime_root / "control"
+    policy = runtime_root / "srt" / "assets" / "settings.json"
+    violation = runtime_root / "srt" / "logs" / "violations.jsonl"
+    policy.parent.mkdir(parents=True)
+    violation.parent.mkdir(parents=True)
+    policy.write_bytes(b'{"policy":"pre-launch"}\n')
+    violation.write_bytes(b"")
+    row = {
+        "agent": {
+            "id": "agent-run",
+            "workflow_name": "native-ask",
+            "status": "cancelled",
+            "error": "background spawn failed",
+            "pid": None,
+            "terminal_id": None,
+            "child_session_id": None,
+            "resume_metadata_json": {
+                "provider": "claude",
+                "project_id": "project-id",
+                "workflow": "native-ask",
+                "initial_variables": {"ask_run_id": "ask-run"},
+                "sandbox": {
+                    "policy_path": str(policy),
+                    "violation_path": str(violation),
+                },
+            },
+        },
+        "session": None,
+        "terminal": None,
+    }
+    monkeypatch.setattr(harness, "_agent_receipt_row", lambda *_args: row)
+
+    complete = harness._capture_agent_launch_receipt(
+        _SCOPED_TEST_DATABASE_URL,
+        "agent-run",
+        ask_run_id="ask-run",
+        project_id="project-id",
+        control_dir=control_dir,
+    )
+
+    manifest = json.loads((control_dir / "launch-receipts" / "agent-run.json").read_bytes())
+    assert complete is False
+    assert manifest["launch_complete"] is False
+    assert manifest["agent_run_id"] == "agent-run"
+    assert manifest["status"] == "cancelled"
+    assert manifest["launch_error"] == "background spawn failed"
+    assert manifest["pid"] is None
+    assert manifest["start_identity"] is None
+    assert manifest["process_group"] is None
+    assert harness._launch_process_snapshot({"agent-run": manifest})["agents"] == [
+        {
+            "id": "agent-run",
+            "status": "cancelled",
+            "pid": None,
+            "terminal_id": None,
+            "child_session_id": None,
+            "terminal_process": None,
+            "pgid": None,
+            "process_group": None,
+            "live": None,
+            "start_identity": None,
+            "observed_start_identity": None,
+        }
+    ]
 
 
 def test_external_transcript_receipt_rejects_symlink(tmp_path: Path) -> None:
@@ -1814,6 +2039,106 @@ def test_raw_export_retains_partial_evidence_when_one_run_snapshot_fails(
             "message": "incomplete execution row",
         }
     ]
+
+
+def test_raw_export_retains_sessionless_launch_identity_and_unknown_liveness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    launch_receipts = runtime_root / "control" / "launch-receipts"
+    launch_receipts.mkdir(parents=True)
+    (launch_receipts / "agent-run.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "launch_complete": False,
+                "agent_run_id": "agent-run",
+                "ask_run_id": "ask-run",
+                "project_id": "project-id",
+                "provider": "claude",
+                "child_session_id": None,
+                "pid": None,
+                "terminal_id": None,
+                "status": "cancelled",
+                "start_identity": None,
+                "pgid": None,
+                "process_group": None,
+                "terminal_process": None,
+                "policy": {},
+                "violation": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = _execution_snapshot(
+        run_id="ask-run",
+        deadline="2026-09-10T12:10:00Z",
+        status="failed",
+        current_agent="agent-run",
+        superseded=[],
+        include_publish=False,
+    )
+    agent_rows: list[dict[str, object]] = [
+        {
+            "agent": {
+                "id": "agent-run",
+                "workflow_name": "native-ask",
+                "machine_id": "owned-machine",
+                "status": "cancelled",
+                "pid": None,
+                "terminal_id": None,
+                "child_session_id": None,
+                "resume_metadata_json": {
+                    "provider": "claude",
+                    "project_id": "project-id",
+                    "workflow": "native-ask",
+                    "provider_native_session_id": None,
+                    "initial_variables": {"ask_run_id": "ask-run"},
+                },
+            },
+            "session": None,
+        }
+    ]
+    connection = _Connection({"ask-run": snapshot}, agent_rows)
+    monkeypatch.setattr(
+        "tests.ask.native_probe_harness.psycopg.connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    result = harness._export_raw(
+        _SCOPED_TEST_DATABASE_URL,
+        ["ask-run"],
+        tmp_path / "evidence",
+        runtime_root=runtime_root,
+        process_sets={
+            "agent_launches": harness._launch_process_snapshot(
+                {
+                    "agent-run": json.loads(
+                        (launch_receipts / "agent-run.json").read_text(encoding="utf-8")
+                    )
+                }
+            )
+        },
+    )
+
+    exported = json.loads((tmp_path / "evidence" / "raw-probe.json").read_bytes())
+    assert result["complete"] is False
+    assert exported["missing_agent_run_ids"] == []
+    assert exported["agent_runs"][0]["agent"]["id"] == "agent-run"
+    assert exported["agent_runs"][0]["session"] is None
+    assert exported["process_sets"]["agent_launches"]["agents"][0]["live"] is None
+    assert exported["capture_errors"] == [
+        {
+            "kind": "agent-session-snapshot",
+            "run_id": "agent-run",
+            "error_type": "IncompleteLaunch",
+            "message": "native Ask agent run has no child session",
+        }
+    ]
+    assert {receipt["reason"] for receipt in exported["excluded_receipts"]} == {
+        "agent-child-session-missing"
+    }
 
 
 def test_failure_finalizer_exports_discovered_runs_before_exact_cleanup(
@@ -2127,6 +2452,10 @@ def test_seal_writes_schema_v2_manifest_accepted_by_production_loader(
     from tests.ask.test_native_probe_provenance import _raw_probe_fixture
 
     provider = _provider(tmp_path / "claude")
+    monkeypatch.setattr(
+        "gobby.ask.runtime_validation.probe_native_bin_version",
+        lambda _path: "2.1.265",
+    )
     observations_path = tmp_path / "observations.json"
     observations = _observations(provider, tmp_path)
     raw_path = _raw_probe_fixture(tmp_path, observations)
