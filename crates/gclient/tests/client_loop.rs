@@ -5716,6 +5716,80 @@ async fn git_refresh_runs_as_a_deferred_job() {
     mock.shutdown().await;
 }
 
+/// A refetch started beside the loop that lands after an inline refetch
+/// of the same rows is stale: the inline rows stay, and the next refetch
+/// still lands.
+#[tokio::test]
+async fn a_late_background_refetch_leaves_the_inline_rows_in_place() {
+    let mock = MockDaemon::start("local-token").await;
+    let status_path = "/api/source-control/status?";
+    let status = |branch: &str| json!({"current_branch": branch, "ahead": 0, "behind": 0, "repo_path": "/repo", "worktree_count": 0});
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    workspace.request_git_refresh_if_due();
+    let job = workspace
+        .start_sidebar_refetch()
+        .expect("the interval passed");
+
+    // The inline refetch runs first and reads the current branch; the job,
+    // not yet polled, then reads the reply queued behind it.
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue("GET", status_path, 200, status("fresh"));
+    mock.enqueue("GET", status_path, 200, status("stale"));
+    workspace
+        .fetch_sidebar_rows()
+        .await
+        .expect("inline refetch");
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("fresh")
+    );
+
+    let fetch = job.await.expect("the late job lands");
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("fresh"),
+        "the late job is stale"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(GIT_REFRESH_INTERVAL).await;
+    tokio::time::resume();
+    mock.enqueue("GET", status_path, 200, status("newer"));
+    workspace.request_git_refresh_if_due();
+    let fetch = workspace
+        .start_sidebar_refetch()
+        .expect("the next interval passed")
+        .await
+        .expect("status refetched");
+    workspace.apply_sidebar_fetch(fetch);
+    assert_eq!(
+        workspace.sidebar().projects[0].branch.as_deref(),
+        Some("newer"),
+        "a newer job still lands"
+    );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
 /// The render tick starts the due git refresh beside the loop and applies
 /// it when it lands, without a drain or a reconcile.
 #[tokio::test]

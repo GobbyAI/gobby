@@ -23,6 +23,7 @@ impl Workspace<LiveDaemon> {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             pending_sidebar: PendingSidebar::default(),
+            sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,
             gobby_home: None,
             launch_dir: None,
@@ -215,6 +216,10 @@ impl Workspace<LiveDaemon> {
         self.sidebar_rows.projects = self.daemon.projects().await?;
         self.sidebar_rows.statuses.clear();
         self.sidebar_rows.worktrees.clear();
+        // Every row set is fresh from here: a refetch started earlier and
+        // still in flight lands stale.
+        let seq = self.sidebar_stamps.next();
+        self.sidebar_stamps.stamp_all(seq);
         self.pending_sidebar = PendingSidebar {
             projects: false,
             project_rows: self.checked_out_projects().into_iter().collect(),
@@ -253,6 +258,7 @@ impl Workspace<LiveDaemon> {
             self.git_refreshed_at = Instant::now();
         }
         let request = SidebarRequest {
+            seq: self.sidebar_stamps.next(),
             projects: pending.projects,
             project_rows: pending.project_rows,
             checked_out: self.checked_out_projects(),
@@ -262,12 +268,22 @@ impl Workspace<LiveDaemon> {
         Some(Box::pin(async move { request.run(&daemon).await }))
     }
 
-    /// Install the rows one `start_sidebar_refetch` job produced.
+    /// Install the rows one `start_sidebar_refetch` job produced, row set by
+    /// row set: a set a later refetch already replaced is stale and stays
+    /// out.
     pub fn apply_sidebar_fetch(&mut self, fetch: SidebarFetch) {
+        let seq = fetch.seq;
+        let stamps = &mut self.sidebar_stamps;
         if let Some(projects) = fetch.projects {
-            self.sidebar_rows.projects = projects;
+            if SidebarStamps::accept(&mut stamps.projects, seq) {
+                self.sidebar_rows.projects = projects;
+            }
         }
         for (project, status, worktrees) in fetch.project_rows {
+            let stamp = stamps.project_rows.entry(project.clone()).or_default();
+            if !SidebarStamps::accept(stamp, seq) {
+                continue;
+            }
             self.sidebar_rows
                 .worktrees
                 .retain(|row| row.project_id != project);
@@ -275,8 +291,11 @@ impl Workspace<LiveDaemon> {
             self.sidebar_rows.statuses.insert(project, status);
         }
         if let Some((project, sessions, runs)) = fetch.sessions {
-            self.sidebar_rows.sessions.insert(project.clone(), sessions);
-            self.sidebar_rows.runs.insert(project, runs);
+            let stamp = stamps.sessions.entry(project.clone()).or_default();
+            if SidebarStamps::accept(stamp, seq) {
+                self.sidebar_rows.sessions.insert(project.clone(), sessions);
+                self.sidebar_rows.runs.insert(project, runs);
+            }
         }
         self.rebuild_sidebar();
     }
@@ -568,6 +587,8 @@ fn is_cursor_error(error: &DaemonError) -> bool {
 /// installs them.
 #[derive(Debug, Default)]
 pub struct SidebarFetch {
+    /// The refetch that produced the rows, in start order.
+    seq: u64,
     projects: Option<Vec<ProjectRow>>,
     project_rows: Vec<(String, SourceStatus, Vec<WorktreeRow>)>,
     sessions: Option<(String, Vec<SessionRow>, Vec<RunRow>)>,
@@ -579,6 +600,7 @@ pub type SidebarFetchFuture =
 
 /// What one refetch asks the daemon for.
 struct SidebarRequest {
+    seq: u64,
     projects: bool,
     project_rows: BTreeSet<String>,
     /// The projects checked out here when the request was made; a refetched
@@ -590,7 +612,10 @@ struct SidebarRequest {
 
 impl SidebarRequest {
     async fn run(self, daemon: &LiveDaemon) -> Result<SidebarFetch, DaemonError> {
-        let mut fetch = SidebarFetch::default();
+        let mut fetch = SidebarFetch {
+            seq: self.seq,
+            ..SidebarFetch::default()
+        };
         let mut checked_out = self.checked_out;
         if self.projects {
             let projects = daemon.projects().await?;

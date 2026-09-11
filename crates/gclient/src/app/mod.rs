@@ -45,7 +45,7 @@ use crate::frame_source::{
 use crate::persist::WorkspaceSnapshot;
 use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use serde_json::{json, Value};
-use sidebar_model::{PendingSidebar, SidebarModel};
+use sidebar_model::{PendingSidebar, SidebarModel, SidebarStamps};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tokio::sync::broadcast::error::TryRecvError;
@@ -92,6 +92,7 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     sidebar: SidebarModel,
     git_refreshed_at: Instant,
     pending_sidebar: PendingSidebar,
+    sidebar_stamps: SidebarStamps,
     pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
     /// Where gclient was started; shells of a project with no checkout
@@ -171,6 +172,7 @@ impl Workspace {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             pending_sidebar: PendingSidebar::default(),
+            sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,
             gobby_home: None,
             launch_dir: None,

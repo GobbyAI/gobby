@@ -4,7 +4,7 @@
 //! join; the `Workspace` methods below own the cached inputs and the refetch
 //! bookkeeping around it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -347,6 +347,45 @@ pub(super) struct PendingSidebar {
     pub(super) projects: bool,
     pub(super) project_rows: BTreeSet<String>,
     pub(super) sessions: bool,
+}
+
+/// The refetch each sidebar row set came from. A refetch runs beside the
+/// loop, so one started earlier can land after a later one for the same
+/// rows; the rows keep the newest refetch and the late one is dropped.
+#[derive(Debug, Default)]
+pub(super) struct SidebarStamps {
+    last: u64,
+    pub(super) projects: u64,
+    pub(super) project_rows: HashMap<String, u64>,
+    pub(super) sessions: HashMap<String, u64>,
+}
+
+impl SidebarStamps {
+    /// The sequence of the refetch starting now.
+    pub(super) fn next(&mut self) -> u64 {
+        self.last += 1;
+        self.last
+    }
+
+    /// Every row set counts as produced by `seq`.
+    pub(super) fn stamp_all(&mut self, seq: u64) {
+        self.projects = seq;
+        self.project_rows
+            .values_mut()
+            .for_each(|stamp| *stamp = seq);
+        self.sessions.values_mut().for_each(|stamp| *stamp = seq);
+    }
+
+    /// Whether rows from `seq` are newer than the ones `stamp` records;
+    /// when they are, `stamp` moves to `seq`.
+    pub(super) fn accept(stamp: &mut u64, seq: u64) -> bool {
+        if seq > *stamp {
+            *stamp = seq;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl<D: Daemon> Workspace<D> {
