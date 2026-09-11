@@ -67,7 +67,8 @@ def test_record_pr_opened_persists_pr_metadata(
     ctx.task_manager.update_task.assert_not_called()
 
 
-def test_record_merge_result_records_success_and_failure(
+@pytest.mark.asyncio
+async def test_record_merge_result_records_success_and_failure(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -81,8 +82,10 @@ def test_record_merge_result_records_success_and_failure(
     tool = stage_ops.create_stage_ops_registry(ctx).get_tool("record_merge_result")
     assert tool is not None
 
-    assert tool(task_id=ctx.task_id, merge_sha="abc123")["stage"]["state"] == "done"
-    assert tool(task_id=ctx.task_id, failure_reason="conflict")["stage"]["state"] == "ready"
+    success = await tool(task_id=ctx.task_id, merge_sha="abc123")
+    assert success["stage"]["state"] == "done"
+    failure = await tool(task_id=ctx.task_id, failure_reason="conflict")
+    assert failure["stage"]["state"] == "ready"
 
     ctx.task_manager.stage_states.complete_stage.assert_called_once()
     ctx.task_manager.stage_states.fail_stage.assert_called_once()

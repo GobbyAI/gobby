@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal
+from typing import Literal
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
-from gobby.install.manifest import (
-    check_linked_committed_bundled_manifest_async as check_linked_committed_bundled_manifest,
-)
-from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
     CloseWorktreeRoot,
     RepoPathValidationError,
@@ -37,13 +32,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import (
     children_state as _children_state,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_close as _commit_close
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
-    active_review_response,
-    launch_close_review,
-)
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
-    submit_close_review as finalize_close_review,
-)
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
     resolve_close_commit_shas,
@@ -82,7 +70,6 @@ from gobby.tasks.acceptance_artifacts import (
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.criteria_contract import operational_actions_from_command
-from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
 from gobby.tasks.transcript_evidence import (
@@ -436,26 +423,6 @@ async def _evaluate_close(
                 commit_result.message or "Link a commit for the attributed task edits.",
                 extra=commit_extra,
             )
-    manifest_check = await check_linked_committed_bundled_manifest(Path(repo_path), commit_shas)
-    if manifest_check is not None and not manifest_check.ok:
-        details = {
-            "treeish": manifest_check.treeish,
-            "errors": list(manifest_check.errors),
-            "expected_file_count": manifest_check.expected_file_count,
-        }
-        return evaluation.fail(
-            7,
-            "linked_commits",
-            "stale_bundled_content_manifest",
-            manifest_check.errors[0],
-            action=(
-                "Run `uv run python -m gobby.install.manifest --write --repo-root . "
-                "--treeish HEAD` to regenerate src/gobby/install/bundled_content_manifest.json "
-                "from the committed shared tree, commit it, and retry close_task."
-            ),
-            details=details,
-            extra={"bundled_manifest": details},
-        )
     evaluation.pass_gate(
         7,
         "linked_commits",
@@ -807,154 +774,7 @@ async def _evaluate_close(
     return evaluation
 
 
-def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    """Register the checklist-based close_task tool."""
-
-    async def close_task(
-        task_id: str,
-        reason: str = "completed",
-        changes_summary: str | None = None,
-        skip_validation: bool = False,
-        override_justification: str | None = None,
-        scope_justification: str | None = None,
-        commit_sha: str | None = None,
-        project_path: str | None = None,
-        preview: bool = False,
-        response_detail: Literal["concise", "diagnostic"] = "concise",
-    ) -> dict[str, Any]:
-        active = active_review_response(ctx, task_id)
-        if active is not None:
-            return active
-        close_arguments = {
-            "task_id": task_id,
-            "reason": reason,
-            "changes_summary": changes_summary,
-            "skip_validation": skip_validation,
-            "override_justification": override_justification,
-            "scope_justification": scope_justification,
-            "commit_sha": commit_sha,
-            "project_path": project_path,
-            "preview": preview,
-            "response_detail": response_detail,
-        }
-        evaluation = await _evaluate_close(
-            ctx,
-            task_id=task_id,
-            reason=reason,
-            changes_summary=changes_summary,
-            commit_sha=commit_sha,
-            project_path=project_path,
-            response_detail=response_detail,
-            override_justification=override_justification,
-            scope_justification=scope_justification,
-        )
-        if evaluation.error == "agentic_review_required":
-            return await launch_close_review(
-                ctx,
-                evaluation=evaluation,
-                close_arguments=close_arguments,
-            )
-        if not evaluation.ready:
-            return evaluation.response(preview=preview)
-        result = await _commit_close(
-            ctx,
-            evaluation,
-            reason=reason,
-            skip_validation=skip_validation,
-            override_justification=override_justification,
-            commit_sha=commit_sha,
-        )
-        result.update({"preview": preview, "can_close": result.get("closed") is True})
-        return result
-
-    async def submit_close_review(review_id: str, verdict: dict[str, object]) -> dict[str, Any]:
-        return await finalize_close_review(
-            ctx,
-            review_id=review_id,
-            verdict=verdict,
-            evaluate_close=_evaluate_close,
-            commit_close=_commit_close,
-        )
-
-    registry.register(
-        name="close_task",
-        description=(
-            "Evaluate the ordered close checklist and close ready tasks in the same call. "
-            "Leaf tasks require criteria, a changes summary, commits for attributed edits, "
-            "a clean transcript-derived validation run, and one bounded criteria review "
-            "unless a justified deliberate close exits escalation. "
-            "Epics and parents that own no work close when they have no open children; a "
-            "claimed task or one with linked commits keeps its leaf gates even with "
-            "children. Closing the last child auto-closes eligible ancestors, stopping at "
-            "a claimed ancestor, which its owner closes through its own gates. "
-            "preview=true returns diagnostics when blocked and still closes when ready."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task reference (#N, path, or UUID)."},
-                "reason": {"type": "string", "default": "completed"},
-                "changes_summary": {"type": "string"},
-                "skip_validation": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Organizational close audit flag; ignored for leaves.",
-                },
-                "override_justification": {
-                    "type": "string",
-                    "description": (
-                        "Required to deliberately close an escalated task; persisted as "
-                        "validation_override_reason and ignored for ordinary leaf closure."
-                    ),
-                },
-                "scope_justification": {
-                    "type": "string",
-                    "minLength": 20,
-                    "maxLength": 1000,
-                    "description": (
-                        "Required when linked or attributed paths exceed declared Targets or "
-                        "manual/expansion affected-file annotations; persisted with close audit."
-                    ),
-                },
-                "commit_sha": {"type": "string"},
-                "project_path": {"type": "string"},
-                "preview": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Close when ready; otherwise return first-failure diagnostics.",
-                },
-                "response_detail": {
-                    "type": "string",
-                    "enum": ["concise", "diagnostic"],
-                    "default": "concise",
-                },
-            },
-            "required": ["task_id"],
-        },
-        func=close_task,
-    )
-    registry.register(
-        name="submit_close_review",
-        description=(
-            "Validator-only submission for a persisted oversized task-close review. "
-            "The authenticated task-close-validator run reruns deterministic gates and "
-            "atomically applies the current verdict."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "review_id": {"type": "string"},
-                "verdict": TASK_CLOSE_VALIDATION_SCHEMA,
-            },
-            "required": ["review_id", "verdict"],
-            "additionalProperties": False,
-        },
-        func=submit_close_review,
-    )
-
-
 __all__ = [
     "_commit_close",
     "_evaluate_close",
-    "register_close_task",
 ]

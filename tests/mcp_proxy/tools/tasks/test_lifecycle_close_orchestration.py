@@ -23,8 +23,8 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
-import gobby.mcp_proxy.tools.tasks._lifecycle_close as close_module
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
+import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
 from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -710,7 +710,7 @@ async def test_submit_close_review_claims_before_heavy_work(
         evaluation.verdict = dict(submitted.verdict)
         return evaluation
 
-    monkeypatch.setattr(close_module, "_evaluate_close", evaluate_close)
+    monkeypatch.setattr(close_tool, "_evaluate_close", evaluate_close)
     internal_manager = InternalRegistryManager()
     internal_manager.add_registry(
         create_task_registry(LocalTaskManager(temp_db), project_id=sample_project["id"])

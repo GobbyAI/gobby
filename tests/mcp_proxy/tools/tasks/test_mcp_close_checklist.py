@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -43,12 +42,6 @@ NAMED_TEST = AcceptanceTest(
     symbol="test_batched_read_failure_injects_nothing",
     body="async def test_batched_read_failure_injects_nothing() -> None:\n    assert True\n",
 )
-
-
-@pytest.fixture(autouse=True)
-def _committed_manifest_is_current() -> Iterator[None]:
-    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
-        yield
 
 
 def _task(
@@ -189,7 +182,7 @@ async def _evaluate(
     artifacts: AcceptanceArtifactResult | None = None,
     close_root: CloseWorktreeRoot = NO_WORKTREE,
     project_path: str | None = None,
-    acceptance_evaluator: MagicMock | None = None,
+    acceptance_evaluator: AsyncMock | None = None,
     transcript: TranscriptEvidence | None = None,
     changes_summary: str = "Implemented and tested.",
     dirty_paths: set[str] | None = None,
@@ -223,20 +216,24 @@ async def _evaluate(
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "resolve_close_worktree_root", return_value=close_root),
+        patch.object(lifecycle, "resolve_close_worktree_root_async", return_value=close_root),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(
             close_finalization,
             "_committable_task_paths",
             return_value=attributed_paths,
         ),
-        patch.object(lifecycle, "_task_dirty_paths", return_value=dirty_paths or set()),
+        patch.object(
+            lifecycle_validation, "task_dirty_paths_async", return_value=dirty_paths or set()
+        ),
         patch.object(
             lifecycle_validation,
             "foreign_owned_dirty_paths",
             return_value=foreign_owners,
         ),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
+        patch.object(close_finalization, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(
             lifecycle,
             "validate_commit_requirements",
@@ -257,7 +254,7 @@ async def _evaluate(
         patch.object(
             lifecycle,
             "evaluate_acceptance_artifacts",
-            acceptance_evaluator or MagicMock(return_value=artifacts),
+            acceptance_evaluator or AsyncMock(return_value=artifacts),
         ),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_criteria_review", review),
@@ -474,7 +471,7 @@ async def test_close_gates_evaluate_the_registered_worktree_root() -> None:
     Named acceptance tests may exist only on that branch, so gate 11 resolving
     them against the main checkout failed for the wrong reason (#21098).
     """
-    acceptance = MagicMock(
+    acceptance = AsyncMock(
         return_value=AcceptanceArtifactResult(
             passed=True, tests=(NAMED_TEST,), findings=(), evidence_files=()
         )

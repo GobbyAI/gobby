@@ -7,7 +7,6 @@ import threading
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +15,7 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
+import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
@@ -27,12 +27,9 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     fingerprint_differences,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
-    _commit_close,
-    _evaluate_close,
-    register_close_task,
-)
+from gobby.mcp_proxy.tools.tasks._lifecycle_close import _commit_close, _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
@@ -59,9 +56,8 @@ _MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _committed_manifest_is_current() -> Iterator[None]:
+def _close_gates_are_quiet() -> Iterator[None]:
     with (
-        patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None),
         patch.object(lifecycle, "collect_commit_paths", return_value=set()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(
@@ -809,59 +805,6 @@ async def test_scope_justification_controls_downstream_close_evidence(
 
 
 @pytest.mark.asyncio
-async def test_stale_committed_bundled_manifest_blocks_close() -> None:
-    task = replace(_task(), category="research")
-    ctx = _ctx(task, validator=object())
-    ctx.session_var_manager = cast(
-        SessionVariableManager,
-        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
-    )
-    stale = SimpleNamespace(
-        ok=False,
-        treeish="HEAD",
-        errors=("Committed bundled content manifest is stale.",),
-        expected_file_count=3,
-    )
-    review = AsyncMock(
-        return_value=ValidationResult(
-            can_close=True,
-            validation_status="valid",
-            validation_feedback="Criteria satisfied.",
-            reset_reason="llm_valid",
-        )
-    )
-
-    with (
-        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
-        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
-        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
-        patch.object(lifecycle, "evaluate_criteria_review", review),
-        patch.object(
-            lifecycle,
-            "check_linked_committed_bundled_manifest",
-            return_value=stale,
-            create=True,
-        ) as check_manifest,
-    ):
-        evaluation = await _evaluate_close(
-            ctx,
-            task_id=task.id,
-            reason="completed",
-            changes_summary="Updated bundled templates.",
-            commit_sha="abc123",
-            project_path=None,
-            response_detail="diagnostic",
-        )
-
-    assert evaluation.error == "stale_bundled_content_manifest"
-    assert evaluation.message == "Committed bundled content manifest is stale."
-    check_manifest.assert_called_once_with(Path("/repo"), ["abc123"])
-    review.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
     ctx = _ctx(_task())
     evaluation = CloseEvaluation("task", response_detail="diagnostic").fail(
@@ -876,9 +819,9 @@ async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
     register_close_task(registry, ctx)
 
     with (
-        patch.object(lifecycle, "_evaluate_close", evaluate),
-        patch.object(lifecycle, "_commit_close", commit),
-        patch.object(lifecycle, "active_review_response", return_value=None),
+        patch.object(close_tool, "_evaluate_close", evaluate),
+        patch.object(close_tool, "_commit_close", commit),
+        patch.object(close_tool, "active_review_response", return_value=None),
     ):
         result = await registry.call(
             "close_task",
@@ -911,10 +854,10 @@ async def test_ready_preview_commits_same_evaluation() -> None:
     register_close_task(registry, ctx)
 
     with (
-        patch.object(lifecycle, "_evaluate_close", evaluate),
-        patch.object(lifecycle, "_commit_close", commit),
-        patch.object(lifecycle, "active_review_response", return_value=None),
-        patch.object(lifecycle, "launch_close_review", launch),
+        patch.object(close_tool, "_evaluate_close", evaluate),
+        patch.object(close_tool, "_commit_close", commit),
+        patch.object(close_tool, "active_review_response", return_value=None),
+        patch.object(close_tool, "launch_close_review", launch),
     ):
         result = await registry.call(
             "close_task",
@@ -985,8 +928,8 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
     register_close_task(registry, ctx)
 
     with (
-        patch.object(lifecycle, "active_review_response", return_value=None),
-        patch.object(lifecycle, "_evaluate_close", AsyncMock(return_value=evaluation)),
+        patch.object(close_tool, "active_review_response", return_value=None),
+        patch.object(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation)),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration.TaskCloseReviewStore",
             return_value=store,

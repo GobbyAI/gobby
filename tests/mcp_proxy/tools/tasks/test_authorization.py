@@ -1,11 +1,13 @@
 """Tests for the MCP-layer claim-authority guard (#20821)."""
 
+import asyncio
+import inspect
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
-from unittest.mock import MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -275,6 +277,12 @@ def _build_commit_tool(tool_name: str) -> Callable[[MagicMock, ExitStack], Build
     def build(manager: MagicMock, stack: ExitStack) -> BuildResult:
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
+        stack.enter_context(
+            patch(
+                "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
+                new=AsyncMock(side_effect=lambda sha, cwd=None: sha),
+            )
+        )
         registry = create_commit_registry(task_manager=manager)
         tool = registry.get_tool(tool_name)
         assert tool is not None
@@ -440,10 +448,18 @@ def _invoke(
         tool, mutation = spec.build(manager, stack)
         if context_session is not None:
             with session_context_for_test(context_session):
-                result = tool(**spec.kwargs)
+                result = _call(tool, spec.kwargs)
         else:
-            result = tool(**spec.kwargs)
+            result = _call(tool, spec.kwargs)
     return result, mutation
+
+
+def _call(tool: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Invoke a registered tool, running coroutine tools to completion."""
+    result = tool(**kwargs)
+    if inspect.iscoroutine(result):
+        result = asyncio.run(result)
+    return cast(dict[str, Any], result)
 
 
 class TestGuardedToolMatrix:

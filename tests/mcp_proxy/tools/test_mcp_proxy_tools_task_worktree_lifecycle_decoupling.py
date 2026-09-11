@@ -75,10 +75,6 @@ def _set_session_context() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
             return_value=_checkout_session_manager(),
         ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.check_linked_committed_bundled_manifest",
-            return_value=None,
-        ),
     ):
         yield
 
@@ -140,6 +136,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         "closed": True,
         "task_id": mock_task.id,
         "commit_shas": ["abc123"],
+        "clean_proof": {"status": "clean"},
     }
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)
