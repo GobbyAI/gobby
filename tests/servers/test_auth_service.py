@@ -447,6 +447,75 @@ def test_agent_capability_matrix(
         assert not service.is_request_authenticated(_request(identity, method=method, path=path))
 
 
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/ask/runs"),
+        ("GET", "/api/ask/runs/ask-run-1"),
+        ("GET", "/api/ask/runs/ask-run-1/wait"),
+        ("POST", "/api/ask/runs/ask-run-1/resume"),
+        ("POST", "/api/ask/runs/ask-run-1/cancel"),
+        ("GET", "/api/ask/runs/ask-run-1/export"),
+    ],
+)
+def test_agent_capability_matrix_allows_exact_ask_lifecycle_routes(
+    method: str,
+    path: str,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    service, headers = _agent_service_and_headers(temp_db, tmp_path, live_agent_run.id)
+
+    assert service.is_request_authenticated(_request(headers, method=method, path=path))
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/ask/runs"),
+        ("POST", "/api/ask/runs/ask-run-1"),
+        ("POST", "/api/ask/runs/ask-run-1/wait"),
+        ("GET", "/api/ask/runs/ask-run-1/resume"),
+        ("GET", "/api/ask/runs/ask-run-1/cancel"),
+        ("POST", "/api/ask/runs/ask-run-1/export"),
+        ("GET", "/api/ask/runs/ask-run-1/review"),
+    ],
+)
+def test_agent_capability_matrix_rejects_non_ask_routes(
+    method: str,
+    path: str,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    service, headers = _agent_service_and_headers(temp_db, tmp_path, live_agent_run.id)
+
+    assert not service.is_request_authenticated(_request(headers, method=method, path=path))
+
+
+def test_managed_ask_principal_cannot_reenter_public_ask_lifecycle(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    temp_db.execute(
+        "UPDATE agent_runs SET workflow_name = %s WHERE id = %s",
+        ("native-ask", live_agent_run.id),
+    )
+    service, headers = _agent_service_and_headers(temp_db, tmp_path, live_agent_run.id)
+
+    for method, path in (
+        ("POST", "/api/ask/runs"),
+        ("GET", "/api/ask/runs/ask-run-1"),
+        ("GET", "/api/ask/runs/ask-run-1/wait"),
+        ("POST", "/api/ask/runs/ask-run-1/resume"),
+        ("POST", "/api/ask/runs/ask-run-1/cancel"),
+        ("GET", "/api/ask/runs/ask-run-1/export"),
+    ):
+        assert not service.is_request_authenticated(_request(headers, method=method, path=path))
+
+
 def test_agent_capability_survives_ref_spelled_path_segment(
     temp_db: HubDatabase,
     tmp_path: Path,
