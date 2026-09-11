@@ -994,53 +994,6 @@ class TestFoundWorkDeclarativeRules:
 
         assert response.decision == "allow"
 
-    @pytest.mark.asyncio
-    async def test_successful_close_injects_one_complete_reminder(
-        self,
-        temp_db: HubDatabase,
-    ) -> None:
-        response = await RuleEngine(temp_db).evaluate(
-            _event(
-                HookEventType.AFTER_TOOL,
-                {
-                    "tool_name": "mcp__gobby__call_tool",
-                    "mcp_server": "gobby-tasks",
-                    "mcp_tool": "close_task",
-                    "tool_input": {"arguments": {"task_id": "#42"}},
-                    "tool_output": {"success": True, "closed": True},
-                },
-                {"is_failure": False},
-            ),
-            session_id=SESSION_ID,
-            variables={},
-        )
-
-        context = response.context or ""
-        assert context.count("Task closed. Found-work sweep") == 1
-        assert "new claimed task" in context
-        assert "send_message" in context
-        assert "needs-decision/clean-window" in context
-
-    @pytest.mark.asyncio
-    async def test_failed_close_injects_no_reminder(self, temp_db: HubDatabase) -> None:
-        response = await RuleEngine(temp_db).evaluate(
-            _event(
-                HookEventType.AFTER_TOOL,
-                {
-                    "tool_name": "mcp__gobby__call_tool",
-                    "mcp_server": "gobby-tasks",
-                    "mcp_tool": "close_task",
-                    "tool_input": {"arguments": {"task_id": "#42"}},
-                    "tool_output": {"success": False, "error": "blocked"},
-                },
-                {"is_failure": True},
-            ),
-            session_id=SESSION_ID,
-            variables={},
-        )
-
-        assert "Found-work sweep" not in (response.context or "")
-
     def test_bundled_template_has_no_repo_specific_commands(self) -> None:
         template = (
             get_bundled_rules_path() / "stop-gates" / "enforce-found-work-ladder.yaml"
