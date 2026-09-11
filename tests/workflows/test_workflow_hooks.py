@@ -22,7 +22,11 @@ from gobby.storage.projects import (
     LocalProjectManager,
 )
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.git_utils import DEFAULT_GIT_STATUS_TIMEOUT_SECONDS, DirtyFiles
+from gobby.workflows.git_utils import (
+    DEFAULT_GIT_STATUS_TIMEOUT_SECONDS,
+    GIT_STATUS_UNAVAILABLE_MARKER,
+    DirtyFiles,
+)
 from gobby.workflows.hooks import (
     _GIT_STATUS_FLOOR_SECONDS,
     _NO_REPO_SYSTEM_PROJECTS,
@@ -308,6 +312,256 @@ class TestWorkflowHookHandlerDisabled:
 
 class TestProjectPathResolution:
     """Verify project_path for dirty file checks uses event.cwd."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_input"),
+        [
+            (
+                "call_tool",
+                {
+                    "server_name": "gobby-skills",
+                    "tool_name": "get_skill",
+                    "arguments": {"name": "python"},
+                },
+            ),
+            (
+                "mcp__gobby-results__get_tool_result",
+                {"result_id": "result-1"},
+            ),
+            (
+                "mcp__gobby-agents__get_agent_result",
+                {"run_id": "run-1"},
+            ),
+            (
+                "call_tool",
+                {
+                    "server_name": "gobby-agents",
+                    "tool_name": "get_inter_session_message",
+                    "arguments": {"message_id": "message-1"},
+                },
+            ),
+            (
+                "mcp__gobby__call_tool",
+                {"args": '{"server_name":"gobby-results","tool_name":"get_tool_result"}'},
+            ),
+            ("mcp__gobby-sessions__list_sessions", {"status": "active"}),
+            ("mcp__gobby-sessions__get_handoff", {}),
+            ("mcp__gobby-tasks__list_tasks", {"status": "open"}),
+            ("mcp_gobby_get_tool_schema", {"server_name": "gobby-tasks"}),
+            ("get_tool_schema", {"server_name": "gobby-tasks"}),
+            ("ToolSearch", {"query": "gobby tasks"}),
+        ],
+        ids=(
+            "wrapped-skill",
+            "direct-result",
+            "direct-agent-result",
+            "wrapped-inter-session-message",
+            "wrapped-route-alias",
+            "direct-sessions",
+            "argumentless-handoff",
+            "direct-tasks",
+            "proxy-alias",
+            "bare-proxy",
+            "provider-discovery",
+        ),
+    )
+    async def test_repository_independent_queries_skip_git_preflight_but_evaluate_rules(
+        self,
+        tool_name: str,
+        tool_input: dict[str, object],
+    ) -> None:
+        handler, mock_engine = _handler_with_variables(
+            {
+                "_variable_defaults_loaded": True,
+                "baseline_dirty_files": [GIT_STATUS_UNAVAILABLE_MARKER],
+                "session_edited_files": ["owned.py"],
+            }
+        )
+        mock_engine.evaluate.return_value = HookResponse(
+            decision="block",
+            reason="unrelated identity guard",
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data={"tool_name": tool_name, "tool_input": tool_input},
+            cwd="/repo/subdir",
+            project_id="project-1",
+            metadata={"_platform_session_id": MOCK_SESSION_ID, "project_path": "/repo"},
+        )
+
+        with (
+            patch("gobby.workflows.git_utils.resolve_git_worktree_root_async") as resolve_root,
+            patch("gobby.workflows.git_utils.get_dirty_files_categorized_async") as dirty,
+            patch.object(handler, "_resolve_project_path") as resolve_project,
+            patch.object(handler, "_run_observers", return_value=set()) as observers,
+        ):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "block"
+        mock_engine.evaluate.assert_awaited_once()
+        resolve_root.assert_not_awaited()
+        dirty.assert_not_awaited()
+        resolve_project.assert_not_called()
+        assert observers.call_args.args[4] is None
+        eval_context = mock_engine.evaluate.call_args.kwargs["eval_context"]
+        assert not bool(eval_context["has_dirty_files"])
+        variable_manager = cast(Any, handler._session_var_manager)
+        persisted = [call.args[1] for call in variable_manager.merge_variables.call_args_list]
+        assert all("baseline_dirty_files" not in payload for payload in persisted)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("event_type", "data"),
+        [
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "call_tool",
+                    "tool_input": {
+                        "server_name": "gobby-tasks",
+                        "tool_name": "create_task",
+                    },
+                    "mcp_server": "gobby-skills",
+                    "mcp_tool": "get_skill",
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "set_variable",
+                    "tool_input": {"name": "flag", "value": True},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "custom_wrapper",
+                    "tool_input": {
+                        "server_name": "gobby-skills",
+                        "tool_name": "get_skill",
+                    },
+                    "mcp_server": "gobby-skills",
+                    "mcp_tool": "get_skill",
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "curl https://example.test/status"},
+                    "mcp_server": "gobby-skills",
+                    "mcp_tool": "get_skill",
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__external__get_skill",
+                    "tool_input": {"name": "python"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__spawn_agent",
+                    "tool_input": {"task_id": "#1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__end_agent_run",
+                    "tool_input": {"run_id": "run-1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__send_message",
+                    "tool_input": {"target_session_id": "session-1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-agents__wait_for_agent",
+                    "tool_input": {"run_id": "run-1"},
+                },
+            ),
+            (
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "mcp__gobby-skills__get_skill_and_delete",
+                    "tool_input": {"name": "python"},
+                },
+            ),
+            (
+                HookEventType.STOP,
+                {
+                    "tool_name": "mcp__gobby-skills__get_skill",
+                    "tool_input": {"name": "python"},
+                },
+            ),
+        ],
+        ids=(
+            "mutation-route",
+            "bare-proxy-mutation",
+            "arbitrary-wrapper",
+            "shell-spoof",
+            "external-lookalike",
+            "agent-spawn",
+            "agent-stop",
+            "agent-send",
+            "agent-subscription",
+            "prefix-lookalike",
+            "stop",
+        ),
+    )
+    async def test_mutations_spoofs_and_stop_keep_git_preflight(
+        self,
+        event_type: HookEventType,
+        data: dict[str, object],
+    ) -> None:
+        handler, _mock_engine = _handler_with_variables(
+            {
+                "_variable_defaults_loaded": True,
+                "baseline_dirty_files": [],
+                "plan_mode": True,
+            }
+        )
+        event = HookEvent(
+            event_type=event_type,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=MOCK_TIMESTAMP,
+            data=data,
+            cwd="/repo",
+            project_id="project-1",
+            metadata={"_platform_session_id": MOCK_SESSION_ID},
+        )
+
+        with (
+            patch(
+                "gobby.workflows.git_utils.resolve_git_worktree_root_async",
+                new=AsyncMock(return_value="/repo"),
+            ) as resolve_root,
+            patch(
+                "gobby.workflows.git_utils.get_dirty_files_categorized_async",
+                new=AsyncMock(return_value=DirtyFiles(set(), set())),
+            ) as dirty,
+            patch.object(handler, "_resolve_project_path", return_value="/repo"),
+            patch.object(handler._found_work_analyzer, "unclaimed_found_work", return_value=()),
+        ):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "allow"
+        assert response.reason is None
+        resolve_root.assert_awaited_once()
+        dirty.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_existing_baseline_is_kept_and_snapshot_taken_once(self) -> None:

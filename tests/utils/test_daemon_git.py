@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import stat
 import subprocess
 import threading
@@ -76,6 +77,20 @@ def _git_env(tmp_path: Path, **values: str) -> dict[str, str]:
     env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
     env.update(values)
     return env
+
+
+class _CompletedStreamProcess:
+    """A process double that has already spooled one stdout chunk."""
+
+    pid = 2_147_483_647
+    returncode = 0
+
+    def __init__(self, *_args: object, **kwargs: object) -> None:
+        stdout = cast(Any, kwargs["stdout"])
+        stdout.write(b"chunk")
+
+    def wait(self) -> int:
+        return self.returncode
 
 
 async def _wait_for_file(path: Path) -> None:
@@ -332,6 +347,149 @@ async def test_timeout_kills_process_group_and_reaps_leader(tmp_path: Path) -> N
     assert "spawn_seconds=" in result.stderr
     assert "running_seconds=" in result.stderr
     await _assert_processes_gone(leader, child)
+
+
+@pytest.mark.asyncio
+async def test_nonstream_timeout_waits_for_bounded_worker_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_fake_git(tmp_path)
+    real_popen = subprocess.Popen
+    release_cleanup = threading.Event()
+
+    class DelayedCompletionProcess:
+        def __init__(self, process: subprocess.Popen[bytes]) -> None:
+            self._process = process
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._process, name)
+
+        def communicate(self, input_bytes: bytes | None = None) -> tuple[bytes, bytes]:
+            output = self._process.communicate(input_bytes)
+            assert release_cleanup.wait(1)
+            return output
+
+    def delayed_popen(*args: Any, **kwargs: Any) -> DelayedCompletionProcess:
+        return DelayedCompletionProcess(real_popen(*args, **kwargs))
+
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", delayed_popen)
+    asyncio.get_running_loop().call_later(0.08, release_cleanup.set)
+
+    started = time.monotonic()
+    result = await DaemonGitService().run(
+        ["status"],
+        cwd=tmp_path,
+        timeout=0.02,
+        env=_git_env(tmp_path, GIT_TEST_DELAY="30"),
+    )
+    elapsed = time.monotonic() - started
+
+    assert isinstance(result, GitTimeout)
+    assert release_cleanup.is_set()
+    assert elapsed >= 0.07
+    cleanup_match = re.search(r"cleanup_seconds=([0-9.]+)", result.stderr)
+    assert cleanup_match is not None
+    assert float(cleanup_match.group(1)) >= 0.04
+
+
+@pytest.mark.asyncio
+async def test_stream_timeout_waits_for_callback_longer_than_cleanup_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", _CompletedStreamProcess)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    returned = threading.Event()
+    writes: list[tuple[bytes, bool]] = []
+
+    def consume(chunk: bytes) -> None:
+        entered.set()
+        assert release.wait(2)
+        writes.append((chunk, returned.is_set()))
+        finished.set()
+
+    request = asyncio.create_task(
+        DaemonGitService().stream_bytes(
+            ["show"],
+            cwd=tmp_path,
+            consume=consume,
+            timeout=0.05,
+            env={},
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1)
+    premature_result: GitOk | GitFailed | GitTimeout | None = None
+    try:
+        try:
+            premature_result = await asyncio.wait_for(asyncio.shield(request), 0.35)
+        except TimeoutError:
+            pass
+    finally:
+        if premature_result is not None:
+            returned.set()
+        release.set()
+
+    result = premature_result or await asyncio.wait_for(request, 1)
+    returned.set()
+    assert await asyncio.to_thread(finished.wait, 1)
+
+    assert premature_result is None
+    assert isinstance(result, GitTimeout)
+    assert "phase=consuming" in result.stderr
+    assert writes == [(b"chunk", False)]
+
+
+@pytest.mark.asyncio
+async def test_stream_cancellation_waits_for_callback_longer_than_cleanup_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.utils.daemon_git.subprocess.Popen", _CompletedStreamProcess)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    cancellation_returned = threading.Event()
+    writes: list[tuple[bytes, bool]] = []
+
+    def consume(chunk: bytes) -> None:
+        entered.set()
+        assert release.wait(2)
+        writes.append((chunk, cancellation_returned.is_set()))
+        finished.set()
+
+    request = asyncio.create_task(
+        DaemonGitService().stream_bytes(
+            ["show"],
+            cwd=tmp_path,
+            consume=consume,
+            timeout=10,
+            env={},
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1)
+    request.cancel()
+    cancelled_early = False
+    try:
+        try:
+            await asyncio.wait_for(asyncio.shield(request), 0.35)
+        except TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            cancelled_early = True
+            cancellation_returned.set()
+    finally:
+        release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    cancellation_returned.set()
+    assert await asyncio.to_thread(finished.wait, 1)
+
+    assert not cancelled_early
+    assert writes == [(b"chunk", False)]
 
 
 @pytest.mark.asyncio

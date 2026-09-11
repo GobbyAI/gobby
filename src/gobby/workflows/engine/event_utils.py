@@ -1,5 +1,6 @@
 """Event helpers for rule-engine evaluation."""
 
+import json
 from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -32,6 +33,11 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
     """
     tool_name = event_data.get("tool_name", "")
     if is_gobby_call_tool(tool_name):
+        if tool_name == "mcp__gobby__call_tool":
+            server = event_data.get("mcp_server")
+            tool = event_data.get("mcp_tool")
+            if isinstance(server, str) and server and isinstance(tool, str) and tool:
+                return f"{server}:{tool}"
         tool_input = event_data.get("tool_input") or {}
         if isinstance(tool_input, dict):
             server = tool_input.get("server_name", "")
@@ -44,6 +50,35 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
         if len(parts) == 3 and parts[1] and parts[2]:
             return f"{parts[1]}:{parts[2]}"
     return str(tool_name)
+
+
+def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
+    raw_tool_input = data.get("tool_input") or data.get("arguments") or {}
+    if not isinstance(raw_tool_input, dict):
+        return {}
+
+    tool_name = data.get("tool_name", "")
+    if is_gobby_call_tool(tool_name):
+        inner_args = raw_tool_input.get("arguments")
+        if isinstance(inner_args, dict):
+            return inner_args
+        if isinstance(inner_args, str):
+            try:
+                parsed = json.loads(inner_args)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+    return raw_tool_input
+
+
+def _target_task_id_for_event(event: HookEvent, variables: dict[str, Any]) -> str | None:
+    if not isinstance(event.data, dict):
+        return None
+
+    from gobby.workflows.task_claim_state import resolve_target_task_id
+
+    return resolve_target_task_id(variables, _target_task_tool_input(event.data).get("task_id"))
 
 
 def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:

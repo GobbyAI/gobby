@@ -68,6 +68,7 @@ type _GitProcess = subprocess.Popen[str] | subprocess.Popen[bytes]
 type _GitWorker = Callable[
     [asyncio.AbstractEventLoop, asyncio.Future[GitOk | GitFailed], "_ProcessControl"], None
 ]
+type _ProcessPhase = Literal["queued", "preparing", "spawning", "running", "consuming", "finished"]
 type _StatusKey = tuple[
     asyncio.AbstractEventLoop,
     str,
@@ -78,6 +79,7 @@ type _StatusKey = tuple[
 
 _STREAM_CHUNK_BYTES = 64 * 1024
 _MAX_STREAM_STDERR_BYTES = 64 * 1024
+_WORKER_CLEANUP_GRACE_SECONDS = 0.25
 
 
 def parse_porcelain_v1_z(output: str) -> tuple[GitStatusEntry, ...]:
@@ -121,7 +123,7 @@ class _ProcessControl:
 
     process: _GitProcess | None = None
     kill_requested: bool = False
-    phase: Literal["queued", "preparing", "spawning", "running", "consuming", "finished"] = "queued"
+    phase: _ProcessPhase = "queued"
     lock: threading.Lock = field(default_factory=threading.Lock)
     started_at: float = field(default_factory=time.monotonic)
     spawn_started_at: float | None = None
@@ -138,7 +140,7 @@ class _ProcessControl:
             self.phase = "spawning"
             self.spawn_started_at = time.monotonic()
 
-    def diagnostic(self) -> str:
+    def diagnostic(self, *, include_cleanup: bool = True) -> str:
         """Snapshot the phase before timeout cleanup changes process ownership."""
         with self.lock:
             now = time.monotonic()
@@ -152,12 +154,19 @@ class _ProcessControl:
                 if self.spawn_finished_at
                 else 0.0
             )
-            cleanup_seconds = now - self.kill_started_at if self.kill_started_at else 0.0
-            return (
+            diagnostic = (
                 f"phase={self.phase} pid={self.pid} elapsed_seconds={now - self.started_at:.3f} "
-                f"spawn_seconds={spawn_seconds:.3f} running_seconds={running_seconds:.3f} "
-                f"cleanup_seconds={cleanup_seconds:.3f}"
+                f"spawn_seconds={spawn_seconds:.3f} running_seconds={running_seconds:.3f}"
             )
+            if not include_cleanup:
+                return diagnostic
+            cleanup_seconds = now - self.kill_started_at if self.kill_started_at else 0.0
+            return f"{diagnostic} cleanup_seconds={cleanup_seconds:.3f}"
+
+    def cleanup_seconds(self) -> float:
+        """Return elapsed timeout cleanup without changing process ownership."""
+        with self.lock:
+            return time.monotonic() - self.kill_started_at if self.kill_started_at else 0.0
 
     def attach(self, process: _GitProcess) -> None:
         with self.lock:
@@ -181,17 +190,17 @@ class _ProcessControl:
         with self.lock:
             return not self.kill_requested
 
-    def kill(self) -> bool:
-        """Request shutdown and report whether caller-visible consumption is active."""
+    def kill(self) -> _ProcessPhase:
+        """Request shutdown and return the phase that owned cleanup at request time."""
         with self.lock:
             self.kill_requested = True
             if self.kill_started_at is None:
                 self.kill_started_at = time.monotonic()
-            consuming = self.phase == "consuming"
+            phase = self.phase
             process = self.process if self.phase == "running" else None
         if process is not None:
             _kill_process_group(process)
-        return consuming
+        return phase
 
     def mark_finished(self) -> None:
         with self.lock:
@@ -387,21 +396,35 @@ class DaemonGitService:
         try:
             return await asyncio.wait_for(asyncio.shield(completion), timeout)
         except TimeoutError:
-            diagnostic = control.diagnostic()
-            consumer_active = control.kill()
+            diagnostic = control.diagnostic(include_cleanup=False)
+            cleanup_phase = control.kill()
             cancelled = False
-            if consumer_active:
+            if cleanup_phase == "consuming":
                 cancelled = await _await_worker_cleanup(completion)
+            elif cleanup_phase == "running":
+                cancelled = await _await_worker_cleanup(
+                    completion,
+                    timeout=_WORKER_CLEANUP_GRACE_SECONDS,
+                )
             completion.cancel()
             if cancelled:
                 raise asyncio.CancelledError() from None
-            # The dedicated worker owns eventual kill/reap, including a process
-            # that has not returned from Popen yet. Never await a wedged spawn.
-            return GitTimeout("timeout", argv, timeout, stderr=f"Git timed out: {diagnostic}")
+            cleanup_seconds = control.cleanup_seconds()
+            return GitTimeout(
+                "timeout",
+                argv,
+                timeout,
+                stderr=f"Git timed out: {diagnostic} cleanup_seconds={cleanup_seconds:.3f}",
+            )
         except asyncio.CancelledError:
-            consumer_active = control.kill()
-            if consumer_active:
+            cleanup_phase = control.kill()
+            if cleanup_phase == "consuming":
                 await _await_worker_cleanup(completion)
+            elif cleanup_phase == "running":
+                await _await_worker_cleanup(
+                    completion,
+                    timeout=_WORKER_CLEANUP_GRACE_SECONDS,
+                )
             completion.cancel()
             raise
 
@@ -548,12 +571,26 @@ async def _await_cleanup[T](future: asyncio.Future[T] | asyncio.Task[T]) -> T:
                 raise
 
 
-async def _await_worker_cleanup(future: asyncio.Future[GitOk | GitFailed]) -> bool:
-    """Wait until a byte consumer stops without replacing timeout/cancellation."""
+async def _await_worker_cleanup(
+    future: asyncio.Future[GitOk | GitFailed],
+    *,
+    timeout: float | None = None,
+) -> bool:
+    """Wait for owned cleanup, optionally bounding process kill and reap."""
     cancelled = False
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout if timeout is not None else None
     while True:
         try:
-            await asyncio.shield(future)
+            if deadline is None:
+                await asyncio.shield(future)
+            else:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    return cancelled
+                await asyncio.wait_for(asyncio.shield(future), remaining)
+            return cancelled
+        except TimeoutError:
             return cancelled
         except asyncio.CancelledError:
             cancelled = True
