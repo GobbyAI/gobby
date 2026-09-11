@@ -33,7 +33,6 @@ from tests.ask.test_native_integration import (
     _commit,
     _git,
     _profile,
-    _seed_parent_index,
 )
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -109,17 +108,7 @@ async def test_native_source_and_git_metadata_validate_from_exact_emissions(
         "gobby.agents.code_index.resolve_native_bin",
         lambda _name: (_ for _ in ()).throw(AssertionError("global gcode lookup")),
     )
-    session_id = UUID(session.id)
     gcode_bin = _branch_gcode()
-    _seed_parent_index(
-        repo=repo,
-        manager=credentials,
-        session_id=session_id,
-        project_id=project_id,
-        machine_id=isolated.machine_id,
-        runtime_root=runtime_root / "parent",
-        gcode_bin=gcode_bin,
-    )
     manager = AskSnapshotManager(
         worktree_storage=LocalWorktreeManager(temp_db),
         run_storage=storage,
