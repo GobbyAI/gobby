@@ -45,6 +45,17 @@ _SENSITIVE_NAMES = {
 }
 _SENSITIVE_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
 _URI_PASSWORD = re.compile(r"([a-z][a-z0-9+.-]*://[^:/\s]+:)[^@\s]+(@)", re.IGNORECASE)
+_KNOWN_CREDENTIALS = (
+    _URI_PASSWORD,
+    re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bbearer\s+[A-Za-z0-9._-]{16,}", re.IGNORECASE),
+)
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)\b(?:api[_-]?key|secret|token|password|passwd)[\"']?\s*[:=]\s*"
+    r"([\"'`]?[^\s\"'`]{12,})"
+)
 _TERMINAL_CHECKPOINT_SECONDS = 2.0
 
 
@@ -76,9 +87,60 @@ def _sanitize(value: Any) -> Any:
     return value
 
 
-def _contains_credential(value: object) -> bool:
-    serialized = _canonical_json(value)
-    return _redact_output(serialized) != serialized
+def _credential_text(value: str, *, source_references: bool = False) -> bool:
+    if any(pattern.search(value) for pattern in _KNOWN_CREDENTIALS):
+        return True
+    return any(
+        not source_references
+        or match.group(1).startswith(('"', "'", "`"))
+        or match.group(1)[0].isdigit()
+        for match in _CREDENTIAL_ASSIGNMENT.finditer(value)
+    )
+
+
+def _contains_credential(
+    value: object,
+    *,
+    source_languages: Mapping[str, str | None] | None = None,
+    source_references: bool = False,
+) -> bool:
+    if isinstance(value, str):
+        return _credential_text(value, source_references=source_references)
+    if isinstance(value, Mapping):
+        path = value.get("path")
+        language = (
+            source_languages.get(path)
+            if source_languages is not None and isinstance(path, str)
+            else None
+        )
+        for key, child in value.items():
+            if _credential_text(str(key)):
+                return True
+            if key in {"path", "paths"}:
+                continue
+            child_source_references = key == "query" or (
+                key == "excerpt"
+                and (
+                    source_languages is None
+                    or (
+                        isinstance(path, str)
+                        and path in source_languages
+                        and language not in {None, "bash", "json", "yaml"}
+                    )
+                )
+            )
+            if _contains_credential(
+                child,
+                source_languages=source_languages,
+                source_references=child_source_references,
+            ):
+                return True
+        return False
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return any(
+            _contains_credential(child, source_languages=source_languages) for child in value
+        )
+    return False
 
 
 class EvidenceAdmission:
@@ -184,6 +246,16 @@ class EvidenceAdmission:
         inventory = identity.get("inventory")
         if not isinstance(binding, dict) or not isinstance(inventory, dict):
             raise EvidenceAdmissionError("snapshot identity is missing its native payload")
+        entries = inventory.get("entries")
+        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+            raise EvidenceAdmissionError("snapshot identity inventory is invalid")
+        self.source_languages = {
+            entry["path"]: entry.get("language")
+            for entry in entries
+            if isinstance(entry.get("path"), str)
+            and (entry.get("language") is None or isinstance(entry.get("language"), str))
+            and entry.get("exclusion") is None
+        }
         if binding.get("commit_oid") != record.binding.commit_oid:
             raise EvidenceAdmissionError(
                 "native snapshot binding differs from the persisted Ask run"
@@ -772,9 +844,16 @@ class EvidenceAdmission:
         deadline_at: datetime | None = None,
     ) -> None:
         deadline = deadline_at or self.deadline_at
+        stored_result: dict[str, Any] = _sanitize(
+            {key: value for key, value in result.items() if key != "response"}
+        )
+        if response is not None:
+            # Admission established that the response contains no credentials. Keep its
+            # source bytes exact so persisted citation hashes still name the Git evidence.
+            stored_result["response"] = response
         result_pointer = await self._write_artifact(
             "evidence-result",
-            _sanitize(result),
+            stored_result,
             deadline_at=deadline,
         )
         items = response.get("items", []) if response is not None else []
@@ -875,7 +954,7 @@ class EvidenceAdmission:
         total_items = bounds.get("total_items")
         if not isinstance(total_items, int) or total_items < len(items):
             raise EvidenceAdmissionError("response total item bound is invalid")
-        if _contains_credential(response):
+        if _contains_credential(response, source_languages=self.source_languages):
             raise EvidenceAdmissionError("response contains credential-bearing content")
         return response
 

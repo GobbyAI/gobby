@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -20,7 +21,7 @@ from gobby.ask.contracts import (
     ProfileSnapshot,
     RetrievalMode,
 )
-from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
+from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError, _contains_credential
 from gobby.ask.snapshots import SnapshotIndexRuntime
 from gobby.ask.storage import AskRunStorage
 from gobby.code_index.eligibility import code_index_id_for_root
@@ -30,6 +31,53 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 
 pytestmark = pytest.mark.unit
+_TEST_LITERAL_VALUE = "01234567" + "89abcdef"
+
+
+@pytest.mark.parametrize(
+    ("value", "source_languages", "expected"),
+    [
+        ({"excerpt": str(Path.home()) + "/example.py"}, None, False),
+        (
+            {"path": "settings.yaml", "excerpt": f"token = {Path.home()}/x"},
+            {"settings.yaml": "yaml"},
+            True,
+        ),
+        ({"excerpt": "token = runtime_token_reference"}, None, False),
+        (
+            {"path": "src/runtime.py", "excerpt": "token = runtime_token_reference"},
+            {"src/runtime.py": "python"},
+            False,
+        ),
+        (
+            {"path": "src/runtime.py", "excerpt": "token = " + repr(_TEST_LITERAL_VALUE)},
+            {"src/runtime.py": "python"},
+            True,
+        ),
+        (
+            {"path": "settings.yaml", "excerpt": "token = runtime_token_reference"},
+            {"settings.yaml": "yaml"},
+            True,
+        ),
+        (
+            {"path": "settings.json", "excerpt": json.dumps({"token": _TEST_LITERAL_VALUE})},
+            {"settings.json": "json"},
+            True,
+        ),
+        (
+            {"path": "docs/task-native-source-reference.md", "excerpt": "safe evidence"},
+            {"docs/task-native-source-reference.md": None},
+            False,
+        ),
+        ({"excerpt": "postgresql://worker:real-secret@127.0.0.1/db"}, None, True),
+    ],
+)
+def test_credential_classifier_matches_snapshot_source_semantics(
+    value: dict[str, str],
+    source_languages: dict[str, str | None] | None,
+    expected: bool,
+) -> None:
+    assert _contains_credential(value, source_languages=source_languages) is expected
 
 
 def _write_gcode_fixture(path: Path) -> None:
@@ -39,6 +87,7 @@ import hashlib
 import json
 import sys
 import time
+from pathlib import Path
 
 request = json.loads(sys.argv[sys.argv.index('--request-json') + 1])
 query = request.get('search', {}).get('query')
@@ -83,6 +132,25 @@ if query == 'credential-response':
         'path': 'src/public.py',
         'excerpt': 'postgresql://worker:successful-secret@127.0.0.1/db',
     })
+if query == 'token = runtime_token_reference':
+    excerpt = f'source = {Path.home()}/example.py\\ntoken = runtime_token_reference'
+    excerpt_hash = hashlib.sha256(excerpt.encode()).hexdigest()
+    response['items'][0] = {
+        'item_type': 'source',
+        'evidence_id': 'src:source-reference-response',
+        'path': 'src/runtime.py',
+        'blob_oid': 'f' * 40,
+        'content_hash': excerpt_hash,
+        'excerpt_hash': excerpt_hash,
+        'line_start': 1,
+        'line_end': 2,
+        'byte_start': 0,
+        'byte_end': len(excerpt.encode()),
+        'excerpt': excerpt,
+    }
+    response['bounds']['serialized_item_bytes'] = len(
+        json.dumps(response['items'][0], separators=(',', ':')).encode()
+    )
 if query == 'identity-mismatch':
     response['binding'] = {**request['binding'], 'commit_oid': '0' * 40}
 if query == 'terminal-partial':
@@ -165,7 +233,16 @@ def _persist_authority(
         "deadline_at": deadline_at,
         "retrieval_mode": record.binding.retrieval_mode.value,
         "binding": binding,
-        "inventory": {"digest": binding["inventory_digest"], "entries": []},
+        "inventory": {
+            "digest": binding["inventory_digest"],
+            "entries": [
+                {
+                    "path": "src/runtime.py",
+                    "language": "python",
+                    "exclusion": None,
+                }
+            ],
+        },
     }
     identity_pointer = artifacts.write_body("snapshot-identity", identity)
     record = storage.attach_snapshot(
@@ -333,6 +410,23 @@ async def test_durable_scoped_evidence_admission(
     assert len(responses) == 35
     assert all(response["binding"] == binding for response in responses)
 
+    source_reference = await admission.query(
+        "search",
+        {
+            "search": {
+                "lane": "content",
+                "query": "token = runtime_token_reference",
+                "paths": ["src"],
+                "limit": 1000,
+            }
+        },
+    )
+    source_item = source_reference["items"][0]
+    expected_excerpt = f"source = {Path.home()}/example.py\ntoken = runtime_token_reference"
+    assert source_item["path"] == "src/runtime.py"
+    assert source_item["excerpt"] == expected_excerpt
+    assert source_item["excerpt_hash"] == hashlib.sha256(expected_excerpt.encode()).hexdigest()
+
     terminal_partial = await admission.query(
         "search",
         {
@@ -457,8 +551,8 @@ async def test_durable_scoped_evidence_admission(
     checkpoint = [
         item.model_dump(mode="json") for item in storage.evidence_references(record.run_id)
     ]
-    assert len(checkpoint) == 44
-    assert len({item["invocation_id"] for item in checkpoint}) == 44
+    assert len(checkpoint) == 45
+    assert len({item["invocation_id"] for item in checkpoint}) == 45
     assert any(item["status"] == "failed" for item in checkpoint)
     assert any(item["status"] == "denied" for item in checkpoint)
     assert any(item["status"] == "invalid_response" for item in checkpoint)
@@ -468,8 +562,25 @@ async def test_durable_scoped_evidence_admission(
     )
     assert all(len(item["request_hash"]) == 64 for item in checkpoint)
 
+    source_checkpoint = next(
+        item for item in checkpoint if item["evidence_ids"] == ["src:source-reference-response"]
+    )
+    source_result = artifacts.read_body(source_checkpoint["result_artifact"])
+    assert source_result["response"] == source_reference
+    assert (
+        source_checkpoint["response_hash"]
+        == hashlib.sha256(
+            json.dumps(
+                source_reference,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+    )
+
     manifest = json.loads(artifacts.manifest_path.read_text(encoding="utf-8"))
-    assert len(manifest["artifacts"]) == 90
+    assert len(manifest["artifacts"]) == 92
     assert oct(artifacts.run_root.stat().st_mode & 0o777) == "0o700"
     assert all(
         oct((artifacts.run_root / item["relative_path"]).stat().st_mode & 0o777) == "0o600"
