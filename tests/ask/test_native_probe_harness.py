@@ -92,7 +92,11 @@ def _policy_fixture(tmp_path: Path) -> tuple[dict[str, object], dict[str, str]]:
         },
         "filesystem": {
             "denyRead": [str((tmp_path / "private").resolve())],
-            "allowRead": [source_root, str(run_root / "assets")],
+            "allowRead": [
+                source_root,
+                str(run_root / "assets"),
+                str(run_root / "grant.json"),
+            ],
             "allowWrite": [scratch_root, run_tmp_root],
             "denyWrite": [source_root],
             "allowGitConfig": False,

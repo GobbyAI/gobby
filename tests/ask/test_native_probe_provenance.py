@@ -4,6 +4,7 @@ import argparse
 import copy
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,12 @@ def _write_capture(path: Path, raw: dict[str, Any]) -> None:
     path.with_suffix(".sha256").write_text(hashlib.sha256(payload).hexdigest(), encoding="utf-8")
 
 
-def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Path:
+def _raw_probe_fixture(
+    tmp_path: Path,
+    observations: list[dict[str, Any]],
+    *,
+    resume_metadata_by_run_id: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Path:
     """Model exported rows/files; all responses here are synthetic unit fixtures."""
     raw: dict[str, Any] = {
         "schema_version": 1,
@@ -44,6 +50,22 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
         phase_observations = [row for row in observations if row["phase"] == phase]
         record = phase_observations[0]["receipt"]["record"]
         run_id = record["agent_run_id"]
+        resume_metadata = dict((resume_metadata_by_run_id or {}).get(run_id, {}))
+        if not resume_metadata:
+            resume_metadata = {
+                "project_id": "project",
+                "env": {"CARGO_HOME": "/cache/cargo", "UV_CACHE_DIR": "/cache/uv"},
+                "sandbox": {
+                    "backend": "srt",
+                    "enforced": True,
+                    "policy_path": record["policy_path"],
+                    "policy_hash": record["policy_hash"],
+                    "managed_bootstrap_path": str(
+                        Path(record["policy_path"]).parents[1] / "grant.json"
+                    ),
+                },
+            }
+        resume_metadata.setdefault("project_id", "project")
         agent = {
             "id": run_id,
             "child_session_id": record["session_id"],
@@ -51,7 +73,7 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
             "pid": record["process_id"],
             "provider": "claude",
             "machine_id": "machine",
-            "resume_metadata_json": {"project_id": "project"},
+            "resume_metadata_json": resume_metadata,
         }
         session = {"id": record["session_id"], "machine_id": "machine", "project_id": "project"}
         ids = [run_id]
@@ -59,10 +81,7 @@ def _raw_probe_fixture(tmp_path: Path, observations: list[dict[str, Any]]) -> Pa
         if phase == "resumed":
             predecessor = record["resumed_from_agent_run_id"]
             lifecycle["superseded_agent_run_ids"] = [predecessor]
-            agent["resume_metadata_json"] = {
-                "project_id": "project",
-                "resumed_from_run_id": predecessor,
-            }
+            resume_metadata["resumed_from_run_id"] = predecessor
             raw["agent_runs"].append(
                 {
                     "agent": {
@@ -318,6 +337,10 @@ def test_binds_reviewed_observations_to_captured_files_and_processes(tmp_path: P
         "predecessor",
         "excluded",
         "record_hash",
+        "missing_grant_metadata",
+        "foreign_grant_metadata",
+        "invalid_policy_metadata",
+        "self_attested_grant",
     ],
 )
 def test_rejects_unbacked_or_tampered_observations(tmp_path: Path, tamper: str) -> None:
@@ -353,6 +376,21 @@ def test_rejects_unbacked_or_tampered_observations(tmp_path: Path, tamper: str) 
             raw["excluded_receipts"] = [{"kind": "srt-policy"}]
         elif tamper == "record_hash":
             first["sha256"] = "0" * 64
+        elif tamper == "missing_grant_metadata":
+            raw["agent_runs"][0]["agent"]["resume_metadata_json"]["sandbox"].pop(
+                "managed_bootstrap_path"
+            )
+        elif tamper == "foreign_grant_metadata":
+            raw["agent_runs"][0]["agent"]["resume_metadata_json"]["sandbox"][
+                "managed_bootstrap_path"
+            ] = str(tmp_path / "foreign" / "grant.json")
+        elif tamper == "invalid_policy_metadata":
+            raw["agent_runs"][0]["agent"]["resume_metadata_json"]["sandbox"]["policy_path"] = "/"
+        elif tamper == "self_attested_grant":
+            first["record"]["managed_bootstrap_path"] = str(tmp_path / "run" / "grant.json")
+            first["sha256"] = hashlib.sha256(
+                json.dumps(first["record"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
         _write_capture(path, raw)
 
     with pytest.raises(ValueError):

@@ -38,6 +38,7 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
         source_root = f"/probe/{phase}/source"
         scratch_root = f"/probe/{phase}/scratch"
         policy_path = f"/probe/{phase}/runtime/assets/settings.json"
+        managed_bootstrap_path = f"/probe/{phase}/runtime/grant.json"
         policy = {
             "network": {
                 "allowedDomains": [],
@@ -49,7 +50,10 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
             },
             "filesystem": {
                 "denyRead": [source_root],
-                "allowRead": [f"/probe/{phase}/runtime/assets"],
+                "allowRead": [
+                    f"/probe/{phase}/runtime/assets",
+                    managed_bootstrap_path,
+                ],
                 "allowWrite": [f"/probe/{phase}/runtime/logs"],
                 "denyWrite": [source_root, scratch_root],
                 "allowGitConfig": False,
@@ -79,6 +83,7 @@ def _observations(executable: Path) -> list[dict[str, Any]]:
                 "policy_hash": policy_hash,
                 "policy": json.loads(json.dumps(policy)),
                 "policy_path": policy_path,
+                "managed_bootstrap_path": managed_bootstrap_path,
                 "source_root": source_root,
                 "scratch_root": scratch_root,
                 "srt_runtime_version": "0.0.66",
@@ -157,6 +162,41 @@ def test_probe_artifact_binds_live_provider_version_and_control_digest(tmp_path:
     artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
     with pytest.raises(ValueError, match="artifact hash"):
         load_ask_runtime_validation(reference, provider_executable=executable)
+
+
+@pytest.mark.parametrize("tamper", ["missing", "foreign", "duplicate"])
+def test_probe_artifact_requires_exact_managed_grant_binding(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    executable = _provider(tmp_path / "claude", "2.1.265")
+    observations = _observations(executable)
+    for observation in observations:
+        receipt = observation["receipt"]
+        record = receipt["record"]
+        grant_path = record["managed_bootstrap_path"]
+        if tamper == "missing":
+            record.pop("managed_bootstrap_path")
+        elif tamper == "foreign":
+            record["managed_bootstrap_path"] = str(tmp_path / "foreign" / "grant.json")
+        else:
+            record["policy"]["filesystem"]["allowRead"].append(grant_path)
+            record["policy_hash"] = hashlib.sha256(
+                json.dumps(record["policy"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        receipt["sha256"] = hashlib.sha256(
+            json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    with pytest.raises(ValueError, match="managed grant"):
+        build_ask_runtime_probe_artifact(
+            runtime_identity=_runtime_identity(),
+            provider="claude",
+            provider_executable=executable,
+            auth_mode="claude.ai",
+            control_digest=ask_runtime_control_digest("claude", "claude.ai"),
+            observations=observations,
+        )
 
 
 def test_runtime_loader_rejects_replaced_provider_before_executing_it(tmp_path: Path) -> None:
@@ -264,6 +304,7 @@ def test_probe_artifact_normalizes_only_registered_macos_run_temp_roots(
                 receipt = observation["receipt"]
                 record = receipt["record"]
                 record["policy_path"] = str(run_root / "assets" / "settings.json")
+                record["managed_bootstrap_path"] = str(run_root / "grant.json")
                 record["run_tmp_root"] = str(short_root)
                 record["policy"] = {
                     **record["policy"],
@@ -273,7 +314,10 @@ def test_probe_artifact_normalizes_only_registered_macos_run_temp_roots(
                     },
                     "filesystem": {
                         **record["policy"]["filesystem"],
-                        "allowRead": [str(run_root / "assets")],
+                        "allowRead": [
+                            str(run_root / "assets"),
+                            record["managed_bootstrap_path"],
+                        ],
                         "allowWrite": [str(run_root / "logs"), str(short_root)],
                     },
                 }

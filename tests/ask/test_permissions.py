@@ -15,10 +15,12 @@ from uuid import UUID
 
 import pytest
 
-from gobby.agents import resume_executor
+from gobby.agents import resume_executor, srt_runtime
 from gobby.agents.isolation import IsolationContext
+from gobby.agents.spawn_executor_support import _record_resume_launch_details
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
+from gobby.ask import runtime_profile, runtime_validation
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.permissions import (
     ASK_PIPELINE_NAME,
@@ -34,6 +36,7 @@ from gobby.ask.permissions import (
 from gobby.ask.runtime_validation import (
     ASK_SRT_POLICY_SCHEMA_VERSION,
     ask_runtime_control_digest,
+    ask_sandbox_config,
     normalized_ask_srt_policy_digest,
 )
 from gobby.ask.stages import AskStage, AskStageStore
@@ -47,6 +50,8 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION,
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
 )
+from gobby.runtime_grants.launch import materialize_managed_launch
+from gobby.runtime_grants.schema import GrantBundle
 from gobby.servers.routes.mcp.endpoints.discovery import (
     list_all_mcp_tools,
     recommend_mcp_tools,
@@ -70,6 +75,13 @@ from gobby.utils.session_context import (
 )
 from gobby.workflows.pipeline_state import StepStatus
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.ask.test_native_probe_harness import (
+    _observations as _probe_observations,
+)
+from tests.ask.test_native_probe_harness import (
+    _provider as _probe_provider,
+)
+from tests.ask.test_native_probe_provenance import _raw_probe_fixture
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -1149,6 +1161,209 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
 
 
 @pytest.mark.asyncio
+async def test_ask_true_managed_launch_policy_matches_pinned_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform="darwin"))
+    gobby_home = tmp_path / "gobby-home"
+    source_root = tmp_path / "source"
+    scratch_root = tmp_path / "scratch"
+    runtime_root = tmp_path / "srt"
+    provider = _probe_provider(tmp_path / "claude")
+    source_root.mkdir()
+    scratch_root.mkdir()
+    runtime_root.mkdir()
+    node = runtime_root / "node"
+    runner = runtime_root / "runner.mjs"
+    package_json = runtime_root / "package.json"
+    for path in (node, runner, package_json):
+        path.write_text("test", encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setattr(
+        srt_runtime,
+        "verify_srt_installation",
+        lambda **_context: SrtInstallation(runtime_root, node, runner, package_json),
+    )
+
+    async def preflight(_launch: SandboxLaunch, _cwd: str, _env: dict[str, str]) -> None:
+        return None
+
+    monkeypatch.setattr(srt_runtime, "_preflight_srt", preflight)
+    monkeypatch.setattr(
+        srt_runtime,
+        "_resolve_provider_executable",
+        lambda _provider, _env: str(provider.resolve()),
+    )
+    monkeypatch.setattr(runtime_profile, "probe_native_bin_version", lambda _path: "2.1.265")
+
+    sandbox = ask_sandbox_config(str(source_root), str(scratch_root))
+    grant = GrantBundle.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "runtime_grants"
+            / "golden"
+            / "brokered_datastores.json"
+        ).read_bytes()
+    )
+
+    async def render_managed_launch(label: str) -> tuple[dict[str, str], SandboxLaunch]:
+        managed = materialize_managed_launch(
+            grant,
+            dest_dir=gobby_home / "runtime" / "managed-executions" / label,
+            operator_token="operator-token",
+            deadline_seconds=60,
+        )
+        environment = {"PATH": "", **managed.env}
+        launch = await prepare_sandbox_launch(
+            config=sandbox,
+            provider="claude",
+            workspace_path=str(scratch_root),
+            run_id=label,
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env=environment,
+            allow_run_unix_sockets=True,
+        )
+        return environment, launch
+
+    probe_launches = {
+        phase: await render_managed_launch(f"probe-{phase}") for phase in ("fresh", "resumed")
+    }
+    persisted_metadata: dict[str, dict[str, object]] = {}
+
+    class CapturingAgentRunManager:
+        def __init__(self, _database: object) -> None:
+            pass
+
+        def update_resume_metadata(self, agent_run_id: str, metadata: dict[str, object]) -> None:
+            persisted_metadata[agent_run_id] = metadata
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", CapturingAgentRunManager)
+    for phase, (environment, launch) in probe_launches.items():
+        agent_run_id = f"{phase}-agent-run"
+        resume_metadata: dict[str, object] = {"project_id": "project"}
+        if phase == "resumed":
+            resume_metadata["resumed_from_run_id"] = "interrupted-agent-run"
+        request = SpawnRequest(
+            prompt="native Ask probe",
+            cwd=str(scratch_root),
+            provider="claude",
+            session_id=f"{phase}-session",
+            run_id=agent_run_id,
+            parent_session_id="parent-session",
+            project_id="project",
+            agent_run_id=agent_run_id,
+            session_manager=cast(
+                Any,
+                SimpleNamespace(_storage=SimpleNamespace(db=object())),
+            ),
+            resume_metadata_json=resume_metadata,
+            prepared_spawn=prepared_spawn(
+                agent_run_id=agent_run_id,
+                session_id=f"{phase}-session",
+            ),
+            terminal_backend="tmux",
+        )
+        _record_resume_launch_details(
+            request,
+            agent_run_id=agent_run_id,
+            env={**environment, **launch.provider_env},
+            sandbox_launch=launch,
+        )
+    observations = _probe_observations(provider, tmp_path)
+    for observation in observations:
+        phase = observation["phase"]
+        environment, launch = probe_launches[phase]
+        policy = json.loads(Path(launch.policy_path or "").read_bytes())
+        record = observation["receipt"]["record"]
+        record.update(
+            {
+                "policy": policy,
+                "policy_hash": launch.policy_hash,
+                "policy_path": launch.policy_path,
+                "source_root": str(source_root),
+                "scratch_root": str(scratch_root),
+                "run_tmp_root": launch.provider_env["CLAUDE_CODE_TMPDIR"],
+                "srt_runtime_version": launch.runtime_version,
+                "srt_policy_schema_version": launch.policy_schema_version,
+            }
+        )
+        observation["receipt"]["sha256"] = hashlib.sha256(
+            json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        assert environment["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] in policy["filesystem"]["allowRead"]
+
+    capture_dir = tmp_path / "capture"
+    capture_dir.mkdir()
+    raw_probe_path = _raw_probe_fixture(
+        capture_dir,
+        observations,
+        resume_metadata_by_run_id=persisted_metadata,
+    )
+    raw_probe_sha256, bound, runtime_identity = runtime_validation.bind_ask_runtime_observations(
+        raw_probe_path, observations
+    )
+    for observation in bound:
+        environment, _launch = probe_launches[observation["phase"]]
+        assert (
+            observation["receipt"]["record"]["managed_bootstrap_path"]
+            == environment["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"]
+        )
+    raw_probe = json.loads(raw_probe_path.read_bytes())
+    assert all(
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP" not in row["agent"]["resume_metadata_json"]["env"]
+        for row in raw_probe["agent_runs"]
+    )
+    assert "GOBBY_AGENT_API_TOKEN" not in raw_probe_path.read_text(encoding="utf-8")
+
+    artifact = runtime_validation.build_ask_runtime_probe_artifact(
+        provider="claude",
+        provider_executable=provider,
+        auth_mode="claude.ai",
+        control_digest=ask_runtime_control_digest("claude", "claude.ai"),
+        observations=bound,
+        runtime_identity=runtime_identity,
+    )
+    assert artifact["raw_probe_sha256"] == raw_probe_sha256
+    artifact_path = tmp_path / "runtime-validation.json"
+    artifact_sha256 = runtime_validation.write_ask_runtime_probe_artifact(artifact_path, artifact)
+    validation = runtime_validation.load_ask_runtime_validation(
+        runtime_validation.AskRuntimeValidationArtifact(
+            path=artifact_path,
+            sha256=artifact_sha256,
+        ),
+        provider_executable=provider,
+    )
+    profile = compile_ask_runtime_profile(
+        provider="claude",
+        source_root=source_root,
+        scratch_root=scratch_root,
+        agent_profile_digest="e" * 64,
+        model="claude-test",
+        reasoning_effort="high",
+        endpoint_api_base=None,
+        validation=validation,
+    )
+
+    for phase in ("fresh", "resumed"):
+        launch_env, launch = await render_managed_launch(f"validate-{phase}")
+        profile.validate_launch(
+            backend=launch.backend,
+            enforced=launch.enforced,
+            provider_executable=launch.provider_executable,
+            runtime_version=launch.runtime_version,
+            policy_schema_version=launch.policy_schema_version,
+            policy_hash=launch.policy_hash,
+            policy_path=launch.policy_path,
+            environment={**launch_env, **launch.provider_env},
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("profile_present", "authority_present"),
     ((True, False), (False, True)),
@@ -1525,7 +1740,9 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
             agent_run_id=str(successor_id),
             parent_session_id=original.parent_session_id,
             project_id="ask-project",
-            env_vars={},
+            env_vars={
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/policy/grant.json",
+            },
         )
 
     async def runtime_spawn(_request: SpawnRequest, plan: Any) -> Any:
@@ -1550,6 +1767,7 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
         policy_schema_version=ASK_SRT_POLICY_SCHEMA_VERSION,
         policy_hash="b" * 64,
         policy_path="/policy/settings.json",
+        managed_bootstrap_path="/policy/grant.json",
     )
     prepare_sandbox = AsyncMock(return_value=sandbox_launch)
     monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
@@ -1614,8 +1832,15 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
         policy_schema_version=ASK_SRT_POLICY_SCHEMA_VERSION,
         policy_hash="b" * 64,
         policy_path="/policy/settings.json",
-        environment={},
+        environment={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/policy/grant.json"},
     )
+    persisted_launch = next(
+        call.args[1]
+        for call in storage.merge_resume_metadata.call_args_list
+        if len(call.args) > 1 and "sandbox" in call.args[1]
+    )
+    assert persisted_launch["env"] == {}
+    assert persisted_launch["sandbox"]["managed_bootstrap_path"] == "/policy/grant.json"
     assert len(launched) == 1
     runtime_request, runtime_plan = launched[0]
     assert runtime_request.cwd == profile.scratch_root

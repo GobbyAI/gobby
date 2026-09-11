@@ -417,6 +417,10 @@ def _validate_observations(
             policy_path=_required_string(record.get("policy_path"), name="probe policy path"),
             run_tmp_root=raw_run_tmp_root,
             require_registered_run_tmp=require_registered_run_tmp,
+            managed_bootstrap_path=_required_string(
+                record.get("managed_bootstrap_path"),
+                name="managed grant path",
+            ),
         )
         policy_identities.add((srt_runtime_version, srt_policy_schema_version, policy_digest))
         key = (phase, case)
@@ -479,8 +483,9 @@ def normalized_ask_srt_policy_digest(
     policy_path: str,
     run_tmp_root: str | None = None,
     require_registered_run_tmp: bool = False,
+    managed_bootstrap_path: str | None = None,
 ) -> str:
-    """Hash rendered SRT semantics while replacing only per-run Ask roots."""
+    """Hash rendered SRT semantics across equivalent managed launch roots."""
     _validate_srt_policy_schema(policy)
     policy_file = Path(policy_path).expanduser().resolve(strict=False)
     if tuple(policy_file.parts[-len(SRT_SETTINGS_RELATIVE_PATH.parts) :]) != tuple(
@@ -526,6 +531,14 @@ def normalized_ask_srt_policy_digest(
     filesystem = normalized["filesystem"]
     for key in ("denyRead", "allowRead", "allowWrite", "denyWrite"):
         filesystem[key] = [normalize_path(value) for value in filesystem[key]]
+    if managed_bootstrap_path is not None:
+        bootstrap = Path(managed_bootstrap_path).expanduser().resolve(strict=False)
+        if bootstrap.name != "grant.json" or bootstrap.parent != run_root:
+            raise ValueError("Ask runtime managed grant is outside its launch root")
+        normalized_bootstrap = normalize_path(str(bootstrap))
+        if filesystem["allowRead"].count(normalized_bootstrap) != 1:
+            raise ValueError("Ask runtime managed grant is not uniquely readable")
+        filesystem["allowRead"].remove(normalized_bootstrap)
     network = normalized["network"]
     network["allowUnixSockets"] = [normalize_path(value) for value in network["allowUnixSockets"]]
     return _fingerprint(normalized)
@@ -706,6 +719,38 @@ def bind_ask_runtime_observations(
         snapshot = snapshots[0 if phase == "fresh" else 1]
         execution = executions[0 if phase == "fresh" else 1]
         metadata = _probe_mapping(agent.get("resume_metadata_json"), "resume metadata")
+        sandbox = _probe_mapping(metadata.get("sandbox"), "launch sandbox")
+        managed_bootstrap_path = _required_string(
+            sandbox.get("managed_bootstrap_path"),
+            name="captured managed grant path",
+        )
+        raw_captured_policy_path = Path(
+            _required_string(sandbox.get("policy_path"), name="captured policy path")
+        ).expanduser()
+        if not raw_captured_policy_path.is_absolute() or tuple(
+            raw_captured_policy_path.parts[-len(SRT_SETTINGS_RELATIVE_PATH.parts) :]
+        ) != tuple(SRT_SETTINGS_RELATIVE_PATH.parts):
+            raise ValueError("Ask runtime captured policy path is not a managed SRT settings path")
+        captured_policy_path = raw_captured_policy_path.resolve(strict=False)
+        captured_run_root = captured_policy_path.parents[len(SRT_SETTINGS_RELATIVE_PATH.parts) - 1]
+        raw_captured_bootstrap = Path(managed_bootstrap_path).expanduser()
+        if not raw_captured_bootstrap.is_absolute():
+            raise ValueError("Ask runtime captured managed grant path is not absolute")
+        captured_bootstrap = raw_captured_bootstrap.resolve(strict=False)
+        if (
+            captured_bootstrap.name != "grant.json"
+            or captured_bootstrap.parent != captured_run_root
+        ):
+            raise ValueError("Ask runtime captured managed grant is outside its launch root")
+        if record.get("managed_bootstrap_path") is not None:
+            raise ValueError("Ask runtime reviewed receipt cannot self-attest a managed grant")
+        if (
+            sandbox.get("backend") != "srt"
+            or sandbox.get("enforced") is not True
+            or sandbox.get("policy_path") != record.get("policy_path")
+            or sandbox.get("policy_hash") != record.get("policy_hash")
+        ):
+            raise ValueError("Ask runtime reviewed policy lacks captured launch metadata")
         if run_id not in snapshot.get("agent_run_ids", []):
             raise ValueError("Ask runtime reviewed agent belongs to a different phase")
         if (
@@ -821,7 +866,11 @@ def bind_ask_runtime_observations(
             "response": response,
             "process_start_identity": starts.pop(),
         }
-        record = {**record, "raw_evidence": captured}
+        record = {
+            **record,
+            "managed_bootstrap_path": managed_bootstrap_path,
+            "raw_evidence": captured,
+        }
         bound.append(
             {
                 **observation,
