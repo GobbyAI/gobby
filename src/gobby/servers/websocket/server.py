@@ -411,6 +411,7 @@ class WebSocketServer(
                 "voice_audio": self._handle_voice_audio,
                 "voice_mode_toggle": self._handle_voice_mode_toggle,
                 "voice_prepare": self._handle_voice_prepare,
+                "voice_status_request": self._handle_voice_status_request,
                 "tts_stop": self._handle_tts_stop,
                 "heartbeat": self._handle_heartbeat,
             }
@@ -471,11 +472,6 @@ class WebSocketServer(
 
         Gracefully closes all client connections, chat sessions, and shuts down server.
         """
-        if self._server is None:
-            logger.warning("WebSocket server not started")
-            await self.lease_registry.shutdown_lifecycle_publication()
-            return
-
         logger.debug("Stopping WebSocket server...")
         server = self._server
         try:
@@ -504,8 +500,9 @@ class WebSocketServer(
                 self._session_create_locks.clear()
 
             # Close server (stops accepting new connections)
-            server.close()
-            await server.wait_closed()
+            if server is not None:
+                server.close()
+                await server.wait_closed()
 
             # Close remaining client connections with timeout
             for websocket in list(self.clients.keys()):

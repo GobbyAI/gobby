@@ -20,6 +20,7 @@ _STT_DEPS: list[tuple[str, str]] = [
 ]
 
 _TTS_DEPS: dict[str, list[tuple[str, str]]] = {
+    "crane": [("httpx", "httpx")],
     "chatterbox": [
         ("chatterbox-tts", "chatterbox"),
     ],

@@ -78,65 +78,76 @@ export function useVoiceStatus({
   const [statusVoiceError, setStatusVoiceError] = useState<string | null>(null);
 
   const statusPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollCancelledRef = useRef(false);
+  const statusRequestRef = useRef<string | null>(null);
 
-  const applyVoiceStatus = useCallback((data: RawVoiceStatus | null) => {
-    const parsed = parseVoiceStatus(data, window.isSecureContext);
-    setSttAvailable(parsed.sttAvailable);
-    setVoiceAvailable(parsed.voiceAvailable);
-    setVoiceReady(parsed.voiceReady);
-    setVoiceLoading(parsed.voiceLoading);
-    setStatusVoiceError(parsed.warmupError);
-  }, []);
+  const startStatusPolling = useCallback(() => {
+    if (statusPollRef.current) clearTimeout(statusPollRef.current);
+    const ws = wsRef.current;
+    if (!socketConnected || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const requestId = crypto.randomUUID();
+    statusRequestRef.current = requestId;
+    ws.send(
+      JSON.stringify({
+        type: "voice_status_request",
+        request_id: requestId,
+        conversation_id: conversationId,
+        want_stt: sttEnabled,
+        want_tts: ttsEnabled,
+      }),
+    );
+  }, [wsRef, socketConnected, conversationId, sttEnabled, ttsEnabled]);
+
+  const applyVoiceStatus = useCallback(
+    (data: RawVoiceStatus | null) => {
+      const parsed = parseVoiceStatus(data, window.isSecureContext);
+      setSttAvailable(parsed.sttAvailable);
+      setVoiceAvailable(parsed.voiceAvailable);
+      setVoiceReady(parsed.voiceReady);
+      setVoiceLoading(parsed.voiceLoading);
+      setStatusVoiceError(parsed.warmupError);
+      if (statusPollRef.current) clearTimeout(statusPollRef.current);
+      if (parsed.voiceLoading) {
+        statusPollRef.current = setTimeout(startStatusPolling, 1000);
+      }
+    },
+    [startStatusPolling],
+  );
 
   const markVoicePreparing = useCallback(() => {
     setVoiceLoading(true);
     setVoiceReady(false);
   }, []);
 
-  const startStatusPolling = useCallback(() => {
-    if (statusPollRef.current) clearTimeout(statusPollRef.current);
-
-    const syncVoiceStatus = async () => {
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!socketConnected || !ws) {
+      applyVoiceStatus(null);
+      return;
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data !== "string") return;
+      let data: RawVoiceStatus & { type?: string; request_id?: string };
       try {
-        const params = new URLSearchParams();
-        if (sttEnabled) params.set("want_stt", "true");
-        if (ttsEnabled) params.set("want_tts", "true");
-        const query = params.toString();
-        const res = await fetch(
-          query ? `/api/voice/status?${query}` : "/api/voice/status",
-        );
-        const data = res.ok ? ((await res.json()) as RawVoiceStatus) : null;
-        if (pollCancelledRef.current) return;
-
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (
+        data?.type === "voice_status" &&
+        data.request_id === statusRequestRef.current
+      ) {
         applyVoiceStatus(data);
-
-        const parsed = parseVoiceStatus(data, window.isSecureContext);
-        if (parsed.voiceLoading) {
-          statusPollRef.current = setTimeout(syncVoiceStatus, 1000);
-        }
-      } catch (err) {
-        console.error("Voice status check failed:", err);
-        if (pollCancelledRef.current) return;
-        setSttAvailable(false);
-        setVoiceAvailable(false);
-        setVoiceReady(false);
-        setVoiceLoading(false);
       }
     };
-
-    void syncVoiceStatus();
-  }, [applyVoiceStatus, sttEnabled, ttsEnabled]);
-
-  useEffect(() => {
-    pollCancelledRef.current = false;
+    ws.addEventListener("message", onMessage);
     startStatusPolling();
 
     return () => {
-      pollCancelledRef.current = true;
+      ws.removeEventListener("message", onMessage);
+      statusRequestRef.current = null;
       if (statusPollRef.current) clearTimeout(statusPollRef.current);
     };
-  }, [startStatusPolling]);
+  }, [wsRef, socketConnected, startStatusPolling, applyVoiceStatus]);
 
   useEffect(() => {
     const wantsVoice = sttEnabled || ttsEnabled;

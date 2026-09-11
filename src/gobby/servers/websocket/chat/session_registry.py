@@ -340,22 +340,15 @@ class WebChatSessionRegistry:
         if conversation_id is None or session is None:
             return self._no_live_web_chat_result(session_id)
 
-        if self.has_active_turn(conversation_id) or self._has_running_queued_task(conversation_id):
-            self._queued_wakes[conversation_id] = (session_id, message)
-            return {
-                "session_id": session_id,
-                "delivered": True,
-                "method": "web_chat",
-                "queued": True,
-            }
-
-        return await self._drain_wake_session(
-            requested_session_id=session_id,
-            conversation_id=conversation_id,
-            session=session,
-            message=message,
-            queued=False,
-        )
+        self._queued_wakes[conversation_id] = (session_id, message)
+        self._schedule_queued_wake_if_idle(conversation_id)
+        return {
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "delivered": True,
+            "method": "web_chat",
+            "queued": True,
+        }
 
     def _on_active_task_done(
         self,

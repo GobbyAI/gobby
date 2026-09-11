@@ -447,6 +447,25 @@ class VoiceMixin(VoiceWarmupMixin):
             "Voice mode %s for %s", "enabled" if enabled else "disabled", conversation_id[:8]
         )
 
+    async def _handle_voice_status_request(self, websocket: Any, data: dict[str, Any]) -> None:
+        """Return a read-only status snapshot on the authenticated voice connection."""
+        want_stt = data.get("want_stt")
+        want_tts = data.get("want_tts")
+        await websocket.send(
+            json_dumps(
+                {
+                    "type": "voice_status",
+                    "status": "snapshot",
+                    "conversation_id": data.get("conversation_id", ""),
+                    "request_id": data.get("request_id"),
+                    **self.get_voice_status(
+                        want_stt=want_stt if isinstance(want_stt, bool) else None,
+                        want_tts=want_tts if isinstance(want_tts, bool) else None,
+                    ),
+                }
+            )
+        )
+
     async def _handle_voice_prepare(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle voice_prepare: trigger lazy model warmup on mic-button click.
 

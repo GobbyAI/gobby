@@ -158,6 +158,8 @@ export function useVoice(
         }
       } else if (type === "voice_status") {
         const voiceStatus = data.status as string;
+        // Correlated snapshots are consumed by useVoiceStatus on this socket.
+        if (voiceStatus === "snapshot") return;
         if (voiceStatus === "error") {
           if (finishTranscriptionRequest(data.request_id)) {
             clearTransientError();

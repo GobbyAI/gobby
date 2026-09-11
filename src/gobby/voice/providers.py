@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_CLASSES: dict[str, tuple[str, str]] = {
     "chatterbox": ("gobby.voice.tts_chatterbox", "ChatterboxTurboProvider"),
+    "crane": ("gobby.voice.tts_crane", "CraneTTSProvider"),
 }
 
 
