@@ -25,6 +25,9 @@ Implementation substeps (native tracker unavailable in this provider):
 - [x] Commit readiness repair f9e41419b0 after 203 focused tests and clean audits; restart and repeat 20 live hook checks.
 - [ ] Gate tmux maintenance on startup readiness: run b0fe2983 parked correctly, but maintenance expired its session before resume preflight. Verify, commit, restart, and repeat native resume.
 - [x] Align five stale tmux maintenance test status lists with existing interrupted/input/approval states.
+- [x] Real native resume dcffee01 to 350a7c32 preserved session and exact grant after restart23:37:57 UTC.
+- [ ] Preserve resumed claims from cancelled-original recovery: sweep released #12738's claim twice, blocking resumed writes. Fix shared recovery, verify, and repeat affected live gate.
+- [x] Repair two existing untyped task-recovery fixture signatures encountered by audit.
 - [ ] Resolve shared editable-environment interference with owner #12261; daemon startup recovered after main uv invocation restored main imports.
 - [x] Materialize and validate this plan (base validation passed).
 - [x] Implement and automatically verify #22028; live smoke gate remains open.
@@ -61,6 +64,8 @@ Targets:
 - `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: wire existing startup readiness into terminal monitors
 - `src/gobby/runner_maintenance/isolation.py::*` — scope-reason: defer missing-terminal expiration until restart recovery finishes
 - `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: wire startup readiness into tmux maintenance
+- `src/gobby/agents/task_recovery.py::*` — scope-reason: preserve claims belonging to parked and resumed daemon-stop runs
+- `tests/agents/test_task_recovery.py::*` — scope-reason: verify repeated recovery preserves resumed task ownership and mutex
 - `tests/test_runner_maintenance_tmux_repair.py::*` — scope-reason: verify missing sockets survive startup recovery
 - `tests/sessions/test_liveness_monitor.py::*` — scope-reason: align eligible terminal-owner status expectation
 - `tests/test_terminal_startup_readiness.py::*` — scope-reason: verify monitors wait for startup reconciliation

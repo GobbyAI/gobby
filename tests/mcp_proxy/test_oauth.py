@@ -6,13 +6,15 @@ import json
 import time
 from dataclasses import replace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
+import click
 import httpx2
 import pytest
 from mcp.client.auth import AuthorizationCodeResult, OAuthFlowError
 
+from gobby.cli.mcp_oauth import authorize_server
 from gobby.mcp_proxy.models import MCPAuthorizationRequired, MCPServerConfig
 from gobby.mcp_proxy.oauth import MCPOAuthStorage, PersistentOAuthProvider
 from gobby.mcp_proxy.transports.factory import create_transport_connection
@@ -39,7 +41,8 @@ def secret_store() -> SecretStore:
 
 
 class AuthorizationServer:
-    def __init__(self) -> None:
+    def __init__(self, auth_method: str = "none") -> None:
+        self.auth_method = auth_method
         self.authorization: dict[str, list[str]] = {}
         self.registration: dict[str, Any] = {}
         self.refreshes = 0
@@ -84,15 +87,34 @@ class AuthorizationServer:
                     "token_endpoint": "https://auth.example/custom/token",
                     "registration_endpoint": "https://auth.example/register",
                     "response_types_supported": ["code"],
+                    "token_endpoint_auth_methods_supported": [self.auth_method],
                     "code_challenge_methods_supported": ["S256"],
                     "authorization_response_iss_parameter_supported": True,
                 },
             )
         if path == "/register":
             self.registration = json.loads(request.content)
-            return httpx2.Response(201, json={**self.registration, "client_id": "gobby-client"})
+            assert self.registration["token_endpoint_auth_method"] == self.auth_method
+            return httpx2.Response(
+                201,
+                json={
+                    **self.registration,
+                    "client_id": "gobby-client",
+                    "client_secret": "client-secret" if self.auth_method != "none" else None,
+                },
+            )
         if path == "/custom/token":
             params = parse_qs(request.content.decode())
+            if self.auth_method == "client_secret_basic":
+                expected = base64.b64encode(b"gobby-client:client-secret").decode()
+                assert request.headers["Authorization"] == f"Basic {expected}"
+                assert "client_secret" not in params
+            elif self.auth_method == "client_secret_post":
+                assert params["client_secret"] == ["client-secret"]
+                assert "Authorization" not in request.headers
+            else:
+                assert "client_secret" not in params
+                assert "Authorization" not in request.headers
             assert params["resource"] == ["https://resource.example"]
             if params["grant_type"] == ["refresh_token"]:
                 self.refreshes += 1
@@ -124,8 +146,84 @@ class AuthorizationServer:
         raise AssertionError(f"Unexpected OAuth request: {request.method} {request.url}")
 
 
-async def login(store: SecretStore, server: AuthorizationServer) -> MCPServerConfig:
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", [True, False])
+async def test_cli_login_discovers_tools_after_public_initialization(
+    secret_store: SecretStore, protected: bool
+) -> None:
+    server = AuthorizationServer()
+    methods: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path != "/mcp":
+            return server.respond(request)
+        if request.method != "POST":
+            return httpx2.Response(405)
+        body = json.loads(request.content)
+        method = body["method"]
+        if method == "server/discover":
+            return httpx2.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                },
+            )
+        methods.append(method)
+        if method == "initialize":
+            result = {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "public-init", "version": "1"},
+            }
+        elif method == "notifications/initialized":
+            return httpx2.Response(202)
+        elif method == "tools/list":
+            if protected and not request.headers.get("Authorization"):
+                return server.respond(request)
+            result = {"tools": []}
+        else:
+            raise AssertionError(f"Unexpected MCP method: {method}")
+        return httpx2.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
     config = MCPServerConfig(
+        name="public-init", project_id="project", url="https://resource.example/mcp"
+    )
+    callback = AsyncMock()
+    callback.redirect_uri = "http://127.0.0.1:54321/callback"
+    callback.redirect = server.redirect
+    callback.wait = server.callback
+    callback.__aenter__.return_value = callback
+
+    def http_client(headers: object, auth: httpx2.Auth) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(auth=auth, transport=httpx2.MockTransport(respond))
+
+    with (
+        patch("gobby.cli.mcp_oauth.OAuthCallback", return_value=callback),
+        patch("gobby.cli.mcp_oauth.build_mcp_http_client", side_effect=http_client),
+    ):
+        if protected:
+            await authorize_server(config, secret_store, 5)
+        else:
+            with pytest.raises(click.ClickException, match="did not request OAuth"):
+                await authorize_server(config, secret_store, 5)
+    assert methods[:3] == ["initialize", "notifications/initialized", "tools/list"]
+    storage = MCPOAuthStorage(secret_store, config)
+    await storage.load()
+    if protected:
+        assert storage.state.tokens is not None
+        assert storage.state.tokens.access_token == "access"
+        assert methods.count("tools/list") == 2
+    else:
+        assert storage.state.tokens is None
+        assert server.registration == {}
+
+
+async def login(
+    store: SecretStore, server: AuthorizationServer, config: MCPServerConfig | None = None
+) -> MCPServerConfig:
+    config = config or MCPServerConfig(
         name="fieldy", project_id="project", url="https://resource.example/mcp"
     )
     provider = PersistentOAuthProvider(
@@ -144,8 +242,49 @@ async def login(store: SecretStore, server: AuthorizationServer) -> MCPServerCon
 
 
 @pytest.mark.asyncio
-async def test_login_reconnect_and_refresh_after_restart(secret_store: SecretStore) -> None:
-    server = AuthorizationServer()
+async def test_unfinished_public_registration_is_replaced(secret_store: SecretStore) -> None:
+    config = await login(secret_store, AuthorizationServer())
+    storage = MCPOAuthStorage(secret_store, config)
+    await storage.load()
+    storage.state.tokens = None
+    await storage.save()
+    server = AuthorizationServer("client_secret_basic")
+    await login(secret_store, server, config)
+    await storage.load()
+    assert server.registration["token_endpoint_auth_method"] == "client_secret_basic"
+    assert storage.state.client is not None
+    assert storage.state.client.client_secret == "client-secret"
+    assert storage.state.tokens is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/register", "/custom/token"])
+@pytest.mark.parametrize("status", [200, 400])
+async def test_oauth_response_secrets_are_redacted_before_sdk_logging(
+    secret_store: SecretStore, caplog: pytest.LogCaptureFixture, endpoint: str, status: int
+) -> None:
+    class FailingServer(AuthorizationServer):
+        def respond(self, request: httpx2.Request) -> httpx2.Response:
+            if request.url.path == endpoint:
+                return httpx2.Response(
+                    status,
+                    json={"error": "invalid_client", "client_secret": "private-response-secret"},
+                )
+            return super().respond(request)
+
+    with pytest.raises(OAuthFlowError) as error:
+        await login(secret_store, FailingServer())
+    assert "private-response-secret" not in str(error.value)
+    assert "private-response-secret" not in caplog.text
+    assert "oauth_endpoint_error" in str(error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth_method", ["none", "client_secret_basic", "client_secret_post"])
+async def test_login_reconnect_and_refresh_after_restart(
+    secret_store: SecretStore, auth_method: str
+) -> None:
+    server = AuthorizationServer(auth_method)
     config = await login(secret_store, server)
     assert server.authorization["code_challenge_method"] == ["S256"]
     assert "offline_access" in server.authorization["scope"][0]

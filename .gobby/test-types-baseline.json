@@ -631,16 +631,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_task_recovery.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 58,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 2,
-      "path": "tests/agents/test_task_recovery.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_tech_writer_definition.py::::mypy:no-any-return",
       "issue_code": "mypy:no-any-return",
       "line": 20,

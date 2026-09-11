@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from gobby.agents.recovery_state import is_daemon_stop_parked
+from gobby.agents.recovery_state import daemon_resume_successor_id, is_daemon_stop_parked
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.tasks.state_semantics import (
@@ -159,6 +159,9 @@ class TaskRecoveryHandler:
         outcome: Literal["failed", "cancelled"],
     ) -> bool:
         """Recover task ownership after a failed or cancelled agent run."""
+        # A resume shares the child session; its original no longer owns cleanup.
+        if is_daemon_stop_parked(db_run) or daemon_resume_successor_id(db_run):
+            return False
         if not self._task_manager:
             return False
         try:

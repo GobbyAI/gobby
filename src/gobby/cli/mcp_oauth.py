@@ -41,7 +41,7 @@ async def authorize_server(config: MCPServerConfig, store: SecretStore, timeout:
             or redirect.fragment
             or redirect.username
         ):
-            raise ValueError("Stored OAuth client has an invalid loopback callback URI")
+            raise click.ClickException("Stored OAuth client has an invalid loopback callback URI")
         port = redirect.port
 
     async def open_browser(url: str) -> None:
@@ -60,10 +60,14 @@ async def authorize_server(config: MCPServerConfig, store: SecretStore, timeout:
                 if config.transport == "sse"
                 else streamable_http_client(config.url, http_client=http_client)
             )
-            async with Client(transport):
-                pass  # SDK negotiation verifies that the authorized connection works.
+            async with Client(transport) as client:
+                # Some servers permit initialization anonymously and challenge discovery.
+                await client.list_tools()
         if storage.state.tokens is None:
-            raise ValueError("The MCP server did not complete an OAuth authorization flow")
+            raise click.ClickException(
+                "The MCP server did not request OAuth during initialization or tool discovery; "
+                "check the server URL and authentication requirements"
+            )
 
 
 @mcp_proxy.command("auth")
@@ -94,6 +98,8 @@ def auth_server(ctx: click.Context, name: str, global_scope: bool, timeout: floa
     try:
         config.validate()
         asyncio.run(authorize_server(config, store, timeout))
+    except click.ClickException:
+        raise
     except TimeoutError as exc:
         raise click.ClickException(
             "OAuth authorization timed out; run auth again to retry"

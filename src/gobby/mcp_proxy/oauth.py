@@ -3,10 +3,12 @@
 import asyncio
 import hashlib
 import shlex
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import Literal
 
 import httpx2
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, OAuthFlowError
+from mcp.client.auth.utils import create_client_registration_request
 from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthClientMetadata,
@@ -109,11 +111,85 @@ class PersistentOAuthProvider(OAuthClientProvider):
         state = self.persistent_storage.state
         if not self.interactive and state.tokens is None:
             raise MCPAuthorizationRequired(self.auth_command)
+        if self.interactive and state.tokens is None:
+            # An unfinished registration may have selected an unusable auth method.
+            state.client = None
+            await self.persistent_storage.save()
         await super()._initialize()
         self.context.token_expiry_time = state.expires_at
         self.context.oauth_metadata = state.metadata
         self.context.protected_resource_metadata = state.resource
         self.context.auth_server_url = state.issuer
+
+    async def async_auth_flow(
+        self, request: httpx2.Request
+    ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        flow = super().async_auth_flow(request)
+        try:
+            outgoing = await anext(flow)
+            while True:
+                metadata = self.context.oauth_metadata
+                registration_url = (
+                    str(metadata.registration_endpoint)
+                    if metadata and metadata.registration_endpoint
+                    else self.context.get_authorization_base_url(self.context.server_url)
+                    + "/register"
+                )
+                registering = outgoing.method == "POST" and str(outgoing.url) == registration_url
+                if registering:
+                    supported = (
+                        metadata.token_endpoint_auth_methods_supported
+                        if metadata and metadata.token_endpoint_auth_methods_supported is not None
+                        else ["client_secret_basic"]
+                    )
+                    choices: tuple[
+                        Literal["none", "client_secret_basic", "client_secret_post"], ...
+                    ] = ("none", "client_secret_basic", "client_secret_post")
+                    method = next(
+                        (m for m in choices if m in supported),
+                        None,
+                    )
+                    if method is None:
+                        raise OAuthFlowError(
+                            "Server has no supported OAuth client authentication method"
+                        )
+                    self.context.client_metadata.token_endpoint_auth_method = method
+                    outgoing = create_client_registration_request(
+                        metadata,
+                        self.context.client_metadata,
+                        self.context.get_authorization_base_url(self.context.server_url),
+                    )
+                response = yield outgoing
+                if response.is_success:
+                    model = (
+                        OAuthClientInformationFull
+                        if registering
+                        else OAuthToken
+                        if outgoing.method == "POST"
+                        and str(outgoing.url) == self._get_token_endpoint()
+                        else None
+                    )
+                    if model is not None:
+                        try:
+                            model.model_validate_json(await response.aread())
+                        except ValueError:
+                            # Validation errors can embed access tokens or client secrets.
+                            response = httpx2.Response(400, request=outgoing)
+                # SDK exceptions/logs include OAuth response bodies. Strip error bodies
+                # before they reach that layer; successful credentials remain encrypted.
+                if outgoing.url != request.url and response.status_code >= 400:
+                    response = httpx2.Response(
+                        response.status_code,
+                        headers={"Content-Type": "application/json"},
+                        json={"error": "oauth_endpoint_error"},
+                        request=outgoing,
+                    )
+                try:
+                    outgoing = await flow.asend(response)
+                except StopAsyncIteration:
+                    break
+        finally:
+            await flow.aclose()
 
     async def _save_context(self) -> None:
         state = self.persistent_storage.state
