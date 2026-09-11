@@ -1093,6 +1093,9 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
         validation=_runtime_validation(),
     )
     assert profile.builtin_tools == ("EndConversation",)
+    resume_metadata = {
+        "sandbox_config": profile.sandbox_config.model_dump(mode="json"),
+    }
     request = SpawnRequest(
         prompt="Investigate through run-scoped MCP tools",
         cwd=str(scratch_root),
@@ -1103,15 +1106,20 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
         project_id="project",
         session_manager=MagicMock(),
         prepared_spawn=prepared_spawn(session_id="child", agent_run_id="run"),
+        managed_runtime_profile=profile,
         sandbox_config=profile.sandbox_config,
         auto_approve=profile.auto_approve,
         provider_args=profile.provider_args,
+        resume_metadata_json=resume_metadata,
     )
+
+    prepared_sandbox_configs: list[Any] = []
 
     async def prepare_sandbox(
         *_args: Any,
-        **_kwargs: Any,
+        **kwargs: Any,
     ) -> SandboxLaunch:
+        prepared_sandbox_configs.append(kwargs["config"])
         return SandboxLaunch(
             backend="srt",
             enforced=True,
@@ -1120,7 +1128,7 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
 
     directory_approval = MagicMock()
     monkeypatch.setattr(
-        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
         prepare_sandbox,
     )
     monkeypatch.setattr(
@@ -1135,6 +1143,8 @@ async def test_ask_native_profile_is_last_word_on_fresh_launch(
     assert plan.command[-1] == request.prompt
     profile_start = -len(profile.provider_args) - 1
     assert tuple(plan.command[profile_start:-1]) == profile.provider_args
+    assert prepared_sandbox_configs == [profile.sandbox_config]
+    assert resume_metadata["sandbox_config"] == profile.sandbox_config.model_dump(mode="json")
     directory_approval.assert_not_called()
 
 
