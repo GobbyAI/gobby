@@ -155,3 +155,14 @@ class TestBuildGobbyInstructions:
         assert (
             "Direct `gcode` calls do not require loading the `code-index` skill" in prompt_section
         )
+
+
+def test_instructions_name_gated_skill_file_tools() -> None:
+    """Skill reference loads are behind the schema gate and say so."""
+    from gobby.mcp_proxy.instructions import build_gobby_instructions
+
+    result = build_gobby_instructions()
+
+    assert "`get_skill_file` and `get_skill_files` are not bootstrap tools" in result
+    assert '`get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file")`' in result
+    assert "after the schema lease above, using the exact `get_skill_file(" in result

@@ -61,8 +61,12 @@ call_tool("gobby-skills", "install_skill", {"source": "hub:skill-slug"})
   wrapper output.
 - When using an execution wrapper, emit the current page's `content` together with `page` so the
   caller can follow `next_cursor`. Keep each page in its own outer result.
+- `get_skill_file` and `get_skill_files` are not bootstrap tools: call
+  `get_tool_schema(server_name="gobby-skills", tool_name="get_skill_file")` (or
+  `get_skill_files`) once per context before the first reference load; the lease then
+  covers later loads until context is cleared or compacted.
 - After reassembling `SKILL.md`, use its topic index to select references. Load only a referenced
-  topic whose stated condition applies, via its exact
+  topic whose stated condition applies, after the schema lease above, via its exact
   `get_skill_file(name="<skill>", path="references/<topic>.md")` call, and page it the same way.
 - If a page body is absent or contains an explicit truncation marker such as
   `…N tokens truncated…`, restart that skill or file lookup individually.
