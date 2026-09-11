@@ -950,6 +950,27 @@ def test_record_edited_files_stamps_the_newest_edit_per_task_path(db: Any, tmp_p
     assert between <= times["task-1"]["src/app.py"] <= after
 
 
+def test_record_edited_files_uses_the_event_time_and_keeps_the_newest_stamp(
+    db: Any, tmp_path: Path
+) -> None:
+    """A replayed envelope carries its original hook time: the ledger stamps that time,
+    and a stale replay never lowers a newer stamp already recorded for the path."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+
+    mgr.record_edited_files(S1, ["src/app.py"], checkout_root=str(tmp_path), edited_at=1_000.0)
+    assert mgr.get_variables(S1)["task_edited_file_times"] == {"task-1": {"src/app.py": 1_000.0}}
+
+    mgr.record_edited_files(
+        S1, ["src/app.py", "src/lib.py"], checkout_root=str(tmp_path), edited_at=500.0
+    )
+    assert mgr.get_variables(S1)["task_edited_file_times"] == {
+        "task-1": {"src/app.py": 1_000.0, "src/lib.py": 500.0}
+    }
+
+
 def test_record_edited_files_without_claim_stamps_nothing(db: Any, tmp_path: Path) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 

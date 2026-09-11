@@ -2535,6 +2535,22 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event.source == SessionSource.CODEX
         assert hook_event.cwd == "/project/path"
 
+    def test_enqueued_at_sets_event_timestamp(self) -> None:
+        """A replayed envelope keeps the time its hook fired, not the replay time."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        hook_event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "_enqueued_at": "2026-04-16T12:00:00Z",
+                "input_data": {"session_id": "codex-session-123", "cwd": "/project/path"},
+                "source": "codex",
+            }
+        )
+
+        assert hook_event is not None
+        assert hook_event.timestamp == datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
+
     def test_translate_subagent_start_preserves_lifecycle_context(self) -> None:
         """Translate SubagentStart without dropping child identifiers or transcript context."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter

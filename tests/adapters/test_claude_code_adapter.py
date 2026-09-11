@@ -7,6 +7,7 @@ Only external I/O (HookManager daemon calls) is mocked.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -193,6 +194,30 @@ class TestTranslateToHookEvent:
         assert event.cwd == "/projects/test"
         assert event.timestamp is not None
         assert event.metadata == {"_native_hook_type": "session-start"}
+
+    def test_enqueued_at_sets_event_timestamp(self) -> None:
+        """A replayed envelope keeps the time its hook fired, not the replay time."""
+        adapter = ClaudeCodeAdapter()
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "post-tool-use",
+                "_enqueued_at": "2026-04-16T12:00:00Z",
+                "input_data": {"session_id": "ext-123"},
+            }
+        )
+        assert event.timestamp == datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
+
+    def test_unparseable_enqueued_at_falls_back_to_now(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        before = datetime.now(UTC)
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "session-start",
+                "_enqueued_at": "yesterday",
+                "input_data": {"session_id": "ext-123"},
+            }
+        )
+        assert before <= event.timestamp <= datetime.now(UTC)
 
     def test_pre_tool_use_keeps_the_raw_tool_input(self) -> None:
         """Normalization aliases ``tool_input``; the payload Claude sent survives beside it."""

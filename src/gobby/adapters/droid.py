@@ -8,7 +8,6 @@ any other CLI adapter.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import (
@@ -128,7 +127,7 @@ class DroidAdapter(BaseAdapter):
             event_type=event_type,
             session_id=session_id,
             source=self.source,
-            timestamp=datetime.now(UTC),
+            timestamp=self._hook_event_timestamp(native_event),
             machine_id=self._resolve_text_field(
                 native_event, input_data, "machine_id", "machineId"
             ),

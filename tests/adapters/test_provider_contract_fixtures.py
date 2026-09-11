@@ -100,7 +100,14 @@ def test_provider_json_fixtures_have_contract_metadata(path: Path) -> None:
     payload = json.loads(path.read_text())
 
     assert isinstance(payload, dict)
-    assert {"provider", "capture_type"}.issubset(payload)
+    if "providers" in payload:
+        # Cross-provider characterization capture: provenance lives per provider entry.
+        assert {"schema_version", "capture_date"}.issubset(payload)
+        assert payload["providers"]
+        for entry in payload["providers"]:
+            assert {"provider", "version", "official_source", "capture_command"}.issubset(entry)
+    else:
+        assert {"provider", "capture_type"}.issubset(payload)
 
 
 def test_grok_hook_payload_fixture_translates_to_unified_events() -> None:

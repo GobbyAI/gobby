@@ -73,6 +73,20 @@ def test_real_session_header_is_passed_to_adapter_payload(temp_db: HubDatabase) 
     assert adapter_payload["input_data"]["session_id"] == "claude-external"
 
 
+def test_enqueued_at_is_passed_to_adapter_payload(temp_db: HubDatabase) -> None:
+    """The envelope's hook time reaches the adapter so a replay keeps its original time."""
+    adapter_payload = _post_claude_hook(
+        temp_db,
+        {
+            "hook_type": "session-start",
+            "source": "claude",
+            "input_data": {"session_id": "claude-external"},
+        },
+    )
+
+    assert adapter_payload["_enqueued_at"] == "2026-04-16T12:00:00Z"
+
+
 def test_envelope_id_marks_processed_and_skips_duplicate(
     temp_db: HubDatabase,
     tmp_path: Path,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -98,6 +99,17 @@ class TestDroidTranslateToHookEvent:
         assert event.event_type is HookEventType.SESSION_START
         assert event.session_id == "nested-session"
         assert event.data["session_id"] == "nested-session"
+
+    def test_enqueued_at_sets_event_timestamp(self) -> None:
+        adapter = DroidAdapter()
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "_enqueued_at": "2026-04-16T12:00:00Z",
+                "input_data": {"session_id": "droid-session", "cwd": "/repo"},
+            }
+        )
+        assert event.timestamp == datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
 
     def test_input_data_camel_case_session_id_is_canonicalized(self) -> None:
         adapter = DroidAdapter()

@@ -7,7 +7,6 @@ migration from the existing HookManager.execute() method.
 
 import logging
 import re
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import (
@@ -169,7 +168,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             event_type=event_type,
             session_id=session_id,
             source=self.source,
-            timestamp=datetime.now(UTC),
+            timestamp=self._hook_event_timestamp(native_event),
             machine_id=input_data.get("machine_id"),
             cwd=input_data.get("cwd"),
             data=normalized_data,

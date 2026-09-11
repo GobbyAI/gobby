@@ -539,11 +539,18 @@ class SessionVariableManager:
         repo_relative_paths: list[str],
         *,
         checkout_root: str | None = None,
+        edited_at: float | None = None,
     ) -> bool:
-        """Atomically record one successful mutation observation and its paths."""
+        """Atomically record one successful mutation observation and its paths.
+
+        ``edited_at`` is the epoch time the edit hook fired; a replayed envelope
+        carries its original time, so the ledger never mistakes replay time for
+        edit time.
+        """
         normalized_paths = list(dict.fromkeys(path for path in repo_relative_paths if path))
         if not normalized_paths:
             return False
+        stamp = time.time() if edited_at is None else edited_at
 
         from gobby.workflows.task_claim_state import (
             active_task_id_for_edit,
@@ -576,14 +583,17 @@ class SessionVariableManager:
                 variables["task_edited_files"] = task_files
                 # Epoch seconds of the newest edit per path: release_task_paths compares
                 # it against the last commit touching the path to tell this task's own
-                # uncommitted work from someone else's dirt on a stale attribution.
+                # uncommitted work from someone else's dirt on a stale attribution. A
+                # stale replay never lowers a newer stamp.
                 raw_times = variables.get("task_edited_file_times") or {}
                 task_times = raw_times if isinstance(raw_times, dict) else {}
                 raw_task_times = task_times.get(task_id, {})
                 times_for_task = dict(raw_task_times) if isinstance(raw_task_times, dict) else {}
-                edited_at = time.time()
                 for path in normalized_paths:
-                    times_for_task[path] = edited_at
+                    previous = times_for_task.get(path)
+                    times_for_task[path] = (
+                        max(float(previous), stamp) if isinstance(previous, (int, float)) else stamp
+                    )
                 task_times = dict(task_times)
                 task_times[task_id] = times_for_task
                 variables["task_edited_file_times"] = task_times

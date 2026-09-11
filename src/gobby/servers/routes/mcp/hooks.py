@@ -478,6 +478,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             platform_session_id = request.headers.get("X-Gobby-Session-Id", "").strip()
             if platform_session_id:
                 payload["_platform_session_id"] = platform_session_id
+            enqueued_at = request_metadata.get("enqueued_at")
+            if isinstance(enqueued_at, str) and enqueued_at:
+                payload["_enqueued_at"] = enqueued_at
             if envelope_id:
                 input_data = payload.get("input_data")
                 if isinstance(input_data, dict):

@@ -244,6 +244,18 @@ class TestTranslateToHookEvent:
 
         assert before <= event.timestamp <= after
 
+    def test_timestamp_missing_uses_envelope_enqueue_time(self, adapter: QwenAdapter) -> None:
+        """A replayed envelope keeps the time its hook fired, not the replay time."""
+        native_event = {
+            "hook_type": "PostToolUse",
+            "_enqueued_at": "2026-04-16T12:00:00Z",
+            "input_data": {"session_id": "sess-replayed"},
+        }
+
+        event = adapter.translate_to_hook_event(native_event)
+
+        assert event.timestamp == datetime(2026, 4, 16, 12, 0, tzinfo=UTC)
+
     def test_timestamp_invalid_uses_current_time(self, adapter: QwenAdapter) -> None:
         """Invalid timestamp format uses current time."""
         native_event = {
