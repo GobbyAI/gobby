@@ -770,7 +770,7 @@ impl<D: Daemon> Workspace<D> {
         let pane = self.panes.get_mut(&pane_id)?;
         let terminal_id = pane.terminal_id.clone();
         let (attachment_id, generation) = pane.begin_detaching(now)?;
-        pane.clear_control("control result indeterminate");
+        pane.clear_control("Control result indeterminate.");
         Some((terminal_id, attachment_id, generation))
     }
 
@@ -816,7 +816,7 @@ impl<D: Daemon> Workspace<D> {
     fn ensure_not_exiting(&self) -> Result<(), DaemonError> {
         if self.exit_reason.is_some() {
             return Err(DaemonError::Protocol {
-                detail: "client exit is latched".to_string(),
+                detail: "Client exit is latched.".to_string(),
             });
         }
         Ok(())

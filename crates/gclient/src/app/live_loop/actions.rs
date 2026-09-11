@@ -728,7 +728,7 @@ fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
                 }
             }
             chrome.apply_prefs(prefs);
-            chrome.status_message = Some(format!("Reloaded {}", path.display()));
+            chrome.status_message = Some(format!("Reloaded {}.", path.display()));
         }
         Err(error) => {
             chrome.toast = Some(Toast {

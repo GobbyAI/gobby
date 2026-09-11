@@ -38,8 +38,8 @@
 17 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 18 |                         │                                                                                              |
 18 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-19 |                         │                                         no pane open                                         |
-19 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*41 overlay1/panel_bg+b*12 -/panel_bg*41
+19 |                         │                                         No pane open.                                        |
+19 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*41 overlay1/panel_bg+b*13 -/panel_bg*40
 20 |                         │                          select a terminal in the sidebar to attach                          |
 20 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*26 overlay0/panel_bg*42 -/panel_bg*26
 21 | new                 menu│                                                                                              |
@@ -78,5 +78,5 @@
 37 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
 38 |                         │                                                                                              |
 38 : -/panel_bg*25 surface_dim/panel_bg*1 -/panel_bg*94
-39 |                        «│ no pane │ prefix ctrl+b                                                                      |
-39 : -/panel_bg*24 overlay0/panel_bg*1 surface_dim/panel_bg*1 overlay1/surface_dim*8 subtext0/surface_dim*16 -/surface_dim*70
+39 |                        «│ No pane. │ prefix ctrl+b                                                                     |
+39 : -/panel_bg*24 overlay0/panel_bg*1 surface_dim/panel_bg*1 overlay1/surface_dim*9 subtext0/surface_dim*16 -/surface_dim*69

@@ -407,7 +407,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
     );
     assert_ne!(
         chrome.status_message.as_deref(),
-        Some("No actionable attention prompt"),
+        Some("No actionable attention prompt."),
         "an idle row asks for no prompt"
     );
     assert_eq!(attention_label(&workspace, "session:sess-1"), "15 #12217");

@@ -842,7 +842,7 @@ impl LiveExitCause {
             Self::Sigint => "SIGINT",
             Self::Sigterm => "SIGTERM",
             Self::Sighup => "SIGHUP",
-            Self::DaemonLoss => "daemon unavailable",
+            Self::DaemonLoss => "Daemon unavailable.",
         }
     }
 }

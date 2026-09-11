@@ -191,6 +191,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut supervisor = ReconnectSupervisor::new();
     let mut reconnect_job = None;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
+    let mut sidebar_error_shown = false;
     let mut last_snapshot = None;
 
     // Draw once before the first select: input outranks the render tick, so
@@ -320,10 +321,18 @@ pub async fn run_live_loop<B: Backend>(
             }
             result = await_sidebar_job(&mut sidebar_job), if sidebar_job.is_some() => {
                 sidebar_job = None;
-                match result {
-                    Ok(fetch) => workspace.apply_sidebar_fetch(fetch),
-                    Err(error) => chrome.status_message = Some(error.to_string()),
-                }
+                let error = match result {
+                    Ok(fetch) => {
+                        workspace.apply_sidebar_fetch(fetch);
+                        None
+                    }
+                    Err(error) => Some(error),
+                };
+                settle_sidebar_banner(
+                    &mut chrome.status_message,
+                    &mut sidebar_error_shown,
+                    error.as_ref(),
+                );
             }
             result = await_reconnect_job(&mut reconnect_job), if reconnect_job.is_some() => {
                 reconnect_job = None;
@@ -598,7 +607,7 @@ async fn route_live_input(
                     .panes
                     .get_mut(&pane_id)
                     .expect("pane exists")
-                    .status_message = Some("paste_too_large".into());
+                    .status_message = Some("Paste too large.".into());
             } else if workspace.pane(pane_id).copy_search {
                 workspace
                     .panes
@@ -771,4 +780,50 @@ async fn resize_live_workspace<B: Backend>(
         return Ok(());
     }
     workspace.propagate_geometry(&updates).await
+}
+
+/// Show a sidebar refetch failure in the status line and retire it on the
+/// next successful refetch. A transient timeout under daemon load otherwise
+/// stays on screen until an unrelated message replaces it.
+fn settle_sidebar_banner(
+    status: &mut Option<String>,
+    shown: &mut bool,
+    error: Option<&DaemonError>,
+) {
+    match error {
+        Some(error) => {
+            *status = Some(error.to_string());
+            *shown = true;
+        }
+        None if *shown => {
+            *status = None;
+            *shown = false;
+        }
+        None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_banner_clears_on_the_next_successful_refetch() {
+        let mut status = None;
+        let mut shown = false;
+        settle_sidebar_banner(&mut status, &mut shown, Some(&DaemonError::Timeout));
+        assert_eq!(status.as_deref(), Some("Daemon request timed out."));
+        assert!(shown);
+        settle_sidebar_banner(&mut status, &mut shown, None);
+        assert_eq!(status, None);
+        assert!(!shown);
+    }
+
+    #[test]
+    fn sidebar_banner_leaves_an_unrelated_message_alone() {
+        let mut status = Some("Response sent.".to_string());
+        let mut shown = false;
+        settle_sidebar_banner(&mut status, &mut shown, None);
+        assert_eq!(status.as_deref(), Some("Response sent."));
+    }
 }

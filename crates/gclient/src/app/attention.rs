@@ -37,7 +37,7 @@ pub(super) async fn open_response_dialog(
         .filter(|entry| entry_id.is_none_or(|wanted| wanted == entry.entry_id))
         .find_map(parse_prompt);
     let Some(prompt) = prompt else {
-        chrome.status_message = Some("No actionable attention prompt".to_string());
+        chrome.status_message = Some("No actionable attention prompt.".to_string());
         return Ok(());
     };
 
@@ -136,7 +136,7 @@ async fn submit_response(
     workspace.pending_attention = None;
     chrome.dialog = None;
     chrome.mode = Mode::Terminal;
-    chrome.status_message = Some("Response sent".to_string());
+    chrome.status_message = Some("Response sent.".to_string());
     Ok(())
 }
 

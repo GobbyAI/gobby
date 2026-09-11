@@ -32,23 +32,23 @@ pub type WsReply = Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DaemonError {
-    #[error("daemon authorization failed")]
+    #[error("Daemon authorization failed.")]
     Unauthorized,
-    #[error("daemon resource was not found")]
+    #[error("Daemon resource was not found.")]
     NotFound,
-    #[error("daemon unavailable")]
+    #[error("Daemon unavailable.")]
     Unavailable { retry_after: Option<Duration> },
     /// The daemon closed the socket with 1001 (going away): a deliberate stop
     /// or restart, not a fault. The client waits for it to come back (#22002).
-    #[error("daemon shut down; waiting for it to return")]
+    #[error("Daemon shut down; waiting for it to return.")]
     GoingAway,
-    #[error("daemon protocol error: {detail}")]
+    #[error("Daemon protocol error: {detail}")]
     Protocol { detail: String },
-    #[error("a control request is already in flight for this attachment")]
+    #[error("A control request is already in flight for this attachment.")]
     ControlRequestInFlight,
-    #[error("the attachment's control scope has an indeterminate result")]
+    #[error("The attachment's control scope has an indeterminate result.")]
     ControlScopeIndeterminate,
-    #[error("daemon request timed out")]
+    #[error("Daemon request timed out.")]
     Timeout,
 }
 

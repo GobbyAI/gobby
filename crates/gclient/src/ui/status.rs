@@ -345,7 +345,7 @@ pub fn render_status_line<W: WorkspaceView>(
                 ));
             }
         }
-        None => spans.push(Span::styled(" no pane", base.fg(p.overlay1))),
+        None => spans.push(Span::styled(" No pane.", base.fg(p.overlay1))),
     }
     if let Some(name) = mode_name(chrome.mode) {
         spans.push(Span::styled(format!(" │ {name}"), base.fg(p.accent)));
@@ -357,7 +357,7 @@ pub fn render_status_line<W: WorkspaceView>(
         base.fg(p.subtext0),
     ));
     if !ws.daemon_ready() {
-        spans.push(Span::styled(" │ daemon unreachable", base.fg(p.red)));
+        spans.push(Span::styled(" │ Daemon unreachable.", base.fg(p.red)));
     }
     if let Some(message) = chrome.status_message.as_deref() {
         spans.push(Span::styled(format!(" │ {message}"), base.fg(p.subtext0)));

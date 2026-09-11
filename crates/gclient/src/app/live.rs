@@ -566,7 +566,7 @@ impl Workspace<LiveDaemon> {
 
     pub async fn reconnect_daemon_ws(&mut self) -> Result<Generation, DaemonError> {
         for pane in self.panes.values_mut() {
-            pane.clear_control("daemon disconnected");
+            pane.clear_control("Daemon disconnected.");
         }
         self.reconcile_subscribe_first().await?;
         self.daemon_ready = true;

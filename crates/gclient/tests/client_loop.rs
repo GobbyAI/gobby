@@ -3416,7 +3416,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
     let exit_reason = workspace.exit_reason();
     assert_eq!(
         exit_reason,
-        Some("daemon unavailable"),
+        Some("Daemon unavailable."),
         "the shared socket-and-roster retry budget must latch the live-loop exit"
     );
     assert_eq!(mock.websocket_handshakes(), 6);
@@ -3480,7 +3480,7 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
     let mut chrome = Chrome::dark();
     // A request that failed during the outage leaves its banner behind; the
     // recovered handshake must clear it.
-    chrome.status_message = Some("daemon request timed out".to_string());
+    chrome.status_message = Some("Daemon request timed out.".to_string());
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     // More failed handshakes than an unexpected loss is allowed before exiting.
