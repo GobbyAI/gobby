@@ -123,6 +123,80 @@ class OwnedWorker:
         self.stderr_handle.close()
 
 
+async def _await_managed_agent_launch(agent_run_id: str, *, deadline_at: datetime) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+
+    remaining = (deadline_at - datetime.now(UTC)).total_seconds()
+    if remaining <= 0:
+        raise TimeoutError("deadline expired during native Ask launch")
+    prefix = f"{agent_run_id}:"
+    tasks = [task for key, task in tuple(_spawn_background_tasks.items()) if key.startswith(prefix)]
+    if len(tasks) > 1:
+        raise RuntimeError(f"native Ask launch has multiple managed tasks: {agent_run_id}")
+    if not tasks:
+        return
+    try:
+        async with asyncio.timeout(remaining):
+            await asyncio.shield(tasks[0])
+    except TimeoutError as error:
+        raise TimeoutError("deadline expired during native Ask launch") from error
+
+
+async def _settle_owned_receipt_capture(task: asyncio.Task[bool]) -> BaseException | None:
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except Exception:
+            break
+    if task.cancelled():
+        return asyncio.CancelledError("native Ask receipt capture was cancelled")
+    return task.exception()
+
+
+async def _capture_agent_launch_receipt_owned(
+    database_url: str,
+    agent_run_id: str,
+    *,
+    ask_run_id: str,
+    project_id: str,
+    control_dir: Path,
+    deadline_at: datetime,
+) -> bool:
+    remaining = (deadline_at - datetime.now(UTC)).total_seconds()
+    if remaining <= 0:
+        raise TimeoutError("deadline expired before native Ask receipt capture")
+    capture_task = asyncio.create_task(
+        asyncio.to_thread(
+            _capture_agent_launch_receipt,
+            database_url,
+            agent_run_id,
+            ask_run_id=ask_run_id,
+            project_id=project_id,
+            control_dir=control_dir,
+        ),
+        name=f"native-ask-receipt-{agent_run_id}",
+    )
+    deadline_timeout = asyncio.timeout(remaining)
+    try:
+        async with deadline_timeout:
+            return await asyncio.shield(capture_task)
+    except asyncio.CancelledError as error:
+        capture_error = await _settle_owned_receipt_capture(capture_task)
+        if capture_error is not None:
+            error.add_note(f"native Ask receipt capture also failed: {capture_error}")
+        raise
+    except TimeoutError as error:
+        if not deadline_timeout.expired():
+            raise
+        capture_error = await _settle_owned_receipt_capture(capture_task)
+        deadline_error = TimeoutError("deadline expired during native Ask receipt capture")
+        if capture_error is not None:
+            deadline_error.add_note(f"native Ask receipt capture also failed: {capture_error}")
+        raise deadline_error from error
+
+
 @dataclass
 class ReceiptCapturingAgents:
     delegate: Any
@@ -136,14 +210,19 @@ class ReceiptCapturingAgents:
         agent_run_id = await self.delegate.launch(spec, bind_authority)
         if not isinstance(agent_run_id, str) or not agent_run_id:
             raise RuntimeError("native Ask launch returned no agent run ID")
-        await asyncio.to_thread(
-            _capture_agent_launch_receipt,
+        await _await_managed_agent_launch(agent_run_id, deadline_at=spec.deadline_at)
+        complete = await _capture_agent_launch_receipt_owned(
             self.database_url,
             agent_run_id,
             ask_run_id=spec.run_id,
             project_id=spec.project_id,
             control_dir=self.control_dir,
+            deadline_at=spec.deadline_at,
         )
+        if not complete:
+            raise RuntimeError(
+                f"native Ask launch {agent_run_id} did not produce a complete process receipt"
+            )
         return agent_run_id
 
     def status(self, agent_run_id: str) -> str | None:
@@ -2281,43 +2360,21 @@ def _capture_agent_launch_receipt(
     ask_run_id: str,
     project_id: str,
     control_dir: Path,
-) -> None:
+) -> bool:
     row = _agent_receipt_row(database_url, agent_run_id)
     agent = _json_mapping(row.get("agent"), name="launch agent")
-    session = _json_mapping(row.get("session"), name="launch session")
-    terminal = _json_mapping(row.get("terminal"), name="launch terminal")
     metadata = _json_mapping(agent.get("resume_metadata_json"), name="launch metadata")
     initial = _json_mapping(metadata.get("initial_variables"), name="launch variables")
     sandbox = _json_mapping(metadata.get("sandbox"), name="launch sandbox")
-    terminal_process = _json_mapping(terminal.get("process"), name="launch terminal process")
     if (
         agent.get("id") != agent_run_id
         or agent.get("workflow_name") != "native-ask"
-        or agent.get("child_session_id") != session.get("id")
-        or agent.get("terminal_id") != terminal.get("id")
         or metadata.get("provider") != "claude"
         or metadata.get("project_id") != project_id
         or metadata.get("workflow") != "native-ask"
         or initial.get("ask_run_id") != ask_run_id
-        or session.get("source") != "claude"
-        or session.get("project_id") != project_id
     ):
         raise RuntimeError("native Ask launch identity is inconsistent")
-    pid = agent.get("pid")
-    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-        raise RuntimeError("native Ask launch PID is invalid")
-    start_identity = _process_start_identity(pid)
-    if start_identity is None:
-        raise RuntimeError("native Ask launch process has no stable OS start identity")
-    try:
-        pgid = os.getpgid(pid)
-    except ProcessLookupError as error:
-        raise RuntimeError("native Ask launch process exited during capture") from error
-    if pgid != pid or terminal_process.get("pgid") != pgid:
-        raise RuntimeError("native Ask launch process group is inconsistent")
-    process_group = _process_group_snapshot(pgid)
-    if _process_group_identities(process_group, pgid=pgid).get(pid) != start_identity:
-        raise RuntimeError("native Ask launch process group leader is inconsistent")
     runtime_root = control_dir.parent.resolve(strict=True)
     artifact_root = control_dir / "launch-artifacts" / agent_run_id
     policy = _copy_receipt(
@@ -2336,21 +2393,29 @@ def _capture_agent_launch_receipt(
         raise RuntimeError("native Ask launch violation path is outside the owned runtime")
     retained_violation = runtime_root / "gobby" / "logs" / "sandbox-violations"
     retained_violation /= f"{agent_run_id}.jsonl"
+    raw_session = row.get("session")
+    raw_terminal = row.get("terminal")
+    session = dict(raw_session) if isinstance(raw_session, Mapping) else None
+    terminal = dict(raw_terminal) if isinstance(raw_terminal, Mapping) else None
+    pid = agent.get("pid")
     manifest = {
         "schema_version": 1,
+        "launch_complete": False,
         "captured_at_unix": time.time(),
         "agent_run_id": agent_run_id,
         "ask_run_id": ask_run_id,
         "project_id": project_id,
         "provider": "claude",
-        "child_session_id": session.get("id"),
+        "child_session_id": agent.get("child_session_id"),
         "pid": pid,
         "terminal_id": agent.get("terminal_id"),
         "status": agent.get("status"),
-        "start_identity": start_identity,
-        "pgid": pgid,
-        "process_group": process_group,
-        "terminal_process": terminal_process,
+        "launch_error": agent.get("error"),
+        "receipt_error": None,
+        "start_identity": None,
+        "pgid": None,
+        "process_group": None,
+        "terminal_process": None,
         "policy": {
             "source_path": policy["source_path"],
             "captured_path": policy["output_path"],
@@ -2362,7 +2427,53 @@ def _capture_agent_launch_receipt(
             "retained_path": str(retained_violation.resolve(strict=False)),
         },
     }
-    _atomic_json(control_dir / "launch-receipts" / f"{agent_run_id}.json", manifest)
+    receipt_path = control_dir / "launch-receipts" / f"{agent_run_id}.json"
+
+    def incomplete(reason: str) -> bool:
+        manifest["receipt_error"] = reason
+        _atomic_json(receipt_path, manifest)
+        return False
+
+    if session is None or terminal is None:
+        return incomplete("managed launch did not persist a child session and terminal")
+    if (
+        agent.get("child_session_id") != session.get("id")
+        or agent.get("terminal_id") != terminal.get("id")
+        or session.get("source") != "claude"
+        or session.get("project_id") != project_id
+    ):
+        raise RuntimeError("native Ask launch identity is inconsistent")
+    raw_terminal_process = terminal.get("process")
+    if not isinstance(raw_terminal_process, Mapping):
+        return incomplete("managed launch did not persist terminal process identity")
+    terminal_process = dict(raw_terminal_process)
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return incomplete("managed launch did not persist a valid PID")
+    start_identity = _process_start_identity(pid)
+    if start_identity is None:
+        return incomplete("managed launch process has no observable OS start identity")
+    try:
+        pgid = os.getpgid(pid)
+    except ProcessLookupError:
+        return incomplete("managed launch process exited before receipt capture")
+    if pgid != pid or terminal_process.get("pgid") != pgid:
+        return incomplete("managed launch process group identity is inconsistent")
+    process_group = _process_group_snapshot(pgid)
+    if _process_group_identities(process_group, pgid=pgid).get(pid) != start_identity:
+        return incomplete("managed launch process group leader identity is inconsistent")
+    manifest.update(
+        {
+            "launch_complete": True,
+            "launch_error": None,
+            "child_session_id": session.get("id"),
+            "start_identity": start_identity,
+            "pgid": pgid,
+            "process_group": process_group,
+            "terminal_process": terminal_process,
+        }
+    )
+    _atomic_json(receipt_path, manifest)
+    return True
 
 
 def _load_launch_receipts(
@@ -2437,7 +2548,7 @@ def _launch_process_snapshot(
                 "terminal_process": manifest.get("terminal_process"),
                 "pgid": manifest.get("pgid"),
                 "process_group": manifest.get("process_group"),
-                "live": True,
+                "live": True if manifest.get("launch_complete") is True else None,
                 "start_identity": manifest.get("start_identity"),
                 "observed_start_identity": manifest.get("start_identity"),
             }
@@ -2462,6 +2573,8 @@ def _agent_evidence_identity_error(
         return "agent-not-bound-to-exported-ask-run"
     if manifest is None:
         return "pre-reap-launch-receipt-missing"
+    if not session:
+        return "agent-child-session-missing"
     metadata = agent.get("resume_metadata_json")
     if not isinstance(metadata, Mapping):
         return "agent-resume-metadata-missing"
@@ -2627,7 +2740,6 @@ def _export_raw(
     for index, row in enumerate(agent_rows):
         try:
             agent = _json_mapping(row.get("agent"), name="agent run export")
-            session = _json_mapping(row.get("session", {}), name="agent session export")
         except Exception as error:
             capture_errors.append(
                 {
@@ -2641,6 +2753,30 @@ def _export_raw(
         agent_run_id = str(agent.get("id", ""))
         if agent_run_id:
             captured_agent_ids.add(agent_run_id)
+        raw_session = row.get("session")
+        if raw_session is None:
+            session: dict[str, Any] = {}
+            capture_errors.append(
+                {
+                    "kind": "agent-session-snapshot",
+                    "run_id": agent_run_id,
+                    "error_type": "IncompleteLaunch",
+                    "message": "native Ask agent run has no child session",
+                }
+            )
+        else:
+            try:
+                session = _json_mapping(raw_session, name="agent session export")
+            except Exception as error:
+                capture_errors.append(
+                    {
+                        "kind": "agent-receipts",
+                        "run_id": agent_run_id,
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    }
+                )
+                continue
         manifest = launch_receipts.get(agent_run_id)
         identity_error = _agent_evidence_identity_error(
             agent,
