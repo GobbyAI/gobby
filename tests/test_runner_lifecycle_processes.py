@@ -161,6 +161,8 @@ def test_host_preserve_pids_requires_gterm_identity(tmp_path: Path) -> None:
 
     missing: dict[str, Any] = {}
     assert (
-        runner_lifecycle_processes._host_preserve_pids(cast(GobbyRunner, SimpleNamespace(**missing)))
+        runner_lifecycle_processes._host_preserve_pids(
+            cast(GobbyRunner, SimpleNamespace(**missing))
+        )
         == set()
     )

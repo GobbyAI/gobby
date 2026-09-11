@@ -49,7 +49,9 @@ def session_id(temp_db: HubDatabase, tmp_path: Path) -> str:
     return str(row["id"])
 
 
-def test_frozen_pages_exclude_concurrent_feedback_and_later_edits(temp_db: HubDatabase, session_id: str) -> None:
+def test_frozen_pages_exclude_concurrent_feedback_and_later_edits(
+    temp_db: HubDatabase, session_id: str
+) -> None:
     first = _insert_feedback(temp_db, session_id)
     second = _insert_feedback(temp_db, session_id, created_at=_T0 + timedelta(minutes=1))
     store = FeedbackReviewStore(temp_db)
@@ -66,7 +68,11 @@ def test_frozen_pages_exclude_concurrent_feedback_and_later_edits(temp_db: HubDa
     assert last["observations"][0]["id"] == second and last["next_offset"] is None
     assert new not in {row["id"] for row in page["observations"] + last["observations"]}
     assert store.freeze_batch(2, dry_run=False) is None
-    store.save_progress(run_id, {"clusters": [{"observation_ids": [first]}, {"observation_ids": [second]}]}, {"filed": [{"observation_ids": [first], "task_ref": "#123"}]})
+    store.save_progress(
+        run_id,
+        {"clusters": [{"observation_ids": [first]}, {"observation_ids": [second]}]},
+        {"filed": [{"observation_ids": [first], "task_ref": "#123"}]},
+    )
     results = store.results_page(run_id, limit=1)
     assert results["outcomes"]["filed"][0]["task_ref"] == "#123"
     assert store.results_page(run_id, offset=1, limit=1)["outcomes"]["filed"] == []

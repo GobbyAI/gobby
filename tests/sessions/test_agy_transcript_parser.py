@@ -136,8 +136,7 @@ def _messages(records: list[Any]) -> list[ParsedMessage]:
     return [
         record
         for record in records
-        if isinstance(record, ParsedMessage)
-        and record.content_type != TURN_BOUNDARY_CONTENT_TYPE
+        if isinstance(record, ParsedMessage) and record.content_type != TURN_BOUNDARY_CONTENT_TYPE
     ]
 
 
@@ -191,8 +190,7 @@ def test_completed_planner_response_emits_turn_boundary() -> None:
     boundaries = [
         record
         for record in records
-        if isinstance(record, ParsedMessage)
-        and record.content_type == TURN_BOUNDARY_CONTENT_TYPE
+        if isinstance(record, ParsedMessage) and record.content_type == TURN_BOUNDARY_CONTENT_TYPE
     ]
     assert len(boundaries) == 1
 

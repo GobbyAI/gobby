@@ -553,7 +553,9 @@ def test_rejection_log_attributes_principal(
         )
 
     assert response.status_code == 403
-    record = next(record for record in caplog.records if record.getMessage() == "handshake rejected")
+    record = next(
+        record for record in caplog.records if record.getMessage() == "handshake rejected"
+    )
     assert record.__dict__["kind"] == "agent_run"
     assert record.__dict__["execution_id"] == AGENT_RUN_ID
     assert record.__dict__["session_id"] == SESSION_ID
