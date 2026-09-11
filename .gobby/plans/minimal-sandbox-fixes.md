@@ -54,6 +54,15 @@ fresh safe restart checkpoint from #12261 and other affected sessions.
 `kind: deliverable`
 
 Targets:
+- `.gobby/python-suppressions-baseline.json`
+- `src/gobby/hooks/inbox.py::*` — scope-reason: bound replay barrier waits and extract quarantine retention
+- `src/gobby/hooks/quarantine_retention.py::*` — scope-reason: own diagnostic quarantine pruning and periodic retention
+- `src/gobby/runner_maintenance/messaging.py::*` — scope-reason: consume the extracted quarantine retention loop
+- `src/gobby/servers/_app_ui.py::*` — scope-reason: reject proxy WebSocket handshakes when the backend is unavailable
+- `tests/hooks/test_inbox.py::*` — scope-reason: preserve inbox replay and quarantine behavior after extraction
+- `tests/hooks/test_inbox_barrier_deadline.py::*` — scope-reason: cover deadline contention, stalled ingress, retry, and cancellation
+- `tests/servers/test_websocket_proxy_failure.py::*` — scope-reason: verify backend failure sends an ASGI rejection
+- `tests/servers/test_app_factory_ui_modes.py::*` — scope-reason: replace the obsolete silent-handshake assertion
 - `src/gobby/agents/external_write_grants.py::*` — scope-reason: validate and audit external grants
 - `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: integrate grant preflight and extract context assembly
 - `src/gobby/mcp_proxy/tools/spawn_agent/_request.py::*` — scope-reason: assemble resolved launch requests
@@ -235,3 +244,87 @@ repairs under #22142. Root owns shutdown ordering: ASGI mode skipped chat
 cleanup and Uvicorn could close the hook worker before chat SESSION_END.
 Two focused tests reproduced skipped cleanup before repair. No clean-log claim
 is made yet.
+
+## V3 Current repair checkpoint
+`kind: verification`
+
+Shutdown ordering repair committed as `d255ee76ae`, linked to both tasks.
+43 focused tests passed: protected isolated-database pytest on
+`tests/test_asgi_chat_shutdown.py`, `tests/test_runner_shutdown.py`, and
+`tests/servers/websocket/test_server.py`. Ruff, format, production mypy, new-test
+quality/type audits, suppression ratchet and plan validation passed. Existing
+63 typing baseline errors in the old shutdown test file were filed as #22146
+under the user's instruction to file unrelated findings. The stop hook objects;
+root asked the user whether to leave it filed or expand scope. No human answer
+has arrived; automatic hook reinjections do not answer that question.
+
+Voice owner #12736 committed `966888917a`, including companion ASGI server stop,
+voice status, wake scheduling and handshake changes. Coordinated
+`UV_NO_SYNC=1 uv run gobby restart --wait --verbose` stopped the old daemon
+at September 11 00:26:46 UTC; new HTTP startup was around 00:27:20 UTC, PID71202.
+CLI exited1: daemon did not finish startup readiness. Basic /api/health is OK,
+but no subsystem initialization completion, UI60889 unavailable. Runtime log
+repeats "ASGI callable returned without completing handshake"; owner #12736
+has the diagnostics and owns the follow-up. No passing log window since V2.
+
+Root found replay deadline gaps: `drain_hook_inbox_barrier` in the 900-line
+`src/gobby/hooks/inbox.py` bounds neither lock acquisition nor the awaited batch.
+`tests/hooks/test_inbox_barrier_deadline.py` has two new RED cases (lock/post),
+both exceed the1s outer bound despite a0.01s replay deadline. Tests ran with
+isolated DATABASE_URL, GOBBY_TEST_PROTECT=1 and UV_NO_SYNC=1;2failed as expected.
+No production replay fix yet. Preserve unresolved run/session identities and
+pending files on timeout; do not cancel the independent periodic drain owner.
+Check replay cancellation/dedupe before implementation. A transport or retention
+extraction may be appropriate to avoid growing the900-line inbox module.
+Native diagnostic sample is `/tmp/gobby-grant-smoke-wECAsK/startup-71202.sample.txt`.
+Python asyncio remote task inspection failed for macOS attachment permissions.
+The live stall is consistent with the timeout gap, but no coroutine-stack proof
+was obtained. Inbox still showed replay progress and8pending files during diagnosis.
+
+The prolonged hold caused Ask worker #12746/fdb3b6af to hit its958s inactivity
+watchdog. Parent #12261 owns clean worker checkpoints and was asked to end other
+held workers cooperatively; that message timed out, delivery uncertain.
+Do not count requested quiet-window inactivity as implementation failure.
+No new managed launches until explicit readiness release; preserve remaining
+terminals, manual Crane8080 and independent viewers5183/5184. Parent #12261
+does isolated source/test work only. Root has no running local PTY commands at
+this checkpoint. Next: repair/verify replay, coordinate owner handshake repair,
+restart, repeat affected live checks, then five clean minutes and final closure.
+
+
+## V4 Replay deadline and proxy rejection repair
+`kind: verification`
+
+The V3 checkpoint above is historical. The replay barrier now bounds lock
+acquisition and awaited replay with asyncio.timeout, preserving unresolved
+identities and pending files for retry. External cancellation propagates and
+an independent drain keeps its lock. Four deadline tests cover lock/post
+contention, successful retry, caller cancellation, and unrelated TimeoutError.
+The original two tests failed before the fix; the focused combined run passed
+98 tests after the fix and extraction.
+
+Move quarantine retention from src/gobby/hooks/inbox.py into
+src/gobby/hooks/quarantine_retention.py. Retention depends on the existing inbox
+path API; inbox does not import retention. Its maintenance consumer and four
+existing quarantine tests now use the new module. Production sizes are 757,
+166, and 319 lines for inbox, retention, and _app_ui respectively.
+Consumer sweeps: gcode grep -w drain_hook_inbox_barrier src tests; gcode grep -w
+'prune_hook_quarantine|hook_quarantine_retention_loop' src tests; gcode grep -w
+_proxy_websocket src/gobby/servers/_app_ui.py and tests. Existing restart,
+maintenance, inbox, and proxy tests provide the consumer characterization.
+
+The repeated incomplete ASGI handshake has a reproducible proxy failure path:
+backend connection refusal returned without sending accept or close. A real
+Starlette WebSocket regression failed with zero ASGI messages, and now receives
+websocket.close. The old test that expected silence is removed. Owner #12736
+confirmed no active repair; root owns this follow-up. Live attribution and a
+fresh clean-log interval remain required after restart.
+
+Validation command (isolated DATABASE_URL, GOBBY_TEST_PROTECT=1, UV_NO_SYNC=1):
+uv run pytest tests/hooks/test_inbox_barrier_deadline.py tests/hooks/test_inbox.py
+ tests/test_runner_lifecycle_restart_replay.py tests/test_runner_maintenance_startup.py
+ tests/servers/test_websocket_proxy_failure.py tests/servers/test_app_factory_ui_modes.py
+ -q --no-cov --tb=short -> 98 passed. Ruff passes; mypy passes all four changed
+production files. New test quality/type audits and suppression ratchet recorded
+in the session. Foreign session/storage edits appeared during validation;
+project restart coordination requested before loading those changes.

@@ -88,7 +88,6 @@ async def _proxy_websocket(
 ) -> None:
     import websockets
 
-    accepted = False
     try:
         requested_subprotocols = _requested_websocket_subprotocols(websocket.headers)
         if bearer_token:
@@ -105,7 +104,6 @@ async def _proxy_websocket(
 
         async with backend_connection as backend:
             await websocket.accept(subprotocol=getattr(backend, "subprotocol", None))
-            accepted = True
 
             async def client_to_backend() -> None:
                 try:
@@ -162,11 +160,12 @@ async def _proxy_websocket(
                     raise exc
     except Exception as e:
         logger.debug("WebSocket proxy error: %s", e)
-        if accepted:
-            try:
-                await websocket.close(code=1011)
-            except Exception:
-                pass
+        # Before accept, close rejects the handshake; returning silently leaves
+        # Uvicorn with an incomplete ASGI handshake when the backend is down.
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:
