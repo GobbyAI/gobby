@@ -9,7 +9,7 @@ use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest}
 use crate::frame_source::FrameError;
 use crate::prefs::{load_prefs, prefs_path};
 use crate::startup::load_keymap;
-use crate::ui::chrome::attention_pane;
+use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::{attention_order, next_machine_filter};
@@ -47,20 +47,25 @@ pub(super) fn sync_live_chrome(workspace: &Workspace<LiveDaemon>, chrome: &mut C
             .iter()
             .filter_map(|(slot, pane_id)| (!workspace.panes.contains_key(pane_id)).then_some(*slot))
             .collect();
-        if stale.len() == tab.slots.len() {
-            tab.slots.clear();
-            continue;
-        }
         for slot in stale {
-            tab.layout.focus_pane(slot);
-            let _ = tab.layout.close_focused();
-            tab.slots.remove(&slot);
+            close_slot(tab, slot);
         }
     }
     set.tabs.retain(|tab| !tab.slots.is_empty());
     if set.active_tab >= set.tabs.len() {
         set.active_tab = set.tabs.len().saturating_sub(1);
     }
+}
+
+/// Drop `slot` from `tab`. The layout keeps its last pane (it refuses to
+/// close it), so an emptied tab is left for `sync_live_chrome` to reap.
+fn close_slot(tab: &mut Tab, slot: layout::PaneId) {
+    tab.slots.remove(&slot);
+    if tab.slots.is_empty() {
+        return;
+    }
+    tab.layout.focus_pane(slot);
+    let _ = tab.layout.close_focused();
 }
 
 /// Apply what `route_mouse` decided. Focus moves chrome first and then the
@@ -636,20 +641,26 @@ pub(super) async fn close_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
-    let panes: Vec<PaneId> = chrome
+    let slots: Vec<(layout::PaneId, PaneId)> = chrome
         .active_tab()
-        .map(|tab| tab.slots.values().copied().collect())
+        .map(|tab| {
+            tab.slots
+                .iter()
+                .map(|(slot, pane)| (*slot, *pane))
+                .collect()
+        })
         .unwrap_or_default();
-    for pane_id in panes {
+    for (slot, pane_id) in slots {
         if workspace.pane(pane_id).external {
             release_live_control(workspace, pane_id).await?;
+            if let Some(tab) = chrome.active_tab_mut() {
+                close_slot(tab, slot);
+            }
         } else {
+            // A killed pane leaves the roster and `sync_live_chrome` reaps
+            // its slot; a refused kill keeps the pane, and so its tab.
             terminate_live_terminal(workspace, pane_id).await?;
         }
-    }
-    let set = chrome.tabs_mut();
-    if set.active_tab < set.tabs.len() {
-        set.tabs.remove(set.active_tab);
     }
     sync_live_chrome(workspace, chrome);
     Ok(())

@@ -1053,6 +1053,65 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
     mock.shutdown().await;
 }
 
+/// `close tab` when the daemon refuses the gobby-owned kill: the external
+/// pane still leaves the tab with its lease released, the refused pane keeps
+/// its place, and so the tab stays.
+#[tokio::test]
+async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    mock.enqueue_kill_refusal("terminal_busy");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    let (input_tx, input_rx) = mpsc::channel(32);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        websocket_requests(&mock, "terminal_release_control").len(),
+        1,
+        "the external pane's lease is released"
+    );
+    let gobby = workspace
+        .pane_for_terminal("terminal-gobby")
+        .expect("the refused terminal stays in the roster");
+    assert!(
+        !workspace.pane(gobby).is_terminating(),
+        "the pane is no longer marked terminating"
+    );
+    let tab = chrome.active_tab().expect("the tab keeps the refused pane");
+    assert_eq!(tab.slots.len(), 1, "the external pane left the tab");
+    assert!(
+        tab.slot_for(gobby).is_some(),
+        "the refused pane keeps its slot"
+    );
+    let mine = workspace
+        .pane_for_terminal("terminal-mine")
+        .expect("the external session stays in the roster");
+    assert!(workspace.pane(mine).is_observe(), "its lease was released");
+    mock.shutdown().await;
+}
+
 /// `close_pane` on an external tmux session releases its lease and drops the
 /// slot; the session is never killed and the tab keeps its other pane.
 #[tokio::test]

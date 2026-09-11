@@ -234,8 +234,8 @@ tab, its control lease is released, and the session stays in the sidebar to
 reopen later. Only `close_terminal` kills an external session. Closing a tab
 kills every gobby-owned pane in it. With `confirm close` on (the default),
 closing a tab first opens a dialog that names the tab and counts its panes; `y`
-or `enter` confirms, `n` or `esc` cancels. If the daemon refuses the kill, the
-pane stays.
+or `enter` confirms, `n` or `esc` cancels. If the daemon refuses a kill, that
+pane stays, and so does its tab.
 
 Renames apply locally: a tab name, a pane name, or a project label is yours and
 does not change the daemon's terminal title.
