@@ -207,10 +207,12 @@ def test_contract_apply_creates_placeholder_deferral_tasks(
         "parent_task_id": parent.id,
         "contract_plan": True,
         "plan_id": "native-runtime-completion",
-        "phases": [{"id": "phase-p1", "title": "Phase 1", "summary": "P1", "task_ids": ["leaf-1"]}],
+        "phases": [
+            {"id": "phase-p1", "title": "Phase 1", "summary": "P1", "task_ids": ["1.1::single"]}
+        ],
         "tasks": [
             {
-                "id": "leaf-1",
+                "id": "1.1::single",
                 "phase_id": "phase-p1",
                 "title": "Implement leaf 1",
                 "category": "code",
@@ -224,6 +226,7 @@ def test_contract_apply_creates_placeholder_deferral_tasks(
                 "section_id": "D1",
                 "title": "Native default flip",
                 "task_ref": "#TBD-created-at-expansion",
+                "depends_on": ["1.1"],
                 "reason": "gated on acceptance evidence",
                 "owner": "backend-developer",
                 "original_acceptance_items": [
@@ -239,6 +242,7 @@ def test_contract_apply_creates_placeholder_deferral_tasks(
                 "section_id": "D2",
                 "title": "Already tracked",
                 "task_ref": "#4242",
+                "depends_on": [],
                 "reason": "tracked elsewhere",
                 "owner": "backend-developer",
                 "original_acceptance_items": [],
@@ -262,11 +266,16 @@ def test_contract_apply_creates_placeholder_deferral_tasks(
     assert set(deferral_task.labels or []) == {
         "deferred-from:native-runtime-completion:D1",
         f"expansion-run:{run.id}",
+        "needs-planning",
     }
     assert "D1.1" in (deferral_task.validation_criteria or "")
     assert "created at expansion apply" in (deferral_task.description or "")
+    assert "Gated by plan sections: 1.1" in (deferral_task.description or "")
     blockers = {dep.depends_on for dep in service.dep_manager.get_blockers(parent.id)}
     assert deferral_id in blockers
+    leaf_id = (applied.task_id_map or {})["1.1::single"]
+    deferral_blockers = {dep.depends_on for dep in service.dep_manager.get_blockers(deferral_id)}
+    assert deferral_blockers == {leaf_id}
 
 
 def test_apply_parent_with_no_stages_is_noop_for_expansion_completion(

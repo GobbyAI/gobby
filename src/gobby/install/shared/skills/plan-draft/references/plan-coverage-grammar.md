@@ -81,6 +81,13 @@ deferral:
 The referenced task must be open, and it must carry provenance label
 `deferred-from:<plan-id>:<section-id>`. A closed task fails the gate.
 
+A deferred heading may carry `(depends: ...)` naming the deliverable sections or
+phases that gate the deferred work (`## D1 Native default flip (depends: 8.1)`);
+the refs resolve exactly like a deliverable's. It carries no `[category: ...]`.
+Expansion apply turns each ref into a `blocked-by` edge on the created task and
+labels the task `needs-planning`: it is a ledger entry that is planned or
+expanded by hand once the gate passes, and automated dispatch skips hold labels.
+
 Work gated on anything outside the plan — another epic, plan, or task — MUST be
 a `kind: deferred` section, never a prose blocker or a manifest dependency:
 manifest `depends_on` cannot encode external tasks, so prose-only sequencing is

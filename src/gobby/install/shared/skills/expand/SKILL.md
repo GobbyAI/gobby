@@ -31,7 +31,9 @@ Expansion-side obligations:
   (`coverage_check` step; its result is the pipeline's `coverage` output).
 - Apply creates one task per `kind: deferred` section whose `task_ref` is a
   placeholder; the run checkpoint `deferral_task_map` maps section id to the
-  created task id.
+  created task id. The task is labeled `needs-planning` (a hold label that
+  automated dispatch skips) and is blocked by the leaf of every section the
+  deferred heading's `(depends: ...)` names.
 - Free-form `plan-ref:` labels are not honored.
 
 ## Supported Inputs

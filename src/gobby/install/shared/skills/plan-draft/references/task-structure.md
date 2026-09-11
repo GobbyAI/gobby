@@ -15,7 +15,9 @@ Every plan is one Markdown document. The structure is:
   carry `kind: deliverable`).
 - **Dependencies** — inline `(depends: 1.1)` for an intra-phase task or
   `(depends: P<N>)` for the whole phase, on task headings. Use the bare
-  section_id — `(depends: Phase 1)` does NOT resolve.
+  section_id — `(depends: Phase 1)` does NOT resolve. A deferred heading
+  (`## D1 Title (depends: 8.1)`) takes the same annotation to name the leaves
+  that gate the deferred work; it carries no `[category: ...]`.
 
 ### Canonical Build Stages
 

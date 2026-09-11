@@ -1077,6 +1077,45 @@ def test_unresolved_dependency_reference_is_an_error(tmp_path: Path) -> None:
     assert all(issue.line is not None for issue in issues)
 
 
+def test_deferred_section_dependency_must_resolve(tmp_path: Path) -> None:
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** deferred-dependency
+
+        # Deferred Dependency
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Owner [category: code]
+        `kind: deliverable`
+
+        Target: `src/shared.py::first`
+
+        Implement the owner.
+
+        **Acceptance:**
+        - 1.1.1 - Owner is complete. file: `src/shared.py`.
+
+        ## D1 Gated follow-up (depends: 1.1, P1, 9.9)
+        `kind: deferred`
+
+        ```yaml
+        deferral:
+          task_ref: "#TBD-created-at-expansion"
+          reason: "Waits on the owner's evidence."
+          owner: "backend-developer"
+          original_acceptance_items:
+            - 1.1.1
+        ```
+        """,
+    )
+
+    issues = [issue for issue in result.issues if issue.code == "unresolved-dependency"]
+    assert [(issue.section_id, issue.details["reference"]) for issue in issues] == [("D1", "9.9")]
+
+
 def test_phase_heading_dependency_applies_to_every_deliverable(tmp_path: Path) -> None:
     result = _lint_plan_text(
         tmp_path,

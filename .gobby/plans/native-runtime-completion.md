@@ -1181,7 +1181,7 @@ dispatching D1 wait for a green P7 macOS and Linux run at one commit.
 - 8.1.3 - A later red row after a qualifying same-commit macOS/Linux green pair causes the checker to fail under the documented row ordering. test: `tests/config/test_native_backend_flip.py::test_flip_gate_rules`.
 - 8.1.4 - Guard set G groups 1 and 5 pass from the `0.5.0` checkout with the isolated test hub DSN and `GOBBY_TEST_PROTECT=1`, with no carve-out. behavior: "Guard set G" in `docs/guides/gterminal-development-guide.md`.
 
-## D1 Native default flip
+## D1 Native default flip (depends: 8.1)
 `kind: deferred`
 
 Flipping `TerminalConfig.default_backend` to `native` (original QA items 5.3.1 and
