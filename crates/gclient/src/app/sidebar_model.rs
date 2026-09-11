@@ -347,6 +347,9 @@ pub(super) struct PendingSidebar {
     pub(super) projects: bool,
     pub(super) project_rows: BTreeSet<String>,
     pub(super) sessions: bool,
+    /// The attention roster: a session ending is the only signal that an
+    /// agent run left it, since attention events never remove an entry.
+    pub(super) roster: bool,
 }
 
 /// The refetch each sidebar row set came from. A refetch runs beside the
@@ -358,6 +361,7 @@ pub(super) struct SidebarStamps {
     pub(super) projects: u64,
     pub(super) project_rows: HashMap<String, u64>,
     pub(super) sessions: HashMap<String, u64>,
+    pub(super) roster: u64,
 }
 
 impl SidebarStamps {

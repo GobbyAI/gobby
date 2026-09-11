@@ -5455,8 +5455,8 @@ fn sidebar_roster_entry(entry_id: &str, run_id: &str, terminal_id: &str) -> Valu
 
 /// 2.1.3: a `worktree_event` or `project_event` on the live socket refetches
 /// the affected project's status and worktrees once per drain however many
-/// events asked, and an attention refetch drops the roster entries the
-/// daemon no longer returns.
+/// events asked, a `session_event` refetches the attention roster, and an
+/// attention refetch drops the roster entries the daemon no longer returns.
 #[tokio::test]
 async fn sidebar_model_follows_daemon_events() {
     let mock = MockDaemon::start("local-token").await;
@@ -5500,6 +5500,7 @@ async fn sidebar_model_follows_daemon_events() {
             "entries": [
                 sidebar_roster_entry("run:a", "run-a", "terminal-a"),
                 sidebar_roster_entry("run:b", "run-b", "terminal-b"),
+                sidebar_roster_entry("run:c", "run-c", "terminal-c"),
             ],
         }),
     );
@@ -5521,6 +5522,7 @@ async fn sidebar_model_follows_daemon_events() {
             .count()
     };
     assert_eq!(gets(status_path), 1, "reconcile fetched the status once");
+    assert_eq!(gets("/api/attention/roster"), 1);
     assert_eq!(
         gets(worktrees_path),
         1,
@@ -5568,6 +5570,43 @@ async fn sidebar_model_follows_daemon_events() {
         worktrees,
         ["wt-1"],
         "the refetched worktree joined the project"
+    );
+    assert_eq!(
+        gets("/api/attention/roster"),
+        1,
+        "project and worktree events leave the roster alone"
+    );
+
+    // An ended agent run fires no attention event; its session expiring
+    // is what refetches the roster, and the roster no longer lists it.
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1",
+            "seq": 2,
+            "entries": [
+                sidebar_roster_entry("run:a", "run-a", "terminal-a"),
+                sidebar_roster_entry("run:c", "run-c", "terminal-c"),
+            ],
+        }),
+    );
+    send_daemon_event(
+        &mock,
+        &daemon,
+        json!({"type": "session_event", "event": "session_expired", "project_id": "project-1", "session_id": "session-b"}),
+    )
+    .await;
+    workspace
+        .drain_live_events()
+        .await
+        .expect("drain session event");
+    assert_eq!(gets("/api/attention/roster"), 2);
+    assert_eq!(
+        workspace.attention_entry_ids(),
+        ["run:a", "run:c"],
+        "the session event refetched the roster and dropped the ended run"
     );
 
     mock.enqueue(

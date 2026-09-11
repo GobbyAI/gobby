@@ -200,13 +200,19 @@ impl Workspace<LiveDaemon> {
     /// Replace the roster wholesale: an entry the daemon no longer returns is
     /// gone, whatever an event said about it.
     async fn fetch_attention(&mut self) -> Result<(), DaemonError> {
-        let (epoch, seq, entries) = self.daemon.attention_roster().await?;
+        let roster = self.daemon.attention_roster().await?;
+        // A background roster refetch started earlier lands stale.
+        self.sidebar_stamps.roster = self.sidebar_stamps.next();
+        self.install_attention(roster);
+        Ok(())
+    }
+
+    fn install_attention(&mut self, (epoch, seq, entries): RosterSnapshot) {
         self.attention.epoch = epoch;
         self.attention.seq = seq;
         self.attention.entries = entries;
         self.attention.applied_seqs = vec![seq];
         self.rebuild_sidebar();
-        Ok(())
     }
 
     /// Fetch every sidebar row: projects, then status and worktrees for each
@@ -224,6 +230,7 @@ impl Workspace<LiveDaemon> {
             projects: false,
             project_rows: self.checked_out_projects().into_iter().collect(),
             sessions: true,
+            roster: false,
         };
         self.flush_sidebar_refetches().await
     }
@@ -251,7 +258,11 @@ impl Workspace<LiveDaemon> {
     /// retrying every tick. `apply_sidebar_fetch` installs the result.
     pub fn start_sidebar_refetch(&mut self) -> Option<SidebarFetchFuture> {
         let pending = std::mem::take(&mut self.pending_sidebar);
-        if !pending.projects && !pending.sessions && pending.project_rows.is_empty() {
+        if !pending.projects
+            && !pending.sessions
+            && !pending.roster
+            && pending.project_rows.is_empty()
+        {
             return None;
         }
         if !pending.project_rows.is_empty() {
@@ -263,6 +274,7 @@ impl Workspace<LiveDaemon> {
             project_rows: pending.project_rows,
             checked_out: self.checked_out_projects(),
             sessions: pending.sessions.then(|| self.project_id.clone()).flatten(),
+            roster: pending.roster,
         };
         let daemon = self.daemon.clone();
         Some(Box::pin(async move { request.run(&daemon).await }))
@@ -295,6 +307,18 @@ impl Workspace<LiveDaemon> {
             if SidebarStamps::accept(stamp, seq) {
                 self.sidebar_rows.sessions.insert(project.clone(), sessions);
                 self.sidebar_rows.runs.insert(project, runs);
+            }
+        }
+        if let Some(roster) = fetch.roster {
+            if SidebarStamps::accept(&mut stamps.roster, seq) {
+                let (epoch, roster_seq, _) = &roster;
+                if *epoch == self.attention.epoch && *roster_seq < self.attention.seq {
+                    // An event newer than this snapshot already landed;
+                    // installing it would undo that event, so ask again.
+                    self.pending_sidebar.roster = true;
+                } else {
+                    self.install_attention(roster);
+                }
             }
         }
         self.rebuild_sidebar();
@@ -549,7 +573,10 @@ impl Workspace<LiveDaemon> {
                     .project_rows
                     .extend(self.checked_out_projects()),
             },
-            Some("session_event") => self.pending_sidebar.sessions = true,
+            Some("session_event") => {
+                self.pending_sidebar.sessions = true;
+                self.pending_sidebar.roster = true;
+            }
             _ => {}
         }
     }
@@ -592,7 +619,11 @@ pub struct SidebarFetch {
     projects: Option<Vec<ProjectRow>>,
     project_rows: Vec<(String, SourceStatus, Vec<WorktreeRow>)>,
     sessions: Option<(String, Vec<SessionRow>, Vec<RunRow>)>,
+    roster: Option<RosterSnapshot>,
 }
+
+/// The attention roster as the daemon returned it: epoch, seq, entries.
+type RosterSnapshot = (String, u64, Vec<RosterEntry>);
 
 /// A running sidebar refetch; the live loop polls it from a select branch.
 pub type SidebarFetchFuture =
@@ -608,6 +639,7 @@ struct SidebarRequest {
     checked_out: Vec<String>,
     /// The focused project whose sessions and runs are wanted.
     sessions: Option<String>,
+    roster: bool,
 }
 
 impl SidebarRequest {
@@ -638,6 +670,9 @@ impl SidebarRequest {
             let sessions = daemon.sessions(&project).await?;
             let runs = daemon.agent_runs(&project).await?;
             fetch.sessions = Some((project, sessions, runs));
+        }
+        if self.roster {
+            fetch.roster = Some(daemon.attention_roster().await?);
         }
         Ok(fetch)
     }
