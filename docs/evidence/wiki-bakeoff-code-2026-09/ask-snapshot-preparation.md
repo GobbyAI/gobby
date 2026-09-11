@@ -257,3 +257,49 @@ file hashes stayed identical before and after:
 A fresh main-checkout import resolved to
 `/Users/josh/Projects/gobby/src/gobby/__init__.py`. Subsequent coordinator commands
 also export `UV_NO_SYNC=1` so child tools inherit the intended environment policy.
+
+## Contained attempt 11
+
+Independent reviewer run `7731c838-7692-48b8-ad63-e7adc26208a5` reported
+NO FINDINGS for both `a34d76491c` and `c1063381df`; its completion was consumed.
+Integration `a08066e83093204e631fe9982ede9d3b85b4ced0` then merged main through
+`1189323508`, preserving the startup-monitor and tmux-maintenance repairs.
+All eight changed production/test files matched main's Git blobs. Combined
+regressions passed 77 tests in 7.59 seconds; real native integration passed
+three tests in 7.80 seconds. The release build passed, and fresh binaries were
+pinned under `target/ask-probe-a08066e8` with the same hashes as attempt 10.
+
+After an explicit quiet-window release, attempt 11 ran from that clean commit
+with `UV_NO_SYNC=1`, isolated schema/home/ports, and the original 600-second
+controller budget. Private parent indexing completed for 6,723 files from an
+8,546-entry inventory, which also includes excluded entries. Materialization
+took 42,020.969 ms and indexing took 292,164.304 ms. All six bootstrap commands
+exited zero and the checkout was restored. A two-second sample recorded all
+1,650 main-thread samples under local-import resolution; this remains a phase
+observation, not an end-to-end performance attribution.
+
+Ask run `04fb130b-2458-44cb-a1fe-dc9a7d9218a6` completed prepare at
+`2026-09-10T23:46:35.930911Z`. Seed then failed at
+`2026-09-10T23:46:36.540392Z` with
+`index_incomplete: eligible snapshot path is not indexed: .claude-plugin/plugin.json`.
+The earlier machine-identity error was resolved. No provider agents or launch
+receipts were created, so native security and resume acceptance remain unproved.
+
+Evidence is retained at `/tmp/gobby-ask-native-probe-12261-eleventh` with raw SHA-256
+`faf8c0b4e29466ddf6842dc65971561234f80f3bdffc85d200e13ad2e02302fa`.
+Cleanup recorded `errors=[]`, complete raw export, schema
+`gobby_test_askprobe_bb259f1bad054fbc884511a359e754ee` dropped, runtime removed,
+worker 56920 exited, and host 57069 absent. Parent process inspection found no
+remaining harness or pinned gcode process. A diagnostic read raced cleanup and
+found the private control directory already removed; the retained raw export
+provided the index and failure records.
+
+The expanded small native regression is intentionally RED pending the complete
+inventory/index-policy correction. Adding a committed `.metadata/project.json`
+reproduced the same error in 4.31 seconds. The fixture now also includes a tracked
+gitignored source, committed text under `target/`, and empty source. Its current
+first failure is the eligible `.gitignore` omitted by normal discovery (2.94 seconds).
+The production fix must index the verified eligible inventory while preserving
+security exclusions and ordinary navigation policy; it must not waive completeness
+or allowlist only the first failing path. No new full probe is justified until
+this real-native fixture passes fresh and recovered retrieval.

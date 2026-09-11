@@ -174,6 +174,16 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     (repo / "src").mkdir()
     (repo / "include").mkdir()
     (repo / "assets").mkdir()
+    (repo / ".metadata").mkdir()
+    (repo / ".metadata" / "project.json").write_text(
+        '{"project": "native evidence fixture"}\n', encoding="utf-8"
+    )
+    (repo / "target").mkdir()
+    (repo / "target" / "committed.txt").write_text("committed build-directory text\n")
+    (repo / "src" / "empty.py").touch()
+    (repo / ".gitignore").write_text("tracked_ignored.py\n")
+    (repo / "tracked_ignored.py").write_text("def tracked_ignored_symbol(): pass\n")
+    _git(repo, "add", "--force", "tracked_ignored.py")
     (repo / "src" / "lib.rs").write_text(
         "pub fn pinned_symbol() -> usize { 42 }\npub fn second_symbol() -> usize { 7 }\n",
         encoding="utf-8",
@@ -362,6 +372,18 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         "read",
         {"kind": "range", "path": "include/public.h", "start_line": 1, "end_line": 1},
     )
+    hidden_metadata = await admission.query(
+        "read",
+        {"kind": "range", "path": ".metadata/project.json", "start_line": 1, "end_line": 1},
+    )
+    ignored_source = await admission.query(
+        "search",
+        {"lane": "literal", "query": "tracked_ignored_symbol", "paths": [], "limit": 100},
+    )
+    build_directory_text = await admission.query(
+        "read",
+        {"kind": "range", "path": "target/committed.txt", "start_line": 1, "end_line": 1},
+    )
     merge_metadata = await admission.query("read", {"kind": "commit_metadata"})
     partial = await admission.query(
         "search",
@@ -381,6 +403,14 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
     assert snapshot.runtime.executable == gcode_bin
     assert any(item.get("path") == "src/lib.rs" for item in response["items"])
     assert header["items"][0]["excerpt"] == "#define GOBBY_PUBLIC_HEADER 42\n"
+    assert hidden_metadata["items"][0]["excerpt"] == '{"project": "native evidence fixture"}\n'
+    assert any(item.get("path") == "tracked_ignored.py" for item in ignored_source["items"])
+    assert build_directory_text["items"][0]["excerpt"] == "committed build-directory text\n"
+    empty_entry = next(
+        item for item in snapshot.inventory["entries"] if item["path"] == "src/empty.py"
+    )
+    assert empty_entry["exclusion"] is None
+    assert empty_entry["size_bytes"] == 0
     assert merge_metadata["items"][0]["comparison_kind"] == "first_parent"
     assert len(merge_metadata["items"][0]["parent_oids"]) == 2
     assert partial["complete"] is False
