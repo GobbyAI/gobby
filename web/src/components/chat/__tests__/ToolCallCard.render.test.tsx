@@ -19,22 +19,30 @@ function makeCall(
 }
 
 describe("ToolCallCard rendering", () => {
-  it("renders exec_command like a bash card in collapsed headers", () => {
-    renderWithProviders(
-      <ToolCallCards
-        toolCalls={[
-          makeCall({
-            id: "tool-1",
-            tool_name: "exec_command",
-            arguments: { cmd: "git status --short" },
-          }),
-        ]}
-      />,
-    );
+  it.each(["exec_command", "functions.exec_command", "exec"])(
+    "renders %s like a Claude Bash card",
+    (toolName) => {
+      renderWithProviders(
+        <ToolCallCards
+          toolCalls={[
+            makeCall({
+              id: "tool-1",
+              tool_name: toolName,
+              arguments:
+                toolName === "exec"
+                  ? {
+                      raw: 'text(await tools.exec_command({cmd: "git status --short"}));',
+                    }
+                  : { cmd: "git status --short" },
+            }),
+          ]}
+        />,
+      );
 
-    expect(screen.getByText("Bash")).toBeInTheDocument();
-    expect(screen.getByText("git status --short")).toBeInTheDocument();
-  });
+      expect(screen.getByText("Bash")).toBeInTheDocument();
+      expect(screen.getByText("git status --short")).toBeInTheDocument();
+    },
+  );
 
   it("uses the shared DropdownCaret as the tool-row expand affordance (#19187)", () => {
     const { container } = renderWithProviders(

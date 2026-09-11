@@ -332,14 +332,14 @@ fn pick_navigator_row<W: WorkspaceView>(
 fn settings_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
     let last = SettingsRow::ALL.len() - 1;
     match key.code {
-        KeyCode::Esc => return close_modal(chrome),
+        KeyCode::Esc | KeyCode::Enter => return close_modal(chrome),
         KeyCode::Char('k') | KeyCode::Up => {
             chrome.settings.selected = step(chrome.settings.selected, -1, last);
         }
         KeyCode::Char('j') | KeyCode::Down => {
             chrome.settings.selected = step(chrome.settings.selected, 1, last);
         }
-        KeyCode::Enter | KeyCode::Char(' ') => activate_settings_row(ws, chrome),
+        KeyCode::Char(' ') => activate_settings_row(ws, chrome),
         KeyCode::Left => step_settings_row(ws, chrome, -1),
         KeyCode::Right => step_settings_row(ws, chrome, 1),
         _ => {}

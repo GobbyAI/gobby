@@ -110,7 +110,7 @@ function TaskTreeRowComponent({
         paddingLeft: `${row.depth * TASK_ROW_DEPTH_INDENT_REM + TASK_ROW_BASE_INDENT_REM}rem`,
       }}
       className={cn(
-        "flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pr-[0.35rem] text-left text-[length:var(--text-base)] text-inherit transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+        "flex h-[var(--activity-panel-row-height)] min-h-[var(--activity-panel-row-height)] w-full cursor-pointer items-center gap-[0.45rem] py-0 pr-[0.35rem] text-left text-[length:var(--text-base)] text-inherit transition-colors hover:bg-[var(--bg-tertiary)]",
         isSelected && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
         displayState === "closed" && "opacity-[0.72]",
       )}
@@ -131,7 +131,7 @@ function TaskTreeRowComponent({
           dense
           className={cn(
             coarseHitAreaCls,
-            "h-6 min-h-0 w-6 shrink-0 rounded-[0.35rem] p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+            "h-6 min-h-0 w-6 shrink-0 rounded-[0.35rem] p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]",
           )}
           onClick={(event) => {
             event.stopPropagation();
@@ -198,7 +198,7 @@ function TaskTreeRowComponent({
         size="icon"
         dense
         className={cn(
-          "size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+          "size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
           coarseHitAreaCls,
         )}
         onClick={(event) => onMenuButtonClick(event, task)}

@@ -79,11 +79,6 @@ export function SessionsTabDetailPane({
       <div className="activity-panel-status-bar activity-panel-status-bar--detail">
         <div className="min-w-0 flex-1">
           <span className="activity-panel-status-bar__title">
-            <span className="activity-panel-status-bar__watching-prefix">
-              Watching{" "}
-            </span>
-            {/* Provisional titles already carry the #ref, so the bar adds only
-                the "Watching " prefix (#19152, moat 616342c4). */}
             {selectedEntry ? selectedEntry.label : "session"}
           </span>
         </div>

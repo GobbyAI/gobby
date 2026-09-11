@@ -91,7 +91,7 @@ function activityPanelClassName(className?: string) {
     "[&_.activity-row-title]:text-[length:var(--text-base)] [&_.activity-row-title]:font-[var(--font-weight-medium)] [&_.activity-row-title]:text-[var(--text-primary)]",
     "[&_.activity-row-meta]:shrink-0 [&_.activity-row-meta]:text-[length:var(--text-sm)] [&_.activity-row-meta]:font-[var(--font-weight-normal)]",
     "[&_.activity-row-meta]:text-[var(--text-muted)] [&_.activity-row-meta]:tabular-nums",
-    "[&_.activity-list-row]:flex [&_.activity-list-row]:min-h-[var(--activity-panel-row-height)] [&_.activity-list-row]:w-full",
+    "[&_.activity-list-row]:flex [&_.activity-list-row]:h-[var(--activity-panel-row-height)] [&_.activity-list-row]:min-h-[var(--activity-panel-row-height)] [&_.activity-list-row]:w-full",
     "[&_.activity-list-row]:items-center [&_.activity-list-row]:border-b [&_.activity-list-row]:border-border [&_.activity-list-row]:bg-transparent",
     "[&_.activity-list-row]:text-[var(--text-primary)] [&_.activity-list-row]:transition-colors [&_.activity-list-row:hover]:bg-[var(--bg-tertiary)]",
     "[&_.activity-list-row--selected]:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] [&_.activity-list-row--selected:hover]:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",

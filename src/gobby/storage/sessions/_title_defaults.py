@@ -52,7 +52,7 @@ def format_provisional_session_title(
     source: str,
 ) -> str:
     """Return the deterministic title for a session without an open claim."""
-    return f"({project_name.strip()}#{session_seq_num}): {provider_title_label(source)}"
+    return f"{project_name.strip()}#{session_seq_num}: {provider_title_label(source)}"
 
 
 def format_task_session_title(
@@ -62,4 +62,4 @@ def format_task_session_title(
     title: str,
 ) -> str:
     """Return the deterministic title for a successfully claimed task."""
-    return f"({project_name.strip()}#{session_seq_num}): Task #{task_seq_num} - {title.strip()}"
+    return f"{project_name.strip()}#{session_seq_num}: Task #{task_seq_num} - {title.strip()}"

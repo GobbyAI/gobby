@@ -295,9 +295,10 @@ name, `enter` or `esc` closes.
 
 ## Settings
 
-`prefix+s` opens the settings popup. `j` / `k` or the arrows move, `enter` or
-`space` toggles the row, `left` / `right` steps a value, `esc` closes. Rows are
-clickable. Every change is written to `~/.gobby/client/prefs.toml` at once.
+`prefix+s` opens the settings popup. `j` / `k` or the arrows move, `space`
+toggles the row, `left` / `right` steps a value, `enter` or `esc` closes, as do
+the `done` and `close` buttons. Rows are clickable. Every change is written to
+`~/.gobby/client/prefs.toml` at once; there is nothing to apply.
 
 | Row | Default | Effect |
 | --- | --- | --- |

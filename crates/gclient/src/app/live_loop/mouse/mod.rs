@@ -261,7 +261,8 @@ fn confirm_close_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome 
 }
 
 /// Settings overlay: a left press on a row selects and activates it, the
-/// wheel moves the selection, and a press outside the popup closes it.
+/// wheel moves the selection, and a press on a footer button or outside the
+/// popup closes it (every change is already written, so `done` is a close).
 fn settings_mouse<W: WorkspaceView>(
     ws: &W,
     chrome: &mut Chrome,
@@ -273,6 +274,9 @@ fn settings_mouse<W: WorkspaceView>(
         (MouseEventKind::Down(MouseButton::Left), Hit::SettingsRow(index)) => {
             chrome.settings.selected = index.min(last);
             activate_settings_row(ws, chrome);
+        }
+        (MouseEventKind::Down(MouseButton::Left), Hit::DialogButton(_)) => {
+            close_modal(chrome);
         }
         (MouseEventKind::Down(_), Hit::SettingsRow(_) | Hit::SettingsDialog) => {}
         (MouseEventKind::Down(_), _) => {

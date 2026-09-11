@@ -104,9 +104,9 @@ describe("terminal session helpers", () => {
       {
         tmux: tmux[0],
         gobby: userSession,
-        label: "other-project#7 User shell",
+        label: "other-project#7: User shell",
         provider: "codex",
-        paneRef: "default:user-shell",
+        paneRef: "user-shell",
         backendLabel: "tmux",
         dead: false,
         agentManaged: false,
@@ -117,7 +117,7 @@ describe("terminal session helpers", () => {
         gobby: null,
         label: "external-shell",
         provider: null,
-        paneRef: "default:external-shell",
+        paneRef: "external-shell",
         backendLabel: "tmux",
         dead: true,
         agentManaged: false,
@@ -126,9 +126,9 @@ describe("terminal session helpers", () => {
       {
         tmux: tmux[2],
         gobby: agentSession,
-        label: "gobby#8 Agent shell",
+        label: "gobby#8: Agent shell",
         provider: "codex",
-        paneRef: "gobby:agent-shell",
+        paneRef: "agent-shell",
         backendLabel: "tmux",
         dead: false,
         agentManaged: true,
@@ -212,11 +212,7 @@ describe("terminal session helpers", () => {
     expect(joined[0].label).toBe("vim");
     expect(joined[1].label).toBe("gobby");
     expect(joined[2].label).toBe("2");
-    expect(joined.map(({ paneRef }) => paneRef)).toEqual([
-      "default:0",
-      "default:1",
-      "default:2",
-    ]);
+    expect(joined.map(({ paneRef }) => paneRef)).toEqual(["0", "1", "2"]);
   });
 
   it("derives the provider icon from the pane command for unmanaged panes", () => {

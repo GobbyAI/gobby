@@ -51,6 +51,8 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   svg: "xml",
 };
 export function formatToolName(fullName: string): string {
+  if (fullName.startsWith("functions."))
+    return fullName.slice("functions.".length);
   const parts = fullName.split("__");
   return parts[parts.length - 1] || fullName;
 }
@@ -69,6 +71,8 @@ export function pathBasename(path: string): string {
 }
 
 export function resolveToolType(call: ToolCall): string {
+  if (["exec_command", "functions.exec_command"].includes(call.tool_name))
+    return "bash";
   if (call.tool_type) return call.tool_type;
   return classifyTool(formatToolName(call.tool_name));
 }
@@ -236,6 +240,18 @@ export function getToolSummary(call: ToolCall): string | null {
   }
 
   switch (name) {
+    case "Tools": {
+      const calls = args.calls;
+      return Array.isArray(calls)
+        ? calls
+            .map((item) =>
+              typeof item === "object" && item !== null && "name" in item
+                ? formatToolName(String(item.name))
+                : "unknown",
+            )
+            .join(", ")
+        : null;
+    }
     case "Task": {
       const agentType = args.subagent_type as string;
       const desc = args.description as string;

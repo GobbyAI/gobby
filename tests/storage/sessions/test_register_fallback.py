@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any, cast
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import Cursor, HubDatabase, LockTarget, Transaction
 from gobby.storage.sessions import SessionManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -121,7 +121,7 @@ def test_register_session_failure_returns_existing_canonical_session(
     persisted = session_mgr.get(canonical_id)
     assert persisted is not None
     assert session_mgr._session_metadata[canonical_id]["title"] == (
-        f"(test-project#{persisted.seq_num}): Codex"
+        f"test-project#{persisted.seq_num}: Codex"
     )
 
 
@@ -213,7 +213,7 @@ def test_register_session_happy_path_caches_persisted_provisional_title(
     session = session_mgr.get(session_id)
 
     assert session is not None
-    assert session.title == f"(test-project#{session.seq_num}): Codex"
+    assert session.title == f"test-project#{session.seq_num}: Codex"
     assert session.title_source == "provisional"
     assert session_mgr._session_metadata[session_id]["title"] == session.title
 
@@ -401,10 +401,10 @@ def test_register_raises_on_storage_failure(
     original_transaction = session_mgr.db.transaction_immediate
 
     class FailingConnection:
-        def __init__(self, conn):
+        def __init__(self, conn: Transaction) -> None:
             self._conn = conn
 
-        def execute(self, sql: str, params: object = ()) -> object:
+        def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Cursor:
             if "INSERT INTO sessions" in sql:
                 raise RuntimeError("boom")
             return self._conn.execute(sql, params)
@@ -413,7 +413,7 @@ def test_register_raises_on_storage_failure(
             return getattr(self._conn, name)
 
     @contextmanager
-    def transaction_with_insert_failure(lock: object | None = None):
+    def transaction_with_insert_failure(lock: LockTarget) -> Iterator[FailingConnection]:
         with original_transaction(lock) as conn:
             yield FailingConnection(conn)
 

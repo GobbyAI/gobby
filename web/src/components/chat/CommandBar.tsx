@@ -34,6 +34,12 @@ export function CommandBar({
   agentHasGlobal: _agentHasGlobal = false,
   agentHasProject: _agentHasProject = false,
 }: CommandBarProps) {
+  const titleText = getSessionTitleText(title);
+  const providerTitle = titleText.toLowerCase().replace(/ (?:code|cli)$/, "");
+  const showTitle =
+    !sessionRef ||
+    !sessionSource ||
+    providerTitle !== sessionSource.toLowerCase();
   return (
     <div className="command-bar flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3">
       {/* Left cluster — Session context */}
@@ -59,10 +65,11 @@ export function CommandBar({
           {sessionRef && (
             <span className="command-bar-ref shrink-0 [font-weight:var(--font-weight-medium)] text-[var(--accent)]">
               {sessionRef}
+              {showTitle ? ":" : ""}
             </span>
           )}
           <span className="command-bar-title min-w-0 flex-1 basis-auto overflow-hidden text-left [font-weight:var(--font-weight-medium)] text-ellipsis whitespace-nowrap text-[var(--text-primary)] max-md:max-w-none">
-            {getSessionTitleText(title)}
+            {showTitle ? titleText : ""}
           </span>
           <DropdownCaret />
         </Button>

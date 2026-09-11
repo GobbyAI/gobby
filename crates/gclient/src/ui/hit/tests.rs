@@ -8,7 +8,7 @@ use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog};
 use crate::ui::render_workspace;
 use crate::ui::status::{Toast, ToastKind};
 use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::Terminal;
 use serde_json::json;
 
@@ -264,6 +264,15 @@ fn settings_and_toast_hits_take_precedence() {
         assert_eq!(at(view, rect.x, rect.y), Hit::SettingsRow(*index));
     }
     assert_eq!(at(view, dialog.x, dialog.y), Hit::SettingsDialog);
+    assert_eq!(
+        view.dialog_button_hit_areas.len(),
+        2,
+        "done and close drawn"
+    );
+    for (index, button) in view.dialog_button_hit_areas.iter().enumerate() {
+        assert!(dialog.contains(Position::new(button.x, button.y)));
+        assert_eq!(at(view, button.x, button.y), Hit::DialogButton(index));
+    }
     let toast = view.toast_hit_area.expect("toast drawn");
     assert_eq!(at(view, toast.x, toast.y), Hit::Toast);
     let bar = view.tab_bar_rect.expect("tab bar drawn");

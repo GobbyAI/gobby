@@ -315,15 +315,8 @@ describe("coarse-pointer touch targets", () => {
       join(srcRoot, "components/activity/TasksTabDetailPanel.tsx"),
       "utf8",
     );
-    for (const candidate of TASK_ROW_TOUCH_CANDIDATES) {
-      expect(taskRowSource).toContain(candidate);
-    }
-    for (const candidate of [
-      ...TASK_ACTION_TOUCH_CANDIDATES,
-      ...TASK_EXPAND_TOUCH_CANDIDATES,
-    ]) {
-      expect(taskRowSource).toContain(candidate);
-    }
+    expect(taskRowSource).toContain("coarseHitAreaCls");
+    expect(taskRowSource).not.toContain("pointer-coarse:min-h-11");
     for (const candidate of TASK_ERROR_DISMISS_TOUCH_CANDIDATES) {
       expect(taskDetailSource).toContain(candidate);
     }

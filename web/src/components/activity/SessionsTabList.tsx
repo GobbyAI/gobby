@@ -1,7 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
-import { getSessionDisplayTitle } from "../../lib/sessionTitle";
 import { SourceIcon } from "../shared/SourceIcon";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
@@ -91,35 +90,37 @@ function SessionEntryRow({
 }: SessionEntryRowProps) {
   const isDimmed = ["paused", "interrupted", "expired"].includes(entry.status);
   const statusKind =
-    entry.status === "active"
-      ? "active"
-      : entry.status === "expired"
-        ? "stopped"
-        : entry.status === "awaiting_input"
-          ? "info"
-          : entry.status === "awaiting_approval" ||
-              entry.status === "awaiting_handoff"
-            ? "warning"
-            : "paused";
+    (entry.blockedCount ?? 0) > 0
+      ? "paused"
+      : entry.status === "active"
+        ? "active"
+        : entry.status === "expired"
+          ? "stopped"
+          : entry.status === "awaiting_input"
+            ? "info"
+            : entry.status === "awaiting_approval" ||
+                entry.status === "awaiting_handoff"
+              ? "warning"
+              : "paused";
   const statusGlyph =
-    entry.status === "awaiting_input"
-      ? EyeGlyph
-      : entry.status === "awaiting_approval" ||
-          entry.status === "awaiting_handoff"
-        ? LockGlyph
-        : entry.status === "interrupted"
-          ? DashGlyph
-          : undefined;
-  const displayLabel = getSessionDisplayTitle({
-    title: entry.label,
-  });
+    (entry.blockedCount ?? 0) > 0
+      ? undefined
+      : entry.status === "awaiting_input"
+        ? EyeGlyph
+        : entry.status === "awaiting_approval" ||
+            entry.status === "awaiting_handoff"
+          ? LockGlyph
+          : entry.status === "interrupted"
+            ? DashGlyph
+            : undefined;
+  const displayLabel = entry.label;
 
   return (
     <div
       role="button"
       tabIndex={0}
       className={cn(
-        "session-entry flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between border-0 border-b border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
+        "session-entry flex h-[var(--activity-panel-row-height)] min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between border-0 border-b border-border bg-transparent px-3 py-0 text-left font-[inherit] text-[inherit] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
         isSelected &&
           "session-entry--active bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
         isDimmed && "session-entry--paused opacity-[0.55] hover:opacity-75",
@@ -135,8 +136,12 @@ function SessionEntryRow({
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <ActivityRowStatusDot
           kind={statusKind}
-          pulse={entry.status === "active"}
-          label={`Session ${entry.status}`}
+          pulse={entry.status === "active" && !(entry.blockedCount ?? 0)}
+          label={
+            (entry.blockedCount ?? 0) > 0
+              ? "Session paused"
+              : `Session ${entry.status}`
+          }
           glyph={statusGlyph}
         />
         <SourceIcon source={entry.provider} size={14} />
@@ -150,7 +155,7 @@ function SessionEntryRow({
           size="icon"
           dense
           className={cn(
-            "session-more-btn size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+            "session-more-btn size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
             coarseHitAreaCls,
           )}
           onClick={(event) => onMenuButtonClick(event, entry)}

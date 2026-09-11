@@ -90,7 +90,7 @@ def test_registration_requires_local_machine_ownership(
 def test_registration_blocks_foreign_owner_across_projects(
     isolated_checkout_factory: IsolatedCheckoutFactory,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
 ) -> None:
     """The ownership scan is project-agnostic: register may recover a
     same-identity session across projects, so a foreign owner in another
@@ -189,7 +189,7 @@ def test_session_unique_conflict_detection_uses_integrity_error_args() -> None:
 
 def test_update_existing_session_can_set_clear_or_preserve_is_local(
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
 ) -> None:
     session = session_manager.register(
         external_id="local-flag",
@@ -273,8 +273,8 @@ def _session_stub() -> Session:
         summary_markdown=None,
         git_branch=None,
         parent_session_id=None,
-        created_at="2026-05-22T00:00:00+00:00",
-        updated_at="2026-05-22T00:00:00+00:00",
+        created_at=datetime.fromisoformat("2026-05-22T00:00:00+00:00"),
+        updated_at=datetime.fromisoformat("2026-05-22T00:00:00+00:00"),
     )
 
 
@@ -494,6 +494,7 @@ class TestSessionManagerRegistration:
             ("machine-attribution-transition", "codex", sample_project["id"]),
         )
         assert second.id == first.id
+        assert row is not None
         assert row["session_count"] == 1
         assert row["machine_id"] == "20000000-0000-4000-8000-000000000001"
 
@@ -525,12 +526,13 @@ class TestSessionManagerRegistration:
             ("concurrent-machine-attribution", "codex", sample_project["id"]),
         )
         assert {session.id for session in sessions} == {sessions[0].id}
+        assert row is not None
         assert row["session_count"] == 1
 
     def test_register_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test registering a new session."""
         session = session_manager.register(
@@ -576,7 +578,7 @@ class TestSessionManagerRegistration:
     def test_register_without_title_uses_provisional_title(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
         source: str,
         provider_label: str,
     ) -> None:
@@ -587,13 +589,13 @@ class TestSessionManagerRegistration:
             project_id=sample_project["id"],
         )
 
-        assert session.title == f"(test-project#{session.seq_num}): {provider_label}"
+        assert session.title == f"test-project#{session.seq_num}: {provider_label}"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_register_with_explicit_title_does_not_mark_provisional(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.register(
             external_id="explicit-title",
@@ -609,7 +611,7 @@ class TestSessionManagerRegistration:
     def test_register_rejects_removed_native_title_source(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         with pytest.raises(ValueError, match="Invalid title_source"):
             session_manager.register(
@@ -624,7 +626,7 @@ class TestSessionManagerRegistration:
     def test_register_rejects_invalid_title_source(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         with pytest.raises(ValueError, match="Invalid title_source"):
             session_manager.register(
@@ -639,7 +641,7 @@ class TestSessionManagerRegistration:
     def test_register_rejects_removed_llm_title_source(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         with pytest.raises(ValueError, match="Invalid title_source"):
             session_manager.register(
@@ -653,7 +655,7 @@ class TestSessionManagerRegistration:
     def test_register_existing_blank_title_backfills_provisional_title(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.register(
             external_id="blank-title",
@@ -671,13 +673,13 @@ class TestSessionManagerRegistration:
         )
 
         assert updated.id == session.id
-        assert updated.title == f"(test-project#{updated.seq_num}): Codex"
+        assert updated.title == f"test-project#{updated.seq_num}: Codex"
         assert updated.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_stale_registration_backfill_preserves_concurrent_task_title(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         session = session_manager.register(
@@ -713,7 +715,7 @@ class TestSessionManagerRegistration:
     def test_create_web_chat_without_title_uses_provisional_title(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.create_web_chat_session(
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -725,13 +727,13 @@ class TestSessionManagerRegistration:
         )
 
         assert session.session_type == "web_chat"
-        assert session.title == f"(test-project#{session.seq_num}): Droid"
+        assert session.title == f"test-project#{session.seq_num}: Droid"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_create_web_chat_with_user_title_marks_it_manual(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.create_web_chat_session(
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -748,7 +750,7 @@ class TestSessionManagerRegistration:
     def test_register_recreates_missing_system_parent_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Register self-heals the system parent row before inserting children."""
         session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (system_session_id(),))
@@ -779,7 +781,7 @@ class TestSessionManagerRegistration:
     def test_register_session_has_stats_columns(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that a newly registered session has the stats columns."""
         session = session_manager.register(
@@ -811,7 +813,7 @@ class TestSessionManagerRegistration:
     def test_register_persists_sandbox_metadata(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.register(
             external_id="sandboxed-session",
@@ -833,7 +835,7 @@ class TestSessionManagerRegistration:
     def test_register_preserves_unknown_sandbox_metadata_as_null(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.register(
             external_id="unknown-sandbox-session",
@@ -860,7 +862,7 @@ class TestSessionManagerRegistration:
     def test_register_upserts_on_conflict(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that register updates existing session on conflict."""
         # First registration
@@ -888,7 +890,7 @@ class TestSessionManagerRegistration:
     def test_register_preserves_expired_terminal_session_and_transcript_state(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.register(
             external_id="expired-registration",
@@ -978,7 +980,7 @@ class TestSessionManagerRegistration:
     def test_register_does_not_revive_deleted_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.register(
             external_id="deleted-registration",
@@ -1002,7 +1004,7 @@ class TestSessionManagerRegistration:
         self,
         caplog: pytest.LogCaptureFixture,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Existing session re-registration must not persist itself as parent."""
         session = session_manager.register(
@@ -1034,7 +1036,7 @@ class TestSessionManagerRegistration:
     def test_register_repairs_existing_self_parent_row(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Legacy corrupt self-parent rows are repaired during registration."""
         session = session_manager.register(
@@ -1079,7 +1081,7 @@ class TestSessionManagerRegistration:
     def test_register_existing_session_persists_valid_parent_update(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Valid parent updates still persist on existing sessions."""
         child = session_manager.register(
@@ -1109,7 +1111,7 @@ class TestSessionManagerRegistration:
     def test_register_existing_session_clears_parent_rejected_as_cycle(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """A rejected cyclic parent must clear stale parent attribution."""
         ancestor = session_manager.register(
@@ -1147,7 +1149,7 @@ class TestSessionManagerRegistration:
     def test_register_isolates_session_types(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         web_chat = session_manager.register(
             external_id="runtime-key",
@@ -1174,7 +1176,7 @@ class TestSessionManagerRegistration:
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         destination = isolated_checkout_factory(
             session_manager.db, "registration-recovery-destination"
@@ -1207,7 +1209,7 @@ class TestSessionManagerRegistration:
     def test_get_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test getting a session by ID."""
         created = session_manager.register(
@@ -1230,7 +1232,7 @@ class TestSessionManagerRegistration:
     def test_find_by_external_id(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test finding session by canonical provider identity."""
         session = session_manager.register(
