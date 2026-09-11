@@ -438,3 +438,16 @@ No system security settings, shared binaries, or daemon were changed.
 The release rebuild, immutable binary pin, native attempt 12, installed acceptance,
 and all 14 cohort questions remain pending. Earlier successful focused tests and
 attempts 1–11 remain unchanged; the stalled build is not a native probe attempt.
+
+The user then authorized a system-service restart. After a machine-wide coordination
+notice, administrator-authenticated `launchctl kickstart` was refused by System
+Integrity Protection. Administrator-authenticated `SIGTERM` to the verified
+`syspolicyd` PID 494 succeeded; launchd started replacement PID 7443. The same
+previously stalled `/tmp/gobby-12261-build-script-diagnostic` then completed with
+exit 0 in 0.35 seconds. The quiet window was released. System Integrity Protection
+remained enabled; no Gobby restart or shared binary replacement occurred. This
+establishes recovery of the observed launch failure, not its underlying cause.
+The Ask pipeline, permission, and recovery Python selection also passed 44 tests
+in 10.19 seconds.
+After service recovery, the same combined Rust selection compiled in 8.38 seconds
+and passed all 217 selected tests in 2.196 seconds (873 unrelated tests skipped).
