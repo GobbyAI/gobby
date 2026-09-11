@@ -702,3 +702,62 @@ The separate direct fake-Git reproduction also stalled before `/bin/sh` entered
 still awaiting macOS administrator authentication at this checkpoint. No service
 restart has completed. The reviewed parser commit remains isolated for managed
 landing after recovery, and attempt 15 remains unrun.
+
+## Attempt 15: preparation and seed pass; launch receipt capture fails
+
+The pending administrator dialog ended with `User canceled (-128)`; parent did
+not restart syspolicyd. After another session's announced main-checkout daemon
+restart, a fresh shell executable launched in 0.344 seconds. This establishes
+that the launch probe recovered, not the cause of the earlier OS stalls.
+
+The reviewed parser correction was merged at `575e3fc734`; the corrected Git
+preflight/callback work was merged at `3f8410b49c`. Both correction worktrees
+were deleted through managed worktree tools. Parent validation on integration:
+
+```sh
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync pytest tests/utils/test_daemon_git.py tests/workflows/test_workflow_hooks.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src uv run --no-sync pytest tests/ask/test_pipeline.py tests/ask/test_permissions.py tests/ask/test_recovery.py -q
+```
+
+The full Git/workflow pair passed all 78 tests in 5.09 seconds; the Ask pairings
+passed all 44 tests in 10.08 seconds. These results resolve the earlier focused
+test failures but do not establish native runtime acceptance.
+
+The `gcode` release build passed in 57.99 seconds. `gterm` first required its
+`vt-engine` feature, then reproduced the documented Zig/libc++ `INFINITY`
+failure with the default SDK. Selecting
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` made the release
+build pass in 14.88 seconds. Fresh binaries were pinned under
+`target/ask-probe-3f8410b4`:
+
+- `gcode`: `a00bd2df47691e24e2e1ef15fbf6b03569033785f27826ae60a23b6e9e3632d0`
+- `gterm`: `dd0ee8a926db25b0b534b54803fd92e059785007dece62198e226dd289a94204`
+
+Attempt 15 used clean source `3f8410b49cc3a82dcc89116bdad4ab17f0511947`:
+
+```sh
+UV_NO_SYNC=1 UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv PYTHONPATH=src DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_NATIVE_BIN_DIR=/Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask/target/ask-probe-3f8410b4 uv run --no-sync python tests/ask/native_probe_harness.py contained-drive --project-root /Users/josh/.gobby/worktrees/gobby/epic-22010-native-ask --output-dir /tmp/gobby-ask-native-probe-12261-fifteenth --timeout-seconds 1500
+```
+
+Ask run `c2513b1f-0883-4a07-9b09-069031b36ef0` retained its original deadline
+`2026-09-11T13:02:08.415358Z`. Preparation completed in 322.616 seconds and seed
+in 31.659 seconds. Investigator launch then failed with
+`launch terminal is not a JSON object`. Agent run
+`10cc2f00-a908-4a1c-9d39-b77f25fbc9ec` had no recorded PID, child session, or
+terminal and was subsequently cancelled. No provider launch receipt, boundary
+probe, or resumed-runtime acceptance was obtained.
+
+The primary raw export remains at
+`/tmp/gobby-ask-native-probe-12261-fifteenth/raw-probe.json`, SHA-256
+`e7123c339c2c0ef08dfc4f49e7d235968b940492be03992bd34f080fbf7a77ab`.
+It explicitly reports `complete=false`, a missing agent session export, and
+the missing agent run above. Cleanup verified the fresh worker and terminal
+host absent, but could not prove the agent's process state. It
+therefore retained runtime `/private/tmp/gobby-ap-xl2j8dul` and isolated schema
+`gobby_test_askprobe_8d9334776a0b4faf9e3acdc2083e4485`. This is an owned receipt
+and cleanup finding, not successful cleanup. The correction must preserve
+asynchronous launch identity and the original deadline without weakening
+runtime evidence checks.
+
+Attempts 1–15 remain immutable failures. Attempt 16 and all14 remain unrun.
+Parent has not installed shared binaries or landed the epic on `0.5.0`.
