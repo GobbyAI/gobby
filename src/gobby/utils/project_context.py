@@ -391,6 +391,8 @@ async def _restore_generated_tracked_project_json(
 async def ensure_project_json_for_isolation(
     source_repo_path: str | Path,
     isolated_path: str | Path,
+    *,
+    snapshot_commit: str | None = None,
 ) -> None:
     """Write the isolation sidecar without rewriting tracked project metadata.
 
@@ -417,6 +419,8 @@ async def ensure_project_json_for_isolation(
             _PARENT_PROJECT_PATH_KEY: str(source_root.resolve()),
             _PARENT_PROJECT_ID_KEY: parent_project_id,
         }
+        if snapshot_commit is not None:
+            marker["snapshot_commit"] = snapshot_commit
         marker_bytes = (json.dumps(marker, indent=2) + "\n").encode()
 
         target_project_json = isolated_root / PROJECT_JSON_RELATIVE_PATH

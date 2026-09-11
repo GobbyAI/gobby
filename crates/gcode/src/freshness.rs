@@ -129,7 +129,9 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     };
 
     let indexed_paths = match &ctx.index_scope {
-        ProjectIndexScope::Single => db::list_indexed_file_paths(&mut conn, &ctx.project_id)?,
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
+            db::list_indexed_file_paths(&mut conn, &ctx.project_id)?
+        }
         ProjectIndexScope::Overlay {
             parent_project_id, ..
         } => {

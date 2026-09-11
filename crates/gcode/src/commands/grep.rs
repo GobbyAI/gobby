@@ -258,7 +258,7 @@ fn load_indexed_chunks(
         });
     };
     let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => {
+        ProjectIndexScope::Single | ProjectIndexScope::Snapshot { .. } => {
             let project_id = db::id_param(&ctx.project_id)?;
             let mut params: Vec<&(dyn ToSql + Sync)> =
                 vec![&project_id, &tombstone_language, &machine_id];

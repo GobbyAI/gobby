@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from gobby.agents.code_index import ensure_isolation_code_index
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.evidence import EvidenceAdmission, EvidenceAdmissionError
@@ -364,6 +365,54 @@ async def test_real_managed_snapshot_queries_branch_native_gcode(
         artifacts=artifacts,
         storage=storage,
     )
+    # A parent file first indexed after capture must not enter snapshot reads.
+    (repo / "src" / "future.rs").write_text("pub fn future_parent_only() {}\n")
+    _commit(repo, "parent changed after snapshot capture")
+    parent_session = SessionManager(temp_db).register(
+        external_id="ask-native-parent-refresh",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=project_id,
+        workspace_path=str(repo),
+    )
+    parent_credential = credential_manager.issue_tool_request(
+        session_id=UUID(parent_session.id),
+        requested_project_path=str(repo),
+        expires_at=record.binding.deadline_at,
+    )
+    try:
+        await ensure_isolation_code_index(
+            str(repo),
+            gcode_bin=gcode_bin,
+            credential=parent_credential.credential,
+            principal_kind="tool_chat",
+            runtime_root=runtime_root / "parent-after-capture",
+            identity_env={
+                "GOBBY_AGENT_RUN_ID": str(parent_credential.credential.managed_execution_id),
+                "GOBBY_MACHINE_ID": isolated.machine_id,
+                "GOBBY_PROJECT_ID": project_id,
+                "GOBBY_SESSION_ID": parent_session.id,
+            },
+        )
+    finally:
+        credential_manager.revoke(
+            parent_credential.credential.managed_execution_id,
+            generation=parent_credential.credential.credential_generation,
+            reason="test_parent_refresh_complete",
+        )
+    assert (
+        temp_db.fetchone(
+            """SELECT file_path FROM code_indexed_file_states
+        WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
+            (isolated.machine_id, project_id, "src/future.rs"),
+        )
+        is not None
+    )
+    future_parent = await admission.query(
+        "search",
+        {"lane": "literal", "query": "future_parent_only", "paths": [], "limit": 100},
+    )
+    assert future_parent["items"] == []
     response = await admission.query(
         "search",
         {"lane": "literal", "query": "pinned_symbol", "paths": [], "limit": 100},

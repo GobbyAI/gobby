@@ -328,7 +328,9 @@ async def test_snapshot_metadata_preparation_obeys_remaining_deadline(
     metadata_started = asyncio.Event()
     metadata_cancelled = asyncio.Event()
 
-    async def stalled_metadata(_repository_root: Path, _source_root: Path) -> None:
+    async def stalled_metadata(
+        _repository_root: Path, _source_root: Path, *, snapshot_commit: str | None = None
+    ) -> None:
         metadata_started.set()
         try:
             await asyncio.Event().wait()

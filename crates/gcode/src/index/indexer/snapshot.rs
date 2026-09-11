@@ -26,6 +26,13 @@ pub(crate) fn index_snapshot(ctx: &Context, commit_oid: &str) -> anyhow::Result<
     snapshot.verify_materialized(root)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let (project_id, mode) = match &ctx.index_scope {
+        ProjectIndexScope::Snapshot { commit_oid: pinned } => {
+            anyhow::ensure!(
+                pinned == commit_oid,
+                "snapshot commit does not match isolation binding"
+            );
+            (ctx.project_id.as_str(), api::IndexWriteMode::Overlay)
+        }
         ProjectIndexScope::Overlay {
             overlay_project_id, ..
         } => {
