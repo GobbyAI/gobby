@@ -3981,8 +3981,7 @@ class TestRequireCodeIndexSkillStructure:
             assert row is not None
             body = RuleDefinitionBody.model_validate(row.definition_json)
             assert body.when is not None
-            assert "canonical_code_navigation_repo_scope" in body.when
-            assert "is not False" in body.when
+            assert "navigation_requires_index(event.data" in body.when
 
     def test_code_index_recovery_allowlist_names_installed_rules(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -4645,13 +4644,14 @@ class TestCodeIndexNavigationRules:
     async def test_gcode_fail_open_allows_fallback_search(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
-        variables["gcode_fail_open"] = True
+        variables["code_index_recoveries"] = [{"action": "search", "paths": ["src"]}]
         event = self._event(
             HookEventType.BEFORE_TOOL,
             {
                 "tool_name": "Bash",
                 "command": "rg pattern src",
                 "canonical_tool_kind": "search",
+                "canonical_file_paths": ["src"],
                 "canonical_code_navigation_action": "search",
                 "canonical_code_navigation_broad": True,
             },
@@ -4674,6 +4674,7 @@ class TestCodeIndexNavigationRules:
         self,
         db: HubDatabase,
         command: str,
+        tmp_path: Path,
     ) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
@@ -4700,6 +4701,8 @@ class TestCodeIndexNavigationRules:
             "success": None,
         }
         failure_data = CodexAdapter()._build_completed_tool_data(completed_item)
+        failure_data.update(cwd=str(tmp_path), project_path=str(tmp_path))
+        normalize_tool_fields(failure_data)
 
         assert failure_data["canonical_code_index_navigation"] is True
         assert failure_data["canonical_code_index_error"] is True
@@ -4709,7 +4712,9 @@ class TestCodeIndexNavigationRules:
             variables=variables,
         )
 
-        raw_retry = self._normalized_bash_event("rg -n -F 'gcode-runtime' .")
+        raw_retry = self._normalized_bash_event(
+            "rg -n -F 'gcode-runtime' .", cwd=str(tmp_path), project_path=str(tmp_path)
+        )
         retry_response = await RuleEngine(db).evaluate(
             raw_retry,
             session_id=SESSION_ID,
@@ -4721,21 +4726,22 @@ class TestCodeIndexNavigationRules:
             variables=self._variables(loaded=True),
         )
 
-        assert variables["gcode_fail_open"] is True
-        assert retry_response.decision == "allow"
+        assert variables["code_index_recoveries"]
+        assert retry_response.decision == ("block" if "--project" in command else "allow")
         assert ordinary_response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_gcode_fail_open_bypasses_skill_requirement(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=False)
-        variables["gcode_fail_open"] = True
+        variables["code_index_recoveries"] = [{"action": "search", "paths": ["src"]}]
         event = self._event(
             HookEventType.BEFORE_TOOL,
             {
                 "tool_name": "Bash",
                 "command": "rg pattern src",
                 "canonical_tool_kind": "search",
+                "canonical_file_paths": ["src"],
                 "canonical_code_navigation_action": "search",
                 "canonical_code_navigation_broad": True,
             },
@@ -4746,7 +4752,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_gcode_prefixed_compound_read_is_allowed(
+    async def test_gcode_prefixed_compound_read_retains_enforcement(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
         _sync_bundled(db)
@@ -4763,7 +4769,38 @@ class TestCodeIndexNavigationRules:
             variables=self._variables(loaded=True),
         )
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
+    async def test_zero_symbol_recovery_retains_path_and_operation_gates(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=True)
+        outcome = self._normalized_bash_event(
+            "gcode outline src/constants.py", cwd=str(tmp_path), project_path=str(tmp_path)
+        )
+        outcome.data["tool_output"] = (
+            "file has no indexed symbols in current project: src/constants.py"
+        )
+        normalize_tool_fields(outcome.data)
+        outcome.event_type = HookEventType.AFTER_TOOL
+        engine = RuleEngine(db)
+        await engine.evaluate(outcome, session_id=SESSION_ID, variables=variables)
+        for command, decision in (
+            ("cat src/constants.py", "allow"),
+            ("cat src/other.py", "block"),
+            ("rg VALUE src/constants.py", "block"),
+            ("cat src/constants.py; cat src/other.py", "block"),
+            ("rg VALUE dist/assets", "allow"),
+            ("rg VALUE dist/assets; rg VALUE src", "block"),
+        ):
+            response = await engine.evaluate(
+                self._normalized_bash_event(command, cwd=str(tmp_path), project_path=str(tmp_path)),
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            assert response.decision == decision, command
 
     def test_gcode_fail_open_tracker_rules_sync(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -4775,21 +4812,21 @@ class TestCodeIndexNavigationRules:
         tracker_body = RuleDefinitionBody.model_validate(tracker.definition_json)
         assert tracker_body.event.value == "after_tool"
         assert tracker_body.when is not None
-        assert "event.data.get('is_error')" in tracker_body.when
+        assert "event.data.get('canonical_code_index_recovery')" in tracker_body.when
         assert tracker_body.effects is not None
         assert tracker_body.effects[0].type == "set_variable"
-        assert tracker_body.effects[0].variable == "gcode_fail_open"
-        assert tracker_body.effects[0].value is True
+        assert tracker_body.effects[0].variable == "code_index_recoveries"
+        assert "canonical_code_index_recovery" in str(tracker_body.effects[0].value)
 
-        recovery = manager.get_by_name("track-code-index-navigation")
+        recovery = manager.get_by_name("reset-code-index-navigation")
         assert recovery is not None
         recovery_body = RuleDefinitionBody.model_validate(recovery.definition_json)
         assert recovery_body.effects is not None
         clear_effects = [
-            effect for effect in recovery_body.effects if effect.variable == "gcode_fail_open"
+            effect for effect in recovery_body.effects if effect.variable == "code_index_recoveries"
         ]
         assert len(clear_effects) == 1
-        assert clear_effects[0].value is False
+        assert clear_effects[0].value == []
 
         for rule_name in (
             "require-code-index-skill",
@@ -4801,8 +4838,7 @@ class TestCodeIndexNavigationRules:
             assert row is not None
             body = RuleDefinitionBody.model_validate(row.definition_json)
             assert body.when is not None
-            assert "not variables.get('gcode_fail_open')" in body.when
-            assert "not shell_command_invokes_gcode(tool_input.get('command'))" in body.when
+            assert "navigation_requires_index(event.data" in body.when
             assert "not variables.get('code_index_preflight_warning')" in body.when
 
     @pytest.mark.asyncio
@@ -5143,7 +5179,7 @@ class TestCodeIndexNavigationRules:
             broad_response.reason
         )
         assert "follow the `recovery` directive" in broad_response.reason
-        assert "use Read on the file instead" in broad_response.reason
+        assert "allows Read for that file" in broad_response.reason
         assert narrow_response.decision == "allow"
 
     @pytest.mark.asyncio

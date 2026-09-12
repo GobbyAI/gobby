@@ -500,6 +500,7 @@ def build_condition_helpers(
     Returns:
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
+    from gobby.hooks.code_navigation_recovery import navigation_requires_index
     from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 
     from .condition_helpers import (
@@ -544,6 +545,9 @@ def build_condition_helpers(
         "is_validation_command": is_validation_command,
         "paths_written_this_turn": lambda paths: paths_written_this_turn(
             paths, _get_variables(ctx).get("turn_written_paths")
+        ),
+        "navigation_requires_index": lambda data, action=None: navigation_requires_index(
+            data, _get_variables(ctx), action
         ),
         "shell_command_invokes_gcode": shell_command_invokes_gcode,
         "blocks_direct_provider_launch": blocks_direct_provider_launch,

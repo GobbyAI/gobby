@@ -74,6 +74,11 @@ from gobby.hooks.code_navigation import (
     shell_command_name,
     source_read_navigation_metadata,
 )
+from gobby.hooks.code_navigation_recovery import (
+    annotate_navigation,
+    gcode_targets,
+    navigation_recovery,
+)
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
@@ -332,6 +337,11 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind = "execute"
 
     extra = _merge_code_navigation_extra(active)
+    extra["canonical_code_navigation_segments"] = [
+        {**dict(item.extra), "canonical_file_paths": list(item.paths)}
+        for item in active
+        if item.extra and item.extra.get("canonical_code_navigation_action")
+    ]
     if not pure_gcode_navigation:
         extra = _without_code_index_navigation(extra)
     if mutation_scope_unknown:
@@ -488,9 +498,14 @@ def _classify_shell_segment(
     ):
         kind, extra = gcode_metadata
         gcode_paths = _rebase_navigation_shell_paths(
-            [path for path in plain_parts[2:] if _looks_file_like(path)],
+            gcode_targets(plain_parts, extra["canonical_code_index_command"]),
             cwd,
         )
+        for index, part in enumerate(plain_parts):
+            if part == "--project" and index + 1 < len(plain_parts):
+                extra["canonical_code_index_project"] = plain_parts[index + 1]
+            elif part.startswith("--project="):
+                extra["canonical_code_index_project"] = part.split("=", 1)[1]
         return _ShellSegmentMetadata(
             kind,
             paths=tuple(gcode_paths),
@@ -916,6 +931,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
         metadata.update(search_navigation_metadata(canonical_file_paths))
 
     apply_path_scope_metadata(data, metadata, canonical_file_paths)
+    annotate_navigation(data, metadata)
 
     if canonical_file_paths:
         _setdefault_tool_input_paths(tool_input, canonical_file_paths)
@@ -924,6 +940,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     data.pop("canonical_code_index_error", None)
     if metadata.get("canonical_code_index_navigation") and _has_typed_gcode_error(data):
         data["canonical_code_index_error"] = True
+    data["canonical_code_index_recovery"] = navigation_recovery(data)
 
 
 def _has_typed_gcode_error(data: Mapping[str, Any]) -> bool:
