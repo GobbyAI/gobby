@@ -15,6 +15,7 @@ from gobby.agents.kill import (
     _close_terminal_window,
     _run_subprocess,
     _validate_terminal_value,
+    inspect_agent_process_identity,
     kill_agent,
     pid_matches_agent_identity,
 )
@@ -61,6 +62,44 @@ class TestRunSubprocess:
 
 class TestPidMatchesAgentIdentity:
     SESSION_ID = "ec032f4b-c626-4177-90ce-c1f3765c47d0"
+
+    @pytest.mark.parametrize("stage", ["process", "cmdline", "environment"])
+    @pytest.mark.parametrize("error_type", [psutil.NoSuchProcess, psutil.ZombieProcess])
+    async def test_exit_is_distinct_and_never_safe_to_signal(
+        self,
+        stage: str,
+        error_type: type[psutil.NoSuchProcess],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        process = self._process(["codex"])
+        factory = MagicMock(return_value=process)
+        target = {"process": factory, "cmdline": process.cmdline, "environment": process.environ}
+        target[stage].side_effect = error_type(1234)
+        caplog.set_level(logging.DEBUG, logger="gobby.agents.kill")
+
+        assert (
+            await inspect_agent_process_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=factory,
+            )
+            == "exited"
+        )
+        for liveness in (False, True):
+            assert (
+                await pid_matches_agent_identity(
+                    1234,
+                    provider="codex",
+                    session_id=self.SESSION_ID,
+                    process_factory=factory,
+                    unverifiable_result=liveness,
+                )
+                is False
+            )
+        assert "exited before identity inspection completed" in caplog.text
+        assert "does not match" not in caplog.text
+        assert "no longer matches" not in caplog.text
 
     @staticmethod
     def _process(

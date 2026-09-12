@@ -1584,13 +1584,24 @@ class TestCheckDeadAgents:
         assert updated.status == "running"
 
     @pytest.mark.asyncio
-    async def test_alive_tmux_cleans_up_reused_pid(
+    @pytest.mark.parametrize(
+        ("identity", "expected_reason"),
+        [
+            ("mismatched", "PID 999 no longer matches agent identity"),
+            ("exited", "PID 999 exited unexpectedly"),
+            ("matched", None),
+            ("unverifiable", None),
+        ],
+    )
+    async def test_alive_tmux_process_identity_outcomes(
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
+        identity: str,
+        expected_reason: str | None,
     ) -> None:
-        """A live tmux session does not make an unrelated reused PID healthy."""
+        """Health reports exit or mismatch and preserves live or unverifiable runs."""
         run = _make_terminal_run(
             agent_run_manager,
             sample_session,
@@ -1602,9 +1613,9 @@ class TestCheckDeadAgents:
         with (
             _terminal_liveness(monitor, True),
             patch(
-                "gobby.agents.agent_health.pid_matches_agent_identity",
+                "gobby.agents.agent_health.inspect_agent_process_identity",
                 new_callable=AsyncMock,
-                return_value=False,
+                return_value=identity,
             ) as mock_identity,
             patch.object(
                 monitor._health_monitor,
@@ -1615,7 +1626,7 @@ class TestCheckDeadAgents:
         ):
             cleaned = await monitor.check_unhealthy_agents()
 
-        assert cleaned == 1
+        assert cleaned == (1 if expected_reason else 0)
         mock_identity.assert_awaited_once_with(
             999,
             provider="claude",
@@ -1625,8 +1636,10 @@ class TestCheckDeadAgents:
         mock_kill.assert_not_called()
         updated = agent_run_manager.get(run.id)
         assert updated is not None
-        assert updated.status == "error"
-        assert updated.pid is None
+        assert updated.status == ("error" if expected_reason else "running")
+        assert updated.pid == (None if expected_reason else 999)
+        if expected_reason:
+            assert expected_reason in (updated.error or "")
 
     @pytest.mark.asyncio
     async def test_no_tmux_agents_returns_zero(

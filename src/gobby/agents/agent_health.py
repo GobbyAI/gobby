@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.capture import terminate_managed_runtime_async
-from gobby.agents.kill import pid_matches_agent_identity
+from gobby.agents.kill import inspect_agent_process_identity, pid_matches_agent_identity
 from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.stall_classifier import StallStatus
 from gobby.terminals.lookup import active_terminal_for_run
@@ -218,13 +218,18 @@ class AgentHealthMonitor:
                     if tmux_alive:
                         if run.pid:
                             session_id = run.child_session_id or run.parent_session_id
-                            if not await pid_matches_agent_identity(
+                            identity = await inspect_agent_process_identity(
                                 run.pid,
                                 provider=run.provider,
                                 session_id=session_id,
                                 unverifiable_result=True,
-                            ):
-                                reason = f"PID {run.pid} no longer matches agent identity"
+                            )
+                            if identity in ("exited", "mismatched"):
+                                reason = (
+                                    f"PID {run.pid} exited unexpectedly"
+                                    if identity == "exited"
+                                    else f"PID {run.pid} no longer matches agent identity"
+                                )
                                 logger.info("Agent %s %s - cleaning up", run.id, reason)
                     else:
                         reason = "terminal session died unexpectedly"

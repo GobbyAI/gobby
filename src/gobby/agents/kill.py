@@ -12,7 +12,7 @@ import re
 import signal
 import sys
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import psutil
 
@@ -112,14 +112,37 @@ async def pid_matches_agent_identity(
     liveness checks must pass True so a failed lookup is not mistaken for a
     dead agent.
     """
+    identity = await inspect_agent_process_identity(
+        pid,
+        provider=provider,
+        session_id=session_id,
+        process_factory=process_factory,
+        unverifiable_result=unverifiable_result,
+    )
+    return identity == "matched" or (identity == "unverifiable" and unverifiable_result)
+
+
+async def inspect_agent_process_identity(
+    pid: int,
+    *,
+    provider: str,
+    session_id: str | None,
+    process_factory: Callable[[int], psutil.Process] | None = None,
+    unverifiable_result: bool = False,
+) -> Literal["matched", "mismatched", "exited", "unverifiable"]:
+    """Inspect once, preserving process exit separately from identity mismatch.
+
+    unverifiable_result selects the diagnostic logging policy used by kill
+    and liveness callers; the returned outcome always preserves uncertainty.
+    """
     if not session_id or not _validate_terminal_value("session_id", session_id):
         logger.warning("Refusing to signal PID %s: missing or invalid session id", pid)
-        return False
+        return "mismatched"
 
     provider_marker = provider.strip().lower()
     if not provider_marker:
         logger.warning("Refusing to signal PID %s: missing provider", pid)
-        return False
+        return "mismatched"
 
     matches, failure_stage, error = await asyncio.to_thread(
         _inspect_process_identity,
@@ -142,7 +165,10 @@ async def pid_matches_agent_identity(
             error_details,
             "alive" if unverifiable_result else "unsafe to signal",
         )
-        return unverifiable_result
+        return "unverifiable"
+    if failure_stage == "exited":
+        logger.debug("PID %s exited before identity inspection completed", pid)
+        return "exited"
     if not matches:
         if unverifiable_result:
             logger.debug(
@@ -154,8 +180,8 @@ async def pid_matches_agent_identity(
                 "Refusing to signal PID %s: cmdline does not match provider identity",
                 pid,
             )
-        return False
-    return True
+        return "mismatched"
+    return "matched"
 
 
 def _inspect_process_identity(
@@ -168,14 +194,14 @@ def _inspect_process_identity(
     try:
         process = process_factory(pid)
     except psutil.NoSuchProcess:
-        return False, None, None
+        return False, "exited", None
     except Exception as error:
         return None, "process", error
 
     try:
         cmdline = " ".join(process.cmdline())
     except psutil.NoSuchProcess:
-        return False, None, None
+        return False, "exited", None
     except Exception as error:
         return None, "cmdline", error
 
@@ -189,7 +215,7 @@ def _inspect_process_identity(
     try:
         environment = process.environ()
     except psutil.NoSuchProcess:
-        return False, None, None
+        return False, "exited", None
     except Exception as error:
         return None, "environment", error
     return environment.get("GOBBY_SESSION_ID") == session_id, None, None
