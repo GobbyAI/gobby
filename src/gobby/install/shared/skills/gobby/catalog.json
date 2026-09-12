@@ -206,6 +206,62 @@
           "when": "Progress depends on another operation"
         }
       ]
+    },
+    {
+      "name": "agents",
+      "description": "Define, launch, coordinate, and recover agent work",
+      "overview": "references/agents/overview.md",
+      "when": "Operating agent definitions, personas, or worker runs",
+      "topics": [
+        {
+          "name": "definitions",
+          "description": "Inspect, author, and diagnose installed definitions",
+          "path": "references/agents/definitions.md",
+          "when": "Changing definitions, selectors, or inline steps"
+        },
+        {
+          "name": "spawning",
+          "description": "Start and verify assigned worker runs",
+          "path": "references/agents/spawning.md",
+          "when": "Launching a managed worker or task batch"
+        },
+        {
+          "name": "providers",
+          "description": "Resolve provider, model, and reasoning settings",
+          "path": "references/agents/providers.md",
+          "when": "Selecting or diagnosing execution backends"
+        },
+        {
+          "name": "isolation",
+          "description": "Bound workspaces and external write grants",
+          "path": "references/agents/isolation.md",
+          "when": "Selecting isolation or recovering sandbox failures"
+        },
+        {
+          "name": "personas",
+          "description": "Switch conversational guidance",
+          "path": "references/agents/personas.md",
+          "when": "Applying a persona to the current session"
+        },
+        {
+          "name": "messaging",
+          "description": "Coordinate through durable messages",
+          "path": "references/agents/messaging.md",
+          "when": "Sending work, questions, blockers, or repository notices"
+        },
+        {
+          "name": "checkpoints",
+          "description": "Preserve terminal child worktree changes",
+          "path": "references/agents/checkpoints.md",
+          "when": "Recovering uncommitted work after a child terminates"
+        },
+        {
+          "name": "lifecycle",
+          "description": "Inspect, wait for, cancel, and end runs",
+          "path": "references/agents/lifecycle.md",
+          "when": "Monitoring or terminating agent execution"
+        }
+      ]
     }
   ]
 }

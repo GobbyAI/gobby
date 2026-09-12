@@ -243,9 +243,11 @@ domains, Git forges, and package registries do not receive those credentials.
 SRT's plaintext credential injection fallback is disabled.
 
 Local Git commits need filesystem access only. Network Git operations require
-`allow_git_network: true`. Package downloads require
-`allow_package_registries: true`; enabling the latter also makes the supported
-local package caches writable.
+`allow_git_network: true`. Package downloads require the effective
+`allow_package_registries` capability. Enabled managed-agent spawns add private
+validation caches and set this capability to true in `sandbox_config_for_spawn`,
+even when the base daemon configuration is false. Inspect effective run policy;
+Git network access remains independent. Web chat has its own configured defaults.
 
 ## Launch And Lifecycle
 
@@ -257,9 +259,11 @@ worktree/clone isolation, resource limits, and hooks remain independent.
 
 Hook delivery is fail-open for every tool-use event. No CLI treats `PreToolUse`
 as critical, so a PreToolUse denial degrades to allow when the daemon is
-unreachable. Session-lifecycle hooks (`session-start` / `SessionStart`,
-`session-end` / `SessionEnd`, `pre-compact` / `PreCompact`) still fail closed.
-Turn-level `Stop` is never critical.
+unreachable. Lifecycle failure policy is provider-specific: Claude uses kebab-case lifecycle
+names, Codex/Qwen/Droid use PascalCase, and Grok uses snake_case names. Those
+registered lifecycle hooks fail closed. AGY has no critical hooks and fails open
+for delivery failure. Turn-level `Stop` is never critical. The authoritative
+registry is `crates/ghook/src/cli_config.rs`.
 
 The Gobby runner inherits stdin/stdout/stderr and forwards `SIGINT`, `SIGTERM`,
 `SIGHUP`, and `SIGWINCH` to the provider process. Tmux remains responsible for
@@ -308,4 +312,4 @@ reduces host exposure for managed agents, but it is not the future microVM
 boundary for hostile repositories. Higher-risk unattended execution remains a
 separate microVM follow-up.
 
-_Last verified: 2026-08-30_
+_Last verified: 2026-09-12_

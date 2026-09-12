@@ -447,7 +447,7 @@ exist.
 | `POST` | `/api/agents/spawn/batch` | Spawn multiple agents. |
 | `POST` | `/api/agents/spawn/prompt-preview` | Preview a spawn prompt. |
 | `GET` | `/api/agents/launch-defaults` | Read agent launch defaults. |
-| `PUT` | `/api/agents/launch-defaults` | Save agent launch defaults. |
+| `POST` | `/api/agents/cleanup` | Reconcile stale runs using timeout criteria. |
 | `POST` | `/api/build` | Start lifecycle automation. |
 | `POST` | `/api/build/stop` | Stop lifecycle automation. |
 | `POST` | `/api/build/resume` | Resume lifecycle automation. |
@@ -456,6 +456,11 @@ exist.
 | `GET` | `/api/build/status` | Read compact build state for a task tree or build input. |
 | `GET` | `/api/build/dispatch/explain` | Explain dispatcher eligibility without mutation. |
 | `GET` | `/api/build/history` | List recent build run and event history. |
+
+Agent HTTP routes are operator/client interfaces. Spawn requires `task_id` and
+uses `agent_name`; MCP spawn requires `prompt` and uses `agent`. HTTP batches
+contain individual spawn requests. `GET /api/agents/launch-defaults` is read-only;
+there is no corresponding PUT route. Use configuration management for changes.
 
 `POST /api/build` accepts `input_ref`, `profile`, `project_id`, `coordinator`,
 `dry_run`, `unattended`, delivery fields, `quick`, `skip_stages`, `stage`,

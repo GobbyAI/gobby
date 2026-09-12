@@ -650,6 +650,8 @@ See the [session guide](sessions.md#cli-commands) for workflows and recovery.
 
 ### Agents
 
+Operator interfaces; agents use `gobby-agents` and `gobby-workflows` MCP tools.
+
 ```bash
 gobby agents list [--enabled | --disabled] [--surface SURFACE] [--json]
 gobby agents show NAME [--json]
@@ -660,14 +662,17 @@ gobby agents runs list [--session SESSION] [--status STATUS] [--limit N] [--json
 gobby agents runs show RUN [--json]
 gobby agents status RUN
 gobby agents stop RUN
-gobby agents kill RUN
-gobby agents stats
-gobby agents cleanup
+gobby agents kill RUN [--force] [--stop] [--yes]
+gobby agents stats [--session SESSION]
+gobby agents cleanup [--timeout MINUTES] [--dry-run]
 ```
 
 `agents spawn` supports `--workflow`, `--task`, `--provider`, `--model`,
 `--reasoning-effort`, `--reasoning-required/--no-reasoning-required`,
-`--timeout`, `--max-turns`, `--context`, and `--json`.
+`--timeout`, `--terminal-backend tmux|native`, and `--json`.
+The CLI requires a parent session and does not expose all MCP isolation/grant
+fields. Cleanup mutates by default; use `--dry-run` to inspect stale candidates.
+CLI kill defaults differ from MCP: pass `--stop` to stop the workflow as well.
 
 ## Workspaces
 
