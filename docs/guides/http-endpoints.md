@@ -374,6 +374,10 @@ and still requires `end_agent_run`.
 
 ## Tasks And Stages
 
+These routes support operator/client interfaces. Agents use the `gobby-tasks`
+and `gobby-tasks-ops` MCP lifecycle tools so session attribution and workflow
+gates remain in the agent call path; HTTP claim/release is not an agent workaround.
+
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/tasks` | List tasks. |
@@ -396,7 +400,11 @@ and still requires `end_agent_run`.
 | `GET` | `/api/tasks/{task_id}/stages` | Read a task stage manifest. |
 | `PATCH` | `/api/tasks/{task_id}/stages/{stage_name}` | Apply a stage transition or stage manifest mutation. |
 | `GET` | `/api/stages/registry` | List stage registry entries. |
+| `PUT` | `/api/stages/registry/{name}` | Update stage registry metadata. |
+| `POST` | `/api/stages/registry/{name}/restore` | Restore a bundled stage definition. |
+| `DELETE` | `/api/stages/registry/{name}` | Delete an unused stage definition. |
 | `GET` | `/api/task-types/{task_type}/default-stages` | Read default stages for a task type. |
+| `PUT` | `/api/task-types/{task_type}/default-stages` | Replace default stages for a task type. |
 
 `PATCH /api/tasks/{task_id}` accepts metadata fields such as `title`,
 `description`, `priority`, `task_type`, `labels`, `parent_task_id`, `category`,

@@ -1,4 +1,61 @@
 {
   "version": 1,
-  "capabilities": []
+  "capabilities": [
+    {
+      "name": "tasks",
+      "description": "Discover, own, verify, and complete task work",
+      "overview": "references/tasks/overview.md",
+      "when": "Organizing or performing task work",
+      "topics": [
+        {
+          "name": "creation",
+          "description": "Create, claim, categorize, and label work",
+          "path": "references/tasks/creation.md",
+          "when": "Creating or claiming tasks and changing metadata"
+        },
+        {
+          "name": "dependencies",
+          "description": "Order work and diagnose readiness",
+          "path": "references/tasks/dependencies.md",
+          "when": "Adding dependency edges or investigating blockers"
+        },
+        {
+          "name": "implementation",
+          "description": "Implement, handle found work, and validate",
+          "path": "references/tasks/implementation.md",
+          "when": "Editing task-owned files or preparing verification"
+        },
+        {
+          "name": "closing",
+          "description": "Commit and close with verified evidence",
+          "path": "references/tasks/closing.md",
+          "when": "Closing any task or handling close blockers"
+        },
+        {
+          "name": "reviews",
+          "description": "Manage stages and review transitions",
+          "path": "references/tasks/reviews.md",
+          "when": "Submitting or reviewing autonomous stage work"
+        },
+        {
+          "name": "artifacts",
+          "description": "Manage task evidence and artifact pointers",
+          "path": "references/tasks/artifacts.md",
+          "when": "Attaching commits, retrieving diffs, or changing artifact scope"
+        },
+        {
+          "name": "backups",
+          "description": "Back up, restore, import, and maintain tasks",
+          "path": "references/tasks/backups.md",
+          "when": "Recovering task data or importing external issues"
+        },
+        {
+          "name": "live-work",
+          "description": "Run an interactive umbrella task",
+          "path": "references/tasks/live-work.md",
+          "when": "Starting, resuming, or finishing live interactive work"
+        }
+      ]
+    }
+  ]
 }

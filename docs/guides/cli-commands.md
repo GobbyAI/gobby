@@ -442,14 +442,15 @@ gobby tasks delete TASKS... [OPTIONS]
 
 | Command | Key options |
 | --- | --- |
-| `tasks create` | `--description`, `--priority`, `--type`, `--depends-on`, `--project` |
-| `tasks update` | `--title`, `--priority`, `--parent`, `--task-type`, `--isolation` |
+| `tasks create` | `--description`, `--validation-criteria` (required except epics), `--priority`, `--type`, `--depends-on`, `--project` |
+| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type`, `--isolation` |
 | `tasks close` | `--reason` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
-| `tasks delete` | `--cascade`, `--yes` |
+| `tasks delete` | `--cascade`, `--unlink`, `--yes` |
 
-Agents should use the `gobby-tasks` MCP lifecycle tools for claims, closure, and
-review transitions. The CLI remains useful for human inspection and maintenance.
+Agents use `gobby-tasks` MCP lifecycle tools for claims and closure, and
+`gobby-tasks-ops` for authorized stage review transitions. The CLI remains an
+operator interface. Quote shell task references, for example `'#123'`.
 
 ### Stages And Review
 
@@ -468,7 +469,7 @@ Stages with required review must be submitted through `tasks review --submit`.
 ```bash
 gobby tasks search QUERY [OPTIONS]
 gobby tasks reindex [OPTIONS]
-gobby tasks validate TASK
+gobby tasks validate TASK --summary SUMMARY
 gobby tasks validation-history TASK [--clear] [--json]
 gobby tasks doctor
 gobby tasks clean
@@ -480,6 +481,9 @@ gobby tasks restore [--input PATH] [--quiet]
 `tasks search` supports `--type`, `--priority`, `--project`, `--all-projects`,
 `--limit`, `--min-score`, and `--json`. `tasks reindex` supports
 `--all-projects`.
+
+Leaf validation requires `--summary` or `--file`; it runs a bounded criteria
+review and does not replace the agent close checklist.
 
 ### Dependencies, Labels, Commits, And Diffs
 
