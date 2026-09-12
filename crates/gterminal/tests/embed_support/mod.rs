@@ -178,9 +178,14 @@ pub fn spawn_host(extra: &[&str]) -> HostProc {
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let child = cmd.spawn().expect("spawn gterm");
-    wait_socket(&dir.path().join(CONTROL_SOCKET));
-    wait_socket(&dir.path().join(FRAMES_SOCKET));
-    HostProc { dir, child }
+    // Hand the child to HostProc before waiting on the sockets. `wait_socket` panics on
+    // timeout, and a bare `std::process::Child` does not kill on drop, so building the guard
+    // afterwards leaks a live `gterm host` for every startup that never binds -- the leak the
+    // guard-set PID check reports, long after the run that caused it.
+    let host = HostProc { dir, child };
+    wait_socket(&host.dir.path().join(CONTROL_SOCKET));
+    wait_socket(&host.dir.path().join(FRAMES_SOCKET));
+    host
 }
 
 pub fn wait_socket(path: &Path) {
