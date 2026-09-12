@@ -99,7 +99,6 @@ correctly without it.
   adapter under `src/gobby/mcp_proxy/tools/` and depends inward on the task API.
 - A session-name helper stays with `src/gobby/sessions/` unless `gcode` evidence
   proves a separate capability and consumer boundary.
-- `src/gobby/install/bundled_content_manifest.json` is a generated inventory.
-  Change the shared source, run
-  `uv run python -m gobby.install.manifest --write`, and verify the regenerated
-  output instead of hand-maintaining hashes.
+- `src/gobby/install/bundled_content_manifest.json` is a build artifact: ignored by
+  Git and written by `build_backend` into every wheel and sdist. Change the shared
+  source only; never generate, hand-edit, or commit the manifest.
