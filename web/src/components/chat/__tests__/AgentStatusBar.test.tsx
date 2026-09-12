@@ -188,6 +188,56 @@ describe("AgentStatusBar", () => {
     expect(screen.getByRole("button", { name: "Detach" })).toBeInTheDocument();
   });
 
+  it("exposes the collapsed-label markers the 479px rule selects", () => {
+    render(
+      <AgentStatusBar
+        viewingMeta={{
+          ref: "#89",
+          source: "claude",
+          title: "Attached Session",
+          status: "active",
+          model: "sonnet",
+          externalId: "ext-89",
+          chatMode: "normal",
+          gitBranch: null,
+          contextWindow: null,
+          agentRunId: null,
+          workflowName: null,
+          agentName: null,
+          sessionType: "terminal",
+        }}
+        interactionMode="proxy"
+        isAttached={true}
+        onAttach={vi.fn()}
+        onResume={vi.fn()}
+        onDetach={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    // ChatMainColumn gives these buttons the 28x28 glyph square through
+    // `button:has(> .<marker>__label)`. That selector only matches a DIRECT
+    // child, so a label span nested one level deeper — or renamed — leaves the
+    // button its full padded width with nothing to catch it.
+    const labels = Array.from(
+      document.querySelectorAll<HTMLElement>('span[class*="__label"]'),
+    );
+    expect(labels.length).toBeGreaterThan(0);
+
+    const markers = new Set<string>();
+    for (const label of labels) {
+      expect(label.parentElement?.tagName).toBe("BUTTON");
+      const marker = label.className
+        .split(/\s+/)
+        .find((token) => token.endsWith("__label"));
+      expect(marker).toBeDefined();
+      markers.add(marker as string);
+    }
+    expect(markers).toEqual(
+      new Set(["chat-action-btn__label", "chat-new-chat-btn__label"]),
+    );
+  });
+
   it("keeps context usage visible while attached", () => {
     render(
       <AgentStatusBar
