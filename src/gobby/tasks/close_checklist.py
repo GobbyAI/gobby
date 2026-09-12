@@ -6,15 +6,20 @@ import hashlib
 import json
 import posixpath
 import re
-import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from gobby.config.shell_lexing import parse_shell_command, safe_split
-from gobby.config.validation_detection import classify_validation_segments
+from gobby.tasks.criterion_commands import (
+    criterion_command_gap_message,
+    criterion_command_records,
+    edit_details,
+    execution_details,
+    expand_successful_and_segments,
+    first_invalidating_edit,
+)
 from gobby.tasks.transcript_evidence import (
-    TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
 )
@@ -40,29 +45,6 @@ _GENERIC_COMMAND_WORDS = frozenset(
     {"uv", "run", "npx", "npm", "python", "python3", "bash", "sh", "git", "check", "test", "ci"}
 )
 _CRITERIA_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
-_CRITERION_COMMAND_PREFIXES = frozenset(
-    {
-        "bash",
-        "bun",
-        "bunx",
-        "cargo",
-        "gobby",
-        "git",
-        "go",
-        "just",
-        "make",
-        "node",
-        "npm",
-        "npx",
-        "pnpm",
-        "python",
-        "python3",
-        "sh",
-        "uv",
-        "yarn",
-        "zsh",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -181,7 +163,7 @@ def evaluate_validation_commands(
         uncovered_test_paths = ()
     latest_by_category = _latest_definitive_by_category(attributed)
     latest_by_command: dict[str, TranscriptValidationRun] = {}
-    command_evidence = _expand_successful_and_segments(definitive)
+    command_evidence = expand_successful_and_segments(definitive)
     for run in sorted(command_evidence, key=lambda item: (item.order, item.completed_at)):
         command_key = run.core_command if run.core_command is not None else run.command
         latest_by_command[command_key] = run
@@ -198,7 +180,7 @@ def evaluate_validation_commands(
         }
         for run_category, run in sorted(unresolved.items())
     ]
-    criterion_commands = _criterion_command_records(
+    criterion_commands = criterion_command_records(
         validation_criteria,
         evidence,
         last_edit_order=details["last_task_edit_order"],
@@ -254,7 +236,7 @@ def evaluate_validation_commands(
             item=9,
             name="validation_commands",
             status="failed",
-            message=_criterion_command_gap_message(criterion_command_gaps),
+            message=criterion_command_gap_message(criterion_command_gaps),
             details=details,
         )
 
@@ -623,45 +605,6 @@ def _latest_definitive_by_category(
     return latest
 
 
-def _expand_successful_and_segments(
-    runs: Iterable[TranscriptValidationRun],
-) -> list[TranscriptValidationRun]:
-    """Expose each proven validation segment of a successful top-level ``&&`` chain."""
-    expanded: list[TranscriptValidationRun] = []
-    for run in runs:
-        segments = run.validation_segments
-        parsed = parse_shell_command(run.command)
-        segment_indexes = [segment.segment_index for segment in segments]
-        if (
-            run.outcome != "success"
-            or run.wrapped
-            or not parsed.operators
-            or set(parsed.operators) != {"&&"}
-            or not segments
-            or len(set(segment_indexes)) != len(segment_indexes)
-            or any(not 0 <= index < len(parsed.segments) for index in segment_indexes)
-            or len(parsed.segments) != len(parsed.operators) + 1
-        ):
-            expanded.append(run)
-            continue
-        segment_runs = [
-            replace(
-                run,
-                command=shlex.join(parsed.segments[segment.segment_index]),
-                categories=segment.categories,
-                validation_segments=(segment,),
-            )
-            for segment in segments
-        ]
-        if any(
-            segment_run.wrapped or segment_run.core_command is None for segment_run in segment_runs
-        ):
-            expanded.append(run)
-            continue
-        expanded.extend(segment_runs)
-    return expanded
-
-
 def _attribute_compound_failures(
     runs: Iterable[TranscriptValidationRun],
 ) -> list[TranscriptValidationRun]:
@@ -754,12 +697,12 @@ def _uncredited_runs(
             if run.core_command in fresh_success_cores:
                 continue
             record = {
-                **_execution_details(run),
+                **execution_details(run),
                 "reason": "stale after a later task edit",
             }
-            invalidating_edit = _first_invalidating_edit(evidence.edits, run.order)
+            invalidating_edit = first_invalidating_edit(evidence.edits, run.order)
             if invalidating_edit is not None:
-                record["invalidating_edit"] = _edit_details(invalidating_edit)
+                record["invalidating_edit"] = edit_details(invalidating_edit)
             uncredited.append(record)
         elif run.wrapped:
             uncredited.append(
@@ -772,141 +715,6 @@ def _uncredited_runs(
         elif run.outcome == "unknown":
             uncredited.append({"command": run.command, "reason": "unknown outcome"})
     return uncredited
-
-
-def _criterion_command_records(
-    criteria: str,
-    evidence: TranscriptEvidence,
-    *,
-    last_edit_order: int | None,
-) -> list[dict[str, object]]:
-    runs = sorted(
-        _expand_successful_and_segments((*evidence.validation_runs, *evidence.command_runs)),
-        key=lambda item: (item.order, item.completed_at),
-    )
-    observed_cores = {run.core_command for run in runs if run.core_command is not None}
-    records: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for match in _CRITERIA_CODE_SPAN_RE.finditer(criteria):
-        command = match.group(1).strip()
-        equivalence = classify_validation_command_equivalence(command)
-        core = equivalence.core_command
-        if not _looks_like_criterion_command(command, core, observed_cores):
-            continue
-        key = core or command
-        if key in seen:
-            continue
-        seen.add(key)
-        matching = [
-            run
-            for run in runs
-            if (core is not None and run.core_command == core)
-            or (core is None and run.command.strip() == command)
-        ]
-        fresh = [run for run in matching if last_edit_order is None or run.order > last_edit_order]
-        definitive = [
-            run
-            for run in fresh
-            if not run.wrapped and run.core_command is not None and run.outcome != "unknown"
-        ]
-        latest = definitive[-1] if definitive else None
-        if latest is not None:
-            status = "satisfied" if latest.outcome == "success" else "failed"
-            execution = _execution_details(latest)
-        elif fresh:
-            latest = fresh[-1]
-            status = "wrapped" if latest.wrapped else "unknown"
-            execution = _execution_details(latest)
-        elif matching:
-            latest = matching[-1]
-            status = "stale"
-            execution = _execution_details(latest)
-            invalidating_edit = _first_invalidating_edit(evidence.edits, latest.order)
-            if invalidating_edit is not None:
-                execution["invalidating_edit"] = _edit_details(invalidating_edit)
-        else:
-            status = "wrapped" if equivalence.wrapped else "missing"
-            execution = None
-        record: dict[str, object] = {
-            "command": command,
-            "core_command": core,
-            "status": status,
-            "satisfied": status == "satisfied",
-        }
-        if execution is not None:
-            record["execution"] = execution
-        if equivalence.wrapper_reason is not None:
-            record["wrapper_reason"] = equivalence.wrapper_reason
-        records.append(record)
-    return records
-
-
-def _looks_like_criterion_command(
-    command: str,
-    core_command: str | None,
-    observed_cores: set[str],
-) -> bool:
-    if core_command in observed_cores:
-        return True
-    if classify_validation_segments(command):
-        return True
-    tokens = safe_split(core_command or command)
-    if not tokens:
-        return False
-    return posixpath.basename(tokens[0]).casefold() in _CRITERION_COMMAND_PREFIXES
-
-
-def _execution_details(run: TranscriptValidationRun) -> dict[str, object]:
-    return {
-        "session_id": run.session_id,
-        "source": run.source,
-        "command": run.command,
-        "core_command": run.core_command,
-        "completed_at": run.completed_at.isoformat(),
-        "order": run.order,
-        "outcome": run.outcome,
-        "exit_code": run.exit_code,
-    }
-
-
-def _edit_details(edit: TranscriptEdit) -> dict[str, object]:
-    return {
-        "session_id": edit.session_id,
-        "source": edit.source,
-        "path": edit.path,
-        "timestamp": edit.timestamp.isoformat(),
-        "order": edit.order,
-        "tool_name": edit.tool_name,
-    }
-
-
-def _first_invalidating_edit(
-    edits: Iterable[TranscriptEdit], run_order: int
-) -> TranscriptEdit | None:
-    return min(
-        (edit for edit in edits if edit.order > run_order),
-        key=lambda edit: (edit.order, edit.timestamp, edit.path),
-        default=None,
-    )
-
-
-def _criterion_command_gap_message(gaps: list[dict[str, object]]) -> str:
-    actions: list[str] = []
-    for gap in gaps:
-        command = str(gap.get("core_command") or gap["command"])
-        status = str(gap["status"])
-        execution = gap.get("execution")
-        reason = status
-        if status == "stale" and isinstance(execution, Mapping):
-            invalidating_edit = execution.get("invalidating_edit")
-            if isinstance(invalidating_edit, Mapping):
-                reason = (
-                    f"execution order {execution['order']} at {execution['completed_at']} was "
-                    f"invalidated by {invalidating_edit['path']} at order "
-                    f"{invalidating_edit['order']} ({invalidating_edit['timestamp']})"
-                )
-        actions.append(f"Run `{command}` clean after the final task edit ({reason}).")
-    return "Required criterion commands are unsatisfied: " + " ".join(actions)
 
 
 def _degraded_message(evidence: TranscriptEvidence) -> str:

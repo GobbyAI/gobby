@@ -24,6 +24,7 @@ from gobby.config.validation_detection import (
 )
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
+from gobby.tasks.command_equivalence import target_covers
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
@@ -754,7 +755,7 @@ def _segment_covers(
         return True
     if not failure_paths:
         return False
-    return all(any(_target_covers(green, red) for green in success_paths) for red in failure_paths)
+    return all(any(target_covers(green, red) for green in success_paths) for red in failure_paths)
 
 
 def _split_targets(targets: Sequence[str]) -> tuple[tuple[str, ...], frozenset[str]]:
@@ -796,7 +797,7 @@ def _green_scope_avoids_foreign_paths(
     if not targets:
         return False
     return all(
-        not _target_covers(target, foreign_path) and not _target_covers(foreign_path, target)
+        not target_covers(target, foreign_path) and not target_covers(foreign_path, target)
         for target in targets
         for foreign_path in foreign_paths
     )
@@ -875,20 +876,6 @@ def _is_cover_target(token: str) -> bool:
         or f"/{root}" in f"/{normalized}/"
         for root in _COVER_ROOTS
     )
-
-
-def _target_covers(success: str, failure: str) -> bool:
-    """Return whether the green target's scope contains the red target's scope.
-
-    A file or directory covers every node id beneath it; a node id covers only
-    itself.
-    """
-    if success == failure:
-        return True
-    if success.startswith("-") or failure.startswith("-") or "::" in success:
-        return False
-    failure_path = failure.split("::", 1)[0]
-    return failure_path == success or failure_path.startswith(success.rstrip("/") + "/")
 
 
 def _project_verification_commands(project_path: str | None) -> dict[str, str]:

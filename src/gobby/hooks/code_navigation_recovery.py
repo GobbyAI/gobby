@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from gobby.config.shell_lexing import parse_shell_command
 from gobby.hooks._path_scope import (
     code_navigation_may_touch_project,
     current_project_root,
@@ -182,7 +183,10 @@ def annotate_navigation(data: Mapping[str, Any], metadata: dict[str, Any]) -> No
 
 
 def navigation_recovery(data: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Only a single attributable gcode outcome can grant recovery."""
+    """Grant recovery only when the outcome is attributable to the requested scope."""
+    batched = _batched_error_recovery(data)
+    if batched:
+        return batched
     if not data.get("canonical_code_index_navigation"):
         return []
     segments = data.get("canonical_code_navigation_segments") or []
@@ -219,6 +223,68 @@ def navigation_recovery(data: Mapping[str, Any]) -> list[dict[str, Any]]:
         "enumerate" if command == "gcode tree" else segment.get("canonical_code_navigation_action")
     )
     return [{"action": action, "paths": paths}]
+
+
+def _batched_error_recovery(data: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Recognize one structured failure per gcode invocation in a sequential batch.
+
+    Gcode's failure contract is one JSON line per invocation. A failed aggregate
+    exit alone proves nothing about earlier segments. Permit status inspection as
+    the only non-gcode segment; arbitrary commands could manufacture error output.
+    """
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, Mapping):
+        return []
+    command = tool_input.get("command") or tool_input.get("cmd")
+    if not isinstance(command, str):
+        return []
+    parsed = parse_shell_command(command)
+    if not parsed.operators or any(op not in {";", "\n"} for op in parsed.operators):
+        return []
+    gcode_count = 0
+    for part in parsed.segments:
+        if part and part[0] == "gcode":
+            gcode_count += 1
+        elif part[:2] != ("git", "status"):
+            return []
+    segments = data.get("canonical_code_navigation_segments") or []
+    if (
+        not gcode_count
+        or len(segments) != gcode_count
+        or any(not segment.get("canonical_code_index_navigation") for segment in segments)
+    ):
+        return []
+    output = data.get("tool_output")
+    if isinstance(output, Mapping):
+        output = output.get("output")
+    if not isinstance(output, str):
+        return []
+    errors = 0
+    for line in output.splitlines():
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(payload, dict)
+            and isinstance(payload.get("error"), str)
+            and isinstance(payload.get("message"), str)
+        ):
+            errors += 1
+        else:
+            return []
+    if errors != gcode_count:
+        return []
+    return [
+        {
+            "action": "enumerate"
+            if segment.get("canonical_code_index_command") == "gcode tree"
+            else segment.get("canonical_code_navigation_action"),
+            "paths": segment["canonical_file_paths"],
+        }
+        for segment in segments
+        if segment.get("canonical_file_paths")
+    ]
 
 
 def navigation_requires_index(

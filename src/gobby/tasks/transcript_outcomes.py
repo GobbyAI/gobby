@@ -9,8 +9,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from gobby.config.shell_lexing import ParsedShellCommand, parse_shell_command
+from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.sessions.transcript_tool_metadata import extract_result_metadata
+from gobby.tasks.command_equivalence import parse_validation_shell
 
 EvidenceOutcome = Literal["success", "failure", "unknown"]
 
@@ -127,7 +128,11 @@ def _skip_whitespace(command: str, cursor: int) -> int:
 
 def _wrapper_reason(command: str) -> str | None:
     stripped = command.strip()
-    parsed = parse_shell_command(stripped)
+    if stripped.startswith("(") and stripped.endswith(")"):
+        return "subshell wrapper"
+    if stripped.startswith("js_repl("):
+        return "js_repl wrapper"
+    parsed = parse_validation_shell(stripped)
     if any(operator in {"|", "|&"} for operator in parsed.operators):
         return "pipeline"
     trailing_output = _trailing_output_command(parsed)
@@ -141,11 +146,15 @@ def _wrapper_reason(command: str) -> str | None:
         return "command sequence"
     if not parsed.segments or len(parsed.segments) != len(parsed.operators) + 1:
         return "unsupported shell structure"
-    if stripped.startswith("(") and stripped.endswith(")"):
-        return "subshell wrapper"
-    if stripped.startswith("js_repl("):
-        return "js_repl wrapper"
 
+    for segment in parsed.segments:
+        reason = _executable_wrapper_reason(ParsedShellCommand((segment,), ()))
+        if reason is not None:
+            return reason
+    return None
+
+
+def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
     executable, arguments = _first_executable(parsed)
     if executable == "nohup":
         return "nohup wrapper"

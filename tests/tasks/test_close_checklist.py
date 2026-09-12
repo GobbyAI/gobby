@@ -23,6 +23,149 @@ BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 EvidenceOutcome = Literal["success", "failure", "unknown"]
 
 
+@pytest.mark.parametrize(
+    ("required", "executed"),
+    [
+        ("uv run pytest tests/a.py -q", "CI=1 rtk uv run pytest 'tests/a.py' -q > /tmp/out 2>&1"),
+        ("uv run pytest tests/a.py -q", "cd '/repo path' && uv run pytest tests/a.py -q >> out"),
+        ("uv run pytest tests/a.py -q", "uv run pytest tests/a.py tests/b.py -q"),
+        ("uv run pytest tests/a.py::test_one -q", "uv run pytest tests/ -q"),
+        ("uv run ruff check src/a.py", "uv run ruff check src/ tests/"),
+        ("uv run ruff check src", "uv run ruff check src tests"),
+        ("pytest tests/a.py -q", "pytest . -q"),
+        ("cargo fmt --all -- --check", "cargo fmt --all --check"),
+        ("cargo test -p gobby-core", "cargo test --package=gobby-core"),
+        ("cargo clippy -p gobby-core -- -D warnings", "cargo clippy -pgobby-core -- -Dwarnings"),
+        ("pytest tests/a.py -k 'a or b'", 'pytest "tests/a.py" -k "a or b" 2>errors'),
+        ("pytest tests/a.py -k '|'", 'pytest tests/a.py -k "|"'),
+        ("pytest tests/*.py", "pytest tests/*.py"),
+    ],
+)
+def test_equivalent_criterion_execution_is_credited(required: str, executed: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=executed),)),
+        has_attributed_edits=True,
+        validation_criteria=f"Run `{required}`.",
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["criterion_command_gaps"] == []
+
+
+@pytest.mark.parametrize(
+    "executed",
+    [
+        "uv run pytest tests/a.py -q",
+        "uv run pytest tests/ -q -k selected",
+        "uv run pytest tests/ -q --ignore tests/b.py",
+        "uv run pytest tests/ -q | tail -1",
+        "uv run pytest tests/ -q || true",
+        "uv run pytest tests/ -q & wait",
+        "bash -c 'uv run pytest tests/ -q'",
+        "uv run pytest tests/ -q >",
+        "uv run pytest tests/ -q < input",
+        "uv run pytest tests/ -q > $(echo out)",
+        "uv run pytest tests/ -q && bash -c 'true'",
+    ],
+)
+def test_narrowed_or_obscured_criterion_execution_cannot_pass(executed: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=executed),)),
+        has_attributed_edits=True,
+        validation_criteria="Run `uv run pytest tests/ -q`.",
+    )
+    assert gate.status == "failed"
+    assert "Run `uv run pytest tests/ -q` clean" in gate.message
+
+
+@pytest.mark.parametrize("outcome", ["failure", "unknown"])
+def test_broader_execution_requires_definitive_success(outcome: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(_run(1, command="pytest tests/ -q", outcome=outcome),)
+        ),
+        has_attributed_edits=True,
+        validation_criteria="Run `pytest tests/a.py -q`.",
+    )
+    assert gate.status == "failed"
+    assert "Observed `pytest tests/ -q`" in gate.message
+
+
+@pytest.mark.parametrize(
+    ("required", "executed"),
+    [
+        ("pytest 'tests/*.py'", "pytest tests/*.py"),
+        ("pytest tests/*.py", "pytest 'tests/*.py'"),
+        ("pytest tests/ -k '\"$VALUE\"'", "pytest tests/ -k \"'$VALUE'\""),
+    ],
+)
+def test_shell_expansion_is_not_literal_argument_equivalence(required: str, executed: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1, command=executed),)),
+        has_attributed_edits=True,
+        validation_criteria=f"Run `{required}`.",
+    )
+    assert gate.status == "failed"
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        "`cargo test` is not applicable. Run `pytest`.",
+        "No need to run `cargo test`; `pytest` must pass.",
+        "`cargo test` is unnecessary, but `pytest` is required.",
+        "Do not run `cargo test` and run `pytest`.",
+        "`cargo test` can be skipped. `pytest` is required.",
+        "Run `pytest` (`cargo test` is not applicable).",
+        "`cargo test` isn't required BUT `pytest` is required.",
+    ],
+)
+def test_exclusion_is_local_to_the_command_clause(criteria: str) -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        validation_criteria=criteria,
+    )
+    assert gate.status == "passed", gate.message
+    assert [record["command"] for record in gate.details["criterion_commands"]] == ["pytest"]
+
+
+def test_excluded_occurrence_does_not_hide_a_later_required_occurrence() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=(_run(1),)),
+        has_attributed_edits=True,
+        validation_criteria="`cargo test` is not required before editing. Run `cargo test` afterward.",
+    )
+    assert gate.status == "failed"
+    assert "Run `cargo test` clean" in gate.message
+
+
+def test_all_unmet_criteria_report_observed_wrappers_scope_and_stale_edits() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _run(1, command="cargo fmt --all --check"),
+                _run(3, command="pytest tests/a.py -q"),
+                _run(4, command="pytest tests/ -q | tail -1"),
+            ),
+            edits=(_edit(2),),
+        ),
+        has_attributed_edits=True,
+        validation_criteria="Run `cargo fmt --all -- --check` and `pytest tests/ -q`.",
+    )
+    assert gate.status == "failed"
+    assert "cargo fmt --all --check" in gate.message
+    assert "invalidated by src/example.py" in gate.message
+    assert "Observed `pytest tests/a.py -q`: scope or semantic arguments differ" in gate.message
+    assert "Observed `pytest tests/ -q | tail -1`: pipeline" in gate.message
+
+
 def _run(
     order: int,
     *,

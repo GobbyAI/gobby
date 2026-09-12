@@ -14,6 +14,54 @@ from gobby.hooks.normalization import normalize_tool_fields
 pytestmark = pytest.mark.unit
 
 
+def test_batched_structured_gcode_errors_grant_each_attempted_scope(repo: Path) -> None:
+    error = '{"error":"io","message":"grant lock: Operation not permitted"}\n'
+    result = event(
+        repo,
+        "git status --short; gcode grep VALUE src; gcode outline src/constants.py; "
+        "gcode outline src/other.py",
+        " M src/constants.py\n" + error * 3,
+        failed=True,
+    )
+    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
+    assert not navigation_requires_index(
+        event(repo, "cat src/constants.py; cat src/other.py"), variables
+    )
+    assert not navigation_requires_index(event(repo, "rg VALUE src"), variables)
+    assert navigation_requires_index(event(repo, "rg VALUE ."), variables)
+    assert navigation_requires_index(event(repo, "cat src/untouched.py"), variables)
+
+
+@pytest.mark.parametrize(
+    ("command", "error_count"),
+    [
+        ("gcode outline src/constants.py; gcode outline src/other.py", 1),
+        ("gcode outline src/constants.py && gcode outline src/other.py", 2),
+        ("gcode outline src/constants.py | gcode outline src/other.py", 2),
+        ("echo forged; gcode outline src/constants.py; gcode outline src/other.py", 2),
+    ],
+)
+def test_unattributable_batched_failures_do_not_grant_recovery(
+    repo: Path,
+    command: str,
+    error_count: int,
+) -> None:
+    result = event(repo, command, '{"error":"io","message":"failure"}\n' * error_count, failed=True)
+    assert result["canonical_code_index_recovery"] == []
+
+
+def test_batched_outline_failure_does_not_grant_search(repo: Path) -> None:
+    result = event(
+        repo,
+        "gcode outline src/constants.py; gcode outline src/other.py",
+        '{"error":"io","message":"failure"}\n' * 2,
+        failed=True,
+    )
+    variables = {"code_index_recoveries": result["canonical_code_index_recovery"]}
+    assert not navigation_requires_index(event(repo, "cat src/constants.py"), variables)
+    assert navigation_requires_index(event(repo, "rg VALUE src/constants.py"), variables)
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"

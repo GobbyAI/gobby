@@ -1,0 +1,215 @@
+"""Conservative shell argument and target equivalence for validation evidence."""
+
+from __future__ import annotations
+
+import posixpath
+import re
+import shlex
+
+from gobby.config.shell_lexing import ParsedShellCommand
+
+# Keep the original spelling until operators and redirections have been identified.
+# shlex alone erases whether a token such as '|' was a literal argument.
+_TOKEN = re.compile(
+    r"""(?P<redirect>\d*(?:>>|>\||>&|>)|&>>?)"""
+    r"""|(?P<operator>&&|\|\||\|&|[;&|\n])"""
+    r"""|(?P<word>(?:[^\s;&|<>()'"\\]+|\\.|'[^']*'|"(?:\\.|[^"\\])*")+)"""
+)
+
+
+def parse_validation_shell(command: str) -> ParsedShellCommand:
+    """Parse the supported exit-preserving shell subset, retaining quoted literals.
+
+    Input redirects, substitutions and shell compound constructs are deliberately
+    unsupported: they need execution context we do not have in a transcript.
+    """
+    segments: list[tuple[str, ...]] = []
+    operators: list[str] = []
+    current: list[str] = []
+    cursor = 0
+    redirect: str | None = None
+    while cursor < len(command):
+        if command[cursor] in " \t\r":
+            cursor += 1
+            continue
+        match = _TOKEN.match(command, cursor)
+        if match is None:
+            return ParsedShellCommand((), ())
+        cursor = match.end()
+        raw = match.group()
+        if match.lastgroup == "redirect":
+            if redirect is not None:
+                return ParsedShellCommand((), ())
+            redirect = raw
+        elif match.lastgroup == "operator":
+            if redirect is not None or not current:
+                return ParsedShellCommand((), ())
+            segments.append(tuple(current))
+            current = []
+            operators.append(raw)
+        else:
+            # Reject expansion outside single quotes, including inside double quotes.
+            if _has_expansion(raw):
+                return ParsedShellCommand((), ())
+            words = shlex.split(raw)
+            if len(words) != 1:
+                return ParsedShellCommand((), ())
+            word = words[0]
+            if redirect is not None:
+                if redirect.endswith(">&") and word not in {"1", "2"}:
+                    return ParsedShellCommand((), ())
+                redirect = None
+            else:
+                current.append(word)
+    if redirect is not None:
+        return ParsedShellCommand((), ())
+    if current:
+        segments.append(tuple(current))
+    return ParsedShellCommand(tuple(segments), tuple(operators))
+
+
+def _has_expansion(word: str) -> bool:
+    quote: str | None = None
+    cursor = 0
+    while cursor < len(word):
+        char = word[cursor]
+        if char == "\\" and quote != "'":
+            cursor += 2
+            continue
+        if char == quote:
+            quote = None
+        elif char in {"'", '"'} and quote is None:
+            quote = char
+        elif char in {"$", "`"} and quote != "'":
+            return True
+        cursor += 1
+    return False
+
+
+def canonical_command(command: str) -> str | None:
+    """Compare literal arguments and safe redirects without changing their meaning."""
+    literal_free = re.sub(r'''\\.|'[^']*'|"(?:\\.|[^"\\])*"''', "", command)
+    if any(char in literal_free for char in "*?[]{}~"):
+        return None
+    parsed = parse_validation_shell(command)
+    if not parsed.segments or len(parsed.segments) != len(parsed.operators) + 1:
+        return None
+    if any(operator != "&&" for operator in parsed.operators):
+        return None
+    return " && ".join(shlex.join(_cargo_arguments(list(part))) for part in parsed.segments)
+
+
+def _cargo_arguments(tokens: list[str]) -> list[str]:
+    start = 2 if tokens[:2] == ["uv", "run"] else 0
+    if tokens[start : start + 1] != ["cargo"]:
+        return tokens
+    # cargo fmt accepts --check itself or forwards it to rustfmt after --.
+    if tokens[start + 1 : start + 2] == ["fmt"] and tokens[-2:] == ["--", "--check"]:
+        tokens = tokens[:-2] + ["--check"]
+    result = tokens[: start + 2]
+    forwarded = False
+    for token in tokens[start + 2 :]:
+        if token == "--":
+            forwarded = True
+        if not forwarded and token == "-p":
+            result.append("--package")
+        elif not forwarded and token.startswith("-p") and not token.startswith("--"):
+            result.extend(("--package", token[2:]))
+        elif not forwarded and token.startswith(("--package=", "--manifest-path=", "--target=")):
+            result.extend(token.split("=", 1))
+        elif forwarded and re.fullmatch(r"-[DAWF].+", token):
+            result.extend((token[:2], token[2:]))
+        else:
+            result.append(token)
+    return result
+
+
+def target_covers(success: str, failure: str) -> bool:
+    """A file/directory covers its descendants; a node id covers only itself."""
+    if success == failure:
+        return True
+    if success.startswith("-") or failure.startswith("-") or "::" in success:
+        return False
+    failure_path = failure.split("::", 1)[0]
+    if success == ".":
+        return not failure_path.startswith(("/", "../")) and failure_path != ".."
+    return failure_path == success or failure_path.startswith(success.rstrip("/") + "/")
+
+
+def command_covers(executed: str, required: str) -> bool:
+    """Credit broader explicit targets only for known tools with identical flags."""
+    actual = canonical_command(executed)
+    expected = canonical_command(required)
+    if actual is None or expected is None:
+        parsed = parse_validation_shell(executed)
+        return (
+            executed.strip() == required.strip()
+            and bool(parsed.segments)
+            and len(parsed.segments) == len(parsed.operators) + 1
+            and all(operator == "&&" for operator in parsed.operators)
+        )
+    if actual == expected:
+        return True
+    actual_scope = _path_scope(actual)
+    expected_scope = _path_scope(expected)
+    if actual_scope is None or expected_scope is None:
+        return False
+    actual_flags, actual_paths = actual_scope
+    expected_flags, expected_paths = expected_scope
+    return actual_flags == expected_flags and all(
+        any(target_covers(path, requirement) for path in actual_paths)
+        for requirement in expected_paths
+    )
+
+
+def _path_scope(command: str) -> tuple[list[str], list[str]] | None:
+    parsed = parse_validation_shell(command)
+    if len(parsed.segments) != 1:
+        return None
+    tokens = list(parsed.segments[0])
+    start = 2 if tokens[:2] == ["uv", "run"] else 0
+    if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
+        start += 2
+    executable = tokens[start] if start < len(tokens) else ""
+    if executable not in {"pytest", "mypy", "ruff", "gobby"}:
+        return None
+    end = start + 1
+    if executable == "ruff":
+        if tokens[end : end + 1] not in (["check"], ["format"]):
+            return None
+        end += 1
+    if executable == "gobby":
+        if tokens[end : end + 2] not in (["test-types", "audit"], ["test-quality", "audit"]):
+            return None
+        end += 2
+    flags, paths = tokens[:end], []
+    # Unknown options are retained with their following word. This intentionally
+    # declines broad-scope credit rather than interpreting an option value as a path.
+    takes_value = False
+    for token in tokens[end:]:
+        if takes_value:
+            flags.append(token)
+            takes_value = False
+        elif token.startswith("-"):
+            flags.append(token)
+            takes_value = "=" not in token and token not in {
+                "-q",
+                "-v",
+                "-vv",
+                "-s",
+                "-x",
+                "--check",
+                "--diff",
+                "--strict",
+                "--fail-on-new",
+                "--no-incremental",
+                "--",
+            }
+        elif not any(char in token for char in "*?[]$"):
+            path = posixpath.normpath(token)
+            if path.startswith(("/", "../")) or path == "..":
+                return None
+            paths.append(path)
+        else:
+            flags.append(token)
+    return (flags, paths) if paths else None
