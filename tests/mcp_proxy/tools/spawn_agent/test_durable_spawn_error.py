@@ -21,7 +21,12 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
     machine_id = "21000000-0000-4000-8000-000000000001"
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", machine_id)
     sessions = SessionManager(temp_db)
-    session = sessions.register(external_id="durable-spawn-error", machine_id=machine_id, source="codex", project_id=PERSONAL_PROJECT_ID)
+    session = sessions.register(
+        external_id="durable-spawn-error",
+        machine_id=machine_id,
+        source="codex",
+        project_id=PERSONAL_PROJECT_ID,
+    )
     storage = LocalAgentRunManager(temp_db)
     run = storage.create(parent_session_id=session.id, provider="codex", prompt="test launch")
     origin = "tmux launch rejected 40960-byte command: message too long"
@@ -42,11 +47,28 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
     tmux.capture_full_pane = capture
     tmux.kill_session = AsyncMock(return_value=True)
     monkeypatch.setattr("gobby.agents.tmux.get_tmux_session_manager", lambda **_kwargs: tmux)
-    monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(side_effect=terminalize)) if with_monitor else None
-    runner = SimpleNamespace(run_storage=storage, session_storage=sessions, cancel_run=storage.cancel, get_run=storage.get, agent_lifecycle_monitor=monitor)
+    monitor = (
+        SimpleNamespace(terminalize_cancelled_run=AsyncMock(side_effect=terminalize))
+        if with_monitor
+        else None
+    )
+    runner = SimpleNamespace(
+        run_storage=storage,
+        session_storage=sessions,
+        cancel_run=storage.cancel,
+        get_run=storage.get,
+        agent_lifecycle_monitor=monitor,
+    )
     await cleanup_failed_spawn(
-        runner, run.id, origin, None, None, completion_registry=None,
-        cleanup_isolation=False, task_manager=None, tmux_session_name="isolated-spawn-test",
+        runner,
+        run.id,
+        origin,
+        None,
+        None,
+        completion_registry=None,
+        cleanup_isolation=False,
+        task_manager=None,
+        tmux_session_name="isolated-spawn-test",
     )
     recorded = storage.get(run.id)
     assert recorded is not None and recorded.status == "cancelled"

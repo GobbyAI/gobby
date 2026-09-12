@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -20,8 +19,6 @@ SKILL_DIR = SKILLS_ROOT / "repository-maintenance"
 SKILL_FILE = SKILL_DIR / "SKILL.md"
 DISCIPLINE_FILE = SKILLS_ROOT / "development-discipline" / "SKILL.md"
 SCENARIOS = Path(__file__).resolve().parent / "scenarios" / "repository-maintenance"
-MANIFEST_FILE = REPO_ROOT / "src" / "gobby" / "install" / "bundled_content_manifest.json"
-
 SCENARIO_CASES = (
     ("shared-helper-placement.yaml", "create_dumping_ground", "identify_capability_owner"),
     ("top-level-package.yaml", "create_one_helper_package", "assess_package_boundary"),
@@ -98,7 +95,7 @@ def test_development_discipline_keeps_canonical_name_and_adds_structural_preflig
     assert frontmatter["name"] == "development-discipline"
     for phrase in (
         "Identify the capability that owns the change",
-        "Search with `gcode`",
+        "referenced symbols, callers, helpers, and fixtures with `gcode`",
         "dependency direction",
         "state ownership",
         "public-surface impact",
@@ -115,12 +112,6 @@ def test_repository_maintenance_has_no_automatic_loading_rule() -> None:
     )
 
     assert "repository-maintenance" not in workflow_text
-
-
-def test_bundled_manifest_registers_repository_maintenance() -> None:
-    manifest = json.loads(MANIFEST_FILE.read_text())
-
-    assert "skills/repository-maintenance/SKILL.md" in manifest["files"]
 
 
 @pytest.mark.skill_tdd

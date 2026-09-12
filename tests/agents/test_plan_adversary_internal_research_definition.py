@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +12,6 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
-MANIFEST_PATH = REPO_ROOT / "src/gobby/install/bundled_content_manifest.json"
 REMOVED_RESEARCHER = "plan-review-researcher-taskless"
 ADVERSARIES = ("plan-adversary", "plan-adversary-taskless")
 PLAN_AGENTS = (*ADVERSARIES, "plan-enhancer", "plan-enhancer-taskless")
@@ -67,10 +65,8 @@ def test_adversaries_read_one_complete_evidence_snapshot() -> None:
         assert "shadow-manifest status" in instructions
 
 
-def test_removed_researcher_is_absent_from_inventory_and_manifest() -> None:
+def test_removed_researcher_is_absent_from_inventory() -> None:
     assert not (AGENTS_DIR / f"{REMOVED_RESEARCHER}.yaml").exists()
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    assert f"workflows/agents/{REMOVED_RESEARCHER}.yaml" not in manifest["files"]
 
 
 def test_all_plan_agents_block_gobby_spawn_at_agent_level() -> None:

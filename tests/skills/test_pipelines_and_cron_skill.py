@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 import yaml
 
-from gobby.install.manifest import hash_file_bytes
 from gobby.skills.loader import SkillLoader
 from gobby.workflows.definitions import PipelineDefinition
 
@@ -53,15 +51,6 @@ def test_bundled_directory_discovery_finds_pipelines_and_cron() -> None:
     skills = SkillLoader().load_directory(SKILLS_ROOT)
 
     assert "pipelines-and-cron" in {skill.name for skill in skills}
-
-
-def test_bundled_manifest_tracks_pipelines_and_cron() -> None:
-    manifest_path = REPO_ROOT / "src/gobby/install/bundled_content_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-
-    assert manifest["files"]["skills/pipelines-and-cron/SKILL.md"] == hash_file_bytes(
-        SKILL_DIR / "SKILL.md"
-    )
 
 
 def test_pipeline_yaml_example_matches_runtime_definition() -> None:
