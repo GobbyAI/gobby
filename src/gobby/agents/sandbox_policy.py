@@ -47,7 +47,9 @@ _PROVIDER_DOMAINS: dict[str, tuple[str, ...]] = {
 }
 
 _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
-    "claude": ("~/.claude",),
+    # claude-cli-nodejs is where the CLI creates its per-workspace MCP log
+    # directory; without the grant SRT denies that file-write-create at startup.
+    "claude": ("~/.claude", "~/Library/Caches/claude-cli-nodejs"),
     "codex": ("~/.codex",),
     "gemini": ("~/.gemini", "~/.config/gemini"),
     "qwen": ("~/.qwen",),

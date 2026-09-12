@@ -1712,6 +1712,27 @@ def _agy_resolver() -> SandboxResolver:
 
 
 @pytest.mark.unit
+class TestClaudeProviderGrants:
+    async def test_claude_write_grants_cover_the_cli_mcp_log_cache_root(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        auth_paths = sandbox_policy._PROVIDER_AUTH_PATHS["claude"]
+        assert "~/Library/Caches/claude-cli-nodejs" in auth_paths
+
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        paths = await compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="claude",
+            env={"PATH": ""},
+        )
+        for root in sandbox_policy.provider_write_exceptions("claude"):
+            assert root in paths.write_paths
+            assert root in paths.read_paths
+
+
 class TestAgySandboxResolver:
     """AGY sandbox resolver, policy maps, and capability-gate reachability (plan 3.2)."""
 

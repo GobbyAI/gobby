@@ -413,6 +413,9 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         assert (expected_parent / "tmp-path").read_text() == str(temp_path)
     else:
         assert temp_path == expected_parent / "tmp"
+    # Children the provider spawns (the uv-launched MCP bridge) read TMPDIR, so
+    # every provider gets it pointed at the same writable run temp directory.
+    assert Path(launch.provider_env["TMPDIR"]) == temp_path
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
     mux_dir = gobby_home / "runtime" / "srt-sock"
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)

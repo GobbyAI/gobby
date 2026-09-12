@@ -271,8 +271,10 @@ detach/reattach, pane capture, resize delivery, provider/PID verification, and
 process-group cleanup. The SRT policy explicitly enables pseudo-terminal
 operations so host-native confinement does not block the active tmux PTY.
 Each launch also gets a mode-`0700` private temporary directory under its
-sandbox run directory; Gobby passes it through `CLAUDE_CODE_TMPDIR`, which SRT
-maps to the child's `TMPDIR`. Daemon-stop resume regenerates and preflights a
+sandbox run directory. Gobby passes it to every provider child as `TMPDIR`, so
+anything the provider spawns (the `uv`-launched MCP bridge, for one) takes its
+locks and temp files inside a write-granted root; Claude additionally receives
+it as `CLAUDE_CODE_TMPDIR`, which SRT maps to the child's `TMPDIR`. Daemon-stop resume regenerates and preflights a
 fresh policy before launching the provider resume command. A stored web-chat
 session can resume only when its policy hash matches the current daemon-owned
 policy; a stale hash invalidates direct resume and the continuation is recreated

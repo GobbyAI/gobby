@@ -44,7 +44,12 @@ class SandboxRunPaths:
         values = {
             name: str(self.cache / name.replace("_", "-").lower()) for name in RUN_CACHE_ENV_VARS
         }
-        values["CLAUDE_CODE_TMPDIR" if provider == "claude" else "TMPDIR"] = str(self.tmp)
+        # Every provider child, and everything it spawns, must land temp files in
+        # the run's writable tmp: a Claude MCP bridge launched through `uv` takes
+        # its lock from TMPDIR, and the ambient system tmp is not a write grant.
+        values["TMPDIR"] = str(self.tmp)
+        if provider == "claude":
+            values["CLAUDE_CODE_TMPDIR"] = str(self.tmp)
         # zsh uses TMPPREFIX for heredocs independently of TMPDIR.
         values["TMPPREFIX"] = str(self.tmp / "zsh")
         values["GOBBY_LOG_DIR"] = str(self.logs)
