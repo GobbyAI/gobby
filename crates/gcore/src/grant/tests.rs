@@ -21,6 +21,12 @@ const TOKEN: &str = "operator-token";
 const MACHINE: &str = "machine-test";
 const PROJECT: &str = "project-test";
 const NOW: i64 = 1_700_000_100;
+/// Discard port. `AcquireCtx::from_request` falls back to the default dial URL
+/// when the harness home has no `bootstrap.yaml`, and that default is the port a
+/// developer's own daemon listens on, so a bare `request(None)` would probe it
+/// and take live-daemon branches. Every test that does not stand up its own
+/// server dials here instead and stays isolated.
+const UNREACHABLE_DAEMON_URL: &str = "http://127.0.0.1:9";
 
 struct Harness {
     _home: tempfile::TempDir,
@@ -55,7 +61,7 @@ impl Harness {
             project_root: &self.project_root,
             project_id: None,
             home: Some(&self.home),
-            daemon_url,
+            daemon_url: Some(daemon_url.unwrap_or_else(|| UNREACHABLE_DAEMON_URL.to_string())),
             now: Some(NOW),
             session_id: Some("cli".into()),
             deadline: Some(Duration::from_secs(2)),
