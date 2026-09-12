@@ -327,13 +327,16 @@ test("native capture, persistent editing, responsive controls and idempotent act
     await page.getByLabel("What should change?").fill("Touch region");
     await expect(page.getByRole("status")).toHaveText("Saved locally");
     await page.setViewportSize({ width: 320, height: 280 });
-    const editor = await page
-      .getByRole("region", { name: "Edit annotation" })
-      .boundingBox();
-    expect(editor!.x).toBeGreaterThanOrEqual(0);
-    expect(editor!.y).toBeGreaterThanOrEqual(0);
-    expect(editor!.x + editor!.width).toBeLessThanOrEqual(320);
-    expect(editor!.y + editor!.height).toBeLessThanOrEqual(280);
+    await expect(async () => {
+      const editor = await page
+        .getByRole("region", { name: "Edit annotation" })
+        .boundingBox();
+      expect(editor).not.toBeNull();
+      expect(editor!.x).toBeGreaterThanOrEqual(0);
+      expect(editor!.y).toBeGreaterThanOrEqual(0);
+      expect(editor!.x + editor!.width).toBeLessThanOrEqual(320);
+      expect(editor!.y + editor!.height).toBeLessThanOrEqual(280);
+    }).toPass();
     await page.screenshot({
       path: testInfo.outputPath("editor-small-visible-area.png"),
     });

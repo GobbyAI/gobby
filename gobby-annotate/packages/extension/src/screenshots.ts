@@ -9,7 +9,23 @@ export function fingerprint(documentId: string): Fingerprint {
   return { document: documentId, url: location.href, viewport: viewport() };
 }
 export function sameCapture(a: Fingerprint, b: Fingerprint): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  // Messaging may reorder keys; compare state rather than its serialization.
+  const av = a.viewport,
+    bv = b.viewport;
+  return (
+    a.document === b.document &&
+    a.url === b.url &&
+    av.layout.width === bv.layout.width &&
+    av.layout.height === bv.layout.height &&
+    av.visual.width === bv.visual.width &&
+    av.visual.height === bv.visual.height &&
+    av.visual.offsetLeft === bv.visual.offsetLeft &&
+    av.visual.offsetTop === bv.visual.offsetTop &&
+    av.visual.scale === bv.visual.scale &&
+    av.devicePixelRatio === bv.devicePixelRatio &&
+    av.scrollX === bv.scrollX &&
+    av.scrollY === bv.scrollY
+  );
 }
 export async function captureHidden<T>(
   host: HTMLElement,
