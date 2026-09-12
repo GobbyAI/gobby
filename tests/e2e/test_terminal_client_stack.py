@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, TypeIs, cast
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -29,7 +30,7 @@ from gobby.servers.websocket.terminal_ws import WRITE_FAULT_NAME
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameClient
-from gobby.terminals.host_client import HostClient, encode_control_line
+from gobby.terminals.host_client import CommitTransportError, HostClient, encode_control_line
 from gobby.terminals.host_protocol import (
     CONTROL_PROTOCOL_VERSION,
     control_socket_path,
@@ -892,11 +893,16 @@ async def test_terminal_client_stack_end_to_end(
         commit_deadline_ms=8000,
     )
     inflight_host = str(inflight_prepared["host_terminal_id"])
-    commit_line = encode_control_line(
-        {"method": "spawn_commit", "terminal_id": inflight_id, "spawn_key": inflight_id}
-    )
-    control._writer.write(commit_line)
-    await control._writer.drain()
+    with (
+        patch.object(
+            control,
+            "read_payload",
+            new=AsyncMock(side_effect=ConnectionError("commit reply lost")),
+        ),
+        pytest.raises(CommitTransportError) as commit_error,
+    ):
+        await control.spawn_commit(inflight_id, inflight_id)
+    assert commit_error.value.request_written is True
     await control.close()
     control = await _open_control(socket_dir)
     listed = await control.list_terminals()

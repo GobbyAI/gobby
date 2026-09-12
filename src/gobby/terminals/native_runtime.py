@@ -15,14 +15,17 @@ from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import (
     MAX_CONTROL_LINE,
     MAX_WRITE_BATCH_TARGETS,
+    CommitTransportError,
     HostBatchOperation,
     HostBatchTarget,
     HostCommandError,
     HostDecodeError,
+    HostEpochChangedError,
+    HostManagerStopped,
     HostUnavailableError,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
+from gobby.terminals.host_protocol import HostListRow, frames_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.runtime import (
@@ -43,6 +46,69 @@ from gobby.terminals.runtime import (
     is_named_key,
 )
 from gobby.utils.local_token import LOCAL_API_TOKEN_FILENAME, local_token_path
+
+MAX_SPAWN_ERROR_CODE_LENGTH = 128
+type NativeSpawnSettlement = Literal["fail_pending", "fail_pending_kill", "pending"]
+
+
+def _bounded_spawn_code(code: str) -> str:
+    return (code or "spawn_failed")[:MAX_SPAWN_ERROR_CODE_LENGTH]
+
+
+def _host_error_detail(exc: HostCommandError) -> str | None:
+    if exc.detail and exc.stage:
+        return f"{exc.stage}: {exc.detail}"
+    if exc.detail:
+        return exc.detail
+    if exc.stage:
+        return f"stage: {exc.stage}"
+    return None
+
+
+def classify_native_spawn_failure(
+    exc: BaseException,
+) -> tuple[str, str | None, NativeSpawnSettlement]:
+    """Map every native spawn failure to one bounded code and row settlement."""
+    if isinstance(exc, HostManagerStopped):
+        return "host_stopped", exc.detail, "fail_pending"
+    if isinstance(exc, HostEpochChangedError):
+        return "host_epoch_changed", str(exc), "fail_pending"
+    if isinstance(exc, CommitTransportError):
+        if exc.request_written:
+            return "commit_indeterminate", exc.detail, "pending"
+        return "commit_not_sent", exc.detail, "fail_pending_kill"
+    if isinstance(exc, asyncio.CancelledError):
+        if bool(getattr(exc, "request_written", False)):
+            return "commit_indeterminate", None, "pending"
+        return "commit_not_sent", None, "fail_pending_kill"
+    if isinstance(exc, HostUnavailableError):
+        return "host_unreachable", exc.detail, "fail_pending"
+    if isinstance(exc, HostCommandError):
+        detail = _host_error_detail(exc)
+        if exc.stage == "reserve" and exc.error in {
+            "host_draining",
+            "capacity",
+            "stale",
+            "stale_reservation",
+            "not_native",
+        }:
+            reason = "stale" if exc.error == "stale_reservation" else exc.error
+            return _bounded_spawn_code(f"host_refused:{reason}"), detail, "fail_pending"
+        if exc.error == "exec_failed":
+            return _bounded_spawn_code(f"exec_failed:{exc.code}"), detail, "fail_pending"
+        if exc.error in {"exec_timeout", "malformed_status"}:
+            return exc.error, detail, "fail_pending"
+        if exc.error in {"unknown_terminal", "already_committed"}:
+            return _bounded_spawn_code(f"commit_refused:{exc.error}"), detail, "fail_pending"
+        return _bounded_spawn_code(exc.error), detail, "fail_pending"
+    if isinstance(exc, CommitSpawnRefusedError):
+        return "commit_refused:invalid_state", str(exc), "fail_pending"
+    return _bounded_spawn_code(str(exc)), str(exc) or None, "fail_pending"
+
+
+def _mark_host_error_stage(exc: HostCommandError, stage: str) -> None:
+    if exc.stage is None:
+        exc.stage = stage
 
 
 @dataclass(frozen=True)
@@ -106,6 +172,7 @@ __all__ = [
     "NativeBatchResult",
     "NativeBatchTarget",
     "NativeTerminalRuntime",
+    "classify_native_spawn_failure",
 ]
 
 
@@ -212,13 +279,19 @@ class NativeTerminalRuntime:
         return client
 
     async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
-        await self._ensure()
-        subscribe = getattr(self._client, "subscribe_events", None)
-        if callable(subscribe) and not self._subscribed:
-            await subscribe()
-            self._subscribed = True
-        reserve_key = str(terminal_id)
-        payload = await self._client.reserve_observer(str(terminal_id), reserve_key)
+        try:
+            await self._ensure()
+            subscribe = getattr(self._client, "subscribe_events", None)
+            if callable(subscribe) and not self._subscribed:
+                await subscribe()
+                self._subscribed = True
+            reserve_key = str(terminal_id)
+            payload = await self._client.reserve_observer(str(terminal_id), reserve_key)
+        except HostCommandError as exc:
+            _mark_host_error_stage(exc, "reserve")
+            raise
+        except (ConnectionError, OSError, TimeoutError) as exc:
+            raise HostUnavailableError(str(exc) or "gterm host unavailable") from exc
         return {
             "reservation_id": str(payload.get("reservation_id") or ""),
             "reserve_key": str(payload.get("reserve_key") or reserve_key),
@@ -243,24 +316,30 @@ class NativeTerminalRuntime:
         prepared.acknowledge_observer()
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
-        await self._ensure()
-        if request.rows is not None and request.cols is not None:
-            validate_dimensions(request.rows, request.cols)
-        reservation_id = request.reservation_id
-        reserve_key = request.reserve_key
-        if not reservation_id or not reserve_key:
-            raise HostCommandError("invalid_reservation")
-        payload = await self._client.spawn(
-            terminal_id=str(request.terminal_id),
-            spawn_key=request.spawn_key,
-            reservation_id=reservation_id,
-            reserve_key=reserve_key,
-            argv=list(request.command),
-            env=dict(request.env or {}),
-            cwd=request.cwd or "/tmp",
-            rows=request.rows or 24,
-            cols=request.cols or 80,
-        )
+        try:
+            await self._ensure()
+            if request.rows is not None and request.cols is not None:
+                validate_dimensions(request.rows, request.cols)
+            reservation_id = request.reservation_id
+            reserve_key = request.reserve_key
+            if not reservation_id or not reserve_key:
+                raise HostCommandError("invalid_reservation")
+            payload = await self._client.spawn(
+                terminal_id=str(request.terminal_id),
+                spawn_key=request.spawn_key,
+                reservation_id=reservation_id,
+                reserve_key=reserve_key,
+                argv=list(request.command),
+                env=dict(request.env or {}),
+                cwd=request.cwd or "/tmp",
+                rows=request.rows or 24,
+                cols=request.cols or 80,
+            )
+        except HostCommandError as exc:
+            _mark_host_error_stage(exc, "prepare")
+            raise
+        except (ConnectionError, OSError, TimeoutError) as exc:
+            raise HostUnavailableError(str(exc) or "gterm host unavailable") from exc
         host_terminal_id = str(payload.get("host_terminal_id") or "")
         pgid = payload.get("pgid")
         start_time = payload.get("start_time")
@@ -291,29 +370,19 @@ class NativeTerminalRuntime:
             frame_host_epoch=self._frame_host_epoch,
             host_terminal_id=prepared.host_terminal_id,
         )
+        expected_epoch = locator.frame_host_epoch or self._frame_host_epoch
+        current_epoch = str(getattr(self._client, "host_epoch", "") or "")
+        if expected_epoch and current_epoch and current_epoch != expected_epoch:
+            raise HostEpochChangedError("host epoch changed")
         try:
             await self._client.spawn_commit(str(prepared.terminal_id), prepared.spawn_key)
-        except ConnectionError:
-            directory = self._socket_dir()
-            reconnect = getattr(self._client, "reconnect", None)
-            if directory is None or not callable(reconnect):
-                raise
-            await reconnect(
-                control_socket_path(directory), expected_epoch=self._frame_host_epoch or None
-            )
-            rows = await self._client.list_terminals()
-            match = next(
-                (
-                    row
-                    for row in rows
-                    if str(row.terminal_id) == str(prepared.terminal_id)
-                    and str(row.spawn_key) == prepared.spawn_key
-                    and row.commit_state == "committed"
-                ),
-                None,
-            )
-            if match is None:
-                raise
+        except CommitTransportError:
+            raise
+        except HostCommandError as exc:
+            _mark_host_error_stage(exc, "commit")
+            raise
+        except (ConnectionError, OSError, TimeoutError) as exc:
+            raise CommitTransportError(str(exc), request_written=False) from exc
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:

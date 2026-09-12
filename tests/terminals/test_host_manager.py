@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
 import tomllib
@@ -9,13 +10,14 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
+from gobby.terminals.host_client import HostManagerStopped
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_condition
 from tests.terminals.host_fakes import (
@@ -115,6 +117,18 @@ def _host(
         spawner=spawn,
         pid_identity=lambda _pid: pid_ok,
     )
+
+
+class _ControlledSleep:
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, delay: float) -> None:
+        self.calls.append(delay)
+        self.started.set()
+        await self.release.wait()
 
 
 @pytest.mark.asyncio
@@ -970,3 +984,162 @@ def test_host_spawn_forwards_attachment_pool_args(tmp_path: Path) -> None:
     argv = captured[0]
     assert argv[argv.index("--max-attachments-total") + 1] == "8"
     assert argv[argv.index("--max-attachments-per-terminal") + 1] == "4"
+
+
+@pytest.mark.asyncio
+async def test_ensure_restart_is_singleflight_with_backoff(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    terminal_manager = TerminalManager(temp_db)
+    client = FakeControlClient()
+    manager = _host(tmp_path, terminal_manager, client)
+    manager._client = None
+    manager._stop_requested = False
+    controlled = _ControlledSleep()
+    manager._sleep = controlled
+    spawner = MagicMock(return_value=FakeHostProcess(pid=client.host_pid))
+    manager._spawner = spawner
+
+    first = asyncio.create_task(manager.ensure_restart())
+    second = asyncio.create_task(manager.ensure_restart())
+    await controlled.started.wait()
+    controlled.release.set()
+    first_epoch, second_epoch = await asyncio.gather(first, second)
+    assert first_epoch == client.host_epoch
+    assert second_epoch == client.host_epoch
+    assert spawner.call_count == 1
+    assert controlled.calls == [1.0]
+    await manager.stop_producers()
+
+    failure_delays: list[float] = []
+
+    async def instant_sleep(delay: float) -> None:
+        failure_delays.append(delay)
+
+    failed = _host(tmp_path, terminal_manager, FakeControlClient())
+    failed._client = None
+    failed._stop_requested = False
+    failed._sleep = instant_sleep
+    failed._spawner = MagicMock(side_effect=FileNotFoundError("gterm"))
+    with pytest.raises(HostManagerStopped):
+        await failed.ensure_restart()
+    assert failure_delays == [1.0, 2.0, 4.0, 8.0, 16.0]
+    assert failed._spawner.call_count == 5
+    assert failed.native_available is False
+
+    ceiling_delays: list[float] = []
+    ceiling = _host(tmp_path, terminal_manager, FakeControlClient())
+    ceiling.config = ceiling.config.model_copy(
+        update={"restart_max_attempts": 7, "restart_backoff_ceiling_seconds": 30.0}
+    )
+    ceiling._client = None
+    ceiling._stop_requested = False
+
+    async def ceiling_sleep(delay: float) -> None:
+        ceiling_delays.append(delay)
+
+    ceiling._sleep = ceiling_sleep
+    ceiling._spawner = MagicMock(side_effect=FileNotFoundError("gterm"))
+    with pytest.raises(HostManagerStopped):
+        await ceiling.ensure_restart()
+    assert ceiling_delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+
+    manager.backoff_seconds = 8.0
+    manager._restart_failures = 3
+    manager._healthy_since = 0.0
+    manager._monotonic = lambda: 61.0
+    manager._stop_requested = False
+    manager._client = client
+
+    async def stop_after_reconcile() -> None:
+        manager._stop_requested = True
+
+    manager.reconcile = AsyncMock(side_effect=stop_after_reconcile)
+    manager._sleep = AsyncMock(return_value=None)
+    await manager._health_loop()
+    assert manager.backoff_seconds == 0.0
+    assert manager._restart_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_drained_host_is_never_respawned(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    terminal_manager = TerminalManager(temp_db)
+    client = FakeControlClient()
+    manager = _host(tmp_path, terminal_manager, client)
+    spawner = MagicMock(return_value=FakeHostProcess(pid=client.host_pid))
+    manager._spawner = spawner
+    manager.host_drained = True
+
+    with pytest.raises(HostManagerStopped):
+        await manager.ensure_restart()
+    manager.host_drained = False
+    manager._stop_requested = True
+    with pytest.raises(HostManagerStopped):
+        await manager.ensure_restart()
+    assert spawner.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_waiter_cancellation_does_not_cancel_shared_restart(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    terminal_manager = TerminalManager(temp_db)
+    client = FakeControlClient()
+    manager = _host(tmp_path, terminal_manager, client)
+    manager._client = None
+    manager._stop_requested = False
+    controlled = _ControlledSleep()
+    manager._sleep = controlled
+    spawner = MagicMock(return_value=FakeHostProcess(pid=client.host_pid))
+    manager._spawner = spawner
+
+    cancelled = asyncio.create_task(manager.ensure_restart())
+    survivor = asyncio.create_task(manager.ensure_restart())
+    await controlled.started.wait()
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+    controlled.release.set()
+    assert await survivor == client.host_epoch
+    assert spawner.call_count == 1
+    await manager.stop_producers()
+
+
+@pytest.mark.asyncio
+async def test_stop_fences_restart_creation_and_publication(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+) -> None:
+    terminal_manager = TerminalManager(temp_db)
+    client = FakeControlClient()
+    manager = _host(tmp_path, terminal_manager, client)
+    manager._client = None
+    manager._stop_requested = False
+    controlled = _ControlledSleep()
+    manager._sleep = controlled
+    spawner = MagicMock(return_value=FakeHostProcess(pid=client.host_pid))
+    manager._spawner = spawner
+    manager.rotate_control_token = MagicMock(return_value="rotated")
+
+    waiting = asyncio.create_task(manager.ensure_restart())
+    await controlled.started.wait()
+    await manager.stop()
+    with pytest.raises(HostManagerStopped):
+        await waiting
+    with pytest.raises(HostManagerStopped):
+        await manager.ensure_restart()
+    assert spawner.call_count == 0
+    assert manager.rotate_control_token.call_count == 0
+    assert manager._client is None
+
+    await manager.start()
+    manager._client = None
+    manager._sleep = AsyncMock(return_value=None)
+    assert await manager.ensure_restart() == client.host_epoch
+    assert spawner.call_count == 1
+    await manager.stop_producers()

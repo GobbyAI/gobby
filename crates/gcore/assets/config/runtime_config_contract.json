@@ -4257,6 +4257,28 @@
     },
     {
       "activation": "live",
+      "default": 30.0,
+      "description": "Maximum delay between host restart attempts.",
+      "key": "terminal_host.restart_backoff_ceiling_seconds",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Consecutive host restart failures before native launch is disabled.",
+      "key": "terminal_host.restart_max_attempts",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 10.0,
       "description": "Grace period for host_shutdown and process-group reaping.",
       "key": "terminal_host.shutdown_grace_seconds",

@@ -154,6 +154,7 @@ class SpawnResult:
     pid: int | None = None
     backend: str | None = None
     error: str | None = None
+    error_detail: str | None = None
     message: str | None = None
     codex_session_id: str | None = None
     terminal_id: str | None = None

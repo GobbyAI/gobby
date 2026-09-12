@@ -9,12 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import Mock
 
-from gobby.config.terminals import TerminalConfig
 from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_observation
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator
-from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -384,118 +382,6 @@ class TerminalWsMixin:
         except Exception:
             logger.warning("tmux terminal discovery failed", exc_info=True)
             return {}
-
-    async def _handle_terminal_create(self, websocket: Any, data: dict[str, Any]) -> None:
-        request_id = data.get("request_id")
-        try:
-            validate_dimensions(data.get("rows"), data.get("cols"))
-        except InvalidTerminalDimensionsError:
-            await self._send_json(
-                websocket,
-                {
-                    "type": "terminal_error",
-                    "code": "invalid_dimensions",
-                    "request_id": request_id,
-                },
-            )
-            return
-        from gobby.terminals.web_spawn import spawn_web_terminal
-
-        manager = getattr(self, "terminal_manager", None)
-        registry = getattr(self, "terminal_runtime_registry", None)
-        # A picker with no project selected lists the whole machine; a terminal
-        # created there belongs to the global project, like an unowned pane.
-        project_id = data.get("project_id") or self._project_id(websocket) or GLOBAL_PROJECT_ID
-        if manager is None or registry is None or not isinstance(project_id, str):
-            reason = (
-                "terminal manager unavailable"
-                if manager is None
-                else "terminal runtime registry unavailable"
-                if registry is None
-                else "project unresolved"
-            )
-            logger.warning("terminal_create refused: %s", reason)
-            await self._send_json(
-                websocket,
-                {
-                    "type": "terminal_create_result",
-                    "success": False,
-                    "request_id": request_id,
-                    "reason": reason,
-                },
-            )
-            return
-        backend = getattr(self.terminal_config, "default_backend", None)
-        runtime = registry.resolve(backend or TerminalConfig().default_backend)
-        command = data.get("command") or ["zsh"]
-        if not isinstance(command, list):
-            command = ["zsh"]
-        result = await spawn_web_terminal(
-            manager=manager,
-            runtime=runtime,
-            project_id=project_id,
-            session_id=None,
-            rows=data.get("rows"),
-            cols=data.get("cols"),
-            cwd=data.get("cwd"),
-            command=[str(part) for part in command],
-        )
-        if not result.success:
-            logger.warning(
-                "terminal_create spawn failed (backend=%s, terminal=%s): %s",
-                runtime.backend,
-                result.terminal_id,
-                result.error,
-            )
-        await self._send_json(
-            websocket,
-            {
-                "type": "terminal_create_result",
-                "request_id": request_id,
-                "success": result.success,
-                "terminal_id": result.terminal_id,
-                "backend": runtime.backend,
-                "reason": result.error,
-            },
-        )
-        if result.success:
-            row = manager.get(result.terminal_id)
-            if row is not None:
-                await self.broadcast_tmux_session_event(
-                    "created",
-                    terminal_id=result.terminal_id,
-                    terminal=inventory_item(row),
-                )
-
-    async def _handle_terminal_kill(self, websocket: Any, data: dict[str, Any]) -> None:
-        terminal_id = data.get("terminal_id")
-        manager = getattr(self, "terminal_manager", None)
-        row = (
-            None
-            if manager is None or not isinstance(terminal_id, str)
-            else manager.get(terminal_id)
-        )
-        transitioned = None
-        if (
-            row is not None
-            and manager is not None
-            and getattr(self, "terminal_runtime_registry", None) is not None
-            and row.state in {"live", "orphaned"}
-        ):
-            runtime = self.terminal_runtime_registry.resolve(row.backend)
-            await runtime.terminate(row, 1.0)
-            transitioned = manager.mark_exited(row.id)
-            if transitioned is not None:
-                await self.broadcast_tmux_session_event("killed", terminal_id=row.id)
-        await self._send_json(
-            websocket,
-            {
-                "type": "terminal_kill_result",
-                "success": transitioned is not None,
-                "terminal_id": terminal_id,
-                "request_id": data.get("request_id"),
-            },
-        )
 
     async def _handle_terminal_set_scroll_offset(
         self, websocket: Any, data: dict[str, Any]

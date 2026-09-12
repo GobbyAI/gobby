@@ -10,7 +10,7 @@ import pytest
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.server import WebSocketServer
-from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
@@ -26,7 +26,7 @@ DEFAULT_SOCKET = "/private/tmp/tmux-501/default"
 
 async def _kill(server: Any, terminal_id: str) -> dict[str, Any]:
     websocket = MockWebSocket()
-    await TerminalWsMixin._handle_terminal_kill(
+    await TerminalCreateMixin._handle_terminal_kill(
         server,
         websocket,
         {"type": "terminal_kill", "terminal_id": terminal_id, "request_id": "kill-1"},

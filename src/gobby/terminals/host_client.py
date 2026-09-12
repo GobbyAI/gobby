@@ -31,17 +31,39 @@ class HostEpochChangedError(RuntimeError):
 class HostCommandError(RuntimeError):
     """Typed control-protocol refusal (`ok: false`)."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
+    def __init__(
+        self,
+        error: str,
+        *,
+        code: str | None = None,
+        detail: str | None = None,
+        stage: str | None = None,
+    ) -> None:
+        super().__init__(error)
+        self.error = error
+        self.code = code or error
+        self.detail = detail
+        self.stage = stage
 
 
 class HostUnavailableError(HostCommandError):
     """The gterm host cannot be reached: a `host_unavailable` refusal, never a tmux fallback."""
 
     def __init__(self, message: str = "gterm host unavailable") -> None:
-        super().__init__("host_unavailable")
+        super().__init__("host_unavailable", detail=message)
         self.message = message
+
+
+class CommitTransportError(HostUnavailableError):
+    """Transport failure while committing, with an explicit write boundary."""
+
+    def __init__(self, message: str, *, request_written: bool) -> None:
+        super().__init__(message)
+        self.request_written = request_written
+
+
+class HostManagerStopped(HostUnavailableError):
+    """The host manager is stopping, stopped, drained, or exhausted."""
 
 
 class HostDecodeError(ValueError):
@@ -115,6 +137,7 @@ class HostClient:
         self.closed = False
         self.host_epoch: str | None = None
         self.next_seq = 1
+        self._commit_write_states: dict[asyncio.Task[Any], bool] = {}
 
     @classmethod
     async def connect(cls, socket_path: Path) -> HostClient:
@@ -127,7 +150,16 @@ class HostClient:
     @staticmethod
     def raise_for_payload(payload: dict[str, Any]) -> None:
         if payload.get("ok") is False:
-            raise HostCommandError(str(payload.get("error", "error")))
+            error = str(payload.get("error", "error"))
+            code = payload.get("code")
+            detail = payload.get("detail")
+            stage = payload.get("stage")
+            raise HostCommandError(
+                error,
+                code=code if isinstance(code, str) else None,
+                detail=detail if isinstance(detail, str) else None,
+                stage=stage if isinstance(stage, str) else None,
+            )
 
     @staticmethod
     def require_ping(payload: dict[str, Any]) -> dict[str, Any]:
@@ -164,15 +196,31 @@ class HostClient:
         return payload
 
     async def _roundtrip(self, request: dict[str, Any]) -> dict[str, Any]:
-        if self.closed:
-            raise ConnectionError("control closed")
-        encoded = encode_control_line(request)
-        if len(encoded) >= MAX_CONTROL_LINE:
-            raise HostCommandError("request_too_large")
-        async with self._lock:
-            self._writer.write(encoded)
-            await self._writer.drain()
-            return await self.read_payload()
+        is_commit = request.get("method") == "spawn_commit"
+        request_written = False
+        try:
+            if self.closed:
+                raise ConnectionError("control closed")
+            encoded = encode_control_line(request)
+            if len(encoded) >= MAX_CONTROL_LINE:
+                raise HostCommandError("request_too_large")
+            async with self._lock:
+                self._writer.write(encoded)
+                request_written = True
+                task = asyncio.current_task()
+                if is_commit and task is not None and task in self._commit_write_states:
+                    self._commit_write_states[task] = True
+                await self._writer.drain()
+                return await self.read_payload()
+        except (asyncio.CancelledError, HostCommandError):
+            raise
+        except (ConnectionError, OSError, TimeoutError) as exc:
+            if is_commit:
+                raise CommitTransportError(
+                    str(exc) or "commit transport failed",
+                    request_written=request_written,
+                ) from exc
+            raise HostUnavailableError(str(exc) or "gterm host unavailable") from exc
 
     async def hello(self, protocol_version: int, control_token: str) -> HelloResult:
         payload = await self._roundtrip(
@@ -227,9 +275,20 @@ class HostClient:
         return payload
 
     async def spawn_commit(self, terminal_id: str, spawn_key: str) -> None:
-        await self._roundtrip(
-            {"method": "spawn_commit", "terminal_id": terminal_id, "spawn_key": spawn_key}
-        )
+        task = asyncio.current_task()
+        if task is not None:
+            self._commit_write_states[task] = False
+        try:
+            await self._roundtrip(
+                {"method": "spawn_commit", "terminal_id": terminal_id, "spawn_key": spawn_key}
+            )
+        except asyncio.CancelledError as exc:
+            if task is not None:
+                exc.__dict__["request_written"] = self._commit_write_states.get(task, False)
+            raise
+        finally:
+            if task is not None:
+                self._commit_write_states.pop(task, None)
 
     async def write(
         self,
@@ -415,11 +474,13 @@ class HostClient:
 
 
 __all__ = [
+    "CommitTransportError",
     "CONTROL_PROTOCOL_VERSION",
     "HostClient",
     "HostCommandError",
     "HostDecodeError",
     "HostEpochChangedError",
+    "HostManagerStopped",
     "HostUnavailableError",
     "decode_control_line",
     "encode_control_line",
