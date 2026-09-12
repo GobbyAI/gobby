@@ -103,8 +103,8 @@ callers. Load delivery is independently testable and belongs to 1.2.
 
 **Acceptance:**
 - 1.1.1 - Shared parser validates names and reference paths and rejects traversal and malformed identities. file: `src/gobby/skills/instruction_requirements.py`.
-- 1.1.2 - Requirement consumers accept exact completed references and reject router-only, sibling-topic and absent loads. test: `tests/skills/test_instruction_requirements.py`.
-- 1.1.3 - Plain skills, level preservation and schema-first directives retain their existing behavior. test: `tests/skills/test_skills_formatting.py`.
+- 1.1.2 - Requirement consumers accept exact completed references and reject router-only, sibling-topic and absent loads. test: `tests/skills/test_instruction_requirements.py::test_reference_contract_1_1_2`.
+- 1.1.3 - Plain skills, level preservation and schema-first directives retain their existing behavior. test: `tests/skills/test_skills_formatting.py::test_reference_contract_1_1_3`.
 
 ### 1.2 Track complete reference delivery and reset it with context [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -141,9 +141,9 @@ level behavior. Pagination errors and stale cursors retain existing typed recove
 context-scoped completion lifecycle; requirement interpretation is already provided by 1.1.
 
 **Acceptance:**
-- 1.2.1 - Complete direct and wrapped reference retrieval records only the exact identity. test: `tests/skills/test_reference_load_tracking.py`.
-- 1.2.2 - Partial, failed, stale, menu and listing responses do not satisfy reference requirements. test: `tests/mcp_proxy/tools/skills/test_skill_delivery.py`.
-- 1.2.3 - Context resets clear completed references alongside skills while preserving existing level rules. test: `tests/workflows/test_language_skill_reset_rules.py`.
+- 1.2.1 - Complete direct and wrapped reference retrieval records only the exact identity. test: `tests/skills/test_reference_load_tracking.py::test_reference_contract_1_2_1`.
+- 1.2.2 - Partial, failed, stale, menu and listing responses do not satisfy reference requirements. test: `tests/mcp_proxy/tools/skills/test_skill_delivery.py::test_reference_contract_1_2_2`.
+- 1.2.3 - Context resets clear completed references alongside skills while preserving existing level rules. test: `tests/workflows/test_language_skill_reset_rules.py::test_reference_contract_1_2_3`.
 
 ### 1.3 Define the bundled capability catalog and validator [category: code] (depends: 1.2)
 `kind: deliverable`
@@ -167,7 +167,7 @@ fixture catalogs before documentation exists. The catalog contains metadata, nev
 
 **Acceptance:**
 - 1.3.1 - One catalog contract carries capability and topic metadata and validates all reference paths. file: `src/gobby/skills/capability_catalog.py`.
-- 1.3.2 - Duplicate identifiers, missing files and unsafe paths fail with actionable diagnostics. test: `tests/skills/test_capability_catalog.py`.
+- 1.3.2 - Duplicate identifiers, missing files and unsafe paths fail with actionable diagnostics. test: `tests/skills/test_capability_catalog.py::test_reference_contract_1_3_2`.
 
 ## P2: Verified capability library
 `kind: framing`
@@ -1434,8 +1434,8 @@ Focused validation: routing tests plus existing hook and installer tests, coveri
 dollar and supported slash/colon syntax.
 
 **Acceptance:**
-- 3.1.1 - Menus, overviews, topics, requests, collisions and unknown names follow the routing matrix. test: `tests/skills/test_capability_routing.py`.
-- 3.1.2 - Standalone arguments, levels, visibility and project overrides are preserved. test: `tests/skills/test_gobby_skill_router.py`.
+- 3.1.1 - Menus, overviews, topics, requests, collisions and unknown names follow the routing matrix. test: `tests/skills/test_capability_routing.py::test_reference_contract_3_1_1`.
+- 3.1.2 - Standalone arguments, levels, visibility and project overrides are preserved. test: `tests/skills/test_gobby_skill_router.py::test_reference_contract_3_1_2`.
 - 3.1.3 - Prompt interception and provider carriers derive from the same catalog and never inline unrequested bodies. file: `src/gobby/install/shared/skills/gobby/SKILL.md`.
 
 ### 3.2 Enforce public-operation and verified-guide coverage [category: test] (depends: 3.1)
@@ -1464,8 +1464,8 @@ config revision conflicts; oversized paginated results. Run mutations only in is
 fixtures. This is an independently useful regression contract for future public operations.
 
 **Acceptance:**
-- 3.2.1 - Coverage checks fail for unmapped public tools, supported CLI-only operations or unaudited guide links. test: `tests/skills/test_reference_library.py`.
-- 3.2.2 - Representative workflows and catalog/reference/anchor checks pass using isolated fixtures. test: `tests/skills/test_reference_library.py`.
+- 3.2.1 - Coverage checks fail for unmapped public tools, supported CLI-only operations or unaudited guide links. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+- 3.2.2 - Representative workflows and catalog/reference/anchor checks pass using isolated fixtures. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.
 
 ## P4: Enforcement and workflow migration
 `kind: framing`
@@ -1525,9 +1525,9 @@ contract, with no new enforcement lifecycle. Workflow definitions and persisted 
 separate leaves. Run the targeted rule and live-session tests after final edits.
 
 **Acceptance:**
-- 4.1.1 - Existing bootstrap and first-use triggers request exact references with unchanged timing and failure behavior. test: `tests/workflows/test_skill_discovery_rules.py`.
-- 4.1.2 - Reference gates reject router/menu-only loads and accept completed operation topics. test: `tests/workflows/test_task_enforcement_rules.py`.
-- 4.1.3 - Live-session labeling consumes the tasks/live-work requirement. test: `tests/mcp_proxy/tools/test_live_session_label.py`.
+- 4.1.1 - Existing bootstrap and first-use triggers request exact references with unchanged timing and failure behavior. test: `tests/workflows/test_skill_discovery_rules.py::test_reference_contract_4_1_1`.
+- 4.1.2 - Reference gates reject router/menu-only loads and accept completed operation topics. test: `tests/workflows/test_task_enforcement_rules.py::test_reference_contract_4_1_2`.
+- 4.1.3 - Live-session labeling consumes the tasks/live-work requirement. test: `tests/mcp_proxy/tools/test_live_session_label.py::test_reference_contract_4_1_3`.
 
 ### 4.2 Migrate agent and workflow instruction requirements [category: config] (depends: 4.1)
 `kind: deliverable`
@@ -1582,8 +1582,8 @@ consumers; rule enforcement and persisted migration are distinct deliverables. F
 agent-definition, dispatch prompt and workflow tests verify each changed carrier.
 
 **Acceptance:**
-- 4.2.1 - Agent definitions and workflow consumers resolve only current standalone names or exact reference identities. test: `tests/workflows/test_workflows_agent_definitions.py`.
-- 4.2.2 - Planning, build, review and recovery prompts retain their obligations with valid topic loads. test: `tests/workflows/test_planner_grammar_prompt.py`.
+- 4.2.1 - Agent definitions and workflow consumers resolve only current standalone names or exact reference identities. test: `tests/workflows/test_workflows_agent_definitions.py::test_reference_contract_4_2_1`.
+- 4.2.2 - Planning, build, review and recovery prompts retain their obligations with valid topic loads. test: `tests/workflows/test_planner_grammar_prompt.py::test_reference_contract_4_2_2`.
 
 ### 4.3 Update retained methods and documentation consumers [category: docs] (depends: 4.2)
 `kind: deliverable`
@@ -1616,7 +1616,7 @@ design contract. Change reference routing only; this task is not a UI redesign.
 Verify no current retained consumer depends on a retired entrypoint.
 
 **Acceptance:**
-- 4.3.1 - Retained methods keep reusable guidance and resolve Gobby-specific procedures through references. test: `tests/skills/test_coderabbit_skill.py`.
+- 4.3.1 - Retained methods keep reusable guidance and resolve Gobby-specific procedures through references. test: `tests/skills/test_coderabbit_skill.py::test_reference_contract_4_3_1`.
 - 4.3.2 - Current root instructions and normative plan/session contracts name valid loading paths without changing obligations. file: `AGENTS.md`.
 
 ## P5: Installation and cutover
@@ -1651,8 +1651,8 @@ Focused tests cover fresh empty state, installed bundled state, user overrides, 
 requirements, partial failure/retry and repeated synchronization.
 
 **Acceptance:**
-- 5.1.1 - Gobby-owned persisted instruction requirements convert idempotently to exact references. test: `tests/skills/test_reference_migration.py`.
-- 5.1.2 - Custom skills and user-owned requirements remain intact and incompatible requirements receive actionable replacements. test: `tests/skills/test_reference_migration.py`.
+- 5.1.1 - Gobby-owned persisted instruction requirements convert idempotently to exact references. test: `tests/skills/test_reference_migration.py::test_reference_contract_5_1_1`.
+- 5.1.2 - Custom skills and user-owned requirements remain intact and incompatible requirements receive actionable replacements. test: `tests/skills/test_reference_migration.py::test_reference_contract_5_1_2`.
 
 ### 5.2 Retire folded entrypoints and verify fresh install and upgrade [category: code] (depends: 5.1)
 `kind: deliverable`
@@ -1872,9 +1872,9 @@ are one atomic cutover of the entrypoint set. The persistence algorithm was sepa
 verified in 5.1. Fresh/upgrade tests belong here because they validate this exact bundle.
 
 **Acceptance:**
-- 5.2.1 - Exactly the folded source entrypoints are retired with no wrappers and all retained/custom skills preserved. test: `tests/skills/test_reference_installation.py`.
-- 5.2.2 - Fresh installation, upgrade, repeated sync and derived integrity metadata pass using isolated state. test: `tests/skills/test_reference_installation.py`.
-- 5.2.3 - Existing migrated behavior/scenario checks pass with current reference paths and obligations intact. test: `tests/skills/test_reference_library.py`.
+- 5.2.1 - Exactly the folded source entrypoints are retired with no wrappers and all retained/custom skills preserved. test: `tests/skills/test_reference_installation.py::test_reference_contract_5_2_1`.
+- 5.2.2 - Fresh installation, upgrade, repeated sync and derived integrity metadata pass using isolated state. test: `tests/skills/test_reference_installation.py::test_reference_contract_5_2_2`.
+- 5.2.3 - Existing migrated behavior/scenario checks pass with current reference paths and obligations intact. test: `tests/skills/test_reference_library.py::test_reference_contract_5_2_3`.
 - 5.2.4 - Coordinated live cutover verifies installed ownership, retirement, bootstrap and catalog rows. file: `docs/reference-audit/cutover.md`.
 
 ## V1 Verification and completion
@@ -1907,10 +1907,10 @@ No full pytest suite without an explicit user request.
     rejects traversal and malformed identities. file: `src/gobby/skills/instruction_requirements.py`.
 
     1.1.2: Requirement consumers accept exact completed references and reject router-only,
-    sibling-topic and absent loads. test: `tests/skills/test_instruction_requirements.py`.
+    sibling-topic and absent loads. test: `tests/skills/test_instruction_requirements.py::test_reference_contract_1_1_2`.
 
     1.1.3: Plain skills, level preservation and schema-first directives retain their
-    existing behavior. test: `tests/skills/test_skills_formatting.py`.'
+    existing behavior. test: `tests/skills/test_skills_formatting.py::test_reference_contract_1_1_3`.'
   labels:
   - covers:gobby-reference-library:1.1:1.1.1
   - covers:gobby-reference-library:1.1:1.1.2
@@ -1924,13 +1924,13 @@ No full pytest suite without an explicit user request.
   depends_on:
   - '1.1'
   validation_criteria: '1.2.1: Complete direct and wrapped reference retrieval records
-    only the exact identity. test: `tests/skills/test_reference_load_tracking.py`.
+    only the exact identity. test: `tests/skills/test_reference_load_tracking.py::test_reference_contract_1_2_1`.
 
     1.2.2: Partial, failed, stale, menu and listing responses do not satisfy reference
-    requirements. test: `tests/mcp_proxy/tools/skills/test_skill_delivery.py`.
+    requirements. test: `tests/mcp_proxy/tools/skills/test_skill_delivery.py::test_reference_contract_1_2_2`.
 
     1.2.3: Context resets clear completed references alongside skills while preserving
-    existing level rules. test: `tests/workflows/test_language_skill_reset_rules.py`.'
+    existing level rules. test: `tests/workflows/test_language_skill_reset_rules.py::test_reference_contract_1_2_3`.'
   labels:
   - covers:gobby-reference-library:1.2:1.2.1
   - covers:gobby-reference-library:1.2:1.2.2
@@ -1947,7 +1947,7 @@ No full pytest suite without an explicit user request.
     and validates all reference paths. file: `src/gobby/skills/capability_catalog.py`.
 
     1.3.2: Duplicate identifiers, missing files and unsafe paths fail with actionable
-    diagnostics. test: `tests/skills/test_capability_catalog.py`.'
+    diagnostics. test: `tests/skills/test_capability_catalog.py::test_reference_contract_1_3_2`.'
   labels:
   - covers:gobby-reference-library:1.3:1.3.1
   - covers:gobby-reference-library:1.3:1.3.2
@@ -2442,10 +2442,10 @@ No full pytest suite without an explicit user request.
   - '2.22'
   - '2.23'
   validation_criteria: '3.1.1: Menus, overviews, topics, requests, collisions and
-    unknown names follow the routing matrix. test: `tests/skills/test_capability_routing.py`.
+    unknown names follow the routing matrix. test: `tests/skills/test_capability_routing.py::test_reference_contract_3_1_1`.
 
     3.1.2: Standalone arguments, levels, visibility and project overrides are preserved.
-    test: `tests/skills/test_gobby_skill_router.py`.
+    test: `tests/skills/test_gobby_skill_router.py::test_reference_contract_3_1_2`.
 
     3.1.3: Prompt interception and provider carriers derive from the same catalog
     and never inline unrequested bodies. file: `src/gobby/install/shared/skills/gobby/SKILL.md`.'
@@ -2462,10 +2462,10 @@ No full pytest suite without an explicit user request.
   depends_on:
   - '3.1'
   validation_criteria: '3.2.1: Coverage checks fail for unmapped public tools, supported
-    CLI-only operations or unaudited guide links. test: `tests/skills/test_reference_library.py`.
+    CLI-only operations or unaudited guide links. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
 
     3.2.2: Representative workflows and catalog/reference/anchor checks pass using
-    isolated fixtures. test: `tests/skills/test_reference_library.py`.'
+    isolated fixtures. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_2`.'
   labels:
   - covers:gobby-reference-library:3.2:3.2.1
   - covers:gobby-reference-library:3.2:3.2.2
@@ -2479,12 +2479,12 @@ No full pytest suite without an explicit user request.
   - '3.1'
   - '3.2'
   validation_criteria: '4.1.1: Existing bootstrap and first-use triggers request exact
-    references with unchanged timing and failure behavior. test: `tests/workflows/test_skill_discovery_rules.py`.
+    references with unchanged timing and failure behavior. test: `tests/workflows/test_skill_discovery_rules.py::test_reference_contract_4_1_1`.
 
     4.1.2: Reference gates reject router/menu-only loads and accept completed operation
-    topics. test: `tests/workflows/test_task_enforcement_rules.py`.
+    topics. test: `tests/workflows/test_task_enforcement_rules.py::test_reference_contract_4_1_2`.
 
-    4.1.3: Live-session labeling consumes the tasks/live-work requirement. test: `tests/mcp_proxy/tools/test_live_session_label.py`.'
+    4.1.3: Live-session labeling consumes the tasks/live-work requirement. test: `tests/mcp_proxy/tools/test_live_session_label.py::test_reference_contract_4_1_3`.'
   labels:
   - covers:gobby-reference-library:4.1:4.1.1
   - covers:gobby-reference-library:4.1:4.1.2
@@ -2498,10 +2498,10 @@ No full pytest suite without an explicit user request.
   depends_on:
   - '4.1'
   validation_criteria: '4.2.1: Agent definitions and workflow consumers resolve only
-    current standalone names or exact reference identities. test: `tests/workflows/test_workflows_agent_definitions.py`.
+    current standalone names or exact reference identities. test: `tests/workflows/test_workflows_agent_definitions.py::test_reference_contract_4_2_1`.
 
     4.2.2: Planning, build, review and recovery prompts retain their obligations with
-    valid topic loads. test: `tests/workflows/test_planner_grammar_prompt.py`.'
+    valid topic loads. test: `tests/workflows/test_planner_grammar_prompt.py::test_reference_contract_4_2_2`.'
   labels:
   - covers:gobby-reference-library:4.2:4.2.1
   - covers:gobby-reference-library:4.2:4.2.2
@@ -2514,7 +2514,7 @@ No full pytest suite without an explicit user request.
   depends_on:
   - '4.2'
   validation_criteria: '4.3.1: Retained methods keep reusable guidance and resolve
-    Gobby-specific procedures through references. test: `tests/skills/test_coderabbit_skill.py`.
+    Gobby-specific procedures through references. test: `tests/skills/test_coderabbit_skill.py::test_reference_contract_4_3_1`.
 
     4.3.2: Current root instructions and normative plan/session contracts name valid
     loading paths without changing obligations. file: `AGENTS.md`.'
@@ -2532,10 +2532,10 @@ No full pytest suite without an explicit user request.
   - '4.2'
   - '4.3'
   validation_criteria: '5.1.1: Gobby-owned persisted instruction requirements convert
-    idempotently to exact references. test: `tests/skills/test_reference_migration.py`.
+    idempotently to exact references. test: `tests/skills/test_reference_migration.py::test_reference_contract_5_1_1`.
 
     5.1.2: Custom skills and user-owned requirements remain intact and incompatible
-    requirements receive actionable replacements. test: `tests/skills/test_reference_migration.py`.'
+    requirements receive actionable replacements. test: `tests/skills/test_reference_migration.py::test_reference_contract_5_1_2`.'
   labels:
   - covers:gobby-reference-library:5.1:5.1.1
   - covers:gobby-reference-library:5.1:5.1.2
@@ -2548,13 +2548,13 @@ No full pytest suite without an explicit user request.
   depends_on:
   - '5.1'
   validation_criteria: '5.2.1: Exactly the folded source entrypoints are retired with
-    no wrappers and all retained/custom skills preserved. test: `tests/skills/test_reference_installation.py`.
+    no wrappers and all retained/custom skills preserved. test: `tests/skills/test_reference_installation.py::test_reference_contract_5_2_1`.
 
     5.2.2: Fresh installation, upgrade, repeated sync and derived integrity metadata
-    pass using isolated state. test: `tests/skills/test_reference_installation.py`.
+    pass using isolated state. test: `tests/skills/test_reference_installation.py::test_reference_contract_5_2_2`.
 
     5.2.3: Existing migrated behavior/scenario checks pass with current reference
-    paths and obligations intact. test: `tests/skills/test_reference_library.py`.
+    paths and obligations intact. test: `tests/skills/test_reference_library.py::test_reference_contract_5_2_3`.
 
     5.2.4: Coordinated live cutover verifies installed ownership, retirement, bootstrap
     and catalog rows. file: `docs/reference-audit/cutover.md`.'
