@@ -1506,22 +1506,117 @@ This retention costs the next attempt its working room again — the test
 database's tmpfs is back to 675 MB free against the roughly 600 MB a fresh
 index needs, the same squeeze that rejected attempt 24.
 
+## Attempt 27: the trust fix holds, and the provider refuses the work
+
+Attempt 27 ran with output directory
+`/tmp/gobby-ask-native-probe-12858-twentyseventh`, starting `10:22` and ending
+`10:30` local, against source `1b8463b05e` and the unchanged pin
+`.ask-probe-ed9d7c50`. The only change reaching the runtime since attempt 26 is
+`ecde9874e1`, which is pure Python, so the pinned `gcode`
+(`40aeb1431f207c7ee88247412e36e6f45b5e9583418551051e0903ac7621ec0c`) and
+`gterm` (`b7ad098377451219b6b12f07bae8caa569a9f81163b8d2cab501a2e4e0b48ac2`)
+are byte-identical to the ones attempt 26 ran on. One Python function changed
+and nothing else, which is what makes attempt 26 a usable control rather than
+merely the previous run.
+
+It first had to get its working room back. The retained schemas from attempts
+23 and 26 held about 1.2 GB of the 3.0 GB tmpfs between them, and a fresh index
+needs roughly 600 MB. Both were dumped to
+`~/.gobby/backups/<project>/ask-probe-schemas/` and each dump was verified
+against its live schema before anything was dropped: `code_calls` 475,939 and
+483,034, matching exactly, 144 tables, 301 indexes and 144 `COPY` blocks per
+dump, each with an intact `pg_dump` terminator. Dropping all four schemas — each
+probe schema and its `_agent_auth` sibling — took the database from 1229 MB to
+24 MB and left 2.7 GB free.
+
+| step | window (UTC) | outcome |
+| --- | --- | --- |
+| `prepare` | `15:22:27` – `15:27:46` | completed, 126,696 symbols |
+| `seed` | `15:27:46` – `15:28:19` | completed in 33s |
+| `investigate` | `15:28:19` – `15:30:33` | failed |
+
+### The trust dialog is answered correctly
+
+The daemon logged, fourteen seconds after the spawn:
+
+```
+Auto-dismissed trust prompt for agent 49761af2-d5cf-4cef-9ce7-07d0ec22a7c0
+(trust folder) with down+enter
+```
+
+Attempt 26's line, from the same code path and the same dialog, ended
+`with enter`. That one word is the entire proof, because `with <keys>` is
+written from the tuple `trust_dismiss_keys` returns: a bare `enter` is the
+"no navigable selection list" fallback, which confirms whichever row the dialog
+opened on, and that row is `No, exit`. `down+enter` means `_selection_options`
+found the marker through the SGR sequence that highlights its row, counted the
+options, and navigated to the row that grants trust before confirming.
+
+The agent survived it. Claude Code came up inside the sandbox at
+`…/2565c6b9-f8c4-49e5-988c-8d726952c9d8/scratch/investigator-0` and its pane
+carries the full investigation prompt — question, boundary list, evidence
+manifest `50208d47ef0294c8959e042181af9b2ddcc5bc9771a70e9a4f02e793e92972c5`.
+Every runtime layer this document has been chasing since attempt 1 worked at
+once: the policy digest admitted the launch, the frame credential passed, the
+seed accepted the corpus, and the trust dialog was answered in favour of the
+workspace.
+
+### Where it stopped
+
+The provider declined to do the work:
+
+```
+⎿  You've hit your monthly spend limit. Run /usage-credits to manage your
+   limit and keep using Fable 5.1 or switch models to continue this chat.
+✻ Brewed for 0s · done 10:28 AM
+```
+
+Nothing followed. The child session recorded no activity for 134 seconds — zero
+hook receipt effects, `updated_at` moving only when the kill wrote it — and
+`check_initialization_timeout` killed the run for provider rotation at
+`15:30:33`, which is that guard working correctly on an agent that was never
+going to start. The pipeline reports the same
+`Ask agent ended as error without a valid submission` as attempt 26, from an
+entirely different cause.
+
+This is an account quota, not a defect, and no change in this repository moves
+it. Raising the monthly limit or pointing the `ask-investigator` profile at a
+different model is the precondition for attempt 28 and for all 14 cohort
+questions.
+
+The `⚠ Safe mode` banner in the same pane is deliberate and not a second
+finding: `ask_provider_args` sets `--safe-mode` together with
+`--strict-mcp-config` and an explicit `mcp__gobby__*` allowlist, so the Ask MCP
+surface is supplied on purpose rather than disabled.
+
+The export came back incomplete again — `complete: false`, 0 receipts, 3
+excluded — so runtime root `/private/tmp/gobby-ap-fjteqd9b` and schema
+`gobby_test_askprobe_02e7377c72e445b6b546f4c89b22f13b` are both retained, with
+the pane capture, cleanup record and raw probe copied out to the session
+scratchpad.
+
 Attempts 1–17 and 19 remain immutable policy failures, and 16be058101 closed
 the cause they all share: attempt 22 proved it negatively, by the absence of
-that message, and attempt 26 positively, with a captured launch policy whose
-allowRead and allowWrite carry the workspace-keyed runtime home every one of
-those attempts died on. Attempts 18 and 24 are immutable environment failures carrying no
+that message, and attempts 26 and 27 positively, with a captured launch policy
+whose allowRead and allowWrite carry the workspace-keyed runtime home every one
+of those attempts died on. Attempts 18 and 24 are immutable environment failures carrying no
 policy evidence, the first on the host volume and the second on the test
 database's tmpfs. Attempts 20 and 21 are immutable harness and snapshot
 failures from the shared build directory, fixed by relocating the pin and by
-4c0f6bce05. Attempts 22 through 26 each carry the previous fix forward and
+4c0f6bce05. Attempts 22 through 27 each carry the previous fix forward and
 reach one step further: 22 cleared the digest and died at the gterm frame
 credential, 23 proved the frame-credential fix and died at
 the trust dialog, 24 never launched, 25 died at the seed on a credential
-signature that matched this document's own filename, and 26 passed preparation,
+signature that matched this document's own filename, 26 passed preparation,
 passed the seed, completed the launch, and died at the trust dialog again —
 this time because the monitor was reading the highlighted row through the
-escape sequence that highlights it. Every failure observed so far has a landed
-fix, and no step before the investigator's own work is still unexplained.
-Whether it can reach a submission is what attempt 27 tests; that attempt and
-all 14 cohort questions remain unrun.
+escape sequence that highlights it — and 27 answered that dialog correctly and
+delivered the investigation prompt into a live sandboxed agent.
+
+Every runtime failure this document records now has a landed fix, and attempt
+27 exercised all of them at once without a single one recurring. What stops the
+work is no longer in this repository: the probe account has reached its monthly
+spend limit, so the investigator is refused before it can act. Raising that
+limit, or binding the `ask-investigator` profile to a different model, is the
+precondition for attempt 28. Whether a native Ask agent can reach a submission
+is still unproven, and all 14 cohort questions remain unrun.
