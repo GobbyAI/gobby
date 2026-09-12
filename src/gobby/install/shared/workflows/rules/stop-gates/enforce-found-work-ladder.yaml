@@ -12,6 +12,7 @@ rules:
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
+      and not has_active_coordination_wait()
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
       - type: set_variable
@@ -40,6 +41,7 @@ rules:
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
+      and not has_active_coordination_wait()
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
       - type: block
@@ -60,6 +62,7 @@ rules:
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
+      and not has_active_coordination_wait()
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
       - type: block

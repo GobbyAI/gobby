@@ -26,6 +26,7 @@ from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
 )
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.revisions import get_definitions_revision
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
@@ -299,8 +300,19 @@ class RuleEngine(
                 eval_context.setdefault("_blocking_deadline", blocking_deadline)
 
                 active_agent_wait = False
+                active_coordination_wait = False
                 durable_task_wait = False
                 if is_turn_end:
+                    try:
+                        active_coordination_wait = await offload(
+                            CoordinationWaitManager(self.db).has_active_wait, session_id
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to determine active coordination wait for session %s: %s",
+                            session_id,
+                            exc,
+                        )
                     try:
                         active_agent_wait = await offload(
                             CompletionSubscriberManager(self.db).has_active_agent_wait,
@@ -330,7 +342,10 @@ class RuleEngine(
                                 exc,
                             )
                 eval_context["_has_active_agent_wait"] = active_agent_wait
-                eval_context["_has_durable_stop_wait"] = active_agent_wait or durable_task_wait
+                eval_context["_has_active_coordination_wait"] = active_coordination_wait
+                eval_context["_has_durable_stop_wait"] = (
+                    active_agent_wait or active_coordination_wait or durable_task_wait
+                )
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
@@ -414,7 +429,8 @@ class RuleEngine(
 
                 # Auto-increment ordinary turn-end attempts; durable waits consume none.
                 if is_turn_end:
-                    if not (active_agent_wait or durable_task_wait):
+                    variables.setdefault("stop_attempts", 0)
+                    if not eval_context["_has_durable_stop_wait"]:
                         variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
                         "TURN_END gate diagnostics",
@@ -428,6 +444,7 @@ class RuleEngine(
                             "edit_write_pending": variables.get("edit_write_pending"),
                             "tool_block_pending": variables.get("tool_block_pending"),
                             "active_agent_wait": active_agent_wait,
+                            "active_coordination_wait": active_coordination_wait,
                             "durable_task_wait": durable_task_wait,
                         },
                     )

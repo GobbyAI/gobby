@@ -761,6 +761,7 @@ class TestRequireStepCompletion:
                 "int": int,
                 "bool": bool,
                 "has_active_agent_wait": lambda: False,
+                "has_active_coordination_wait": lambda: False,
             },
         )
         assert body.when is not None

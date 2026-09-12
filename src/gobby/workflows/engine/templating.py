@@ -208,6 +208,9 @@ class TemplatingMixin:
         funcs["has_pending_messages"] = self._has_pending_messages
         funcs["pending_message_count"] = self._pending_message_count
         funcs["has_active_agent_wait"] = lambda: bool(ctx.get("_has_active_agent_wait", False))
+        funcs["has_active_coordination_wait"] = lambda: bool(
+            ctx.get("_has_active_coordination_wait", False)
+        )
         funcs["has_durable_stop_wait"] = lambda: bool(ctx.get("_has_durable_stop_wait", False))
         return funcs
 

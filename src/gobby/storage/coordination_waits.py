@@ -15,6 +15,23 @@ class CoordinationWaitManager:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
+    def has_active_wait(self, session_id: str) -> bool:
+        """Protect unresolved, unexpired holds with an existing nonterminal owner.
+
+        Delivery acknowledgement is irrelevant: expiry ends protection even
+        when the terminal outcome is still awaiting delivery.
+        """
+        row = self.db.fetchone(
+            "SELECT EXISTS (SELECT 1 FROM coordination_waits w "
+            "JOIN sessions owner ON owner.id = w.owner_session_id "
+            "WHERE w.waiter_session_id = %s AND w.outcome = 'waiting' "
+            "AND w.expires_at > clock_timestamp() "
+            "AND owner.status NOT IN ('completed', 'cancelled', 'closed', 'expired', 'deleted')"
+            ") AS active",
+            (session_id,),
+        )
+        return row is not None and row["active"] is True
+
     def register(
         self,
         waiter_session_id: str,

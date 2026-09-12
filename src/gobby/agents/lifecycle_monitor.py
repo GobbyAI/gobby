@@ -32,6 +32,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.machine_id import require_machine_id
 
@@ -622,6 +623,19 @@ class AgentLifecycleMonitor:
         for run in runs:
             session_id = run.child_session_id or run.claimed_session_id or run.parent_session_id
             if not session_id:
+                self._stuck_interventions.pop(run.id, None)
+                self._draft_grace_observations.pop(run.id, None)
+                continue
+            try:
+                coordinated_hold = await self._run_db(
+                    CoordinationWaitManager(self._db).has_active_wait, session_id
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to verify coordination hold for %s", session_id, exc_info=True
+                )
+                coordinated_hold = False
+            if coordinated_hold:
                 self._stuck_interventions.pop(run.id, None)
                 self._draft_grace_observations.pop(run.id, None)
                 continue

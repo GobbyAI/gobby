@@ -11,6 +11,7 @@ rules:
       and variables.get('current_step')
       and not variables.get('step_workflow_complete')
       and not has_active_agent_wait()
+      and not has_active_coordination_wait()
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
       - type: block
