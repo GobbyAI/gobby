@@ -209,6 +209,146 @@ class TestProviderResolution:
         assert spawn_request.provider == "claude"
 
     @pytest.mark.asyncio
+    async def test_rotating_providers_substitutes_the_same_tier_model(self) -> None:
+        """A rotated spawn names a model rather than inheriting the target CLI's default."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="codex-worker",
+            provider="codex",
+            model="gpt-5.6-sol",
+        )
+        runner = _make_runner()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000001",
+            ),
+        ):
+            mock_ctx.return_value = {"id": "proj-abc", "project_path": "/repo"}
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
+            mock_handler.cleanup_environment = AsyncMock()
+            mock_handler.build_context_prompt.return_value = "Do the thing"
+            mock_get_handler.return_value = mock_handler
+
+            mock_execute.return_value = _make_execute_spawn_result()
+
+            result = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="Do the thing",
+                runner=runner,
+                agent_body=agent_body,
+                provider="claude",
+                parent_session_id="parent-session-xyz",
+            )
+            await asyncio.gather(*_spawn_background_tasks.values())
+
+        assert result["success"] is True
+        spawn_request = mock_execute.call_args[0][0]
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model == "opus"
+
+    @pytest.mark.asyncio
+    async def test_rotation_without_a_tier_equivalent_is_refused(self) -> None:
+        """No same-tier model for the target provider fails instead of spawning unpinned."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="codex-worker",
+            provider="codex",
+            model="gpt-6-astra",
+        )
+        runner = _make_runner()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            mock_ctx.return_value = {"id": "proj-abc", "project_path": "/repo"}
+
+            result = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="Do the thing",
+                runner=runner,
+                agent_body=agent_body,
+                provider="claude",
+                parent_session_id="parent-session-xyz",
+            )
+
+        assert result["success"] is False
+        assert "gpt-6-astra" in str(result["error"])
+        mock_execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_model_survives_a_provider_rotation(self) -> None:
+        """A caller-supplied model is never second-guessed by the tier substitution."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="codex-worker",
+            provider="codex",
+            model="gpt-5.6-sol",
+        )
+        runner = _make_runner()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000001",
+            ),
+        ):
+            mock_ctx.return_value = {"id": "proj-abc", "project_path": "/repo"}
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
+            mock_handler.cleanup_environment = AsyncMock()
+            mock_handler.build_context_prompt.return_value = "Do the thing"
+            mock_get_handler.return_value = mock_handler
+
+            mock_execute.return_value = _make_execute_spawn_result()
+
+            result = await spawn_agent_impl(
+                terminal_backend="tmux",
+                prompt="Do the thing",
+                runner=runner,
+                agent_body=agent_body,
+                provider="claude",
+                model="haiku",
+                parent_session_id="parent-session-xyz",
+            )
+            await asyncio.gather(*_spawn_background_tasks.values())
+
+        assert result["success"] is True
+        spawn_request = mock_execute.call_args[0][0]
+        assert spawn_request.model == "haiku"
+
+    @pytest.mark.asyncio
     async def test_provider_inherit_falls_back_to_claude(self) -> None:
         """When provider='inherit' and no agent_body, defaults to 'claude'."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl

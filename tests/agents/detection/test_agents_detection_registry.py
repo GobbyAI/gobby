@@ -111,10 +111,13 @@ def test_bundled_manifests_cover_supported_providers_and_rule_contract() -> None
     assert loaded.keys() == providers
     assert all(loaded[provider].manifest.id == provider for provider in providers)
     assert all(loaded[provider].issues == () for provider in providers)
-    assert all(
-        {rule.id for rule in loaded[provider].manifest.rules} == required_rule_ids
-        for provider in providers
-    )
+    for provider in providers:
+        rule_ids = {rule.id for rule in loaded[provider].manifest.rules}
+        # Every manifest covers the contract; a provider may add rules of its own
+        # (agy carries `artifact_approval`), so this is a floor, not an equality.
+        assert required_rule_ids <= rule_ids, (
+            f"{provider} is missing {sorted(required_rule_ids - rule_ids)}"
+        )
 
 
 @pytest.mark.unit

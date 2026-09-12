@@ -20,6 +20,7 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
+from gobby.agents.provider_rotation import rotated_model_for_provider
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
@@ -207,6 +208,7 @@ async def spawn_agent_impl(
             return {"success": False, "error": agy_support_refusal(agy_record)}
     provider_was_overridden = explicit_provider is not None
 
+    concrete_agent_provider: str | None = None
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
         concrete_agent_provider = concrete_provider(agent_body.provider)
@@ -215,8 +217,30 @@ async def spawn_agent_impl(
         )
 
     effective_model = _normalize_optional_model(model)
-    if effective_model is None and agent_body and not provider_differs_from_agent:
-        effective_model = _normalize_optional_model(agent_body.model)
+    if effective_model is None and agent_body:
+        agent_model = _normalize_optional_model(agent_body.model)
+        if not provider_differs_from_agent:
+            effective_model = agent_model
+        elif agent_model is not None:
+            # The agent pinned a model and the spawn rotated off its provider.
+            # Carrying the model over would be wrong, but leaving it unset hands
+            # the choice to the target CLI's configured default — an unchosen
+            # model that may carry its own spend cap. Substitute the target
+            # provider's model at the same tier, or refuse.
+            effective_model = rotated_model_for_provider(
+                target_provider=effective_provider,
+                source_model=agent_model,
+            )
+            if effective_model is None:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Agent {agent_body.name!r} is pinned to "
+                        f"{concrete_agent_provider}/{agent_model}, and no {effective_provider} "
+                        f"model is registered at that tier. Pass an explicit model for "
+                        f"{effective_provider} instead of leaving it to the provider's default."
+                    ),
+                }
     is_local_run = False
 
     requested_reasoning_effort = reasoning_effort

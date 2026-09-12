@@ -9,9 +9,11 @@ import pytest
 from gobby.agents.provider_rotation import (
     get_failed_providers_for_task,
     parse_provider_list,
+    rotated_model_for_provider,
     select_next_provider,
 )
 from gobby.agents.stall_classifier import StallClassifier
+from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, parse_feature_candidate
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -159,3 +161,47 @@ class TestSelectNextProvider:
             agent_run_manager=None,
         )
         assert result == "claude"
+
+
+class TestRotatedModelForProvider:
+    @pytest.mark.parametrize(
+        ("source_model", "target_provider", "expected"),
+        [
+            ("gpt-5.6-sol", "claude", "opus"),
+            ("opus", "codex", "gpt-5.6-sol"),
+            ("gpt-5.6-terra", "claude", "sonnet"),
+            ("sonnet", "codex", "gpt-5.6-terra"),
+            ("gpt-5.6-luna", "claude", "haiku"),
+            ("haiku", "codex", "gpt-5.6-luna"),
+        ],
+    )
+    def test_substitutes_the_same_tier(
+        self, source_model: str, target_provider: str, expected: str
+    ) -> None:
+        assert (
+            rotated_model_for_provider(target_provider=target_provider, source_model=source_model)
+            == expected
+        )
+
+    def test_case_and_whitespace_do_not_defeat_the_lookup(self) -> None:
+        assert (
+            rotated_model_for_provider(target_provider="claude", source_model="  GPT-5.6-Sol ")
+            == "opus"
+        )
+
+    def test_unknown_source_model_resolves_to_nothing(self) -> None:
+        assert (
+            rotated_model_for_provider(target_provider="claude", source_model="gpt-6-astra") is None
+        )
+
+    def test_provider_absent_from_the_tier_resolves_to_nothing(self) -> None:
+        assert rotated_model_for_provider(target_provider="agy", source_model="gpt-5.6-sol") is None
+
+    def test_model_names_identify_exactly_one_tier(self) -> None:
+        """The lookup keys on the model alone, so no model may span two profiles."""
+        seen: dict[str, str] = {}
+        for profile, candidates in DEFAULT_PROFILE_CANDIDATES.items():
+            for candidate in candidates:
+                _, model = parse_feature_candidate(candidate)
+                assert model not in seen, f"{model} appears in {seen.get(model)} and {profile}"
+                seen[model] = str(profile)

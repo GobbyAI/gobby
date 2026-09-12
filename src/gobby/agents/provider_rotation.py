@@ -13,11 +13,38 @@ import warnings
 from typing import TYPE_CHECKING
 
 from gobby.agents.stall_classifier import StallClassifier
+from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, parse_feature_candidate
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
 
 logger = logging.getLogger(__name__)
+
+
+def rotated_model_for_provider(*, target_provider: str, source_model: str) -> str | None:
+    """Return the model ``target_provider`` uses at ``source_model``'s tier.
+
+    Rotating a spawn onto another provider cannot carry the agent's model
+    across — ``gpt-5.6-sol`` means nothing to the claude CLI — but dropping it
+    is worse: the CLI then falls back to whatever default it has configured,
+    which is a model nobody chose and may carry its own spend cap. The feature
+    profiles in ``DEFAULT_PROFILE_CANDIDATES`` already pair each provider's
+    models by capability tier, so they answer the substitution directly.
+
+    Returns ``None`` when ``source_model`` sits in no profile or the target
+    provider has no candidate at that tier; callers must fail rather than
+    spawn with the model unset.
+    """
+    normalized = source_model.strip().lower()
+    for candidates in DEFAULT_PROFILE_CANDIDATES.values():
+        parsed = [parse_feature_candidate(candidate) for candidate in candidates]
+        if not any(model.lower() == normalized for _, model in parsed):
+            continue
+        for provider, model in parsed:
+            if provider == target_provider:
+                return model
+        return None
+    return None
 
 
 def parse_provider_list(provider_string: str | None) -> list[str]:
