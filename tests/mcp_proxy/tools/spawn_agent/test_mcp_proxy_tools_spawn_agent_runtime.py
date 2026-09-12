@@ -12,7 +12,7 @@ from gobby.mcp_proxy.tools.spawn_agent._response import build_spawn_response
 pytestmark = pytest.mark.unit
 
 
-def test_build_spawn_success_response_serializes_paths_and_omits_null_reasoning() -> None:
+def test_build_spawn_response_serializes_paths_and_omits_null_reasoning() -> None:
     response = build_spawn_response(
         run_id="run-123",
         spawn_result=SimpleNamespace(
@@ -41,7 +41,7 @@ def test_build_spawn_success_response_serializes_paths_and_omits_null_reasoning(
     assert "reasoning" not in response
 
 
-def test_build_spawn_success_response_reports_reused_worktree() -> None:
+def test_build_spawn_response_reports_reused_worktree() -> None:
     response = build_spawn_response(
         run_id="run-123",
         spawn_result=SimpleNamespace(
@@ -68,7 +68,7 @@ def test_build_spawn_success_response_reports_reused_worktree() -> None:
     assert response["reused_worktree"] is True
 
 
-def test_build_spawn_success_response_reports_fresh_after_conflict() -> None:
+def test_build_spawn_response_reports_fresh_after_conflict() -> None:
     conflict = "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted"
     response = build_spawn_response(
         run_id="run-123",

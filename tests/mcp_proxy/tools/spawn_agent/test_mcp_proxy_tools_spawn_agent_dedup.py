@@ -248,7 +248,7 @@ class TestSpawnAgentDedup:
             mock_lease_cls.return_value.attach.return_value = None
             spawn_result = MagicMock()
             spawn_result.success = True
-            spawn_result.terminal_type = "headless"
+            spawn_result.backend = "headless"
             spawn_result.child_session_id = "child-review-1"
             spawn_result.error = None
             mock_execute.return_value = spawn_result
@@ -359,7 +359,7 @@ class TestSpawnAgentDedup:
                 child_session_id="child-merge-worker",
                 status="pending",
                 pid=1234,
-                terminal_type="ghostty",
+                backend="ghostty",
                 terminal_id=None,
                 message="Spawned",
             )

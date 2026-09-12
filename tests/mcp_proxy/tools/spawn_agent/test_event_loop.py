@@ -38,7 +38,7 @@ async def test_spawn_preparation_does_not_block_event_loop(
         child_session_id="child",
         status="ok",
         pid=1,
-        terminal_type=None,
+        backend=None,
         terminal_id=None,
         message="ok",
         process=None,

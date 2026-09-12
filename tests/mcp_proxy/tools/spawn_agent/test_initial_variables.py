@@ -480,7 +480,7 @@ class TestSpawnAgentStepVariables:
                 child_session_id=child.id,
                 status="pending",
                 pid=None,
-                terminal_type=None,
+                backend=None,
                 terminal_id=None,
                 process=None,
                 error=None,
@@ -594,7 +594,7 @@ class TestSpawnAgentStepVariables:
                 child_session_id=child.id,
                 status="pending",
                 pid=None,
-                terminal_type=None,
+                backend=None,
                 terminal_id=None,
                 process=None,
                 error=None,
@@ -793,7 +793,7 @@ class TestSpawnAgentStepVariables:
                 child_session_id=child.id,
                 status="pending",
                 pid=None,
-                terminal_type=None,
+                backend=None,
                 terminal_id=None,
                 process=None,
                 error=None,
@@ -1200,7 +1200,7 @@ class TestDispatchBatchIsolationParity:
             spawn_result.child_session_id = "child-456"
             spawn_result.status = "pending"
             spawn_result.pid = None
-            spawn_result.terminal_type = None
+            spawn_result.backend = None
             spawn_result.terminal_id = None
             spawn_result.process = None
             spawn_result.error = None
@@ -1266,7 +1266,7 @@ class TestDispatchBatchIsolationParity:
             spawn_result.child_session_id = "child-789"
             spawn_result.status = "pending"
             spawn_result.pid = None
-            spawn_result.terminal_type = None
+            spawn_result.backend = None
             spawn_result.terminal_id = None
             spawn_result.process = None
             spawn_result.error = None

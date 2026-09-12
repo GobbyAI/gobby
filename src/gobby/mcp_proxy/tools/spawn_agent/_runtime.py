@@ -118,7 +118,6 @@ class SpawnRunStorage(Protocol):
         *,
         pid: int | None = None,
         terminal_id: str | None = None,
-        tmux_session_name: str | None = None,
         worktree_id: str | None = None,
         clone_id: str | None = None,
     ) -> None: ...

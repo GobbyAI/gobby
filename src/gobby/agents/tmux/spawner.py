@@ -96,8 +96,7 @@ class TmuxSpawner(TerminalSpawnerBase):
 
     * Uses ``-L gobby`` by default (configurable via :class:`TmuxConfig`).
     * Delegates to :class:`TmuxSessionManager` for session lifecycle.
-    * Stores ``tmux_session_name`` on :class:`SpawnResult` so the caller
-      can start output streaming and register the name on the agent.
+    * Returns backend-neutral terminal metadata on :class:`SpawnResult`.
     """
 
     def __init__(

@@ -88,7 +88,7 @@ def _spawn_success(run_storage: LocalAgentRunManager, delay: float = 0.0) -> Asy
             success=True,
             child_session_id=child_session_id,
             status="pending",
-            terminal_type="none",
+            backend="none",
             pid=None,
             message="spawned",
         )
@@ -115,7 +115,7 @@ async def test_parent_claim_transfer_failure_cleans_up_spawn(
     spawn_result = SimpleNamespace(
         success=True,
         child_session_id=child_session_id,
-        terminal_type="none",
+        backend="none",
         terminal_id=None,
         pid=None,
         error=None,
@@ -704,7 +704,7 @@ class TestSpawnAgentPreRegistration:
                 success=True,
                 child_session_id=request.session_id,
                 status="pending",
-                terminal_type="none",
+                backend="none",
                 pid=None,
                 message="spawned",
             )
@@ -764,7 +764,7 @@ class TestSpawnAgentPreRegistration:
                 success=True,
                 child_session_id=request.session_id,
                 status="pending",
-                terminal_type="none",
+                backend="none",
                 pid=None,
                 message="spawned",
             )
@@ -890,7 +890,7 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                terminal_type="ghostty",
+                backend="ghostty",
                 terminal_id=None,
                 message="Spawned",
             )
@@ -1197,7 +1197,7 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                terminal_type="ghostty",
+                backend="ghostty",
                 terminal_id="agent-run-canonical",
                 message="Spawned",
             )
@@ -1256,7 +1256,7 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                terminal_type="ghostty",
+                backend="ghostty",
                 terminal_id="agent-run-canonical",
                 message="Spawned",
             )
@@ -1313,7 +1313,7 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                terminal_type="ghostty",
+                backend="ghostty",
                 terminal_id="agent-run-canonical",
                 message="Spawned",
             )

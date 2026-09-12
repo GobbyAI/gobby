@@ -146,7 +146,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         success=False,
         error="provider boot failed",
         child_session_id="child-123",
-        terminal_type="none",
+        backend="none",
         pid=None,
     )
     isolation_context = SimpleNamespace(

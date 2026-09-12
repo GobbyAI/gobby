@@ -605,7 +605,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="ghostty",
+            backend="ghostty",
             message="Spawned successfully",
         )
 
@@ -793,7 +793,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="ghostty",
+            backend="ghostty",
         )
 
         with (
@@ -942,7 +942,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="agent-run-abc123def456",
         )
 
@@ -1051,7 +1051,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="agent-run-abc123def456",
         )
         agent_body = MagicMock()
@@ -1108,7 +1108,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="agent-run-local123456",
         )
 
@@ -1161,7 +1161,7 @@ class TestExecuteSpawn:
 
         def fake_spawn(**_kwargs: object) -> MagicMock:
             call_order.append("spawn")
-            return MagicMock(success=True, pid=12345, terminal_type="tmux")
+            return MagicMock(success=True, pid=12345, backend="tmux")
 
         mock_spawner.spawn.side_effect = fake_spawn
 
@@ -1233,7 +1233,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="agent-run-xyz",
         )
 
@@ -1377,7 +1377,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="agent-run-grok123",
         )
 
@@ -1437,7 +1437,7 @@ class TestExecuteSpawn:
             )
         )
         mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, terminal_type="tmux")
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, backend="tmux")
 
         with (
             patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
@@ -1783,7 +1783,7 @@ class TestExecuteSpawnSandbox:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="ghostty",
+            backend="ghostty",
         )
 
         # Mock the sandbox resolver (imported locally in _spawn_claude_terminal)
@@ -1958,7 +1958,7 @@ class TestExecuteSpawnSandbox:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="ghostty",
+            backend="ghostty",
         )
 
         with (
@@ -2009,7 +2009,7 @@ class TestExecuteSpawnSandbox:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="ghostty",
+            backend="ghostty",
         )
 
         with (
@@ -2246,7 +2246,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="gobby-test",
         )
 
@@ -2292,7 +2292,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=99,
-            terminal_type="tmux",
+            backend="tmux",
         )
 
         with (
@@ -2339,7 +2339,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=99,
-            terminal_type="tmux",
+            backend="tmux",
         )
 
         with (
@@ -2387,7 +2387,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=99,
-            terminal_type="tmux",
+            backend="tmux",
             terminal_id="gobby-abc",
         )
 
