@@ -92,6 +92,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "7f8eeeeb60bc13f2a5be9b6fdca99eafcd927c03090ae8f147eba4bf78b8736e",
         sql: include_str!("../../assets/schema/migrations/430_add_run_evidence_and_reports.sql"),
     },
+    EmbeddedMigration {
+        version: 431,
+        filename: "431_add_coordination_waits.sql",
+        checksum: "0e3fd049adf275f5b385baadb568d1ea30bfcc45f912b41e56a76c2cbe12b5fe",
+        sql: include_str!("../../assets/schema/migrations/431_add_coordination_waits.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from gobby.config.terminals import TerminalConfig
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.events.coordination_waits import CoordinationWaitService
     from gobby.events.wake import WakeDispatcher
     from gobby.feedback.service import FeedbackReviewService
     from gobby.llm import LLMService
@@ -206,6 +207,7 @@ class GobbyRunner:
 
     # Phase 3: orchestration (init_orchestration)
     wake_dispatcher: WakeDispatcher
+    coordination_wait_service: CoordinationWaitService | None = None
     completion_registry: CompletionEventRegistry
     workflow_loader: PipelineLoader | None
     pipeline_execution_manager: LocalPipelineExecutionManager | None

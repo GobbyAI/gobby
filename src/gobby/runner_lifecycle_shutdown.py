@@ -284,6 +284,12 @@ async def _stop_started_services(
     *,
     shutdown_intent: ShutdownIntent,
 ) -> None:
+    coordination_wait_service = getattr(runner, "coordination_wait_service", None)
+    if coordination_wait_service is not None:
+        await _best_effort(
+            coordination_wait_service.stop, "Coordination wait shutdown", timeout=2.0
+        )
+
     if runner.agent_lifecycle_monitor:
         logger.info("Preserving active agent runs during daemon shutdown")
         await _best_effort(

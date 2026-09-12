@@ -121,6 +121,9 @@ def create_agents_registry(
         get_project_context=get_project_context,
     )
 
+    from gobby.mcp_proxy.tools.coordination import register_coordination_tools
+
+    register_coordination_tools(registry, ctx)
     register_agent_query_tools(registry, ctx)
     register_agent_lifecycle_tools(registry, ctx)
     register_agent_checkpoint_tools(registry, ctx)

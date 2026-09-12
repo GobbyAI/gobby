@@ -191,6 +191,20 @@ async def run_daemon(
 
         await require_managed_services_ready(runner)
 
+        from gobby.events.coordination_waits import CoordinationWaitService
+        from gobby.storage.coordination_waits import CoordinationWaitManager
+        from gobby.storage.hub.postgres import PostgresHubDatabase
+        from gobby.utils.machine_id import require_machine_id
+
+        if isinstance(runner.database, PostgresHubDatabase):
+            runner.coordination_wait_service = CoordinationWaitService(
+                CoordinationWaitManager(runner.database),
+                runner.completion_registry,
+                require_machine_id(),
+                runner.database.open_runtime_async_connection,
+            )
+            await runner.coordination_wait_service.start()
+
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,
@@ -307,4 +321,7 @@ async def run_daemon(
         cleanup_owned_pid_file()
         sys.exit(1)
     finally:
+        coordination_wait_service = getattr(runner, "coordination_wait_service", None)
+        if coordination_wait_service is not None:
+            await coordination_wait_service.stop()
         clear_app_context()

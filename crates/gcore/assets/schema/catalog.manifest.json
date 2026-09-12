@@ -1465,6 +1465,58 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "coordination_waits.completed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "coordination_waits.condition_key",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "coordination_waits.coordination_key",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "coordination_waits.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|clock_timestamp()|NEVER"
+    },
+    {
+      "name": "coordination_waits.delivered_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "coordination_waits.expires_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "coordination_waits.id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "coordination_waits.matched_status",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "coordination_waits.message_id",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "coordination_waits.outcome",
+      "definition": "text|text|NO|'waiting'::text|NEVER"
+    },
+    {
+      "name": "coordination_waits.owner_session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "coordination_waits.statuses",
+      "definition": "ARRAY|_text|YES||NEVER"
+    },
+    {
+      "name": "coordination_waits.waiter_session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "cron_jobs.action_config",
       "definition": "jsonb|jsonb|NO||NEVER"
     },
@@ -6823,6 +6875,22 @@
       "definition": "PRIMARY KEY (key)"
     },
     {
+      "name": "coordination_waits.coordination_waits_check",
+      "definition": "CHECK ((coordination_key IS NOT NULL) <> (statuses IS NOT NULL))"
+    },
+    {
+      "name": "coordination_waits.coordination_waits_outcome_check",
+      "definition": "CHECK (outcome = ANY (ARRAY['waiting'::text, 'released'::text, 'status_matched'::text, 'owner_ended'::text, 'cancelled'::text, 'timeout'::text]))"
+    },
+    {
+      "name": "coordination_waits.coordination_waits_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "coordination_waits.coordination_waits_waiter_session_id_owner_session_id_condi_key",
+      "definition": "UNIQUE (waiter_session_id, owner_session_id, condition_key)"
+    },
+    {
       "name": "cron_jobs.cron_jobs_is_system_check",
       "definition": "CHECK (is_system = ANY (ARRAY[false, true]))"
     },
@@ -8405,6 +8473,18 @@
       "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\n    SELECT CASE\n        WHEN t.closed_at IS NOT NULL THEN 'closed'\n        WHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\n        ELSE COALESCE(\n            (\n                SELECT CASE\n                    WHEN stage_scan.state IN (\n                        'ready', 'in_progress', 'needs_review', 'review_approved'\n                    )\n                    THEN stage_scan.state\n                    ELSE 'ready'\n                END\n                  FROM task_stage_states stage_scan\n                 WHERE stage_scan.task_id = p_task_id\n                   AND stage_scan.state <> 'done'\n                 ORDER BY stage_scan.position\n                 LIMIT 1\n            ),\n            'ready'\n        )\n    END\n    FROM tasks t\n    WHERE t.id = p_task_id\n$function$"
     },
     {
+      "name": "coordination_owner_changed()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_owner_changed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE wait_id text;\nBEGIN\n    FOR wait_id IN SELECT id FROM coordination_waits\n      WHERE owner_session_id = OLD.id AND outcome = 'waiting'\n    LOOP\n        PERFORM resolve_coordination_wait(wait_id);\n    END LOOP;\n    RETURN NULL;\nEND;\n$function$"
+    },
+    {
+      "name": "coordination_release_committed()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_release_committed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE wait_id text;\nBEGIN\n    IF NEW.message_type <> 'coordination_release' THEN RETURN NEW; END IF;\n    PERFORM id FROM sessions WHERE id = NEW.from_session FOR UPDATE;\n    FOR wait_id IN SELECT id FROM coordination_waits\n      WHERE owner_session_id = NEW.from_session AND waiter_session_id = NEW.to_session\n        AND outcome = 'waiting'\n        AND coordination_key = NEW.metadata_json::jsonb ->> 'coordination_key'\n    LOOP\n        PERFORM resolve_coordination_wait(wait_id);\n    END LOOP;\n    RETURN NEW;\nEND;\n$function$"
+    },
+    {
+      "name": "coordination_wait_changed()",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.coordination_wait_changed()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF TG_OP = 'INSERT' OR OLD.outcome IS DISTINCT FROM NEW.outcome THEN\n        PERFORM pg_notify('gobby_coordination_wait', NEW.id);\n    END IF;\n    RETURN NEW;\nEND;\n$function$"
+    },
+    {
       "name": "enforce_chat_attachments_bound_at_write_once()",
       "definition": "CREATE OR REPLACE FUNCTION $schema.enforce_chat_attachments_bound_at_write_once()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF OLD.bound_at IS NOT NULL AND NEW.bound_at IS DISTINCT FROM OLD.bound_at THEN\n        RAISE EXCEPTION 'chat_attachments.bound_at is write-once';\n    END IF;\n    RETURN NEW;\nEND;\n$function$"
     },
@@ -8431,6 +8511,10 @@
     {
       "name": "reset_transcript_processing_on_recovery()",
       "definition": "CREATE OR REPLACE FUNCTION $schema.reset_transcript_processing_on_recovery()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.source IS DISTINCT FROM OLD.source\n       OR NEW.transcript_path IS DISTINCT FROM OLD.transcript_path\n       OR NEW.external_id IS DISTINCT FROM OLD.external_id\n       OR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('active', 'paused'))\n    THEN\n        NEW.transcript_processed := FALSE;\n        NEW.transcript_processing_failure_count := 0;\n        NEW.transcript_processing_last_error_code := NULL;\n        NEW.transcript_processing_last_error := NULL;\n        NEW.transcript_processing_last_failed_at := NULL;\n    END IF;\n    RETURN NEW;\nEND;\n$function$"
+    },
+    {
+      "name": "resolve_coordination_wait(wait_id text)",
+      "definition": "CREATE OR REPLACE FUNCTION $schema.resolve_coordination_wait(wait_id text)\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    w coordination_waits%ROWTYPE;\n    owner_status text;\n    release_id text;\n    terminal_outcome text;\nBEGIN\n    SELECT * INTO w FROM coordination_waits WHERE id = wait_id FOR UPDATE;\n    IF NOT FOUND OR w.outcome <> 'waiting' THEN RETURN; END IF;\n    SELECT status INTO owner_status FROM sessions WHERE id = w.owner_session_id;\n    SELECT id INTO release_id FROM inter_session_messages\n      WHERE from_session = w.owner_session_id AND to_session = w.waiter_session_id\n        AND message_type = 'coordination_release'\n        AND metadata_json::jsonb ->> 'coordination_key' = w.coordination_key\n        AND sent_at <= w.expires_at\n      ORDER BY sent_at, id LIMIT 1;\n    terminal_outcome := CASE\n      WHEN clock_timestamp() >= w.expires_at THEN 'timeout'\n      WHEN release_id IS NOT NULL THEN 'released'\n      WHEN owner_status = ANY(w.statuses) THEN 'status_matched'\n      WHEN owner_status IS NULL OR owner_status IN\n        ('completed', 'cancelled', 'closed', 'expired', 'deleted') THEN 'owner_ended'\n      ELSE NULL END;\n    IF terminal_outcome IS NOT NULL THEN\n        UPDATE coordination_waits SET outcome = terminal_outcome,\n          matched_status = CASE WHEN terminal_outcome = 'status_matched' THEN owner_status END,\n          message_id = CASE WHEN terminal_outcome = 'released' THEN release_id END,\n          completed_at = clock_timestamp() WHERE id = wait_id;\n    END IF;\nEND;\n$function$"
     },
     {
       "name": "touch_chat_attachments_updated_at()",
@@ -8625,6 +8709,22 @@
     {
       "name": "config_store_pkey",
       "definition": "CREATE UNIQUE INDEX config_store_pkey ON $schema.config_store USING btree (key)"
+    },
+    {
+      "name": "coordination_waits_owner",
+      "definition": "CREATE INDEX coordination_waits_owner ON $schema.coordination_waits USING btree (owner_session_id) WHERE (outcome = 'waiting'::text)"
+    },
+    {
+      "name": "coordination_waits_pending",
+      "definition": "CREATE INDEX coordination_waits_pending ON $schema.coordination_waits USING btree (waiter_session_id) WHERE (delivered_at IS NULL)"
+    },
+    {
+      "name": "coordination_waits_pkey",
+      "definition": "CREATE UNIQUE INDEX coordination_waits_pkey ON $schema.coordination_waits USING btree (id)"
+    },
+    {
+      "name": "coordination_waits_waiter_session_id_owner_session_id_condi_key",
+      "definition": "CREATE UNIQUE INDEX coordination_waits_waiter_session_id_owner_session_id_condi_key ON $schema.coordination_waits USING btree (waiter_session_id, owner_session_id, condition_key)"
     },
     {
       "name": "cron_jobs_name_key",
@@ -10351,6 +10451,18 @@
     {
       "name": "chat_attachments.trg_chat_attachments_updated_at_touch",
       "definition": "CREATE TRIGGER trg_chat_attachments_updated_at_touch BEFORE UPDATE ON chat_attachments FOR EACH ROW EXECUTE FUNCTION touch_chat_attachments_updated_at()"
+    },
+    {
+      "name": "coordination_waits.coordination_wait_changed",
+      "definition": "CREATE TRIGGER coordination_wait_changed AFTER INSERT OR UPDATE ON coordination_waits FOR EACH ROW EXECUTE FUNCTION coordination_wait_changed()"
+    },
+    {
+      "name": "inter_session_messages.coordination_release_committed",
+      "definition": "CREATE TRIGGER coordination_release_committed AFTER INSERT ON inter_session_messages FOR EACH ROW EXECUTE FUNCTION coordination_release_committed()"
+    },
+    {
+      "name": "sessions.coordination_owner_changed",
+      "definition": "CREATE TRIGGER coordination_owner_changed AFTER DELETE OR UPDATE OF status ON sessions FOR EACH ROW EXECUTE FUNCTION coordination_owner_changed()"
     },
     {
       "name": "sessions.sessions_transcript_processing_recovery",

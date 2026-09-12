@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Protocol
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
@@ -31,40 +30,16 @@ def db(hub_db: HubDatabase) -> HubDatabase:
     return database
 
 
-class _ColumnLookupDatabase(Protocol):
-    dialect: object
-
-    def fetchone(
-        self,
-        sql: str,
-        params: Sequence[object] = (),
-    ) -> Mapping[str, object] | None: ...
-
-    def fetchall(
-        self,
-        sql: str,
-        params: Sequence[object] = (),
-    ) -> list[Mapping[str, object]]: ...
-
-
-def _has_column(db: _ColumnLookupDatabase, table: str, column: str) -> bool:
-    """Return whether a backend table exposes a column.
-
-    Uses the Postgres catalog when available.
-    """
-    if str(getattr(db, "dialect", "")).startswith("postgres"):
-        row = db.fetchone(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = %s AND column_name = %s
-            """,
+def _has_column(db: HubDatabase, table: str, column: str) -> bool:
+    """Return whether the PostgreSQL table exposes a column."""
+    return (
+        db.fetchone(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s",
             (table, column),
         )
-        return row is not None
-
-    rows = db.fetchall(f"PRAGMA table_info({table})")
-    return any(row["name"] == column for row in rows)
+        is not None
+    )
 
 
 class TestWakeDispatcherSdkResume:
@@ -75,6 +50,8 @@ class TestWakeDispatcherSdkResume:
         """Agent with sdk_session_id gets woken via SDK resume."""
         session_mgr = MagicMock()
         session = MagicMock()
+        session.status = "paused"
+        session.session_type = "terminal"
         session.agent_depth = 1
         session.terminal_context = None
         session.external_id = None
@@ -98,17 +75,19 @@ class TestWakeDispatcherSdkResume:
         )
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
+        assert sdk_resumer.await_args is not None
         assert "Task completed" not in sdk_resumer.await_args.args[1]
         ism_mgr.create_message.assert_called_once()
         assert ism_mgr.create_message.call_args.kwargs["content"] == "Pipeline done"
         assert sdk_resumer.await_count == 1
-        assert sdk_resumer.await_args is not None
 
     @pytest.mark.asyncio
     async def test_sdk_fallback_to_ism_on_failure(self) -> None:
         """Durable ISM remains when SDK wake fails."""
         session_mgr = MagicMock()
         session = MagicMock()
+        session.status = "paused"
+        session.session_type = "terminal"
         session.agent_depth = 1
         session.terminal_context = None
         session.external_id = "sdk-abc123"
@@ -130,7 +109,6 @@ class TestWakeDispatcherSdkResume:
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
         assert sdk_resumer.await_count == 1
-        assert sdk_resumer.await_args is not None
         ism_mgr.create_message.assert_called_once()
         assert ism_mgr.create_message.call_count == 1
         assert ism_mgr.create_message.call_args is not None
@@ -140,6 +118,8 @@ class TestWakeDispatcherSdkResume:
         """Terminal agents try tmux first, skip SDK if tmux succeeds."""
         session_mgr = MagicMock()
         session = MagicMock()
+        session.status = "paused"
+        session.session_type = "terminal"
         session.agent_depth = 1
         session.terminal_context = '{"tmux_session": "agent-1"}'
         session_mgr.get.return_value = session
@@ -177,6 +157,8 @@ class TestWakeDispatcherSdkResume:
         """Tmux failure → SDK failure, with ISM already durable."""
         session_mgr = MagicMock()
         session = MagicMock()
+        session.status = "paused"
+        session.session_type = "terminal"
         session.agent_depth = 1
         session.terminal_context = '{"tmux_session": "agent-1"}'
         session.external_id = "sdk-999"
@@ -209,7 +191,6 @@ class TestWakeDispatcherSdkResume:
         assert tmux_sender.await_args is not None
         sdk_resumer.assert_awaited_once_with("sdk-999", CONTINUE_WAKE_SIGNAL)
         assert sdk_resumer.await_count == 1
-        assert sdk_resumer.await_args is not None
         ism_mgr.create_message.assert_called_once()
         assert ism_mgr.create_message.call_count == 1
         assert ism_mgr.create_message.call_args is not None
@@ -345,8 +326,8 @@ class TestContinuationPromptStorage:
             provider="claude",
             prompt="Do thing",
             status="pending",
-            created_at="2025-01-01",
-            updated_at="2025-01-01",
+            created_at=datetime(2025, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2025, 1, 1, tzinfo=UTC),
             continuation_prompt="Wire the results",
         )
         assert run.continuation_prompt == "Wire the results"

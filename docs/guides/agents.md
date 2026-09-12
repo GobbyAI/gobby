@@ -282,8 +282,24 @@ Run tools:
 Coordination tools:
 
 - `send_message`
+- `wait_for_coordination`
+- `cancel_coordination_wait`
 - `get_inter_session_message`
 - `get_inter_session_messages`
+
+For a coordinated hold, call `wait_for_coordination(owner_session="#123", ... )`
+with exactly one condition: `coordination_key="unique-release-key"` or
+`statuses=["paused", "completed"]`. The owner releases a keyed wait by sending
+you a `coordination_release` message with `metadata.coordination_key` equal to
+that key. Ordinary message text has no release or wake semantics.
+
+The tool returns a durable `wait_id` and an `outcome` of `waiting`, `released`,
+`status_matched`, `owner_ended`, `cancelled`, or `timeout`. Yield after `waiting`;
+completion uses the existing durable mailbox and protected wake handling.
+Expiry defaults to 900 seconds and accepts at most 3600 seconds. Repeating an
+identical owner/condition registration returns the original wait without extending
+its deadline, including its terminal outcome. Use a fresh unique release key for a
+new hold. Only the waiting session can call `cancel_coordination_wait(wait_id=...)`.
 
 `send_message` uses explicit targets: `global`, `project`, `session`, `agent`, and
 `build`. `global` reaches every other live non-system session owned by the sender's
