@@ -10,7 +10,7 @@ import { Input } from "../../../../web/src/components/ui/Input";
 import type { Annotation } from "@gobby/annotate-core";
 import type { Batch } from "./drafts";
 import { Toolbar } from "./Toolbar";
-import { CapturePanel } from "./CapturePanel";
+import { CapturePanel, SaveStatus } from "./CapturePanel";
 import { assertSelectionCurrent, select, type Mode } from "./selection";
 import { captureHidden, fingerprint, sameCapture } from "./screenshots";
 import { viewport } from "./frame-agent";
@@ -495,7 +495,7 @@ function App({
           >
             Export ZIP
           </Button>
-          <p role="status">{status}</p>
+          <SaveStatus status={status} />
           <Button
             onClick={() =>
               queue(async () => {

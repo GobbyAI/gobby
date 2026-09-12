@@ -1,7 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../../../web/src/components/ui/Button";
 import { Textarea } from "../../../../web/src/components/ui/Textarea";
 import type { Annotation } from "@gobby/annotate-core";
+export function SaveStatus({ status }: { status: string }) {
+  const [settled, setSettled] = useState(status === "Saved locally");
+  useEffect(() => {
+    if (status !== "Saved locally") {
+      setSettled(false);
+      return;
+    }
+    // Coalesce success announcements while typing; persistence is never delayed.
+    const timer = setTimeout(() => setSettled(true), 800);
+    return () => clearTimeout(timer);
+  }, [status]);
+  return (
+    <p role="status">
+      {status === "Saved locally" && !settled ? "Saving…" : status}
+    </p>
+  );
+}
 export function CapturePanel({
   annotation,
   image,
@@ -41,7 +58,7 @@ export function CapturePanel({
           onEdit(e.target.value);
         }}
       />
-      <p role="status">{status}</p>
+      <SaveStatus status={status} />
       {image ? (
         <details>
           <summary>Review screenshot</summary>
