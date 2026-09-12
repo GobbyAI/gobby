@@ -993,6 +993,247 @@ that hashes the policy, not in what goes into it. Commit 16be058101 relabels the
 runtime home like the other roots and carries four regression tests, two of
 which fail on the unpatched normalizer.
 
-Attempts 1–17 and 19 remain immutable policy failures; attempt 18 is an
-immutable host-environment failure carrying no policy evidence. Attempt 20 and
+## Pinned binaries for attempts 20 to 24
+
+Attempts 20, 21 and 22 ran against `.ask-probe-1d9e243b`, built from
+`1d9e243bf9` in the epic worktree:
+
+- gcode `dc8118720ac50cf78e142156acc112cdb820b6029b7903198841803886507558`
+- gterm `dd0ee8a926db25b0b534b54803fd92e059785007dece62198e226dd289a94204`,
+  byte-identical to attempt 15's gterm
+
+No Rust source changed between `1d9e243bf9` and `4c0f6bce05`, so attempts 21
+and 22 ran later commits against these same binaries. Attempts 23 and 24 ran
+against `.ask-probe-b92c5542`, built from `b92c554220`:
+
+- gcode `dc8118720ac50cf78e142156acc112cdb820b6029b7903198841803886507558`,
+  unchanged, because `b92c554220` touches only `crates/gterminal`
+- gterm `b7ad098377451219b6b12f07bae8caa569a9f81163b8d2cab501a2e4e0b48ac2`
+
+The pin directory moved out of `target/` at attempt 20 and into
+`<worktree>/.ask-probe-<sha>/`; the reason is attempt 20's finding below.
+
+## Attempt 20: the shared build directory hid the branch-local binary
+
+Attempt 20 ran from session `gobby#12858` at `19:57` with output directory
+`/tmp/gobby-ask-native-probe-12858-twentieth`, against source `1d9e243bf9`. It
+failed before any Ask work, at runtime identity capture:
+
+```
+RuntimeError: native Ask probe did not select the branch-local gcode binary
+```
+
+The pinned binaries had been placed under `target/ask-probe-1d9e243b`, which is
+where every earlier attempt put them. Since 82c58ef83c that path is no longer
+inside the worktree: `target` is a symlink to
+`~/.gobby/cache/cargo-target/<project_id>/`, so `(bin_dir /
+"gcode").resolve(strict=True)` lands outside `source_root` and
+`_capture_runtime_identity` (tests/ask/native_probe_harness.py:764) rejects it.
+The check is correct and the pin location was wrong: under one shared build
+directory, nothing under `target/` is branch-local.
+
+The pin moved to `<worktree>/.ask-probe-<sha>/`, a real directory inside the
+worktree, excluded through the repository's local exclude file.
+
+Immutable `raw-probe.json` SHA-256 is
+`0c11a8b5d837c0ec0b24878fd5a72a6ec896eab071b76df744d3bb120b3b2e69`;
+`complete=false`, zero receipts, one capture error (the isolated schema was
+never created). Runtime root `/private/tmp/gobby-ap-s_es4v11` is retained. This
+attempt carries no policy evidence.
+
+## Attempt 21: the shared build-directory link broke snapshot preparation
+
+Attempt 21 ran at `19:58` with output directory
+`/tmp/gobby-ask-native-probe-12858-twentyfirst`, against the same source and
+the relocated pin. It failed at the first pipeline step:
+
+```
+MCP step prepare failed: gobby-ask:prepare returned error:
+gcode_index_failed:1:Error: unexpected materialized path: target
+```
+
+Second fallout from the same shared build directory, and a strictly better
+failure than attempt 20 because it reached Ask. 82c58ef83c made the isolation
+sidecar writer link `<root>/target` into any root holding a Cargo.toml, and
+`src/gobby/ask/snapshots.py` reuses that writer for the commit-bound evidence
+snapshot. The snapshot root therefore held an entry that is not in its binding
+commit, and `verify_materialized_paths`
+(crates/gcode/src/evidence/snapshot.rs:625) rejected it, correctly.
+
+Commit 4c0f6bce05 skips the link when `snapshot_commit` is supplied, which only
+Ask's snapshot writer does. Ordinary isolation roots keep the shared build
+directory.
+
+Immutable `raw-probe.json` SHA-256 is
+`ae1b7fb67852ffd8d391acd69c8ec8f972158deef82d28de7b640555edb4bc7b`;
+`complete=true`, zero receipts, no capture errors. Cleanup was complete: the
+runtime root was removed and schema
+`gobby_test_askprobe_3a51d9552bbf411a99c51407247881eb` was dropped, so nothing
+from this attempt is retained. It carries no policy evidence either.
+
+## Attempt 22: the digest fix holds, and the launch dies one step later
+
+Attempt 22 ran at `20:04` with output directory
+`/tmp/gobby-ask-native-probe-12858-twentysecond`, against source `4c0f6bce05`,
+which carries the #22018 digest fix (16be058101) and the snapshot link fix. It
+is the first attempt to reach the investigator spawn.
+
+The evidence that #22018 is fixed is negative and decisive. `prepare` completed
+in five minutes and produced a real commit-bound snapshot with gcode evidence
+ids; `seed` completed; `spawn` ran `_preflight_srt` to completion in 111.8 ms
+and logged its phase timings (`agents.spawn_executor.execute_spawn`), which is
+the exact point where every attempt from 1 to 19 raised "Ask SRT policy
+semantics changed after validation". That message does not appear anywhere in
+this attempt's logs. The SRT sandbox launched: the run has a sandbox-violations
+file recording a `sysctl-read` deny from the preflight's own `node --version`.
+
+The launch then failed 34 ms after the pane opened:
+
+```
+mcp_proxy.tools.spawn_agent._implementation._run_spawn_phase
+  Background agent boot failed for run 1f39c81f-...: expected welcome, got error
+workflows.pipeline_executor._execute
+  MCP step investigate failed: gobby-ask:spawn returned error:
+  native Ask launch policy is missing or outside the owned runtime
+```
+
+The second message is the harness reporting, correctly, that the reaper of an
+aborted launch had already emptied
+`gobby/runtime/managed-executions/8a284c01-.../`, so
+`_capture_agent_launch_receipt` (tests/ask/native_probe_harness.py:2387) had no
+policy file to copy. It is downstream of the first, exactly as the root-cause
+note predicted.
+
+The first message is the cause, and it is a second isolation defect of the same
+family as the digest: two sides of one contract resolving one path differently.
+`NativeTerminalRuntime._frame_token` read only `<socket_dir>/local_cli_token`,
+while gterm's `read_local_token` read that file and then fell back to
+`$HOME/.gobby/local_cli_token`. Production hides the disagreement because
+`terminal_host.socket_dir` defaults to `~/.gobby`, so one file answers both
+lookups. The probe gives its host `<runtime_root>/gterm-host`, which holds no
+token, so the daemon sent an empty token, gterm compared it against the
+operator's, and answered `invalid_token`. The daemon read only the frame type
+out of that reply, which is why the symptom reads as "expected welcome, got
+error" and names neither the code nor the socket.
+
+Commit b92c554220 makes both sides resolve the socket directory first and Gobby
+home second, both honouring `GOBBY_HOME`, and puts the host's error code into
+`FrameProtocolError`. tests/terminals/test_runtime_contract.py proves the
+pairing: it spawns a real host and fails with the Python half alone.
+
+Immutable `raw-probe.json` was not written: the harness raised before its
+record step, so this attempt's evidence is its retained runtime root
+`/private/tmp/gobby-ap-z9zbycus` and schema
+`gobby_test_askprobe_fd875d56650945fcad63ec44ed5b0785`, both retained.
+
+## Attempt 23: the frame credential holds, and the agent is told to decline
+
+Ran at 20:36 with output directory
+`/tmp/gobby-ask-native-probe-12858-twentythird`, against source `b92c554220`,
+pinned to `.ask-probe-b92c5542` (gcode
+`dc8118720ac50cf78e142156acc112cdb820b6029b7903198841803886507558`, unchanged,
+and the rebuilt gterm
+`b7ad098377451219b6b12f07bae8caa569a9f81163b8d2cab501a2e4e0b48ac2`).
+
+The frame handshake is fixed. `prepare` and `seed` completed as in attempt 22,
+`_preflight_srt` ran to completion in 113.8 ms, and this time the pane survived
+its first second: at 20:42:44 the daemon logged `Auto-dismissed trust prompt
+for agent 7dd7dea8-… (trust folder)`, which attempt 22 never reached because
+its pane was torn down 34 ms after opening. `invalid_token` appears nowhere.
+
+The launch died 30 seconds later:
+
+    20:42:21  Spawn phase timings | _preflight_srt: 113.839
+    20:42:44  Auto-dismissed trust prompt for agent 7dd7dea8-… (trust folder)
+    20:43:14  Agent 7dd7dea8-… PID 40321 no longer matches agent identity
+    20:43:14  Marked agent run 7dd7dea8-… as failed
+    20:43:14  gobby-ask/spawn: Ask agent ended as error without a valid submission
+
+with `control/fresh-result.json` recording `typed_error.code = "agent_failed"`
+at `current_stage = "investigator"`, and the retained pane capture showing what
+the agent was answering:
+
+     ❯ No, exit
+       Yes, I trust this folder
+
+     Enter to confirm · Esc to cancel
+
+`TerminalPromptMonitor.check_trust_prompts` sends a bare Enter, which confirms
+the highlighted row. Claude Code's workspace trust dialog highlights the
+decline, so Gobby told the investigator to quit, and the health check found the
+process gone on its next 30-second sweep. Nothing else wrote to that pane, and
+a swallowed Enter would have left the agent sitting at the dialog rather than
+exiting.
+
+The dialog appears at all for the same reason the previous two defects hid in
+production. Claude Code's folder trust is hierarchical and lives in
+`~/.claude.json`: `/Users/josh/.gobby` carries `hasTrustDialogAccepted: true`,
+so a production Ask workspace under `<gobby_home>/ask/…` inherits it, while the
+probe's isolated home under `/private/tmp` inherits nothing. Spawns that pass
+`--dangerously-skip-permissions` never see the dialog either; Ask withholds
+that flag on purpose so its permission service stays in charge, which is why
+Ask is the path that surfaced this.
+
+Commit 40c0287769 derives the key sequence from the visible dialog: it reads
+the marked selection block out of the pane, navigates to the row that grants
+trust — skipping any row that declines or that trusts the parent directory —
+and keeps the bare Enter for panes with no navigable list, so no other
+provider's behaviour changes.
+
+This attempt is the first to write an immutable `raw-probe.json` (157 KB), and
+its runtime root `/private/tmp/gobby-ap-hsat03zs` is retained.
+
+
+## Attempt 24: test-database volume exhaustion rejected preparation
+
+Attempt 24 ran from the same session with output directory
+`/tmp/gobby-ask-native-probe-12858-twentyfourth`, starting `21:00` and failing
+at `21:03` local time, against source `40c0287769` and the same
+`.ask-probe-b92c5542` pin, which still applies because that commit changes only
+Python.
+
+Like attempt 18 it never reached the launch, and for the same class of reason.
+The pipeline failed at its first step:
+
+```
+MCP step prepare failed: gobby-ask:prepare returned error:
+gcode_index_failed:1:Error: db error Caused by: ERROR: could not extend file
+"base/16384/5508766": No space left on device HINT: Check free disk space.
+```
+
+The exhausted volume this time is not the host's. The isolated test PostgreSQL
+container `gobby-postgres-test-1` keeps its `PGDATA` on a 3.0 GB tmpfs, which
+`df` reports at 2.6 GB used with 415 MB free. Three retained probe schemas
+account for nearly all of it, each with a small `_agent_auth` sibling:
+
+- `gobby_test_askprobe_122d8ebbbe544508b1ead4c273d91f72`, 960 MB, attempt 19
+- `gobby_test_askprobe_fd875d56650945fcad63ec44ed5b0785`, 954 MB, attempt 22
+- `gobby_test_askprobe_a1da5505996a448eab76b416d9582345`, 951 MB
+
+A full private snapshot index of this repository is roughly a gigabyte, so the
+tmpfs holds three of them and has no room for a fourth. Every probe attempt
+retained for its evidence therefore costs the next attempt its working room,
+and the retention that made attempts 15 and 19 decisive is what blocked this
+one.
+
+This is an environmental failure of the test database, not a defect in Ask, and
+it carries no evidence about the trust-dialog fix that `40c0287769` landed.
+Attempt 24 must not be counted as a policy or launch failure.
+
+Immutable `raw-probe.json` SHA-256 is
+`77bbee59482ee0eb0b87c3cb944bf32801c2fe7e8a18c5c30277e8a72c746d4a`;
+`complete=true`, zero receipts, zero excluded receipts, no capture errors and
+no cleanup errors. The runtime root was removed and schema
+`gobby_test_askprobe_3d2c37a00cbf41c5a8eda274a7fa69e0` was dropped, so nothing
+from this attempt is retained beyond the probe record itself.
+
+Attempts 1–17 and 19 remain immutable policy failures, and 16be058101 closed
+the cause they all share. Attempts 18 and 24 are immutable environment failures
+carrying no policy evidence, the first on the host volume and the second on the
+test database's tmpfs. Attempts 20 and 21 are immutable harness and snapshot
+failures from the shared build directory, fixed by relocating the pin and by
+4c0f6bce05. Attempts 22, 23 and 24 each carry the previous fix forward and
+reach one step further: 22 proved the digest fix and died at the gterm frame
+credential, 23 proved the frame-credential fix and died at the trust dialog,
+and 24 never launched. Attempt 25, the first run against all three fixes, and
 all 14 cohort questions remain unrun.
