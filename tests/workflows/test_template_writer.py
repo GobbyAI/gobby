@@ -21,7 +21,7 @@ def test_read_template_rejects_non_mapping_yaml(tmp_path: Path, content: str) ->
 class TestWriteRuleTemplate:
     """Tests for write_rule_template."""
 
-    def test_round_trip(self, tmp_path):
+    def test_round_trip(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import read_template, write_rule_template
 
         definition = {
@@ -42,7 +42,7 @@ class TestWriteRuleTemplate:
         assert "my-rule" in data["rules"]
         assert data["rules"]["my-rule"]["event"]["type"] == "pre_tool_use"
 
-    def test_creates_directory(self, tmp_path):
+    def test_creates_directory(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import write_rule_template
 
         output_dir = tmp_path / "deep" / "nested" / "rules"
@@ -53,7 +53,7 @@ class TestWriteRuleTemplate:
         )
         assert output_dir.exists()
 
-    def test_overwrites_existing(self, tmp_path):
+    def test_overwrites_existing(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import write_rule_template
 
         output_dir = tmp_path / "rules"
@@ -89,7 +89,7 @@ class TestWriteRuleTemplate:
             stream.write("rules:\n  evolving:")
             raise OSError("simulated interrupted write")
 
-        monkeypatch.setattr(template_writer.yaml, "dump", fail_after_partial_write)
+        monkeypatch.setattr(yaml, "dump", fail_after_partial_write)
 
         with pytest.raises(OSError, match="simulated interrupted write"):
             template_writer.write_rule_template(
@@ -104,7 +104,7 @@ class TestWriteRuleTemplate:
         assert path.read_text(encoding="utf-8") == original
         assert list(output_dir.glob(".evolving.yaml.*.tmp")) == []
 
-    def test_preserves_metadata(self, tmp_path):
+    def test_preserves_metadata(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import write_rule_template
 
         write_rule_template(
@@ -122,7 +122,7 @@ class TestWriteRuleTemplate:
 class TestWritePipelineTemplate:
     """Tests for write_pipeline_template."""
 
-    def test_round_trip(self, tmp_path):
+    def test_round_trip(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import read_template, write_pipeline_template
 
         definition = {
@@ -146,7 +146,7 @@ class TestWritePipelineTemplate:
 class TestWriteAgentTemplate:
     """Tests for write_agent_template."""
 
-    def test_round_trip(self, tmp_path):
+    def test_round_trip(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import read_template, write_agent_template
 
         definition = {
@@ -169,26 +169,30 @@ class TestWriteAgentTemplate:
 class TestWriteVariableTemplate:
     """Tests for write_variable_template."""
 
-    def test_round_trip(self, tmp_path):
+    def test_round_trip(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import read_template, write_variable_template
 
         path = write_variable_template(
             name="my-var",
-            definition={"type": "string", "default": "hello", "description": "A greeting"},
+            definition={"value": "hello", "description": "A greeting"},
             output_dir=tmp_path / "variables",
         )
         assert path.exists()
 
         data = read_template(path)
-        assert "variables" in data
-        assert "my-var" in data["variables"]
-        assert data["variables"]["my-var"]["default"] == "hello"
+        assert data == {
+            "name": "my-var",
+            "type": "variable",
+            "variable": "my-var",
+            "value": "hello",
+            "description": "A greeting",
+        }
 
 
 class TestDeleteTemplateFile:
     """Tests for delete_template_file."""
 
-    def test_deletes_existing(self, tmp_path):
+    def test_deletes_existing(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import delete_template_file, write_rule_template
 
         write_rule_template(
@@ -202,7 +206,7 @@ class TestDeleteTemplateFile:
         assert deleted is True
         assert not (tmp_path / "doomed.yaml").exists()
 
-    def test_returns_false_for_missing(self, tmp_path):
+    def test_returns_false_for_missing(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import delete_template_file
 
         deleted = delete_template_file("nonexistent", tmp_path)

@@ -103,18 +103,18 @@ def write_variable_template(
 ) -> Path:
     """Write a variable definition to a YAML file.
 
-    Uses the multi-variable format with a top-level ``variables:`` key,
-    matching the format expected by ``sync_bundled_variables``.
+    Uses the single named definition consumed by ``sync_imported_workflow_file``.
+    Bundled defaults use a separate grouped format and are not written here.
 
     Args:
         name: Variable name (used as filename)
-        definition: Variable definition dict (type, default, etc.)
+        definition: Variable definition body (value, description, etc.)
         output_dir: Directory to write to
 
     Returns:
         Path to the written file
     """
-    data: dict[str, Any] = {"variables": {name: definition}}
+    data: dict[str, Any] = {**definition, "name": name, "type": "variable", "variable": name}
     return _write_yaml(name, data, output_dir)
 
 

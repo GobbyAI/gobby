@@ -579,6 +579,20 @@ Build profile operator/client routes are:
 | `DELETE` | `/api/rules/{name}` | Delete a rule. |
 | `PUT` | `/api/rules/{name}/toggle` | Toggle one rule. |
 
+### Variable Semantics
+
+`/api/variables` manages definitions with operator authority. List accepts
+`project_id`, `enabled` and `include_deleted`; create accepts `project_id`.
+Update distinguishes an omitted value from explicit null. There is no single-row
+GET, move-scope or undelete variable route. Template restore resolves a live row
+and restores value/description only; it does not reset session overrides.
+
+Runtime `POST /api/sessions/{session_id}/variables/get|set` accepts
+`scope: session|step` (default session), with step scope requiring an existing
+agent-step instance. Agent credentials are bound to their own session. Inspect
+logical `success` errors as well as HTTP status; reserved names and invalid task
+references fail without mutation. See [variables](./variables.md#http-and-scope).
+
 Skill HTTP management does not record instruction loads. List uses `limit=50`
 and `offset=0`; search uses `q` and `limit=20`. Local/ZIP imports require
 `project_id` and remain inside its registered local checkout (escape: `403`).

@@ -786,6 +786,12 @@ gobby skills meta unset NAME KEY
 
 ### Variables
 
+These are operator commands using local database access. Agents use top-level
+`get_variable` / `set_variable` with an explicit session. Both CLI commands are
+session-only; `set` parses booleans, null/none and numbers, then falls back to
+strings (no array/object JSON decoding). Setting null keeps a present override.
+See [variable scope and recovery](./variables.md#resets-and-recovery).
+
 ```bash
 gobby variables get [NAME] [--session SESSION] [--json]
 gobby variables set NAME VALUE [--session SESSION] [--json]

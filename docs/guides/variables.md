@@ -1,486 +1,307 @@
 # Variables
 
-Session variables are mutable state scoped to one Gobby session. Rules, agent
-definitions, MCP tools, and CLI helpers read and write them to coordinate
-enforcement, context injection, and state tracking.
-
-Variables come from enabled variable definitions, are overlaid with
-session-stored values, and can be mutated by `set_variable` rule effects or the
-top-level `set_variable` MCP tool. Rule `when` conditions read the current
-variable snapshot for each evaluated event.
-
-For how variables fit into the broader workflow system, see [Workflows Overview](./workflows-overview.md).
-
----
+Use variables to configure defaults and coordinate state within a session. First
+choose the layer: a **definition** supplies a default; a **session value** overrides
+that default; an **agent-step value** belongs to an existing step instance.
+Changing one layer does not reset the others. Tool schemas are authoritative for
+parameters, and a documented operation grants no permission to bypass enforcement.
 
 ## Variable Lifecycle
 
-```mermaid
-sequenceDiagram
-    participant VD as Variable Definitions
-    participant AV as Agent Variables
-    participant SV as Session Variables
-    participant RE as Rule Engine
-    participant R as Rules
+Enabled global definitions are overlaid by enabled definitions for the session's
+project, then by stored session values. Each key is replaced as a whole; nested
+objects are not recursively merged. Reading does not materialize defaults into
+storage. Some atomic list/set mutations intentionally materialize their layered
+input before saving it.
 
-    Note over VD: YAML templates synced to DB
-    VD->>SV: Load enabled installed defaults
-    AV->>SV: Apply agent variables and selector-filtered defaults
-    SV->>SV: Overlay session-stored values
-    Note over SV: Snapshot available for evaluation
+Definition changes advance the variables revision; the runtime defaults cache is
+keyed by project and revision. An existing stored override still wins after a
+default changes. A disabled project definition contributes no default, so an
+enabled global definition of that name can become visible again.
 
-    loop Each matching workflow event
-        RE->>SV: Read variables for condition eval
-        RE->>R: Evaluate rules
-        R->>SV: set_variable effects mutate state
-        RE->>SV: Updated variables visible to next rule
-    end
-```
-
----
+The database is the authority for installed state. A bundled YAML value alone
+never proves what is enabled or what a session currently sees.
 
 ## Initialization
 
-Bundled variables are defined in YAML and synced into
-`session_variable_defaults`:
+Bundled files under `src/gobby/install/shared/workflows/variables/` use grouped YAML:
 
 ```yaml
-# src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml
 tags: [session-defaults, initialization]
-
 variables:
-  task_claimed:
-    value: false
-    description: Default task_claimed to false
-  stop_attempts:
-    value: 0
-    description: Default stop_attempts to 0
-  max_stop_attempts:
+  example_limit:
     value: 8
-    description: Default max_stop_attempts to 8
+    description: Example retry limit
+    enabled: true
 ```
 
-Each variable entry becomes a `VariableDefinitionBody` in the database:
-
-```yaml
-variable: "task_claimed"      # Variable name
-value: false                  # Default value
-description: "..."            # Optional description
-```
+Each entry becomes a typed `session_variable_defaults` row. This is a format
+example, not a claim that `example_limit` is installed. Bundled sync refreshes
+managed rows, preserves user/custom rows and pinned enabled toggles, and restores
+managed deleted rows. A successful authoritative scan can retire missing managed
+entries; partial/error scans must not be treated as complete cleanup.
 
 ### Runtime Resolution
 
-At rule-evaluation time, `SessionVariableManager.get_variables()` returns:
-
-1. enabled installed variable definition defaults
-2. values persisted in the session's `session_variables` row
-
-Session values win over defaults. This means newly synced defaults are visible
-even when a session row has not materialized them yet.
-
-On session bootstrap, persona application, and spawned-agent setup, agent
-definitions can also merge variables into the session row:
-
-1. `_agent_type`, active rule and skill metadata
-2. explicit `workflows.variables` overrides from the agent definition
-3. defaults selected by the agent's `variable_selectors`
-4. task handoff values such as `assigned_task_id` and `session_task`
-5. any caller-supplied variables
-
-Rules with `session_start`, `turn_start`, `before_tool`, `after_tool`, or
-`turn_end` can then mutate variables via `set_variable`.
+`SessionVariableManager.get_variables()` layers project/global defaults beneath
+stored values. Agent activation computes identity and selection metadata, applies
+explicit non-underscore `workflows.variables`, then fills selected defaults only
+where that activation payload has no value. Bootstrap preserves existing session
+values; persona changes and spawned-agent initial values have their own merge
+boundaries. See [agents](./agents.md) before changing a persona or spawn payload.
 
 ### Variable Selectors
 
-Agent definitions control which variables are loaded:
+Agent `workflows.variable_selectors` controls which defaults are materialized by
+activation. Omitted/null means all enabled defaults; include/exclude selectors
+resolve a set of names, with exclusions winning. It is **not a read-access filter**:
+ordinary session reads still layer all applicable enabled defaults.
 
 ```yaml
-# default.yaml - omitted/null means all enabled installed defaults apply
-workflows:
-  # variable_selectors: null
-
-# A restricted agent might narrow scope:
 workflows:
   variable_selectors:
     include: ["tag:session-defaults"]
-    exclude: ["name:enforce_tdd"]
+    exclude: ["name:example_limit"]
 ```
 
-**Source**: `src/gobby/workflows/definitions.py` — `VariableDefinitionBody`
-
----
+Explicit agent variables starting with `_` are skipped. Do not use selectors or
+agent overrides to defeat runtime-owned enforcement.
 
 ## Mutation
 
-Variables are mutated by `set_variable` rule effects during rule evaluation:
+Agents use the top-level `get_variable` and `set_variable` MCP tools for session
+values, without a progressive-discovery lease. Always pass the intended session.
+Omit `name` on reads for the full effective map. A named read returns both `value`
+and `exists`: a present null value differs from an absent key.
 
-```yaml
-# Literal value
-effect:
-  type: set_variable
-  variable: task_claimed
-  value: true
-
-# Expression (evaluated by SafeExpressionEvaluator)
-effect:
-  type: set_variable
-  variable: stop_attempts
-  value: "variables.get('stop_attempts', 0) + 1"
-
-# List append
-effect:
-  type: set_variable
-  variable: tdd_tests_written
-  value: "variables.get('tdd_tests_written', []) + [first_tdd_test_path(event.data, tool_input)]"
+```python
+get_variable(session_id="#123", name="example_limit")
+# Mutating example: use only for an authorized session setting.
+set_variable(session_id="#123", name="example_limit", value=4)
 ```
+
+Session writes accept JSON-compatible values. Strings representing booleans,
+null/none, integers or floats are coerced; JSON-looking strings containing arrays
+or objects are not parsed. Send actual arrays/objects. Values are literals here,
+not rule expressions. `session_task` references are resolved to task UUIDs in the
+target session's project; unresolved references fail without writing.
 
 ### Expression Detection
 
-The engine detects expressions by looking for these indicators in string values:
-- `assistant_response_matches_any(`, `variables.`, `event.`, `tool_input.`
-- `.get(`, `len(`
-- ` + `, ` - `, ` and `, ` or `, ` not `
-
-If none of these appear, the value is treated as a literal.
-
-Jinja2 templates are rendered before expression evaluation when the value
-contains `{{ ... }}`. Rendered booleans and numbers are coerced back to native
-types.
+Rule `set_variable` effects are a separate authoring surface. Strings with known
+expression indicators are evaluated by `SafeExpressionEvaluator`; other strings
+remain literal. Jinja-containing values are rendered and coerced on a separate
+branch, **not** fed through a second expression evaluation. Failed expressions do
+not write a value. See [set_variable effects](./rules.md#set_variable) and the
+implementation in `src/gobby/workflows/engine/effects.py` for the current heuristic.
 
 ### Mutation Visibility
 
-`set_variable` effects are **immediately visible** to later rules in the same evaluation pass. This enables rule chaining:
-
-```yaml
-# Rule 1 (priority 10): increment counter
-increment-stop:
-  priority: 10
-  effect:
-    type: set_variable
-    variable: stop_attempts
-    value: "variables.get('stop_attempts', 0) + 1"
-
-# Rule 2 (priority 50): block based on counter (sees updated value)
-require-task-close:
-  priority: 50
-  when: "variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"
-  effect:
-    type: block
-    reason: "Close your task before stopping."
-```
+An accepted rule effect updates the evaluation snapshot for subsequent rules in
+the same pass. Public read-then-write calls are not a compare-and-swap or atomic
+increment API; concurrent clients can overwrite each other's whole-key updates.
+Runtime list/set helpers serialize their mutations under a session advisory lock.
 
 ### Auto-Managed Variables
 
-Some variables are managed by the rule engine itself or by built-in observers,
-not only by declarative rules:
+Runtime observers and rules own task attribution, validation/error tracking,
+discovery leases, loaded instructions, tool-block counters and handoff delivery.
+Never manufacture those values to satisfy a gate. Public runtime setters reject
+reserved names and prefixes; the authoritative list is
+`src/gobby/workflows/reserved_variables.py`. Examples include `unlocked_tools`,
+`open_tool_errors`, `grok_pending_*`, `step_workflow_complete`, and `enforce_*`.
+Requirement-list variables require arrays of non-empty instruction identifiers;
+empty arrays are allowed by the value validator, not permission to remove gates.
 
-| Variable | Auto-behavior |
-|----------|--------------|
-| `stop_attempts` | Incremented on `turn_end`, reset to 0 on `turn_start` |
-| `consecutive_tool_blocks` | Incremented when same blocked tool is retried, reset on different tool |
-| `tool_block_pending` | Set `true` on tool failure, cleared on tool success |
-| `_last_blocked_tool` | Tracks which tool was last blocked |
-| `force_allow_stop` | Set `true` on catastrophic failures (rate limit, billing) |
-| `found_work_shirk_alerted` | Set `true` by the found-work shirk stop gate the first time it blocks a permission-seeking defect deferral; the gate never fires again in that session (session-lifetime, never reset on `turn_start`) |
-| `found_work_shirk_confirmed` | Set alongside `found_work_shirk_alerted`: `true` when the LLM confirmed the deferral, `false` when the alert rested on the fast-path verdict alone |
-| `baseline_dirty_files` | Marker only; hooks never sample git status (the sessions capture-baseline tool writes a real list) |
-| `session_edited_files` | Updated by tool observers as the session edits files (session-lifetime history) |
-| `session_dirty_files` | Paths edited since git last reported them clean; `has_dirty_files` reads this, and the session's own git activity reconciles it |
-| `session_dirty_file_checkouts` | Checkout root to the `session_dirty_files` paths edited there; a reconcile releases only paths its own checkout's git can see |
-| `context_compact_guidance_kind` | Current observer guidance kind: unknown, warn, block, failed, or empty |
-| `context_compact_guidance_message` | Turn-start or after-tool context-pressure guidance text |
-| `context_compact_mid_turn_pressure_band` | Current enforcement band: none, warn, or block |
-| `context_compact_tool_calls_since_nudge` | Above-warning tool calls since the last mid-turn nudge |
-| `context_compact_block_message` | Self-contained block reason while the pressure band is block |
-| `context_compact_handoff_unavailable` | Caps the current epoch at warn after a non-retryable compaction failure |
-| `context_compact_unknown_announced` | Records the once-per-epoch unknown-usage fallback |
-| `turns_since_compact` | Non-plan turns elapsed since the last compact boundary |
-
-Task-close validation reads command outcomes directly from the claiming and
-closing session transcripts. It does not project validation evidence into
-session variables. A later task-attributed edit makes an earlier clean run
-stale, while a commit preserves it.
-
----
+`session_edited_files` records session history; `session_dirty_files` and its
+checkout map track unreconciled edits. Hooks do not sample a git baseline;
+`baseline_dirty_files` can be an unsampled marker until explicit capture. Task
+validation comes from transcripts, not variable flags. Commits preserve evidence;
+a later attributed edit makes an earlier validation stale.
 
 ## Using Variables in Conditions
 
-Variables are available in rule `when` conditions via two access patterns:
-
-```yaml
-# Direct access (flattened to top level)
-when: "task_claimed and not plan_mode"
-
-# Dict access (with defaults)
-when: "variables.get('stop_attempts', 0) < 3"
-```
-
-Both are equivalent — session variables are flattened into the evaluation context for convenience.
-
-### Condition Evaluation
-
-Conditions are evaluated by `SafeExpressionEvaluator`, an AST-based evaluator that provides safe expression evaluation without `eval()`.
-
-**Supported operations**: boolean logic (`and`, `or`, `not`), comparisons
-(`==`, `!=`, `<`, `>`, `is`, `is not`, `in`, `not in`), arithmetic (`+`, `-`,
-`*`, `//`, `%`), attribute/subscript access, list/dict/tuple literals, list
-and generator comprehensions, method calls on safe types, and ternary
-expressions.
-
-**Fail behavior**: Block effects fail **closed** (condition error → condition is `true` → block fires). Other effects fail **open** (condition error → condition is `false` → effect skipped). This is conservative: better to block wrongly than to corrupt state.
-
-See [Rule Authoring Guide — Variable Safety In `when`](./workflow-rules.md#variable-safety-in-when) for authoring guidance.
-
----
+Conditions can access flattened names or `variables.get('name', default)`. Prefer
+`.get` for optional values. Flattened names share a namespace with runtime context;
+do not assume a user value can replace a helper or event field. The safe evaluator
+uses an AST, not Python `eval`. Block-condition errors fail closed; ordinary
+non-block effects skip on condition errors. See
+[variable safety](./workflow-rules.md#variable-safety-in-when) and
+[condition expressions](./rules.md#condition-expressions).
 
 ## Using Variables in Templates
 
-Variables are available in `inject_context` templates and `block` reason strings via Jinja2 syntax:
-
-```yaml
-effect:
-  type: inject_context
-  template: |
-    You are working on task {{ task_ref }}: {{ task_title }}
-    Stop attempts: {{ stop_attempts }}/{{ max_stop_attempts }}
-
-effect:
-  type: block
-  reason: |
-    Tasks in progress: {{ claimed_tasks.values() | list | join(', ') }}.
-    Commit and close_task().
-```
-
-Jinja2 filters work: `| list`, `| join(', ')`, `| first`, `| default('')`, `| length`, `| lower`.
-
----
+Context injection and block reasons use Jinja templates. Use defaults for optional
+values and keep secrets out of injected text. See
+[inject_context](./rules.md#inject_context) and [block](./rules.md#block).
 
 ## LazyBool Pattern
 
-For expensive computations (git status, DB queries), Gobby uses `LazyBool` — a deferred boolean that computes its value only when accessed:
-
-```python
-class LazyBool:
-    def __init__(self, thunk: Callable[[], bool]):
-        self._thunk = thunk
-        self._computed = False
-        self._value = False
-
-    def __bool__(self) -> bool:
-        if not self._computed:
-            self._value = self._thunk()
-            self._computed = True
-        return self._value
-```
-
-LazyBool values are passed in the `eval_context` parameter to the rule engine. They look like regular booleans in `when` conditions but only evaluate when referenced:
-
-```yaml
-# This condition won't trigger the expensive git check
-# unless the first part (task_claimed) is true
-when: "task_claimed and has_uncommitted_changes"
-```
-
-If `task_claimed` is `false`, Python's short-circuit evaluation prevents `has_uncommitted_changes` from computing.
-
-**Source**: `src/gobby/workflows/safe_evaluator.py` — `LazyBool`
-
----
+Some condition values defer expensive work until their boolean value is needed.
+Boolean short-circuiting avoids evaluating an unused lazy value. This is runtime
+context, not a persisted variable type. See `LazyBool` in
+`src/gobby/workflows/safe_evaluator.py`.
 
 ## Built-in Condition Helpers
 
-These functions are available in `when` conditions and provide higher-level checks:
+Use the verified [rule condition reference](./rules.md#condition-expressions).
+Helper inventories and full schemas belong with their implementation rather than
+being copied into variable defaults.
 
 ### Task Helpers
 
-| Function | Description |
-|----------|-------------|
-| `task_tree_complete(task_id)` | Check if a task and all subtasks are recursively complete. A leaf is complete only when its closure metadata projects to `closed`; a parent with subtasks is complete when all subtasks are recursively complete. |
-| `task_needs_human_review(task_id)` | Check if a task has been escalated for human review (projected state is `escalated`). |
-
-```yaml
-when: "task_tree_complete(variables.get('session_task'))"
-when: "task_needs_human_review(variables.get('auto_task_ref'))"
-```
+Task state/tree checks read lifecycle state; a variable assignment cannot close a task.
 
 ### Stop Signal Helper
 
-| Function | Description |
-|----------|-------------|
-| `has_stop_signal(session_id)` | Check if a stop signal is pending for the session. |
+Pending stop signals belong to agent lifecycle operations, not a reset flag.
 
 ### MCP Tracking Helpers
 
-| Function | Description |
-|----------|-------------|
-| `mcp_called(server, tool?)` | Was this MCP tool called successfully? |
-| `mcp_result_is_null(server, tool)` | Is the MCP result null/missing? |
-| `mcp_failed(server, tool)` | Did the MCP call fail? |
-| `mcp_result_has(server, tool, field, value)` | Does the MCP result have a specific field value? |
-
-```yaml
-when: "mcp_called('gobby-memory', 'search_memories')"
-when: "not mcp_failed('gobby-tasks', 'get_task')"
-```
+MCP outcome helpers distinguish successful calls, failures and returned values.
+A list/menu does not prove an operation or instruction load occurred.
 
 ### Progressive Discovery Helpers
 
-| Function | Description |
-|----------|-------------|
-| `is_server_listed(tool_input)` | Has this server been listed through `list_tools` or internal pre-seeding? |
-| `is_tool_unlocked(tool_input)` | Was this tool's schema fetched via `get_tool_schema`? |
-| `is_discovery_tool(tool_name)` | Is this a discovery tool (list_servers, list_tools, etc.)? |
-| `is_operator_tool(tool_name)` | Is this an out-of-band operator/debug tool? |
+Schema leases and discovery observations are different state. Get a known unleased
+tool's schema directly; list tools only when discovering a name or auditing inventory.
 
 ### Other Helpers
 
-| Function | Description |
-|----------|-------------|
-| `task_state_in(task_id, *states)` | Check a task's projected stage-native state |
-| `skill_loaded(name)` | Check whether a skill was loaded through `gobby-skills:get_skill` |
-| `assistant_response_matches_any(patterns, regex=False)` | Match assistant output for response-quality rules |
-| `normalize_path(path)` | Normalize path separators for portable comparisons |
-| `first_tdd_code_path(event_data, tool_input)` | Return the first canonical production source path covered by TDD |
-| `first_tdd_test_path(event_data, tool_input)` | Return the first canonical test-convention path in any language |
-| `tdd_gate_open(variables)` | Check whether a named acceptance test, or any test when none is named, was written |
-| `is_plan_file(path)` | Check whether a path is a plan artifact |
-| `is_current_plan_artifact(file_path, artifact_path)` | Check whether a file is the active plan artifact |
-| `get_touched_file_paths(tool_input)` | Extract files affected by a tool call |
-| `requires_task_for_any_touched_file(tool_input, source, plan_mode)` | Check whether touched files require a claimed task |
-| `is_message_delivery_tool(tool_name)` | Check whether a tool delivers inter-session messages |
-| `has_pending_messages(session_id)` | Check whether a session has pending inter-session messages |
-| `pending_message_count(session_id)` | Count pending inter-session messages for a session |
-
-**Source**: `src/gobby/workflows/safe_evaluator.py` — `build_condition_helpers`, `src/gobby/workflows/condition_helpers.py`, `src/gobby/workflows/engine/templating.py`, `src/gobby/workflows/enforcement/blocking.py`
-
----
+See `condition_helpers.py`, `engine/templating.py` and `safe_evaluator.py` under
+`src/gobby/workflows/` for task, path, message and instruction predicates.
 
 ## Default Variables Reference
 
-These are the bundled default variables (from `gobby-default-variables.yaml`):
+Discover actual definitions with `gobby-workflows:list_variables` and inspect one
+with `get_variable_definition`. Read the session separately with top-level
+`get_variable`. Compare `enabled`, `project_id`, `source`, tags and value before
+explaining behavior. Definition lists may include multiple project scopes; the MCP
+list schema exposes `enabled`, not a project filter.
 
-| Variable | Default | Type | Purpose |
-|----------|---------|------|---------|
-| `task_claimed` | `false` | bool | Whether a task is claimed in this session |
-| `claimed_tasks` | `{}` | dict | Map of claimed task UUIDs to refs (`{uuid: '#N'}`) |
-| `active_task_id` | `null` | string | Task UUID receiving new edit attribution when multiple tasks are claimed |
-| `task_edited_files` | `{}` | dict | Map of claimed task UUIDs to repo-relative files edited this session |
-| `require_task_before_edit` | `true` | bool | Enforce task-before-edit gate |
-| `require_commit_before_status` | `true` | bool | Enforce commit-before-status gate |
-| `stop_attempts` | `0` | int | Consecutive turn-end attempts (auto-managed) |
-| `max_stop_attempts` | `8` | int | Threshold before escape hatch allows stop |
-| `max_consecutive_blocked_tool_attempts` | `5` | int | Retry threshold for repeated blocked tool calls |
-| `mode_level` | `2` | int | Autonomy level (0=plan, 1=accept_edits, 2=full auto) |
-| `chat_mode` | `"bypass"` | string | Chat mode setting |
-| `require_uv` | `true` | bool | Enforce `uv` for Python operations |
-| `enforce_tdd` | `false` | bool | Enable TDD enforcement without a claimed TDD-required task |
-| `claimed_task_requires_tdd` | `false` | bool | Whether any currently claimed task requires TDD |
-| `claimed_task_acceptance_test_paths` | `[]` | list | Ordered, deduplicated test paths derived from claimed-task acceptance criteria |
-| `tdd_tests_written` | `[]` | list | Test files written during TDD (internal) |
-| `enforce_tool_schema_check` | `true` | bool | Require current-context schema leases for ordinary proxy calls |
-| `auto_inject_handoff` | `true` | bool | Populate session summary template vars |
-| `servers_listed` | `true` | bool | Internal MCP servers are pre-seeded at startup |
-| `listed_servers` | internal server list | list | Internal servers discovered or pre-seeded for progressive discovery |
-| `unlocked_tools` | `[]` | list | Schema leases recorded by `get_tool_schema`; persisted across ordinary resume/restart and cleared on context loss |
-| `is_subagent` | `false` | bool | Whether a native subagent is currently active |
-| `loaded_skills` | `[]` | list | Skills loaded through `gobby-skills:get_skill` |
-| `code_index_navigation_used_this_turn` | `false` | bool | True after successful gcode navigation in the current turn |
-| `_memory_initial_stop_checked` | `false` | bool | True after the first turn end checks initial memory skill loading |
-| `_memory_reminder_turn_seq` | `null` | int | Parent turn sequence that last received the concise memory reminder |
-| `_memory_pending_task_reviews` | `[]` | list | Closed worked leaves awaiting the bounded post-close memory review turn end |
-| `_gobby_feedback_epoch_submitted` | unset | bool | Persisted submission acknowledgment for the bundled Gobby-experience survey; set true only when `gobby-sessions:feedback` succeeds, never on prompt delivery and never as human review, and re-armed only by a context reset (`reset-gobby-session-feedback-on-context-reset`), never by a task closure. Not a template default |
-| `_gobby_feedback_survey_active` | computed | bool | Per-event flag from `session_feedback.survey` and `variables.project.name`; not a template default |
-| `_memory_review_stop_delivered` | `false` | bool | True once the pending post-close memory review block was delivered to the agent, or once `review_task_memories` has covered every queued closure |
-| `_memory_task_review_records` | `[]` | list | Successful `review_task_memories` results keyed by canonical task closure |
-| `skill_discovery_instructions_shown` | `false` | bool | Whether skill discovery instructions were shown |
-| `brevity_disabled` | `false` | bool | Whether brevity reinforcement is disabled |
-| `brevity_level` | `"normal"` | string | Active brevity level (lite/normal/max); set by `gobby-skills:get_skill` on each leveled load |
-| `restraint_disabled` | `false` | bool | Whether restraint reinforcement is disabled |
-| `restraint_level` | `"max"` | string | Active restraint level (lite/normal/max, default max); set by `gobby-skills:get_skill` on each leveled load |
-| `brevity_last_violation` | `""` | string | Last response fragment that violated brevity rules |
-| `brevity_last_violation_rule` | `""` | string | Brevity rule matched by the last violation |
-| `_agent_context_injected` | `false` | bool | Whether agent identity was injected on first pre-turn event |
-| `_agent_identity_reinject` | `false` | bool | Whether persona identity should be reinjected |
-| `edit_write_pending` | `false` | bool | Whether a write-like tool call is pending |
-| `edit_write_stop_blocks` | `0` | int | Circuit breaker for write-pending stop gate |
+A read-only audit on 2026-09-12 found global `max_stop_attempts` value `8`, enabled,
+source `installed`, tagged `gobby`; this is dated evidence, not a permanent default
+or proof that any stop rule is enabled. Runtime state can override it.
 
 ### Internal Variables (Set by Rules/Engine)
 
-These are set during execution, not initialized from definitions:
-
-| Variable | Type | Purpose |
-|----------|------|---------|
-| `task_ref` | string | Current task reference (e.g., `#1234`) |
-| `plan_mode` | bool | Whether the agent is in plan mode |
-| `tool_block_pending` | bool | A tool was just blocked/failed |
-| `consecutive_tool_blocks` | int | Same-tool retry counter |
-| `_last_blocked_tool` | string | Which tool was last blocked |
-| `force_allow_stop` | bool | Catastrophic failure bypass |
-| `_agent_type` | string | Current agent type (for agent_scope filtering) |
-| `_active_rule_names` | list | Rules active for this session (from selectors) |
-| `_active_skill_names` | list | Skills active for this session |
-| `_observations` | list | Accumulated observe effect entries |
-| `_assigned_pipeline` | string | Pipeline to auto-run on start |
-| `assigned_task_id` | string | Task ref assigned to a spawned/persona task worker |
-| `session_task` | string | Current task ref or UUID used by task-aware rules |
-| `baseline_dirty_files` | list | Dirty files captured by the sessions capture-baseline tool (hooks write an unsampled marker) |
-| `session_edited_files` | list | Files edited by this session |
-| `session_dirty_files` | list | Files edited by this session that git has not yet reported clean |
-| `session_dirty_file_checkouts` | object | Checkout root to the dirty paths edited in that checkout |
-| `set_handoff_pending` | object | One-shot attempt marker written only by `set_handoff` and consumed by `get_handoff`. |
-| `handoff_pull_pending` | bool | Defer turn-start meta skill loads until `get_handoff` consumes. Set on compact stage and clear-successor bind. |
-| `grok_pending_briefing` | list | Ordered, id-deduplicated context components waiting for acknowledged Grok PreToolUse/Stop delivery. |
-| `grok_pending_turn_context` | list | Bounded per-turn context components; oldest entries drop at 32 components or 16,384 serialized UTF-8 bytes. |
-| `grok_pending_delivery` | object | Briefing components claimed by one durable ghook inbox envelope until acknowledgment settles. |
-
-The three `grok_pending_*` variables are runtime-reserved. Public
-`set_variable` calls and non-internal rule effects cannot write them; hook
-delivery code mutates them atomically under the session-variable advisory lock.
-
----
+Internal state has per-event, per-turn, per-context or session lifetime. Ordinary
+resume/restart preserves leases and existing variables; context loss clears
+instruction/schema tracking through the normal reset flow. A found-work shirk
+alert is session-lifetime, not a turn-start reset. Do not clear task ownership,
+dirty-path history, pending errors, feedback acknowledgments or handoff receipts
+by hand. See [session boundaries](../contracts/session-boundary.md) and
+[engine reset behavior](./workflow-rules.md#turn-start-reset).
 
 ## Managing Variables
 
 ### CLI
 
-```bash
-# Get one variable, or omit the name to print all variables
-gobby variables get [NAME] --session <ID> --json
-
-# Set a variable
-gobby variables set <name> <value> --session <ID>
-```
+`gobby variables get [NAME] --session ID --json` and
+`gobby variables set NAME VALUE --session ID` are **operator** commands using local
+DB access. Agents use the tracked runtime tools. Omitted session uses CLI current
+session resolution; explicit IDs are safer for diagnosis. These commands expose
+session scope only. CLI parsing handles booleans, null/none and numbers, then falls
+back to strings; it does not decode list/object JSON. See [CLI](./cli-commands.md#variables).
 
 ### MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `set_variable` | Set a session variable (top-level MCP tool) |
-| `get_variable` | Get a session variable value |
-| `get_step_status` | Show the session's agent-step snapshot and live session variables (`gobby-workflows`) |
-| `list_variables` | List variable definitions, not live session values (`gobby-workflows`) |
-| `get_variable_definition` | Read one variable definition (`gobby-workflows`) |
+`gobby-workflows` exposes definition `list_variables`, `get_variable_definition`,
+`create_variable`, `update_variable`, `delete_variable`, and `export_variable`.
+Fetch each schema before use. Top-level runtime get/set are separate and expose
+session scope only. `get_step_status` is shared agent-step diagnostic guidance.
 
----
+The registered definition create/update schemas currently expose `value` as a
+**string**, even though internal functions accept richer values; those functions
+do not apply runtime string coercion. Do not send `"false"` expecting a boolean
+default. Use typed user YAML or the authorized operator definition HTTP surface
+when a typed default is needed. Definition update treats `None` as unchanged;
+it is not a public MCP null-reset mechanism.
+
+Creation rejects existing names, including bundled collisions. It creates a
+global installed user row: `project_path` selects the export destination, **not**
+the DB project scope, and `make_template` selects the global export directory.
+Update changes value/description; deletion soft-deletes a definition, not a
+session key. Export returns a single named YAML document. It is not a complete
+backup of scope, tags or enabled state. Auto-export may be skipped (no destination
+or development mode) or fail after DB success; verify the file separately.
+
+### Defaults and Overrides
+
+Customize through a user definition, project override or authorized session value.
+Bundled source files and Gobby-owned installed definitions remain Gobby-owned;
+permissive low-level mutators and deletion `force` do not grant authority to edit
+them in place. Keep the [template contract](../../src/gobby/install/shared/AGENTS.md).
+Variables' actual user loader uses `.gobby/workflows/variables/` and
+`~/.gobby/workflows/variables/`, not an inferred generic install path.
+
+A project user file uses the single-definition format:
+
+```yaml
+name: example_limit
+type: variable
+variable: example_limit
+value: 4
+description: Project retry limit
+```
+
+The imported-definition loader supplies scope from its root and preserves a global
+row when creating a same-named project row. Global imports use global scope.
+Explicit exports and auto-exports use this named format; grouped bundled YAML is
+not accepted by this user loader. To recover an older grouped auto-export, export
+its live definition again or convert each entry into a separate named file, then
+validate/reload in isolation. Reload is shared workflow maintenance, not an
+automatic consequence of listing or reading a file.
+
+### HTTP and Scope
+
+Operator `/api/variables` definition routes provide list/create, update, toggle,
+soft-delete and template restore. Create supports `project_id`; list supports
+project/enabled/deleted filters. Update distinguishes omitted `value` from null.
+There is no single-definition GET route: use list or MCP get-definition. There
+are no variable move-scope or undelete HTTP routes. Template restore resolves a
+live row and resets value/description; it does not undelete a row or reset sessions.
+
+`POST /api/sessions/{session_id}/variables/get` and `/set` use
+`scope: session|step` (default session). Step scope reads/writes the existing
+agent-step instance's variable map; no instance is an error, not an instruction
+to create one. Agent credentials are bound to their claimed session and cannot
+use another session or the operator definition API. See
+[HTTP endpoints](./http-endpoints.md#variable-semantics).
+
+### Resets and Recovery
+
+There is no public generic unset/reset-session-variables operation. Setting null
+stores a present null override and continues masking a default. Setting a current
+default value copies it into an override; later default edits will not follow.
+Use the owning lifecycle tool for runtime-managed reset state, and ordinary
+`set_variable` only for an authorized user setting. Never delete a definition to
+try to clear a stored session value.
+
+If a value seems wrong: confirm target session and scope, read its effective
+value and `exists`, inspect project/global definitions and enabled state, then
+inspect agent activation or persisted overrides. For a reserved-variable error,
+use the owning task/agent/handoff operation. For missing definitions or import
+errors, check the single named YAML shape, destination scope and sync result.
+Do not repair a value issue by resetting the user's whole session.
 
 ## File Locations
 
-| Path | Purpose |
-|------|---------|
-| `src/gobby/install/shared/workflows/variables/` | Bundled variable definitions |
-| `src/gobby/workflows/state_manager.py` | Session variable persistence |
-| `src/gobby/storage/definitions/variables.py` | `session_variable_defaults` manager |
-| `src/gobby/workflows/sync_variables.py` | Sync bundled variable YAML into DB definitions |
-| `src/gobby/workflows/safe_evaluator.py` | SafeExpressionEvaluator + LazyBool |
-| `src/gobby/workflows/condition_helpers.py` | Built-in condition helper functions |
-| `src/gobby/workflows/definitions.py` | VariableDefinitionBody model |
-| `src/gobby/mcp_proxy/tools/workflows/_variables.py` | Runtime and definition MCP variable tools |
-| `src/gobby/cli/variables.py` | `gobby variables get` and `gobby variables set` |
+| Path | Authority |
+|---|---|
+| `src/gobby/mcp_proxy/tools/workflows/_variables.py` | Definition and runtime operations |
+| `src/gobby/workflows/state_manager.py` | Layered session values and atomic mutations |
+| `src/gobby/storage/definitions/variables.py` | Definition scope, revision and persistence |
+| `src/gobby/workflows/sync_variables.py` | Grouped bundled defaults |
+| `src/gobby/workflows/imports.py` | Named global/project user imports |
+| `src/gobby/workflows/template_writer.py` | User-file serialization |
+| `src/gobby/servers/routes/variable_definitions.py` | Operator definition API |
+| `src/gobby/servers/routes/sessions/variables.py` | Session-bound runtime HTTP API |
 
 ## See Also
 
-- [Workflows Overview](./workflows-overview.md) — How variables connect rules, agents, and pipelines
-- [Rules](./rules.md) — Rules that read and write variables
-- [Agents](./agents.md) — Agent selectors that control variable loading
+- [Workflows overview](./workflows-overview.md)
+- [Rules](./rules.md)
+- [Agents](./agents.md)
 
-_Last verified: 2026-09-04_
+_Last verified: 2026-09-12_

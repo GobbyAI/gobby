@@ -702,6 +702,50 @@
           "when": "Changing native components or diagnosing installed-binary drift"
         }
       ]
+    },
+    {
+      "name": "variables",
+      "description": "Inspect defaults, scope and live session values",
+      "overview": "references/variables/overview.md",
+      "when": "Reading or managing variable definitions and runtime values",
+      "topics": [
+        {
+          "name": "definitions",
+          "description": "Discover, create, update, export and retire definitions",
+          "path": "references/variables/definitions.md",
+          "when": "Managing variable definitions or investigating missing names"
+        },
+        {
+          "name": "values",
+          "description": "Read and write live session values",
+          "path": "references/variables/values.md",
+          "when": "Inspecting or changing a session variable"
+        },
+        {
+          "name": "defaults",
+          "description": "Resolve enabled defaults and their precedence",
+          "path": "references/variables/defaults.md",
+          "when": "Explaining default values or syncing definitions"
+        },
+        {
+          "name": "scope",
+          "description": "Choose session, project, global or step scope",
+          "path": "references/variables/scope.md",
+          "when": "Targeting a session or choosing definition and step scope"
+        },
+        {
+          "name": "overrides",
+          "description": "Customize values and persist user definitions",
+          "path": "references/variables/overrides.md",
+          "when": "Authoring an override or verifying export and reload"
+        },
+        {
+          "name": "resets",
+          "description": "Recover values and respect lifecycle resets",
+          "path": "references/variables/resets.md",
+          "when": "Resetting user settings or diagnosing reserved and stale state"
+        }
+      ]
     }
   ]
 }

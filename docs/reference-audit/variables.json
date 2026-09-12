@@ -1,0 +1,527 @@
+{
+  "version": 1,
+  "capability": "variables",
+  "status": "verified",
+  "source_skills": [],
+  "guides": [
+    {
+      "path": "docs/guides/variables.md",
+      "anchors": [
+        "variable-lifecycle",
+        "initialization",
+        "runtime-resolution",
+        "variable-selectors",
+        "mutation",
+        "expression-detection",
+        "mutation-visibility",
+        "auto-managed-variables",
+        "using-variables-in-conditions",
+        "using-variables-in-templates",
+        "lazybool-pattern",
+        "built-in-condition-helpers",
+        "default-variables-reference",
+        "internal-variables-set-by-rulesengine",
+        "managing-variables",
+        "cli",
+        "mcp-tools",
+        "defaults-and-overrides",
+        "http-and-scope",
+        "resets-and-recovery",
+        "file-locations"
+      ],
+      "evidence": [
+        "source-audit",
+        "schemas",
+        "focused-final"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "variables"
+      ],
+      "evidence": [
+        "source-audit",
+        "cli-help"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "variable-semantics"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "tool": "list_variables",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+        "symbol": "list_variables"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows"
+    },
+    {
+      "surface": "mcp",
+      "tool": "get_variable_definition",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+        "symbol": "get_variable_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows"
+    },
+    {
+      "surface": "mcp",
+      "tool": "create_variable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+        "symbol": "create_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows"
+    },
+    {
+      "surface": "mcp",
+      "tool": "update_variable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+        "symbol": "update_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows"
+    },
+    {
+      "surface": "mcp",
+      "tool": "delete_variable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+        "symbol": "delete_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows"
+    },
+    {
+      "surface": "mcp",
+      "tool": "export_variable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+        "symbol": "export_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows"
+    },
+    {
+      "surface": "mcp",
+      "tool": "get_variable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/values.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.get_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby",
+      "top_level": true
+    },
+    {
+      "surface": "mcp",
+      "tool": "set_variable",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/values.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/server.py",
+        "symbol": "GobbyDaemonTools.set_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby",
+      "top_level": true
+    },
+    {
+      "surface": "mcp",
+      "tool": "get_step_status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/scope.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_query.py",
+        "symbol": "get_step_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "primary_capability": "agents"
+    },
+    {
+      "surface": "mcp",
+      "tool": "update_agent_variables",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/overrides.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_agents.py",
+        "symbol": "update_agent_variables"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "primary_capability": "agents"
+    },
+    {
+      "surface": "mcp",
+      "tool": "reload_cache",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/overrides.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_import.py",
+        "symbol": "reload_cache"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "schemas"
+      ],
+      "audience": "agent",
+      "server": "gobby-workflows",
+      "primary_capability": "rules"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby variables get",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/values.md",
+      "implementation": {
+        "path": "src/gobby/cli/variables.py",
+        "symbol": "get_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby variables set",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/values.md",
+      "implementation": {
+        "path": "src/gobby/cli/variables.py",
+        "symbol": "set_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "route": "/api/variables",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/variable_definitions.py",
+        "symbol": "create_variable_definitions_router.list_variables"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "operator",
+      "method": "GET"
+    },
+    {
+      "surface": "http",
+      "route": "/api/variables",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/scope.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/variable_definitions.py",
+        "symbol": "create_variable_definitions_router.create_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "operator",
+      "method": "POST"
+    },
+    {
+      "surface": "http",
+      "route": "/api/variables/{ref}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/defaults.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/variable_definitions.py",
+        "symbol": "create_variable_definitions_router.update_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "operator",
+      "method": "PUT"
+    },
+    {
+      "surface": "http",
+      "route": "/api/variables/{ref}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/definitions.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/variable_definitions.py",
+        "symbol": "create_variable_definitions_router.delete_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "operator",
+      "method": "DELETE"
+    },
+    {
+      "surface": "http",
+      "route": "/api/variables/{ref}/toggle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/defaults.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/variable_definitions.py",
+        "symbol": "create_variable_definitions_router.toggle_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "operator",
+      "method": "PUT"
+    },
+    {
+      "surface": "http",
+      "route": "/api/variables/{ref}/restore-from-template",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/resets.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/variable_definitions.py",
+        "symbol": "create_variable_definitions_router.restore_from_template"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "operator",
+      "method": "POST"
+    },
+    {
+      "surface": "http",
+      "route": "/api/sessions/{session_id}/variables/get",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/scope.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/variables.py",
+        "symbol": "register_session_variable_routes.get_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "agent",
+      "method": "POST"
+    },
+    {
+      "surface": "http",
+      "route": "/api/sessions/{session_id}/variables/set",
+      "reference": "src/gobby/install/shared/skills/gobby/references/variables/scope.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/variables.py",
+        "symbol": "register_session_variable_routes.set_variable"
+      },
+      "verification": [
+        "source-audit",
+        "focused-final"
+      ],
+      "audience": "agent",
+      "method": "POST"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "command": "gcode symbol-at/outline and registered inventory: _variables, workflow registry, state_manager, variable defaults manager, selectors/build_persona_changes, imports/sync_variables/template_writer, CLI and HTTP route factories",
+      "result": "Verified scope, defaults revision, shallow overrides, read-only observations vs mutation, JSON coercion, reserved names, operator endpoints and actual user-file import format. Removed duplicate static helper/default catalogs in favor of owning rule guide and implementation; preserved lifecycle and enforcement obligations."
+    },
+    {
+      "id": "schemas",
+      "command": "gobby-workflows list_tools; get_tool_schema for six definition tools and get_step_status/update_agent_variables/reload_cache; top-level get/set tool declarations",
+      "result": "41 registered workflow tools inspected; six primary definition tools plus three shared consumers, two separate top-level runtime tools. Definition create/update value is string in current schema; top-level runtime is native JSON and session-only. save_variable_template is not registered."
+    },
+    {
+      "id": "installed-row",
+      "command": "gobby-workflows:get_variable_definition(name=max_stop_attempts), read-only on 2026-09-12",
+      "result": {
+        "id": "00fc8b5e-e6e9-4501-bfe3-d6a19ddb3423",
+        "value": 8,
+        "enabled": true,
+        "source": "installed",
+        "tags": [
+          "session-defaults",
+          "initialization",
+          "gobby"
+        ],
+        "project_id": null
+      },
+      "scope": "Snapshot only; no rule activation inferred."
+    },
+    {
+      "id": "cli-help",
+      "command": "uv run gobby variables --help; uv run gobby variables get --help; uv run gobby variables set --help (separate calls)",
+      "result": "All exit 0; exactly get/set, optional -s/--session and --json, session scope only. Scalar parsing verified against _parse_variable_value."
+    },
+    {
+      "id": "export-red-green",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_variable_export_import.py -q --tb=short; then same prefix pytest tests/workflows/test_variable_export_import.py tests/workflows/test_template_writer.py tests/workflows/test_imports.py -q --tb=short",
+      "result": "Before fix: 5 failures with missing name in real user loader. After fix: 28 passed in 2.83s. Five typed values and update reimport tested in isolated DB/schema/temp files."
+    },
+    {
+      "id": "focused-final",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_top_level_variables.py tests/mcp_proxy/tools/workflows/test_variables.py tests/mcp_proxy/tools/workflows/test_query.py tests/servers/routes/test_session_variables.py tests/servers/routes/test_variable_definitions.py tests/storage/definitions/test_variables_manager.py tests/workflows/test_session_variable_manager.py tests/workflows/test_session_defaults.py tests/workflows/test_selectors.py tests/workflows/test_imports.py tests/workflows/test_template_writer.py tests/workflows/test_variable_export_import.py tests/hooks/event_handlers/test_session_variable_preservation.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "276 passed in 25.24s; repeated after final documentation edits before commit."
+    },
+    {
+      "id": "links-catalog",
+      "command": "uv run python /tmp/gobby_variables_validate.py: load_capability_catalog; JSON references/evidence and AST symbols; fence-aware local links/anchors",
+      "result": "16 catalog capabilities validated; all 21 operation symbols resolve by AST; 64 local links/anchors valid; evidence identifiers resolve."
+    },
+    {
+      "id": "quality",
+      "command": "uv run ruff check/format --check on owned Python paths; uv run mypy src/gobby/workflows/template_writer.py; uv run gobby test-types audit <two owned tests> --baseline .gobby/test-types-baseline.json --fail-on-new; uv run gobby test-quality audit <two owned tests> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low; uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "Ruff check/format and production mypy clean; test-types 0 errors after fixing all nine encountered baseline errors; test-quality 0 issues; suppression ratchet 217 baseline, 0 new."
+    },
+    {
+      "id": "independent-review",
+      "command": "OCR delegated staged review of 15 owned paths, then incremental validation of corrected reference links",
+      "result": "15 reviewed, 0 skipped. One medium path-depth finding corrected in all seven references; local validator confirms all links. No further scope/type/reset/exporter findings."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "User variable auto-export emitted grouped bundled YAML rejected by the named user importer.",
+      "implementation": "src/gobby/workflows/template_writer.py::write_variable_template; src/gobby/workflows/imports.py::sync_imported_workflow_file",
+      "resolution": "Fixed writer to emit name/type/variable plus body. Added real create/update export/import integration coverage. Documented re-export/conversion recovery for old grouped files.",
+      "evidence": [
+        "export-red-green",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "Guide described Jinja rendering before expression evaluation, suggesting a second evaluation.",
+      "implementation": "src/gobby/workflows/engine/effects.py::EffectsMixin._apply_set_variable",
+      "resolution": "Documented separate return branch and failed-expression no-write behavior.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Selectors were described as controlling loaded variables without distinguishing materialization and ordinary effective reads.",
+      "implementation": "src/gobby/mcp_proxy/tools/apply_persona.py::build_persona_changes; src/gobby/workflows/state_manager.py::SessionVariableManager._apply_variable_defaults",
+      "resolution": "Explicitly separate activation payload filtering from read-layer defaults/access control.",
+      "evidence": [
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "Missing definition lifecycle, typed schema limitations, export scope, HTTP step scope and reset semantics.",
+      "implementation": "src/gobby/mcp_proxy/tools/workflows/_variables.py",
+      "resolution": "Added six operation topics and complete operation inventory; null vs absent, whole-key overrides, global MCP creation vs project export destination, and operator-only definition APIs are explicit.",
+      "evidence": [
+        "schemas",
+        "source-audit",
+        "focused-final"
+      ]
+    },
+    {
+      "finding": "Static default/helper lists duplicated runtime-owned truth and mixed defaults with computed state.",
+      "resolution": "Replaced with discovery workflow and dated installed-row evidence; retained task/dirty-path/validation, lifetime and reserved-state obligations.",
+      "evidence": [
+        "installed-row",
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Generic shared-template path convention does not describe the variable user loader; permissive low-level definition mutators do not enforce the instruction-level Gobby ownership contract.",
+      "implementation": "src/gobby/workflows/imports.py; src/gobby/paths.py; src/gobby/storage/definitions/variables.py",
+      "resolution": "Preserved normative prohibition on in-place Gobby-owned customization; documented actual variables roots and project-scoped imports. No permission inferred from force or writable storage; no live ownership mutation performed.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Touched template-writer tests had eight untyped methods and a non-exported module attribute access.",
+      "resolution": "Annotated Path/None signatures and patch the imported yaml module directly; no suppression or baseline expansion.",
+      "evidence": [
+        "quality"
+      ]
+    },
+    {
+      "finding": "Initial reference guide paths traversed seven parents instead of eight.",
+      "resolution": "Corrected every variables reference link and validated filesystem targets plus anchors.",
+      "evidence": [
+        "links-catalog",
+        "independent-review"
+      ]
+    }
+  ],
+  "coverage_notes": [
+    "21 operations: 11 MCP (six primary definition, two top-level runtime, three shared), two operator CLI, eight HTTP. No dedicated variables MCP service.",
+    "No public generic unset/reset-all, variable HTTP move/undelete, or step-scope top-level MCP operation. Internal save_variable_template is not registered.",
+    "Shared reload_cache mutates multiple registries; require scope and inspect error fields even with success true.",
+    "Pure documentation/catalog plus bounded exporter fix; no new product operation. Full pytest not run; isolated test hub and temporary files only.",
+    "Reference library cutover, strict P3 coverage checker and live daemon code refresh remain later root deliverables."
+  ]
+}
