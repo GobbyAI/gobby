@@ -132,7 +132,7 @@ async def test_launch_moves_down_the_candidate_list_after_a_provider_failure(
     # delivers tells the caller to close again. Relaunching onto the same
     # provider makes that instruction unfollowable, so the ordered candidate
     # list has to advance.
-    store = _Store(_review(status="launching", run_id=None), provider_failures=1)
+    store = _Store(_review(status="launching", run_id=None), unjudged_attempts=1)
     registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
     ctx = _ctx(
         registry=registry,
@@ -159,7 +159,7 @@ async def test_launch_wraps_to_the_head_once_every_candidate_has_failed(
     # its own, so after every candidate has died the one that failed longest ago
     # is the next worth trying; stopping at the last entry would pin the task to
     # whichever provider stays down longest.
-    store = _Store(_review(status="launching", run_id=None), provider_failures=2)
+    store = _Store(_review(status="launching", run_id=None), unjudged_attempts=2)
     registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
     ctx = _ctx(
         registry=registry,
@@ -604,7 +604,7 @@ def test_validator_spawn_overrides_carry_the_reached_candidates_pinned_effort() 
         profile="feature_high",
     )
 
-    overrides = agentic_close_review_module.validator_spawn_overrides(config, provider_failures=1)
+    overrides = agentic_close_review_module.validator_spawn_overrides(config, unjudged_attempts=1)
 
     assert overrides == {"provider": "claude", "model": "opus", "reasoning_effort": "high"}
 
@@ -1111,7 +1111,7 @@ class _Store:
         review: TaskCloseReview,
         *,
         created: bool = True,
-        provider_failures: int = 0,
+        unjudged_attempts: int = 0,
     ) -> None:
         self.review = review
         self.created = created
@@ -1120,10 +1120,10 @@ class _Store:
         self.finished_status: str | None = None
         self.claimed = False
         self.restored = False
-        self.provider_failures = provider_failures
+        self.unjudged_attempts = unjudged_attempts
 
-    def count_provider_failed_attempts(self, _task_id: str) -> int:
-        return self.provider_failures
+    def count_unjudged_attempts(self, _task_id: str) -> int:
+        return self.unjudged_attempts
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
         self.created_arguments = dict(kwargs["close_arguments"])

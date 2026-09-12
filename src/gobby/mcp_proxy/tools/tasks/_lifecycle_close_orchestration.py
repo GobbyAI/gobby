@@ -141,13 +141,13 @@ async def launch_close_review(
             "prompt_chars": len(prompt),
             "prompt_limit": prompt_limit,
         }
-    # Earlier attempts that died on their provider rather than on the evidence
-    # move this one down the ordered candidate list; relaunching onto a
-    # quota-exhausted provider only reproduces the failure, and the caller is
-    # told to call close_task again after exactly that error.
+    # Earlier attempts that ended without judging the evidence move this one
+    # along the ordered candidate list; relaunching onto a runtime that just
+    # died only reproduces the failure, and the caller is told to call
+    # close_task again after exactly that error.
     overrides = validator_spawn_overrides(
         ctx.validation_config,
-        provider_failures=store.count_provider_failed_attempts(task.id),
+        unjudged_attempts=store.count_unjudged_attempts(task.id),
     )
     try:
         launch = await registry.call(

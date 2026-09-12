@@ -17,16 +17,16 @@ TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
 def validator_spawn_overrides(
     validation_config: TaskValidationConfig | None,
     *,
-    provider_failures: int = 0,
+    unjudged_attempts: int = 0,
 ) -> dict[str, str | None]:
     """Return spawn overrides so the validator runs on the ``gobby_tasks.validation`` model.
 
-    The candidate list is ordered, so ``provider_failures`` — how many earlier
-    attempts on this task died on their provider rather than on the evidence —
-    is how far down it this attempt starts, wrapping back to the head once it
-    runs off the end. A quota is a passing condition, so the candidate that
-    failed longest ago is the one most likely to have recovered; stopping at
-    the tail would strand the task on whichever provider stays down longest.
+    The candidate list is ordered, so ``unjudged_attempts`` — how many earlier
+    attempts on this task ended without judging the evidence — is how far down
+    it this attempt starts, wrapping back to the head once it runs off the end.
+    A quota is a passing condition, so the candidate that failed longest ago is
+    the one most likely to have recovered; stopping at the tail would strand the
+    task on whichever provider stays down longest.
     A candidate's reasoning effort (or the feature profile's default) is forwarded
     only when it resolves to a concrete value; an unpinned candidate leaves the
     agent definition's own effort default in force, since an explicit ``None``
@@ -40,7 +40,7 @@ def validator_spawn_overrides(
     )
     if not entries:
         return {}
-    entry = entries[max(provider_failures, 0) % len(entries)]
+    entry = entries[max(unjudged_attempts, 0) % len(entries)]
     provider, model = parse_feature_candidate(entry.candidate)
     overrides: dict[str, str | None] = {"provider": provider, "model": model}
     if entry.reasoning_effort is not None:
