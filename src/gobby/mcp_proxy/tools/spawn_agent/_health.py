@@ -12,6 +12,8 @@ import psycopg
 
 from gobby.agents.capture import _capture_marker, _capture_slot
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
+from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals.runtime import TerminalRuntimeRegistry
 from gobby.utils.terminal_output import redact_terminal_output
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,12 @@ class _RunStorageForHealth(Protocol):
 class _RunnerWithRunStorage(Protocol):
     @property
     def run_storage(self) -> _RunStorageForHealth: ...
+
+    @property
+    def terminal_manager(self) -> TerminalManager: ...
+
+    @property
+    def terminal_runtime_registry(self) -> TerminalRuntimeRegistry: ...
 
 
 def _redacted_pane_output(output: str) -> str:
@@ -129,32 +137,27 @@ except (ValueError, TypeError):
     TMUX_HEALTH_CHECK_DELAY = 0.5
 
 
-async def _check_tmux_session_alive(
-    session_name: str,
-    socket_name: str | None = None,
-    socket_path: str | None = None,
+async def _terminal_is_live(
+    row: Terminal,
+    registry: TerminalRuntimeRegistry,
 ) -> tuple[bool, str | None]:
-    """Check if a tmux session is still alive after spawn."""
-    from gobby.agents.tmux import get_tmux_session_manager_for
-
-    manager = get_tmux_session_manager_for(socket_name=socket_name, socket_path=socket_path)
-    if not manager.is_available():
-        return True, None  # Can't check without tmux binary, assume alive
+    """Check a terminal row through the runtime registered for its backend."""
+    runtime = registry.resolve(row.backend)
     try:
-        info = await asyncio.wait_for(
-            manager.get_session(session_name),
+        alive = await asyncio.wait_for(
+            runtime.is_live(row),
             timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
         )
-        alive = bool(info and not info.pane_dead and info.pane_pid is not None)
-        if alive or info is None:
+        if alive:
             return alive, None
         try:
-            output = await asyncio.wait_for(
-                manager.capture_pane(session_name, lines=50),
+            snapshot = await asyncio.wait_for(
+                runtime.snapshot(row, lines=50),
                 timeout=_TMUX_HEALTH_CHECK_TIMEOUT_SECONDS,
             )
         except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
-            output = None
+            return False, None
+        output = snapshot.text
         if not output or not output.strip():
             return False, None
         return False, _bounded_redacted_pane_output(output)
@@ -167,24 +170,16 @@ async def _check_tmux_session_alive(
 async def _deferred_tmux_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
-    tmux_session_name: str | None = None,
-    socket_name: str | None = None,
-    socket_path: str | None = None,
+    terminal_id: str,
     delay: float = 0,
     completion_registry: Any | None = None,
-    *,
-    terminal_id: str | None = None,
 ) -> None:
     try:
         await asyncio.sleep(delay)
-        session_name = tmux_session_name or terminal_id
-        if session_name is None:
+        row = await asyncio.to_thread(runner.terminal_manager.get, terminal_id)
+        if row is None:
             return
-        alive, pane_output = await _check_tmux_session_alive(
-            session_name,
-            socket_name=socket_name,
-            socket_path=socket_path,
-        )
+        alive, pane_output = await _terminal_is_live(row, runner.terminal_runtime_registry)
         if not alive:
             run = runner.run_storage.get(run_id)
             if run is not None and run.status not in ("pending", "running"):
@@ -199,7 +194,7 @@ async def _deferred_tmux_health_check(
                 error = f"{error}\nPane output:\n{safe_output}"
                 if capture_id:
                     error = f"{error}\ncapture_id={capture_id}"
-            logger.error("Agent %s tmux session %r: %s", run_id, session_name, error)
+            logger.error("Agent %s terminal %r: %s", run_id, terminal_id, error)
             try:
                 failed = runner.run_storage.fail(run_id, error=error)
                 if failed is not None:
@@ -234,23 +229,16 @@ async def _deferred_tmux_health_check(
 def _start_tmux_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
-    tmux_session_name: str,
-    socket_name: str | None,
-    socket_path: str | None,
+    terminal_id: str,
     completion_registry: Any | None = None,
-    *,
-    terminal_id: str | None = None,
 ) -> None:
     health_task = asyncio.create_task(
         _deferred_tmux_health_check(
             runner,
             run_id,
-            tmux_session_name,
-            socket_name,
-            socket_path,
+            terminal_id,
             0,
             completion_registry,
-            terminal_id=terminal_id,
         ),
         name=f"tmux-health-{run_id}",
     )
@@ -261,15 +249,11 @@ def _start_tmux_health_check(
 def schedule_tmux_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
-    tmux_session_name: str | None = None,
-    socket_name: str | None = None,
-    socket_path: str | None = None,
+    terminal_id: str,
     completion_registry: Any | None = None,
     delay: float = TMUX_HEALTH_CHECK_DELAY,
-    *,
-    terminal_id: str | None = None,
 ) -> asyncio.TimerHandle:
-    """Schedule a post-spawn tmux liveness check without leaving a sleeping task."""
+    """Schedule a post-spawn terminal liveness check without a sleeping task."""
     loop = asyncio.get_running_loop()
     handle: asyncio.TimerHandle | None = None
 
@@ -279,11 +263,8 @@ def schedule_tmux_health_check(
         _start_tmux_health_check(
             runner,
             run_id,
-            tmux_session_name or terminal_id or "",
-            socket_name,
-            socket_path,
+            terminal_id,
             completion_registry,
-            terminal_id=terminal_id,
         )
 
     handle = loop.call_later(delay, start_health_check)

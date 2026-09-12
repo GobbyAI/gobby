@@ -7,13 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from gobby.mcp_proxy.tools.spawn_agent._runtime import _build_spawn_success_response
+from gobby.mcp_proxy.tools.spawn_agent._response import build_spawn_response
 
 pytestmark = pytest.mark.unit
 
 
 def test_build_spawn_success_response_serializes_paths_and_omits_null_reasoning() -> None:
-    response = _build_spawn_success_response(
+    response = build_spawn_response(
         run_id="run-123",
         spawn_result=SimpleNamespace(
             child_session_id="child-123",
@@ -30,9 +30,7 @@ def test_build_spawn_success_response_serializes_paths_and_omits_null_reasoning(
             extra={},
         ),
         base_commit_sha="abc123",
-        terminal_id=None,
-        tmux_socket_name=None,
-        tmux_socket_path=None,
+        terminal=SimpleNamespace(id="terminal-123", backend="native"),
         code_index_preflight_warning=None,
         reasoning=None,
     )
@@ -44,7 +42,7 @@ def test_build_spawn_success_response_serializes_paths_and_omits_null_reasoning(
 
 
 def test_build_spawn_success_response_reports_reused_worktree() -> None:
-    response = _build_spawn_success_response(
+    response = build_spawn_response(
         run_id="run-123",
         spawn_result=SimpleNamespace(
             child_session_id="child-123",
@@ -61,9 +59,7 @@ def test_build_spawn_success_response_reports_reused_worktree() -> None:
             extra={"reused_worktree": True},
         ),
         base_commit_sha="abc123",
-        terminal_id=None,
-        tmux_socket_name=None,
-        tmux_socket_path=None,
+        terminal=SimpleNamespace(id="terminal-123", backend="tmux"),
         code_index_preflight_warning=None,
         reasoning=None,
     )
@@ -74,7 +70,7 @@ def test_build_spawn_success_response_reports_reused_worktree() -> None:
 
 def test_build_spawn_success_response_reports_fresh_after_conflict() -> None:
     conflict = "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted"
-    response = _build_spawn_success_response(
+    response = build_spawn_response(
         run_id="run-123",
         spawn_result=SimpleNamespace(
             child_session_id="child-123",
@@ -95,9 +91,7 @@ def test_build_spawn_success_response_reports_fresh_after_conflict() -> None:
             },
         ),
         base_commit_sha="abc123",
-        terminal_id=None,
-        tmux_socket_name=None,
-        tmux_socket_path=None,
+        terminal=SimpleNamespace(id="terminal-123", backend="tmux"),
         code_index_preflight_warning=None,
         reasoning=None,
     )

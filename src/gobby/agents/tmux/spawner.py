@@ -207,14 +207,12 @@ class TmuxSpawner(TerminalSpawnerBase):
             success=True,
             message=(f"Spawned tmux session '{verified_info.name}' (attach: {attach_cmd})"),
             pid=verified_info.pane_pid,
-            terminal_type=self.terminal_type,
+            backend=self.terminal_type,
             locator=AttachLocator(
                 backend="tmux",
                 frame_host_epoch="",
                 pane_id=verified_info.pane_id,
             ),
-            tmux_socket_name=self._config.socket_name,
-            tmux_socket_path=self._config.socket_path,
         )
         return result
 

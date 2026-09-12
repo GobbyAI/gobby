@@ -477,12 +477,12 @@ class TestSpawnResultDataclass:
             success=True,
             message="Spawned successfully",
             pid=12345,
-            terminal_type="ghostty",
+            backend="tmux",
         )
 
         assert result.success is True
         assert result.pid == 12345
-        assert result.terminal_type == "ghostty"
+        assert result.backend == "tmux"
         assert result.error is None
 
     def test_spawn_result_failure(self) -> None:
