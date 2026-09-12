@@ -16,9 +16,28 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.session_context import get_current_session_id
 
 _BINDING_PROPERTIES: dict[str, dict[str, object]] = {
-    "session_id": {"type": "string"},
-    "task_id": {"type": "string"},
-    "stage": {"type": "string"},
+    "session_id": {
+        "type": "string",
+        "description": (
+            "Interactive review session UUID; omit task_id and stage. If omitted, uses the "
+            "current caller session when task_id is absent. An explicit session overrides "
+            "caller context. Without caller context, supply this field explicitly."
+        ),
+    },
+    "task_id": {
+        "type": "string",
+        "description": (
+            "Stage-bound task UUID; task_id and stage must be supplied together. "
+            "Omit arguments.session_id; wrapper-level caller session context is allowed."
+        ),
+    },
+    "stage": {
+        "type": "string",
+        "description": (
+            "Stage name for the task-bound review attempt; task_id and stage must be "
+            "supplied together, without arguments.session_id."
+        ),
+    },
 }
 
 
@@ -59,7 +78,13 @@ def register_review_evidence_tools(
 
     registry.register(
         name="prepare_plan_review_round",
-        description="Capture immutable, server-hashed evidence for one plan review round.",
+        description=(
+            "Capture immutable, server-hashed evidence for one plan review round. "
+            "Use interactive session binding (explicit session_id or current caller context), "
+            "or stage binding (task_id and stage together, without arguments.session_id). "
+            "Schema examples show interactive calls with ambient and explicit sessions, "
+            "then a stage-bound call; substitute existing session/task UUIDs."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -69,6 +94,20 @@ def register_review_evidence_tools(
                 **_BINDING_PROPERTIES,
             },
             "required": ["plan_path", "round_number"],
+            "examples": [
+                {"plan_path": ".gobby/plans/example.md", "round_number": 1},
+                {
+                    "plan_path": ".gobby/plans/example.md",
+                    "round_number": 1,
+                    "session_id": "21000000-0000-4000-8000-000000000001",
+                },
+                {
+                    "plan_path": ".gobby/plans/example.md",
+                    "round_number": 1,
+                    "task_id": "21000000-0000-4000-8000-000000000002",
+                    "stage": "plan_review",
+                },
+            ],
         },
         func=prepare_plan_review_round,
     )
