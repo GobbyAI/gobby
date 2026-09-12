@@ -15,6 +15,7 @@ from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.sessions.activity import last_session_activity
 from gobby.sessions.machine_scope import is_local_machine_owner
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.utils.machine_id import get_machine_id, require_machine_id
 
@@ -219,6 +220,20 @@ class IdleCheckHandler:
         session_stale = False
         session_recent = False
         session_id = run.child_session_id
+        if session_id:
+            try:
+                coordinated_hold = await self._run_db(
+                    CoordinationWaitManager(self.db).has_active_wait, session_id
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to verify coordination hold for %s", session_id, exc_info=True
+                )
+                coordinated_hold = False
+            if coordinated_hold:
+                idle_detector.reset_idle(run.id)
+                self._recovery.discard(run.id)
+                return 0
         if session_id and self._is_parked is not None and self._is_parked(session_id):
             logger.debug("Agent %s is parked on a subscribed completion; not idle", run.id)
             idle_detector.reset_idle(run.id)
