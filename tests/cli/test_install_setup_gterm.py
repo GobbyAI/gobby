@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import yaml
@@ -19,6 +21,7 @@ from gobby.cli.install_setup import (
     _install_gterm_from_github,
     _install_gterm_from_submodule,
 )
+from gobby.cli import install_setup_gterm
 from gobby.cli.install_setup_gterm import GTERM_NO_ZIG_SKIP_REASON
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
@@ -125,35 +128,6 @@ class TestGtermInstaller:
         assert mock_run.call_args.kwargs["timeout"] == 600
         assert (dest / "gterm").read_bytes() == b"gterm-bin"
 
-    @patch("gobby.cli.install_setup.sys.platform", "darwin")
-    @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
-    def test_no_zig_local_build_continues_to_github(
-        self, _mock_machine: MagicMock, tmp_path: Path
-    ) -> None:
-        bin_dir = tmp_path / ".gobby" / "bin"
-        bin_dir.mkdir(parents=True)
-        (bin_dir / "gterm").write_bytes(b"\x00")
-
-        with (
-            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_installed_gterm_version", return_value=None),
-            patch(
-                "gobby.cli.install_setup._install_gterm_from_submodule", return_value=False
-            ) as mock_sub,
-            patch(
-                "gobby.cli.install_setup._install_gterm_from_github",
-                return_value=True,
-            ) as mock_github,
-            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
-            patch("gobby.cli.install_setup_gterm.probe_gterm_version", return_value=GTERM_PIN),
-        ):
-            result = _install_gterm()
-
-        mock_sub.assert_called_once()
-        mock_github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", GTERM_PIN)
-        assert result["method"] == "github"
-        assert result["version"] == GTERM_PIN
-
     def test_github_uses_gterm_tag_prefix(self, tmp_path: Path) -> None:
         with patch(
             "gobby.cli.install_release._download_release_binary",
@@ -225,6 +199,264 @@ class TestGclientInstaller:
         assert kwargs["artifact_name"] == "gclient"
         assert kwargs["tag_prefix"] == "gclient-v"
         assert kwargs["binary_name"] == "gclient"
+
+
+def _gterm_install_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    published: bool | None,
+    present: bool,
+    installed_version: str | None,
+    source_succeeds: bool = False,
+    successful_fetch: str | None = None,
+) -> tuple[SimpleNamespace, Path, MagicMock, MagicMock, MagicMock]:
+    bin_dir = tmp_path / ".gobby" / "bin"
+    if present:
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "gterm").write_bytes(b"existing")
+
+    source = MagicMock(name="source")
+
+    def source_build(destination: Path) -> bool:
+        if source_succeeds:
+            (destination / "gterm").write_bytes(b"workspace")
+        return source_succeeds
+
+    source.side_effect = source_build
+    fetches = MagicMock(name="fetches")
+
+    def fetch_result(method: str) -> Callable[..., bool]:
+        def run(*_args: object) -> bool:
+            if method == successful_fetch:
+                (bin_dir / "gterm").write_bytes(method.encode())
+                return True
+            return False
+
+        return run
+
+    github = MagicMock(name="github", side_effect=fetch_result("github"))
+    binstall = MagicMock(name="binstall", side_effect=fetch_result("binstall"))
+    cargo_install = MagicMock(name="cargo_install", side_effect=fetch_result("cargo_install"))
+    cargo_git = MagicMock(name="cargo_git", side_effect=fetch_result("cargo_git"))
+    fetches.attach_mock(github, "github")
+    fetches.attach_mock(binstall, "binstall")
+    fetches.attach_mock(cargo_install, "cargo_install")
+    fetches.attach_mock(cargo_git, "cargo_git")
+    stamp = MagicMock(name="stamp")
+    module = SimpleNamespace(
+        Path=SimpleNamespace(home=lambda: tmp_path),
+        sys=SimpleNamespace(platform="darwin"),
+        platform=SimpleNamespace(machine=lambda: "arm64"),
+        logger=MagicMock(),
+        _GTERM_BIN_NAME="gterm",
+        _GTERM_TARGETS={("darwin", "arm64"): "aarch64-apple-darwin"},
+        _get_installed_gterm_version=MagicMock(return_value=installed_version),
+        _write_gterm_version_stamp=stamp,
+        _install_gterm_from_submodule=source,
+        _install_gterm_from_github=github,
+        _install_gterm_from_cargo_binstall=binstall,
+        _install_gterm_from_cargo_install=cargo_install,
+        _install_gterm_from_cargo_git=cargo_git,
+        _ensure_gobby_bin_on_path=MagicMock(return_value={}),
+    )
+    if published is not None:
+        monkeypatch.setattr(install_setup_gterm, "is_published", lambda _name: published)
+    monkeypatch.setattr(
+        install_setup_gterm,
+        "probe_gterm_version",
+        lambda _module, _path: GTERM_PIN,
+    )
+    return module, bin_dir, source, fetches, stamp
+
+
+def test_unpublished_binary_skips_remote_fetchers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, _, _, fetches, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=None,
+        present=False,
+        installed_version=None,
+        source_succeeds=True,
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    assert result["method"] == "workspace"
+    assert fetches.mock_calls == []
+
+
+def test_unpublished_absent_binary_builds_or_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, _, stamp = _gterm_install_harness(
+        monkeypatch,
+        tmp_path / "build",
+        published=None,
+        present=False,
+        installed_version=None,
+        source_succeeds=True,
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    source.assert_called_once_with(bin_dir)
+    stamp.assert_called_once_with(bin_dir, GTERM_PIN)
+    assert result["method"] == "workspace"
+
+    missing_module, _, _, missing_fetches, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path / "missing",
+        published=None,
+        present=False,
+        installed_version=None,
+    )
+    error_type = getattr(install_setup_gterm, "ManagedBinaryReleaseMissing")
+    with pytest.raises(error_type, match="gterm"):
+        install_setup_gterm.install_gterm(missing_module)
+    assert missing_fetches.mock_calls == []
+
+
+def test_unpublished_present_binary_is_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, stamp = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=None,
+        present=True,
+        installed_version="0.0.1",
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    stamp.assert_called_once_with(bin_dir, "0.0.1")
+    source.assert_not_called()
+    assert fetches.mock_calls == []
+    assert result == {
+        "installed": False,
+        "skipped": True,
+        "version": "0.0.1",
+        "method": "local",
+    }
+
+
+def test_published_satisfying_binary_is_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, stamp = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=True,
+        present=True,
+        installed_version=GTERM_PIN,
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    stamp.assert_called_once_with(bin_dir, GTERM_PIN)
+    source.assert_not_called()
+    assert fetches.mock_calls == []
+    assert result["installed"] is False
+    assert result["version"] == GTERM_PIN
+
+
+def test_published_binary_runs_fetch_chain(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    module, bin_dir, source, fetches, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=True,
+        present=True,
+        installed_version="0.0.1",
+        successful_fetch="cargo_git",
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    source.assert_not_called()
+    assert fetches.mock_calls == [
+        call.github(bin_dir, "aarch64-apple-darwin", GTERM_PIN),
+        call.binstall(bin_dir, GTERM_PIN),
+        call.cargo_install(bin_dir, GTERM_PIN),
+        call.cargo_git(bin_dir),
+    ]
+    assert result["method"] == "cargo-git"
+
+
+def test_published_absent_binary_runs_fetch_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=True,
+        present=False,
+        installed_version=None,
+        successful_fetch="cargo_install",
+    )
+
+    result = install_setup_gterm.install_gterm(module)
+
+    source.assert_not_called()
+    assert fetches.mock_calls == [
+        call.github(bin_dir, "aarch64-apple-darwin", GTERM_PIN),
+        call.binstall(bin_dir, GTERM_PIN),
+        call.cargo_install(bin_dir, GTERM_PIN),
+    ]
+    assert result["method"] == "cargo-install"
+
+
+def test_force_rebuilds_unpublished_present_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path / "build",
+        published=None,
+        present=True,
+        installed_version=GTERM_PIN,
+        source_succeeds=True,
+    )
+
+    result = install_setup_gterm.install_gterm(module, force=True)
+
+    source.assert_called_once_with(bin_dir)
+    assert fetches.mock_calls == []
+    assert result["installed"] is True
+    assert result["method"] == "workspace"
+
+    missing_module, _, _, _, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path / "missing",
+        published=None,
+        present=True,
+        installed_version=GTERM_PIN,
+    )
+    error_type = getattr(install_setup_gterm, "ManagedBinaryReleaseMissing")
+    with pytest.raises(error_type, match="gterm"):
+        install_setup_gterm.install_gterm(missing_module, force=True)
+
+
+def test_force_refetches_published_satisfying_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, bin_dir, source, fetches, _ = _gterm_install_harness(
+        monkeypatch,
+        tmp_path,
+        published=True,
+        present=True,
+        installed_version=GTERM_PIN,
+        successful_fetch="github",
+    )
+
+    result = install_setup_gterm.install_gterm(module, force=True)
+
+    source.assert_not_called()
+    assert fetches.mock_calls == [call.github(bin_dir, "aarch64-apple-darwin", GTERM_PIN)]
+    assert result["installed"] is True
+    assert result["method"] == "github"
 
 
 def test_managed_native_binary_install_inventory() -> None:

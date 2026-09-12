@@ -11,4 +11,12 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     "gclient": "0.1.0",
 }
 
-__all__ = ["MANAGED_BIN_VERSION_PINS"]
+UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient"})
+
+
+def is_published(name: str) -> bool:
+    """Return whether a managed binary has a published release."""
+    return name not in UNPUBLISHED_MANAGED_BINS
+
+
+__all__ = ["MANAGED_BIN_VERSION_PINS", "UNPUBLISHED_MANAGED_BINS", "is_published"]

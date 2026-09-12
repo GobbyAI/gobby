@@ -12,7 +12,7 @@ from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
-from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
 
 from . import install_release
@@ -23,6 +23,14 @@ GTERM_NO_ZIG_SKIP_REASON = (
 _WORKSPACE_BUILD_TIMEOUT_SECONDS = 600
 _CRATE_PACKAGE = "gobby-terminal"
 _CRATE_DIR = "gterminal"
+
+
+class ManagedBinaryReleaseMissing(RuntimeError):
+    """Raised when an unpublished binary cannot be built from a workspace checkout."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"{name} has no published release and no workspace checkout is available")
 
 
 def get_latest_gterm_version(module: Any) -> str | None:
@@ -291,19 +299,32 @@ def install_gterm(module: Any, force: bool = False) -> dict[str, Any]:
 
     installed_version = module._get_installed_gterm_version(bin_dir)
     pinned_version = MANAGED_BIN_VERSION_PINS["gterm"]
+    published = is_published("gterm")
     if gterm_path.exists() and not force:
+        if not published:
+            local_version = installed_version or "unknown"
+            module._write_gterm_version_stamp(bin_dir, local_version)
+            return {
+                "installed": False,
+                "skipped": True,
+                "version": local_version,
+                "method": "local",
+            }
         if installed_version and managed_version_satisfies_pin("gterm", installed_version):
             module._write_gterm_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
     target_version = pinned_version
-    if compare_versions(installed_version, pinned_version) == 1:
+    if published and compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 
-    if module._install_gterm_from_submodule(bin_dir):
-        method = "workspace"
+    if not published:
+        if module._install_gterm_from_submodule(bin_dir):
+            method = "workspace"
+        else:
+            raise ManagedBinaryReleaseMissing("gterm")
     elif module._install_gterm_from_github(bin_dir, target, target_version):
         method = "github"
     elif module._install_gterm_from_cargo_binstall(bin_dir, target_version):
