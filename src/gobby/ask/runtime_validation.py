@@ -139,8 +139,15 @@ def ask_provider_args(provider: str, auth_mode: str) -> tuple[str, ...]:
         raise ValueError(f"provider {provider!r} has no proven native Ask controls")
     if auth_mode not in _SUPPORTED_CLAUDE_AUTH_MODES:
         raise ValueError("Ask runtime auth mode is unsupported")
+    # `--safe-mode` is deliberately absent. It disables every customization, and
+    # Claude Code counts MCP servers among them, so a safe-mode launch drops the
+    # `--mcp-config` surface the allowlist below names: the agent starts with no
+    # evidence tools and no way to submit. `--restricted` already removes the
+    # command- and code-running built-ins and WebFetch, ignores the user, project
+    # and local settings files, and confines the file tools to the working
+    # directories; `--strict-mcp-config` narrows MCP to the supplied config alone.
+    # Together those are the boundary, and they keep the Ask tools reachable.
     arguments = (
-        "--safe-mode",
         "--restricted",
         "--disable-slash-commands",
         "--no-chrome",

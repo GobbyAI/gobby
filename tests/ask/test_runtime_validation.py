@@ -14,6 +14,7 @@ from gobby.agents.sandbox_policy import gcode_runtime_write_exceptions
 from gobby.ask.runtime_validation import (
     ASK_NATIVE_PROBE_EXPECTATIONS,
     AskRuntimeValidationArtifact,
+    ask_provider_args,
     ask_runtime_control_digest,
     ask_sandbox_config,
     build_ask_runtime_probe_artifact,
@@ -669,3 +670,26 @@ async def test_ask_launch_grants_the_scratch_root_gcode_runtime_home(tmp_path: P
     runtime_home = _gcode_runtime_home(scratch_root)
     assert paths.write_paths.count(runtime_home) == 1
     assert paths.read_paths.count(runtime_home) == 1
+
+
+@pytest.mark.parametrize("auth_mode", ["claude.ai", "api_key", "api_key_helper"])
+def test_provider_args_leave_the_mcp_allowlist_reachable(auth_mode: str) -> None:
+    """No Ask launch flag may disable MCP, because Ask runs only on MCP tools.
+
+    `--safe-mode` disables every customization and Claude Code counts MCP
+    servers among them, so it strands the allowlist: the agent launches with no
+    evidence tools and no way to submit, then dies at the initialization
+    timeout without reporting a cause. `--restricted` and `--strict-mcp-config`
+    carry the boundary instead.
+    """
+    arguments = ask_provider_args("claude", auth_mode)
+
+    assert "--safe-mode" not in arguments
+    assert "--restricted" in arguments
+    assert "--strict-mcp-config" in arguments
+    allowlist = arguments[arguments.index("--allowedTools") + 1]
+    assert set(allowlist.split(",")) == {
+        "mcp__gobby__call_tool",
+        "mcp__gobby__get_tool_schema",
+        "mcp__gobby__list_tools",
+    }
