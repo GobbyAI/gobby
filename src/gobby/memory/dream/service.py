@@ -36,9 +36,9 @@ from gobby.memory.dream.orchestrator import (
     WorkUnitOutcome,
     _positive_int,
 )
-from gobby.memory.dream.planner import normalize_summary
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.related import RelatedEvidenceSession
+from gobby.memory.dream.report import previous_narrative, render_report, report_path
 from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.memory.dream.storage_runs import (
     INTERRUPTED_CANCELLED_ERROR,
@@ -367,6 +367,10 @@ class MemoryDreamService:
             admission_deadline=admission_deadline,
         )
         orchestrator.totals = SweepTotals.restore(checkpoint.get("totals"))
+        if not orchestrator.totals.narrative and run is not None:
+            orchestrator.totals.narrative = await asyncio.to_thread(
+                previous_narrative, self.store.db, run
+            )
         orchestrator._planned = int(checkpoint.get("planned", 0))
         orchestrator._applied_actions = int(checkpoint.get("actions", 0))
         return orchestrator
@@ -445,7 +449,7 @@ class MemoryDreamService:
                 await asyncio.to_thread(self._write_scope_summary, run)
 
     def _write_scope_summary(self, run: dict[str, Any]) -> None:
-        """Save the reviewer's compact output in its owning project's checkout."""
+        """Replace the owning project's shared daily synthesis from durable evidence."""
         from gobby.storage.projects import PERSONAL_PROJECT_ID
 
         project_id = run.get("project_id")
@@ -456,31 +460,25 @@ class MemoryDreamService:
             root = self._resolve_repo_path(str(project_id))
             if root is None:
                 return
-            directory = Path(root) / ".gobby" / "dream"
+            output = report_path(root, run)
+            directory = output.parent
             directory.mkdir(parents=True, exist_ok=True)
-            output = directory / f"{run['id']}.md"
-            narrative = normalize_summary(summary.get("narrative")) or "No narrative recorded."
-            content = (
-                f"# Dream summary\n\nRun: {run['id']}\nProject: {project_id}\n"
-                f"Status: {run['status']}\nDry run: {bool(run.get('dry_run'))}\n\n"
-                f"## Review reasoning\n\n{narrative}\n\n## Recorded outcomes\n\n"
-                + ", ".join(
-                    f"{key}: {summary.get(key, 0)}"
-                    for key in ("mutations", "noops", "skipped", "errors")
-                )
-                + "\n"
-            )
-            if run.get("error"):
-                content += f"\nFailure: {str(run['error'])[:1000]}\n"
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=directory, delete=False
-            ) as draft:
-                draft.write(content)
-            temporary = Path(draft.name)
+            content = render_report(self.store.db, run)
+            temporary: Path | None = None
             try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=directory, delete=False
+                ) as draft:
+                    temporary = Path(draft.name)
+                    draft.write(content)
                 temporary.replace(output)
             finally:
-                temporary.unlink(missing_ok=True)
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            summary["report_path"] = str(output)
+            summary.pop("summary_file_error", None)
+            run["summary"] = summary
+            self.store.update_run(str(run["id"]), summary=summary)
         except (OSError, ValueError) as exc:
             summary["summary_file_error"] = str(exc)
             self.store.update_run(str(run["id"]), summary=summary)

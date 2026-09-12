@@ -243,8 +243,16 @@ async def test_all_projects_receive_their_own_review_summary(
         run = next(run for run in runs if run["project_id"] == project.id)
         stored = service.store.get_run(run["run_id"])
         assert stored is not None and stored["project_id"] == project.id
-        output = Path(roots[project.id]) / ".gobby" / "dream" / f"{run['run_id']}.md"
+        output = Path(stored["summary"]["report_path"])
+        assert output.parent == Path(roots[project.id]) / ".gobby/reports/dream"
+        assert output.name.startswith("gobby-dream-")
         content = output.read_text()
+        scope_summary = next(
+            item
+            for item in result["run"]["summary"]["scope_summaries"]
+            if item["scope"] == project.id
+        )
+        assert scope_summary["report_path"] == str(output)
         assert f"Retain durable conventions for {project.id}." in content
         assert "mutations: 0, noops: 1" in content
         assert len(content.encode()) < 3000

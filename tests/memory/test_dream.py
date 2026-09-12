@@ -3077,6 +3077,8 @@ def _coordinator_service(
 
     _set_method(service, "_open_scope_sweep", fake_open)
     _set_method(service, "_run_scope_unit", fake_unit)
+    # This harness exercises scheduling; real report storage has its own isolated tests.
+    _set_method(service, "_resolve_repo_path", lambda _project_id: None)
     return service, visits
 
 

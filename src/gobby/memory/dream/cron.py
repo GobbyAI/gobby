@@ -139,6 +139,8 @@ def register_memory_dream_cron(
             output += f"\n{scope['scope']} ({scope['status']}): {scope['narrative'] or 'No narrative recorded.'}"
             if scope.get("error"):
                 output += f" Error: {scope['error']}"
+            if scope.get("report_path"):
+                output += f" Report: {scope['report_path']}"
         if not result.get("success"):
             raise RuntimeError(output)
         return output
