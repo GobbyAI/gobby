@@ -1203,18 +1203,29 @@ gcode_index_failed:1:Error: db error Caused by: ERROR: could not extend file
 
 The exhausted volume this time is not the host's. The isolated test PostgreSQL
 container `gobby-postgres-test-1` keeps its `PGDATA` on a 3.0 GB tmpfs, which
-`df` reports at 2.6 GB used with 415 MB free. Three retained probe schemas
+`df` reported at 2.6 GB used with 415 MB free. Three retained probe schemas
 account for nearly all of it, each with a small `_agent_auth` sibling:
 
-- `gobby_test_askprobe_122d8ebbbe544508b1ead4c273d91f72`, 960 MB, attempt 19
-- `gobby_test_askprobe_fd875d56650945fcad63ec44ed5b0785`, 954 MB, attempt 22
-- `gobby_test_askprobe_a1da5505996a448eab76b416d9582345`, 951 MB
+- `gobby_test_askprobe_122d8ebbbe544508b1ead4c273d91f72`, 603 MB, attempt 19
+- `gobby_test_askprobe_fd875d56650945fcad63ec44ed5b0785`, 599 MB, attempt 22
+- `gobby_test_askprobe_a1da5505996a448eab76b416d9582345`, 597 MB, attempt 23
 
-A full private snapshot index of this repository is roughly a gigabyte, so the
-tmpfs holds three of them and has no room for a fourth. Every probe attempt
-retained for its evidence therefore costs the next attempt its working room,
-and the retention that made attempts 15 and 19 decisive is what blocked this
-one.
+Those three figures correct the 960, 954 and 951 MB first recorded here, which
+were a measurement error rather than a change on disk: summing
+`pg_total_relation_size` over every `pg_class` row counts each index twice, once
+inside its own table's total and once as a row in its own right. Restricting the
+sum to `relkind in ('r','p')` gives the sizes above, and those reconcile with the
+volume where the inflated ones did not — `base` is 2.0 GB, of which these three
+schemas are 1.8 GB, alongside 128 MB of WAL and roughly 200 MB of catalog. The
+third schema is attempt 23's, identified by the session rows it still holds,
+01:36 to 01:42 UTC, matching the 20:36 local start recorded above.
+
+A full private snapshot index of this repository is therefore roughly 600 MB
+rather than the gigabyte first inferred, and the tmpfs holds three of them. The
+conclusion is unchanged, because 415 MB of free space could not admit a fourth
+either way. Every probe attempt retained for its evidence therefore costs the
+next attempt its working room, and the retention that made attempts 15 and 19
+decisive is what blocked this one.
 
 This is an environmental failure of the test database, not a defect in Ask, and
 it carries no evidence about the trust-dialog fix that `40c0287769` landed.
