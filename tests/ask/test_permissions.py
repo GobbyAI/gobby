@@ -17,10 +17,13 @@ import pytest
 
 from gobby.agents import resume_executor, srt_runtime
 from gobby.agents.isolation import IsolationContext
+from gobby.agents.sandbox_policy import canonical_path, mcp_config_read_exceptions
 from gobby.agents.spawn_executor_support import _record_resume_launch_details
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
+from gobby.ask import agents as gobby_ask_agents
 from gobby.ask import runtime_profile, runtime_validation
+from gobby.ask.agents import write_ask_mcp_config
 from gobby.ask.contracts import AskRequest, ProfileSnapshot
 from gobby.ask.permissions import (
     ASK_PIPELINE_NAME,
@@ -1850,3 +1853,40 @@ async def test_ask_resume_rederives_profile_and_rebinds_before_process(
         tuple(runtime_plan.command[-len(profile.provider_args) - 1 : -1]) == profile.provider_args
     )
     pre_approve.assert_not_called()
+
+
+def test_ask_scratch_root_declares_the_gobby_mcp_bridge(tmp_path: Path) -> None:
+    """`--strict-mcp-config` makes `<cwd>/.mcp.json` the agent's only tool surface.
+
+    Ask's launch profile passes `--strict-mcp-config`, and `prepare_claude_spawn`
+    derives `--mcp-config` from `<cwd>/.mcp.json`. Without that file Claude Code
+    starts with zero MCP servers, so the `mcp__gobby__*` allowlist names nothing
+    the agent can call: it cannot read evidence and cannot submit an answer.
+    """
+    config_path = write_ask_mcp_config(tmp_path)
+
+    assert config_path == tmp_path / ".mcp.json"
+    servers = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]
+    # The allowlist entries are `mcp__gobby__*`, so the server must be named `gobby`.
+    assert set(servers) == {"gobby"}
+    assert servers["gobby"]["command"] == "uv"
+    args = servers["gobby"]["args"]
+    assert args[-2:] == ["gobby", "mcp-server"]
+    # Syncing would try to reinstall the editable package into a tree the sandbox
+    # denies writing, closing stdio before the MCP handshake finishes.
+    assert "--no-sync" in args
+
+
+def test_ask_mcp_bridge_earns_its_own_sandbox_read_grant(tmp_path: Path) -> None:
+    """The sandbox denies the operator home, so `uv` needs an explicit read grant.
+
+    `mcp_config_read_exceptions` parses this exact file and grants read to the
+    absolute project directories its gobby entry names. If the two ever drift the
+    MCP subprocess dies at startup and the agent silently loses every tool.
+    """
+    write_ask_mcp_config(tmp_path)
+
+    granted = mcp_config_read_exceptions(tmp_path)
+
+    project_root = Path(gobby_ask_agents.__file__).resolve().parents[3]
+    assert canonical_path(str(project_root)) in granted

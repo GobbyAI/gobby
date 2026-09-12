@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -86,6 +87,54 @@ _STAGE_MCP_TOOLS = {
     ),
 }
 _TERMINAL_AGENT_STATUSES = frozenset({"success", "error", "timeout", "cancelled"})
+_GOBBY_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def write_ask_mcp_config(scratch_root: Path) -> Path:
+    """Give an Ask agent the one MCP server its tool allowlist names.
+
+    The launch profile passes ``--strict-mcp-config``, which tells Claude Code to
+    use only the servers declared by ``--mcp-config`` and to ignore every other
+    MCP configuration, the operator's own included. ``prepare_claude_spawn``
+    derives that ``--mcp-config`` from ``<cwd>/.mcp.json`` and the Ask cwd is this
+    scratch root, so without this file the allowlist names a ``gobby`` server that
+    was never configured: the agent launches with no evidence tools and no way to
+    submit, then invents a tool transcript instead of reporting the gap. The same
+    failure has been seen for isolated workspaces (#19097).
+
+    ``--project`` also earns the sandbox read grant for the Gobby checkout through
+    ``mcp_config_read_exceptions``, which parses exactly this file, and
+    ``--no-sync`` keeps ``uv`` from reinstalling the editable package into a
+    read-only tree and closing stdio before the MCP handshake completes.
+    """
+    if not (_GOBBY_PROJECT_ROOT / "pyproject.toml").is_file():
+        raise UnsupportedAskRuntime(
+            f"Ask cannot resolve the Gobby project root for its MCP bridge: {_GOBBY_PROJECT_ROOT}"
+        )
+    config_path = scratch_root / ".mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "gobby": {
+                        "command": "uv",
+                        "args": [
+                            "run",
+                            "--no-sync",
+                            "--project",
+                            str(_GOBBY_PROJECT_ROOT),
+                            "gobby",
+                            "mcp-server",
+                        ],
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return config_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +219,7 @@ class ManagedAskAgents:
         bind_authority: Callable[[str, AskRuntimeProfile], None],
     ) -> str:
         spec.scratch_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        write_ask_mcp_config(spec.scratch_root)
         effective, provider, validation = self._load_validation(spec.profile, spec.stage)
         body = AgentDefinitionBody.model_validate(effective)
         if spec.profile.content_hash is None:
