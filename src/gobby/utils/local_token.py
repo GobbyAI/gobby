@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
 import time
@@ -13,6 +14,8 @@ from pathlib import Path
 
 from gobby.paths import get_gobby_home
 from gobby.utils.machine_id import get_machine_id
+
+logger = logging.getLogger(__name__)
 
 # This is a filename, not a credential value.
 LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
@@ -47,10 +50,22 @@ def local_token_path() -> Path:
 
 
 def read_local_api_token() -> str | None:
-    """Read the local daemon API token when a non-empty file exists."""
+    """Read the local daemon API token when a readable non-empty file exists.
+
+    A sandboxed caller is denied this path on purpose: the operator token is one
+    of the managed-grant credential roots, so ``gobby mcp-server`` running inside
+    an agent sandbox is answered with ``PermissionError`` rather than the file.
+    That answer means the same thing as "no operator token here", and returning
+    ``None`` lets ``daemon_auth_headers`` fall through to a request the daemon
+    refuses legibly, instead of an unhandled ``OSError`` killing the MCP server
+    during startup with a bare ``Operation not permitted``.
+    """
     try:
         token = local_token_path().read_text().strip()
     except FileNotFoundError:
+        return None
+    except PermissionError:
+        logger.debug("Local API token is not readable from here; continuing without it")
         return None
     return token or None
 
