@@ -89,6 +89,8 @@ _SECRET_KEYS = (
     "PASSWORD",
     "SECRET",
 )
+# Worker time held back from the Ask run so a deadline failure is still captured.
+_ASK_BUDGET_RESERVE_SECONDS = 60.0
 _WORKER_EXIT_ON_SHUTDOWN = 75
 
 
@@ -1360,12 +1362,20 @@ async def _run_contained_runner(
             monitor_stop.set()
 
 
-def _probe_ask_request(arguments: argparse.Namespace) -> AskRequest:
-    """Give each new Ask run its own default budget, independent of the controller."""
+def _probe_ask_request(arguments: argparse.Namespace, *, budget_seconds: float) -> AskRequest:
+    """Bind the Ask run to the operator's declared budget.
+
+    ``AskRequest.timeout_seconds`` defaults to 600, and that budget covers the
+    whole run, ``prepare`` included. Every run indexes its own sealed worktree,
+    which costs around six minutes on this repository, so the default leaves the
+    investigator barely two minutes and nothing at all for review. Spending what
+    the operator declared keeps the deadline real and the stages reachable.
+    """
     return AskRequest(
         question=f"{_probe_question(arguments.project_root)}\nProbe phase: {arguments.phase}.",
         project_id=arguments.project_id,
         commit_ref=arguments.source_commit,
+        timeout_seconds=budget_seconds,
         investigator_profile="ask-investigator",
         reviewer_profile="ask-reviewer",
     )
@@ -1500,7 +1510,10 @@ async def _contained_worker_async(arguments: argparse.Namespace) -> int:
             if remaining <= 0:
                 raise TimeoutError("native Ask probe deadline expired before admission")
             result = await service.start(
-                _probe_ask_request(arguments),
+                _probe_ask_request(
+                    arguments,
+                    budget_seconds=max(1.0, remaining - _ASK_BUDGET_RESERVE_SECONDS),
+                ),
                 project_root=arguments.project_root,
                 caller_session_id=caller_session_id,
             )
