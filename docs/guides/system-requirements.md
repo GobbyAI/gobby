@@ -27,7 +27,7 @@ provider you choose.
 
 | Platform | Notes |
 |----------|-------|
-| macOS | Docker Desktop provides the Linux VM for the PostgreSQL hub, Qdrant, and FalkorDB. Apple Silicon is a practical target for the local full stack. |
+| macOS | Docker Desktop provides the Linux VM for the PostgreSQL hub, Qdrant, and FalkorDB. Apple Silicon is a practical target for the local full stack. Raise the vnode ceiling before working in a large Rust or monorepo checkout: see [The Daemon's Git Commands Time Out On macOS](#the-daemons-git-commands-time-out-on-macos). |
 | Linux | Use Docker Engine plus the Docker Compose plugin. Linux avoids the Docker Desktop VM memory allocation step. |
 | Windows | Use Windows 10/11 with WSL2 for Docker-based services. Local shell tooling and filesystem paths should be verified in the target environment. |
 
@@ -267,6 +267,53 @@ uv run gobby restart
 
 The configured auth value is stored in Gobby configuration, and the Compose
 container receives the password through `GOBBY_FALKORDB_PASSWORD`.
+
+### The Daemon's Git Commands Time Out On macOS
+
+Symptom: daemon logs repeat `Git command timed out`, hooks feel slow or stop
+applying, and `git status --untracked-files=all` in the checkout takes seconds.
+
+Cause: macOS caps cached vnodes, and a large build tree exhausts the cache. Each
+`git status` walk then thrashes it and never finishes inside the daemon's budget.
+Check for saturation, where the two numbers are equal:
+
+```bash
+sysctl kern.maxvnodes kern.num_vnodes
+```
+
+Raise the ceiling now, and persist it with a LaunchDaemon because current macOS
+no longer reads `/etc/sysctl.conf`:
+
+```bash
+sudo sysctl kern.maxvnodes=1048576
+sudo tee /Library/LaunchDaemons/local.gobby.maxvnodes.plist >/dev/null <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.gobby.maxvnodes</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/sysctl</string>
+        <string>kern.maxvnodes=1048576</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+sudo launchctl bootstrap system /Library/LaunchDaemons/local.gobby.maxvnodes.plist
+```
+
+Cached vnodes climbing past the old ceiling afterwards confirms it took effect.
+
+Keep the file count down as well. Gobby points every checkout of a Cargo project
+at one shared build directory under `~/.gobby/cache/cargo-target/`, so per-worktree
+`target/` trees do not multiply. A checkout that already has a real `target/`
+directory keeps it: move that directory aside to join the share. Any other large
+untracked tree inside a checkout costs the same on every walk, so keep scratch
+output outside the repository or in an ignored path.
 
 ### Local Embeddings Are Slow
 

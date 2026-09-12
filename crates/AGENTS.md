@@ -41,7 +41,9 @@ Builds land in one shared directory per project,
 for every registered checkout and worktree, and sets `CARGO_TARGET_DIR` for spawned
 agents. Cargo's build-directory lock serializes concurrent builds across worktrees
 ("Blocking waiting for file lock on build directory"). A pre-existing real `target/`
-directory is left alone; move it aside to join the share.
+directory is left alone; move it aside to join the share. On macOS also raise
+the vnode ceiling once per machine, or the daemon's Git commands time out
+while cargo runs: see `docs/guides/system-requirements.md`, Troubleshooting.
 
 Inline `#[cfg(test)]` modules count toward the owning production file's
 1,000-line ceiling. Keep large unit-test modules out of production Rust files.
