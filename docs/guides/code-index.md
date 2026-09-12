@@ -5,8 +5,9 @@ surfaces. Use it to search symbols or content through distinct commands,
 inspect AST outlines, retrieve exact symbol source, and trace graph
 relationships without reading whole source files.
 
-The current user-facing surface is `gcode`. Older Gobby CLI and MCP examples
-for direct code-index access are stale; use the commands below.
+Use `gcode` for indexed navigation and project index operations. PostgreSQL
+BM25 health and repair are operator commands under `gobby postgres`, described
+under [PostgreSQL BM25 recovery](#postgresql-bm25-recovery).
 
 ## Quick Start
 
@@ -294,6 +295,33 @@ uses `gcode index --project <root> --skip-if-locked` for refresh. The sync worke
 delegates vector and graph sync to native commands. Summary generation runs from
 maintenance when `code_index.symbol_summary.enabled` is true and the daemon has an LLM
 service.
+
+### PostgreSQL BM25 Recovery
+
+Operators inspect BM25 verification with `gobby postgres status --json`, in the
+`code_index` payload. This checks `code_symbols_search_bm25` and
+`code_content_search_bm25` in the connection's active schema (normally `public`)
+using `pdb.verify_index`. Read `healthy` and each index's state/error; status does
+not exit nonzero solely for unhealthy BM25.
+
+For a damaged index, run `gobby postgres repair-code-index --json` (omit `--json`
+for text). It reads credentials from the bootstrap configuration, uses
+`code_index.maintenance_index_timeout_seconds` (default 900 seconds), acquires
+advisory lock `gobby:code-index-bm25-repair`, and issues schema-qualified
+`REINDEX INDEX` only for indexes classified `damaged`. It verifies again and
+exits 1 if recovery remains unhealthy. Healthy indexes are left alone; missing
+indexes require normal PostgreSQL setup/migrations. Generic verification errors
+are reported, not blindly reindexed. There is no command-specific DSN or project
+override: this is hub maintenance, not project content rebuilding.
+
+Daemon startup performs the same bounded repair before code-index workers
+start. Failed recovery leaves the daemon running with `code_index_bm25`
+degraded and maintenance/sync workers stopped. After successful operator repair,
+coordinate a daemon restart with active sessions. `gcode repair` handles import
+and projection drift; it does not repair PostgreSQL BM25 corruption. Preserve
+query error details and follow their recovery directive instead of reporting
+failed search as an empty result. Exercise repair examples only in isolated
+fixtures or an explicitly authorized operator recovery window.
 
 ## HTTP Endpoints
 

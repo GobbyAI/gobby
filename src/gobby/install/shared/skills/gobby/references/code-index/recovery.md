@@ -33,6 +33,19 @@ The daemon retries busy/failed post-edit work with backoff and delegates queued
 projection sync to gcode. Check installed schedules and config before assuming
 maintenance is active.
 
+For BM25 corruption, operator `gobby postgres status --json` reports verification
+under `code_index`; inspect its health payload (the status command does not fail
+solely because BM25 is unhealthy). Operator `gobby postgres repair-code-index
+--json` verifies the two required indexes in the active schema, selectively
+reindexes damaged ones under an advisory lock, then verifies again. It exits 1
+if still unhealthy. It reads the bootstrap DSN and uses
+`code_index.maintenance_index_timeout_seconds`; it has no project/DSN override.
+Missing indexes require normal PostgreSQL setup/migrations, not REINDEX.
+If startup marked `code_index_bm25` degraded, repair first, then coordinate a
+restart so maintenance and sync workers can start. Do not substitute `gcode
+repair`, invalidate source facts, or treat database errors as empty search.
+See [BM25 recovery](../../../../../../../../docs/guides/code-index.md#postgresql-bm25-recovery).
+
 Operator-only cleanup: `invalidate` removes the selected project's index and
 prompts unless `--force`; `prune` without `--project` requests global daemon
 maintenance. Explicit `--project` scopes pruning; `--retention-days` is at least

@@ -908,6 +908,14 @@ the running daemon cannot serve.
 
 ## Native Code Index
 
+PostgreSQL BM25 health is available through `gobby postgres status --json`
+(`code_index` in the payload). Operator `gobby postgres repair-code-index
+[--json]` selectively repairs damaged BM25 indexes and exits 1 if still unhealthy.
+It uses bootstrap credentials and the configured maintenance timeout; missing
+indexes require setup/migrations. After failed startup recovery, repair and
+coordinate a restart to enable workers. See
+[PostgreSQL BM25 recovery](code-index.md#postgresql-bm25-recovery).
+
 Use the separately installed `gcode` binary for code navigation. There is no
 `gobby code-index` command or code-index MCP service in this checkout.
 `gcode --help` lists the native surface; the

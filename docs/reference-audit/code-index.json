@@ -26,7 +26,8 @@
         "http-endpoints",
         "rules",
         "typical-workflow",
-        "see-also"
+        "see-also",
+        "postgresql-bm25-recovery"
       ],
       "evidence": [
         "source-audit"
@@ -893,6 +894,32 @@
         "python-maintenance-http"
       ],
       "audience": "integration-client"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "status_cmd"
+      },
+      "verification": [
+        "bm25-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby postgres repair-code-index",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/recovery.md",
+      "implementation": {
+        "path": "src/gobby/cli/postgres.py",
+        "symbol": "repair_code_index_cmd"
+      },
+      "verification": [
+        "bm25-recovery"
+      ],
+      "audience": "operator"
     }
   ],
   "evidence": [
@@ -959,8 +986,14 @@
     {
       "id": "installation-coordination",
       "kind": "active-owner-handoff",
-      "command": "gobby-agents.send_message to gobby#12858; get_inter_session_message 210bc699-da57-49fe-b9ad-9dbbea51dd06 and 4c859e73-4414-4b1b-84a0-868bebcbe839",
-      "result": "Owner confirms installed native Ask epic binary and pinned probe. Three-file help/comment diff sent in message 3d2b898c-384f-4d1f-8eec-9baf7a4913a3; owner accepted rebuild/new-inode install after probe. Main build deliberately not installed over active foreign operations. Awaiting owner installation receipt; integrated live cutover remains P5."
+      "command": "gobby-agents owner receipt 3c02e708-a893-4622-8bc6-0612283d3689 from gobby#12858",
+      "result": "Owner installed the six help/comment lines after pinned probe 27 finished; epic commit 2131bc8fb7. New-inode cp/mv binary sha256 da047a21de879c82a7dd34003d33e35f3496afd474cd578b8a8c7bd25938964a. Owner verified both literal -F examples, 24 top-level tests, format and Clippy clean; epic contract unchanged (45 commands). Main binary deliberately not installed over foreign Ask/evidence operations. Native help cutover complete; integrated Python/template live cutover remains P5."
+    },
+    {
+      "id": "bm25-recovery",
+      "kind": "implementation-and-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_bm25_health.py tests/cli/test_postgres_bm25.py tests/test_bm25_startup.py -q",
+      "result": "13 passed in 0.90s. CLI help confirms only --json and --help. Inspected repair_code_index_cmd/status_cmd, repair_bm25_indexes/_verify_index/_required_index_names and startup repair. Swept CLI code-index/BM25 mentions: other hits are init/install/git-hook integration or plan expansion consumers, not additional dedicated recovery commands. No live repair invoked."
     }
   ],
   "discrepancies": [
@@ -1053,6 +1086,14 @@
       "resolution": "Quote the label and verify SVG rendering.",
       "evidence": [
         "diagram"
+      ]
+    },
+    {
+      "finding": "Post-close review exposed omitted operator BM25 health/repair commands; installation evidence still described a pending owner install.",
+      "resolution": "Added status and selective repair coverage, active-schema/lock/error/startup recovery boundaries, and completed owner install receipt.",
+      "evidence": [
+        "bm25-recovery",
+        "installation-coordination"
       ]
     }
   ]
