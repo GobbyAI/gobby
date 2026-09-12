@@ -36,7 +36,11 @@ def test_prepare_round_snapshot(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
+    original = plan_path.read_text()
+    inventory = "Consumers unchanged:\n- `src/caller.py` — no-edit-reason: API unchanged.\n\n"
+    plan_path.write_text(original.replace("**Acceptance:**", inventory + "**Acceptance:**", 1))
     expected_snapshot = plan_path.read_bytes()
+    assert inventory.encode() in expected_snapshot
 
     prepared = service.prepare_plan_review_round(
         project_id=project_id,

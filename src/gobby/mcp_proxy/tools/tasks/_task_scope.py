@@ -272,7 +272,11 @@ def _iter_target_block_lines(description: str) -> Iterable[str]:
             stripped = candidate.strip()
             if not stripped:
                 break
-            if _TARGET_LINE_RE.match(candidate) or _ACCEPTANCE_RE.match(candidate):
+            if (
+                _TARGET_LINE_RE.match(candidate)
+                or _ACCEPTANCE_RE.match(candidate)
+                or stripped.startswith("Consumers unchanged:")
+            ):
                 break
             if stripped.startswith("#") or stripped.startswith("`kind:"):
                 break

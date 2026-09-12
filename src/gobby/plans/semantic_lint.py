@@ -201,20 +201,100 @@ def lint_plan_document(
             issues.append(table_issue)
         if project_root is not None:
             issues.extend(_lint_production_size_growth(plan_doc, section, project_root))
+    _, consumer_issues = collect_unchanged_consumers(plan_doc, project_root)
+    issues.extend(consumer_issues)
     issues.extend(_lint_dependency_resolution(plan_doc))
     issues.extend(_lint_shared_target_ordering(plan_doc))
     issues.extend(_lint_derived_carriers(plan_doc))
     return SemanticLintResult(tuple(issues), tuple(warnings))
 
 
+_UNCHANGED_LINE_RE = re.compile(r"^\s*Consumers unchanged:\s*(?P<rest>.*)$")
+_UNCHANGED_ENTRY_RE = re.compile(
+    r"^\s*[-*]\s+`(?P<path>[^`]+)`\s+—\s+no-edit-reason:\s*(?P<reason>\S.*)$"
+)
+
+
+def collect_unchanged_consumers(
+    plan_doc: PlanDocument,
+    project_root: Path | None,
+) -> tuple[dict[str, frozenset[str]], list[SemanticLintIssue]]:
+    """Validate non-edit consumer declarations, keeping coverage section-local."""
+    edited = set().union(
+        *(collect_strict_target_inventory(plan_doc, s) for s in _deliverables(plan_doc))
+    )
+    inventories: dict[str, frozenset[str]] = {}
+    issues: list[SemanticLintIssue] = []
+    for section in _deliverables(plan_doc):
+        lines = list(_iter_inventory_block_lines(plan_doc, section, _UNCHANGED_LINE_RE))
+        declared = any(
+            _UNCHANGED_LINE_RE.match(line)
+            for line in section_body_lines(
+                plan_doc,
+                section,
+                before_acceptance=True,
+            )
+        )
+        if declared and not lines:
+            lines = [""]
+        valid_paths: set[str] = set()
+        for line in lines:
+            match = _UNCHANGED_ENTRY_RE.fullmatch(line)
+            error = None
+            path = match.group("path") if match else ""
+            parts = path.split("/")
+            if match is None:
+                error = "Use - `path/to/file` — no-edit-reason: <nonempty reason>"
+            elif (
+                not path
+                or any(part in {"", ".", ".."} for part in parts)
+                or any(char in path for char in "\\:*?[]#")
+                or path.startswith("~")
+                or path != path.strip()
+            ):
+                error = f"Invalid repository-relative file path `{path}`"
+            elif path in edited:
+                error = f"`{path}` conflicts with an edit Target in this plan"
+            elif project_root is None:
+                error = f"Cannot verify existing consumer `{path}` without a project root"
+            else:
+                source = project_root / path
+                if (
+                    not source.resolve().is_relative_to(project_root.resolve())
+                    or not source.is_file()
+                ):
+                    error = f"Consumer `{path}` must be an existing file inside the repository"
+            if error is not None:
+                issues.append(
+                    SemanticLintIssue(
+                        code="consumers-unchanged",
+                        section_id=section.section_id,
+                        message=error,
+                    )
+                )
+            else:
+                valid_paths.add(path)
+        inventories[section.section_id] = frozenset(valid_paths)
+    return inventories, issues
+
+
 def iter_target_block_lines(plan_doc: PlanDocument, section: PlanSection) -> Iterator[str]:
+    """Yield only edit-target inventory lines."""
+    yield from _iter_inventory_block_lines(plan_doc, section, _TARGET_LINE_RE)
+
+
+def _iter_inventory_block_lines(
+    plan_doc: PlanDocument,
+    section: PlanSection,
+    header: re.Pattern[str],
+) -> Iterator[str]:
     """Yield header content and continuation lines from each Target/Targets block."""
 
     body_lines = section_body_lines(plan_doc, section, before_acceptance=True)
     index = 0
     while index < len(body_lines):
         line = body_lines[index]
-        match = _TARGET_LINE_RE.match(line)
+        match = header.match(line)
         if match is None:
             index += 1
             continue
@@ -229,7 +309,11 @@ def iter_target_block_lines(plan_doc: PlanDocument, section: PlanSection) -> Ite
             stripped = candidate.strip()
             if not stripped:
                 break
-            if _TARGET_LINE_RE.match(candidate) or _ACCEPTANCE_RE.match(candidate):
+            if (
+                _TARGET_LINE_RE.match(candidate)
+                or _UNCHANGED_LINE_RE.match(candidate)
+                or _ACCEPTANCE_RE.match(candidate)
+            ):
                 break
             if stripped.startswith("#") or stripped.startswith("`kind:"):
                 break
@@ -382,8 +466,9 @@ def _lint_target_coverage(plan_doc: PlanDocument, section: PlanSection) -> list[
 
 def _mentioned_paths(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
     paths: set[str] = set()
+    unchanged_lines = set(_iter_inventory_block_lines(plan_doc, section, _UNCHANGED_LINE_RE))
     for line in section_body_lines(plan_doc, section, before_acceptance=True):
-        if _TARGET_LINE_RE.match(line):
+        if _TARGET_LINE_RE.match(line) or _UNCHANGED_LINE_RE.match(line) or line in unchanged_lines:
             continue
         paths.update(_find_change_intent_file_paths(line))
 

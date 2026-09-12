@@ -325,3 +325,148 @@ def test_consumer_coverage_unions_overlay_and_parent_usages(tmp_path: Path) -> N
     assert len(issues) == 1
     assert "tests/test_overlay_consumer.py" in issues[0].message
     assert "tests/test_parent_consumer.py" in issues[0].message
+
+
+_UNCHANGED = (
+    "Consumers unchanged:\n- `src/caller.py` — no-edit-reason: Existing call remains valid."
+)
+
+
+def _plan_with_unchanged(tmp_path: Path, inventory: str = _UNCHANGED) -> PlanDocument:
+    plan = _plan(tmp_path)
+    text = plan.source_path.read_text().replace("Implement the provider change.", inventory)
+    plan.source_path.write_text(text)
+    return parse_plan(plan.source_path, parse_mode="draft")
+
+
+def test_unchanged_consumer_covers_only_owning_symbol_without_edit_scope(tmp_path: Path) -> None:
+    from gobby.plans.semantic_lint import collect_strict_target_inventory, lint_plan_document
+    from gobby.tasks.expansion._common import _contract_section_body
+
+    _write_source(tmp_path, "src/caller.py", "# big unchanged consumer\n" * 900)
+    _write_source(tmp_path, "src/omitted.py")
+    plan = _plan_with_unchanged(tmp_path)
+    result = validate_symbol_targets(
+        plan,
+        project_context=_project_context(tmp_path),
+        code_index=_Index(tmp_path, usages=["src/caller.py", "src/omitted.py"]),
+        required=True,
+        consumer_coverage_blocking=True,
+    )
+    assert result.status == "failed"
+    assert "src/omitted.py" in " ".join(result.errors)
+    assert "src/caller.py" not in " ".join(result.errors)
+    section = next(s for s in plan.sections if s.section_id == "1.1")
+    assert collect_strict_target_inventory(plan, section) == frozenset({"src/provider.py"})
+    assert lint_plan_document(plan, project_root=tmp_path).valid
+    assert _UNCHANGED in _contract_section_body(plan, section)
+
+
+def test_unchanged_consumer_in_another_section_does_not_cover_symbol(tmp_path: Path) -> None:
+    _write_source(tmp_path, "src/caller.py")
+    plan = _plan(tmp_path)
+    plan.source_path.write_text(
+        plan.source_path.read_text()
+        + """### 1.2 Verify caller [category: docs]
+`kind: deliverable`
+
+Target: `docs/new.md`
+
+Consumers unchanged:
+- `src/caller.py` — no-edit-reason: Existing call remains valid.
+
+**Acceptance:**
+- 1.2.1 - Document verification. file: `docs/new.md`.
+""",
+    )
+    plan = parse_plan(plan.source_path, parse_mode="draft")
+    result = validate_symbol_targets(
+        plan,
+        project_context=_project_context(tmp_path),
+        code_index=_Index(tmp_path, usages=["src/caller.py"]),
+        required=True,
+        consumer_coverage_blocking=True,
+    )
+    assert result.status == "failed"
+    assert any(i.code == "consumer-coverage" and i.section_id == "1.1" for i in result.issues)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "- `../caller.py` — no-edit-reason: Existing call.",
+        "- `/tmp/caller.py` — no-edit-reason: Existing call.",
+        "- `src/./caller.py` — no-edit-reason: Existing call.",
+        "- `src/caller.py::run` — no-edit-reason: Existing call.",
+        "- `src/*.py` — no-edit-reason: Existing call.",
+        "- `src/missing.py` — no-edit-reason: Existing call.",
+        "- `src/caller.py` — no-edit-reason:",
+        "- `src/caller.py`",
+        "- `src/provider.py` — no-edit-reason: Existing call.",
+        "\n- `src/caller.py` — no-edit-reason: Block separated by blank line.",
+    ],
+)
+def test_unchanged_consumer_rejects_invalid_inventory(tmp_path: Path, entry: str) -> None:
+    from gobby.plans.semantic_lint import lint_plan_document
+
+    _write_source(tmp_path, "src/caller.py")
+    plan = _plan_with_unchanged(tmp_path, "Consumers unchanged:\n" + entry)
+    result = lint_plan_document(plan, project_root=tmp_path)
+    assert not result.valid
+    assert any(i.code == "consumers-unchanged" for i in result.issues)
+
+
+def test_unchanged_consumer_rejects_conflict_in_other_section_and_missing_root(
+    tmp_path: Path,
+) -> None:
+    from gobby.plans.semantic_lint import lint_plan_document
+
+    _write_source(tmp_path, "src/caller.py")
+    plan = _plan_with_unchanged(tmp_path)
+    no_root = lint_plan_document(plan)
+    assert any("without a project root" in error for error in no_root.errors)
+    with plan.source_path.open("a") as output:
+        output.write("""
+### 1.2 Edit caller [category: code]
+`kind: deliverable`
+Target: `src/caller.py`
+
+**Acceptance:**
+- 1.2.1 - Caller changes. file: `src/caller.py`.
+""")
+    result = lint_plan_document(
+        parse_plan(plan.source_path, parse_mode="draft"), project_root=tmp_path
+    )
+    assert any("conflicts with an edit Target" in error for error in result.errors)
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_unchanged_inventory_never_enters_expanded_task_scope(tmp_path: Path, inline: bool) -> None:
+    from gobby.mcp_proxy.tools.tasks._task_scope import collect_declared_task_targets
+    from gobby.plans.semantic_lint import collect_strict_target_inventory
+    from gobby.tasks.expansion._common import _contract_section_body
+
+    _write_source(tmp_path, "src/caller.py")
+    inventory = _UNCHANGED.replace(":\n", ": ") if inline else _UNCHANGED
+    plan = _plan_with_unchanged(tmp_path, inventory)
+    text = plan.source_path.read_text().replace("::run`\n\nConsumers", "::run`\nConsumers")
+    plan.source_path.write_text(text)
+    plan = parse_plan(plan.source_path, parse_mode="draft")
+    section = next(s for s in plan.sections if s.section_id == "1.1")
+    body = _contract_section_body(plan, section)
+    assert inventory in body
+    assert collect_declared_task_targets(body) == {"src/provider.py"}
+    assert collect_strict_target_inventory(plan, section) == frozenset({"src/provider.py"})
+
+
+def test_unchanged_consumer_rejects_symlink_outside_repository(tmp_path: Path) -> None:
+    from gobby.plans.semantic_lint import lint_plan_document
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "caller.py"
+    outside.write_text("pass\n")
+    plan = _plan_with_unchanged(root)
+    (root / "src/caller.py").symlink_to(outside)
+    result = lint_plan_document(plan, project_root=root)
+    assert any("inside the repository" in error for error in result.errors)

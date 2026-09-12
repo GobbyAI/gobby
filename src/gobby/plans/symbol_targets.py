@@ -14,7 +14,11 @@ import psycopg
 
 from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.plans.parser import Kind, PlanDocument
-from gobby.plans.semantic_lint import has_generated_header, iter_target_block_lines
+from gobby.plans.semantic_lint import (
+    collect_unchanged_consumers,
+    has_generated_header,
+    iter_target_block_lines,
+)
 
 INDEX_UNAVAILABLE = "symbol_index_unavailable"
 INDEX_STALE = "symbol_index_stale"
@@ -249,7 +253,16 @@ def validate_symbol_targets(
             primary_project_stats = project_stats
     assert primary_project_stats is not None
 
+    unchanged, unchanged_issues = collect_unchanged_consumers(plan_doc, scope.filesystem_root)
     issues = list(parse_issues)
+    issues.extend(
+        SymbolValidationIssue(
+            code=issue.code,
+            message=issue.to_error(),
+            section_id=issue.section_id,
+        )
+        for issue in unchanged_issues
+    )
     checked_targets = _unique(target.reference for target in targets)
     checked_symbols = _unique(target.reference for target in targets if target.symbol is not None)
 
@@ -280,6 +293,7 @@ def validate_symbol_targets(
                     storage,
                     scope=scope,
                     targets=targets,
+                    unchanged=unchanged,
                     blocking=consumer_coverage_blocking,
                 )
             )
@@ -576,6 +590,7 @@ def _validate_consumer_coverage(
     *,
     scope: SymbolValidationScope,
     targets: tuple[SymbolTarget, ...],
+    unchanged: dict[str, frozenset[str]],
     blocking: bool,
 ) -> list[SymbolValidationIssue]:
     targeted_files = {target.file_path for target in targets}
@@ -592,6 +607,7 @@ def _validate_consumer_coverage(
                 consumer
                 for consumer in consumers
                 if consumer not in targeted_files
+                and consumer not in unchanged.get(target.section_id, frozenset())
                 and _is_owned_consumer(scope.filesystem_root, consumer)
             }
         )
@@ -602,7 +618,7 @@ def _validate_consumer_coverage(
                 code=CONSUMER_COVERAGE,
                 message=(
                     f"consumer-coverage: section {target.section_id}: symbol "
-                    f"`{target.reference}` has consumers missing from Targets: "
+                    f"`{target.reference}` has consumers missing from Targets or its Consumers unchanged inventory: "
                     f"{', '.join(missing)}"
                 ),
                 section_id=target.section_id,
