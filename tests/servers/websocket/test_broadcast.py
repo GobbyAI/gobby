@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,6 +29,35 @@ class FakeBroadcaster(BroadcastMixin):
     def __init__(self) -> None:
         self.clients: dict[Any, dict[str, Any]] = {}
         self.lease_registry = TerminalLeaseRegistry()
+
+
+class FakeSessionManager:
+    """Session store that records every row a broadcast asked it to read."""
+
+    def __init__(self, session: Any) -> None:
+        self.session = session
+        self.lookups: list[str] = []
+
+    def get(self, session_id: str) -> Any:
+        self.lookups.append(session_id)
+        return self.session
+
+
+class SessionRowBroadcaster(FakeBroadcaster):
+    """A broadcaster that can read session rows, the way the daemon's does."""
+
+    session_manager: FakeSessionManager
+
+    def __init__(self, session: Any, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.session_manager = FakeSessionManager(session)
+        self.db_executor = MagicMock()
+        self._error = error
+
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._error is not None:
+            raise self._error
+        return func(*args, **kwargs)
 
 
 class FakeWebSocket:
@@ -379,6 +410,61 @@ class TestBroadcastEventMethods:
         assert msg["session_id"] == "sess-123"
         assert msg["title"] == "Test"
         assert "timestamp" in msg
+        assert "project_id" not in msg, "no session manager, so no project to name"
+
+    @pytest.mark.asyncio
+    async def test_session_event_names_the_project_from_the_session_row(self) -> None:
+        b = SessionRowBroadcaster(SimpleNamespace(project_id="project-2"))
+        ws = _make_ws(subscriptions={"session_event"})
+        b.clients[ws] = {}
+
+        await b.broadcast_session_event("updated", "sess-123")
+
+        assert _sent_message(ws)["project_id"] == "project-2"
+        assert b.session_manager.lookups == ["sess-123"], "read once, not per call site"
+
+    @pytest.mark.asyncio
+    async def test_session_event_keeps_the_project_the_caller_named(self) -> None:
+        b = SessionRowBroadcaster(SimpleNamespace(project_id="project-2"))
+        ws = _make_ws(subscriptions={"session_event"})
+        b.clients[ws] = {}
+
+        await b.broadcast_session_event("updated", "sess-123", project_id="project-1")
+
+        assert _sent_message(ws)["project_id"] == "project-1"
+        assert b.session_manager.lookups == [], "a caller that knows it pays for no lookup"
+
+    @pytest.mark.parametrize(
+        ("session", "error"),
+        [
+            pytest.param(None, None, id="row_already_deleted"),
+            pytest.param(SimpleNamespace(project_id=None), None, id="row_without_a_project"),
+            pytest.param(None, RuntimeError("database down"), id="lookup_failed"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_session_event_omits_an_unresolvable_project(
+        self, session: Any, error: Exception | None
+    ) -> None:
+        """An unscoped event still reaches the client; absence is its sweep signal."""
+        b = SessionRowBroadcaster(session, error=error)
+        ws = _make_ws(subscriptions={"session_event"})
+        b.clients[ws] = {}
+
+        await b.broadcast_session_event("deleted", "sess-123")
+
+        msg = _sent_message(ws)
+        assert msg["event"] == "deleted"
+        assert "project_id" not in msg
+
+    @pytest.mark.asyncio
+    async def test_session_event_reads_no_session_row_without_listeners(self) -> None:
+        """A daemon nobody is listening to pays nothing for the new lookup."""
+        b = SessionRowBroadcaster(SimpleNamespace(project_id="project-2"))
+
+        await b.broadcast_session_event("updated", "sess-123")
+
+        assert b.session_manager.lookups == []
 
     @pytest.mark.asyncio
     async def test_broadcast_pipeline_event(self) -> None:

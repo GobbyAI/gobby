@@ -18,7 +18,10 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from gobby.agents.attention_metadata import AttentionMetadataStore
+    from gobby.storage.executor import DatabaseExecutor
 
 logger = logging.getLogger(__name__)
 BROADCAST_SEND_TIMEOUT_SECONDS = 2.0
@@ -28,13 +31,21 @@ BROADCAST_CLOSE_TIMEOUT_SECONDS = 1.0
 class BroadcastMixin:
     """Mixin providing broadcast methods for WebSocketServer.
 
-    Requires ``self.clients: dict[Any, dict[str, Any]]`` on the host class.
+    Requires ``self.clients: dict[Any, dict[str, Any]]`` on the host class,
+    and — to name the project on a session event — its ``session_manager``,
+    ``db_executor`` and ``run_db``.
     """
 
     clients: dict[Any, dict[str, Any]]
     lease_registry: TerminalLeaseRegistry
+    session_manager: Any = None
+    db_executor: DatabaseExecutor | None = None
     _attention_ordering: AttentionOrderingCoordinator | None = None
     _attention_metadata_store: AttentionMetadataStore | None = None
+
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run daemon database work on the host's bounded DB executor."""
+        raise NotImplementedError
 
     def configure_attention_ordering(self, ordering: AttentionOrderingCoordinator) -> None:
         self._attention_ordering = ordering
@@ -201,7 +212,22 @@ class BroadcastMixin:
         session_id: str,
         **kwargs: Any,
     ) -> None:
-        """Broadcast session event (created, updated, ended)."""
+        """Broadcast session event (created, updated, ended).
+
+        The payload names the project the session belongs to, so a listener
+        can refetch that project alone; without it every listener has to
+        sweep every project it tracks. A caller that already knows the
+        project passes `project_id`; otherwise it is read from the session
+        row here, once, rather than at each of the notifier's call sites.
+        The key stays absent when the row cannot be read — a deletion, most
+        of all — which is the listener's signal to fall back to the sweep.
+        """
+        if not self.clients:
+            return
+        if "project_id" not in kwargs:
+            project_id = await self._session_event_project_id(session_id)
+            if project_id is not None:
+                kwargs["project_id"] = project_id
         message = {
             "type": "session_event",
             "event": event,
@@ -210,6 +236,27 @@ class BroadcastMixin:
             **kwargs,
         }
         await self.broadcast(message)
+
+    async def _session_event_project_id(self, session_id: str) -> str | None:
+        """The project owning `session_id`, or None when it cannot be read.
+
+        A broadcast is a notification, so every failure here — no session
+        manager, no executor, a row already deleted, a database error —
+        degrades to an unscoped event rather than losing the event itself.
+        """
+        manager = self.session_manager
+        if manager is None or self.db_executor is None:
+            return None
+        try:
+            session = await self.run_db(manager.get, session_id)
+        except Exception:
+            logger.debug(
+                "Session project lookup failed for %s; broadcasting unscoped",
+                session_id,
+                exc_info=True,
+            )
+            return None
+        return getattr(session, "project_id", None) if session is not None else None
 
     async def broadcast_config_event(self, revision: int) -> None:
         """Broadcast one revision-only event for each newly reconciled epoch."""

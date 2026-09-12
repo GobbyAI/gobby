@@ -231,6 +231,7 @@ impl Workspace<LiveDaemon> {
             projects: false,
             project_rows: self.checked_out_projects().into_iter().collect(),
             sessions: true,
+            session_rows: BTreeSet::new(),
             roster: false,
         };
         self.flush_sidebar_refetches().await
@@ -263,6 +264,7 @@ impl Workspace<LiveDaemon> {
             && !pending.sessions
             && !pending.roster
             && pending.project_rows.is_empty()
+            && pending.session_rows.is_empty()
         {
             return None;
         }
@@ -275,6 +277,7 @@ impl Workspace<LiveDaemon> {
             project_rows: pending.project_rows,
             checked_out: self.checked_out_projects(),
             sessions: pending.sessions,
+            session_rows: pending.session_rows,
             focused: self.project_id.clone(),
             roster: pending.roster,
         };
@@ -576,7 +579,15 @@ impl Workspace<LiveDaemon> {
                     .extend(self.checked_out_projects()),
             },
             Some("session_event") => {
-                self.pending_sidebar.sessions = true;
+                match project_id {
+                    Some(project_id) => {
+                        self.pending_sidebar.session_rows.insert(project_id);
+                    }
+                    // A session event without its project refetches every
+                    // tracked project rather than guessing which one
+                    // changed: a deleted session leaves no row to name it.
+                    None => self.pending_sidebar.sessions = true,
+                }
                 self.pending_sidebar.roster = true;
             }
             _ => {}
@@ -643,6 +654,10 @@ struct SidebarRequest {
     /// focused one) are wanted: the roster's entries join their own
     /// project, so the all-projects scope lists them where they belong.
     sessions: bool,
+    /// The projects whose sessions and runs one named event each asked for,
+    /// fetched instead of the sweep when `sessions` is false. A project this
+    /// client does not track is dropped: its rows have nowhere to go.
+    session_rows: BTreeSet<String>,
     focused: Option<String>,
     roster: bool,
 }
@@ -671,10 +686,13 @@ impl SidebarRequest {
             let worktrees = daemon.worktrees(&project).await?;
             fetch.project_rows.push((project, status, worktrees));
         }
-        if self.sessions {
+        if self.sessions || !self.session_rows.is_empty() {
             let mut projects = checked_out.clone();
             if let Some(focused) = self.focused.filter(|focused| !projects.contains(focused)) {
                 projects.push(focused);
+            }
+            if !self.sessions {
+                projects.retain(|project| self.session_rows.contains(project));
             }
             for project in projects {
                 let sessions = daemon.sessions(&project).await?;
