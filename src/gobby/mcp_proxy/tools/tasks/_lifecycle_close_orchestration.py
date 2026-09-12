@@ -141,6 +141,14 @@ async def launch_close_review(
             "prompt_chars": len(prompt),
             "prompt_limit": prompt_limit,
         }
+    # Earlier attempts that died on their provider rather than on the evidence
+    # move this one down the ordered candidate list; relaunching onto a
+    # quota-exhausted provider only reproduces the failure, and the caller is
+    # told to call close_task again after exactly that error.
+    overrides = validator_spawn_overrides(
+        ctx.validation_config,
+        provider_failures=store.count_provider_failed_attempts(task.id),
+    )
     try:
         launch = await registry.call(
             "spawn_agent",
@@ -153,7 +161,7 @@ async def launch_close_review(
                 "project_path": evaluation.repo_path,
                 "notify_parent_on_completion": True,
                 "timeout": validator_timeout_seconds,
-                **validator_spawn_overrides(ctx.validation_config),
+                **overrides,
             },
         )
     except Exception as exc:
@@ -194,6 +202,8 @@ async def launch_close_review(
         "review_fingerprint": running.review_fingerprint,
         "deterministic_evidence_fingerprint": running.evidence_fingerprint,
         "review_status": running.status,
+        "validator_provider": overrides.get("provider"),
+        "validator_model": overrides.get("model"),
         "prompt_chars": len(prompt),
         "prompt_limit": prompt_limit,
         "manifest_count": evaluation.extra.get("manifest_count"),

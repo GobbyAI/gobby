@@ -16,6 +16,14 @@ AgentRunTerminalReason = Literal[
     "provider_error",
 ]
 
+# Terminal reasons where the provider, not the work, ended the run. Nothing
+# about the run's subject changes by retrying it, so a retry is only worth
+# making against a different provider.
+PROVIDER_FAILURE_TERMINAL_REASONS: tuple[AgentRunTerminalReason, ...] = (
+    "provider_quota_exhausted",
+    "provider_error",
+)
+
 STATUS_PENDING: AgentRunStatus = "pending"
 STATUS_RUNNING: AgentRunStatus = "running"
 STATUS_SUCCESS: AgentRunStatus = "success"

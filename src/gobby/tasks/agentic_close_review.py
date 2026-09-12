@@ -16,14 +16,19 @@ TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
 
 def validator_spawn_overrides(
     validation_config: TaskValidationConfig | None,
+    *,
+    provider_failures: int = 0,
 ) -> dict[str, str | None]:
     """Return spawn overrides so the validator runs on the ``gobby_tasks.validation`` model.
 
-    The first configured candidate wins. Its reasoning effort (or the feature
-    profile's default) is forwarded only when it resolves to a concrete value;
-    an unpinned candidate leaves the agent definition's own effort default in
-    force, since an explicit ``None`` would suppress it. Without a validation
-    config the definition's defaults apply entirely.
+    The candidate list is ordered, so ``provider_failures`` — how many earlier
+    attempts on this task died on their provider rather than on the evidence —
+    is how far down it this attempt starts, clamped to the last candidate. A
+    candidate's reasoning effort (or the feature profile's default) is forwarded
+    only when it resolves to a concrete value; an unpinned candidate leaves the
+    agent definition's own effort default in force, since an explicit ``None``
+    would suppress it. Without a validation config the definition's defaults
+    apply entirely.
     """
     if validation_config is None:
         return {}
@@ -32,10 +37,11 @@ def validator_spawn_overrides(
     )
     if not entries:
         return {}
-    provider, model = parse_feature_candidate(entries[0].candidate)
+    entry = entries[min(max(provider_failures, 0), len(entries) - 1)]
+    provider, model = parse_feature_candidate(entry.candidate)
     overrides: dict[str, str | None] = {"provider": provider, "model": model}
-    if entries[0].reasoning_effort is not None:
-        overrides["reasoning_effort"] = entries[0].reasoning_effort
+    if entry.reasoning_effort is not None:
+        overrides["reasoning_effort"] = entry.reasoning_effort
     return overrides
 
 

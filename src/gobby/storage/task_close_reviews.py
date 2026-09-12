@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from psycopg.errors import UniqueViolation
 
+from gobby.storage.agents import PROVIDER_FAILURE_TERMINAL_REASONS
 from gobby.storage.hub.protocol import HubDatabase
 
 ActiveTaskCloseReviewStatus = Literal["launching", "running", "finalizing"]
@@ -298,6 +299,27 @@ class TaskCloseReviewStore:
                 (task_id, caller_session_id),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
+
+    def count_provider_failed_attempts(self, task_id: str) -> int:
+        """Count this task's reviews whose validator died on its own provider.
+
+        A quota-exhausted or hard-errored validator says nothing about the close
+        evidence, so the next attempt has to move down the configured candidate
+        list; relaunching onto the same provider just reproduces the failure.
+        """
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT count(*) AS failures
+                FROM task_close_reviews AS review
+                JOIN agent_runs AS run ON run.id = review.agent_run_id
+                WHERE review.task_id = %s
+                  AND review.status = 'error'
+                  AND run.terminal_reason = ANY(%s)
+                """,
+                (task_id, list(PROVIDER_FAILURE_TERMINAL_REASONS)),
+            ).fetchone()
+        return int(row["failures"]) if row is not None else 0
 
     def bind_run(self, review_id: str, run_id: str) -> TaskCloseReview | None:
         """Bind a successful launch and move the review to running."""

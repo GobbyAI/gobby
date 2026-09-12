@@ -8,11 +8,14 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import ensure_system_session, system_session_id
 from gobby.storage.task_close_reviews import (
     VALIDATOR_RUN_ENDED_SUCCESS_ERROR,
     TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
+    TerminalTaskCloseReviewStatus,
 )
 
 
@@ -329,6 +332,57 @@ def test_memo_rows_stay_out_of_the_agentic_review_lifecycle(temp_db: HubDatabase
     launched, created = store.create_or_get_active(**_intent())
     assert created is True
     assert store.get_active_for_task(_TASK_ID) == launched
+
+
+def test_provider_failed_attempts_count_only_provider_ended_reviews(
+    temp_db: HubDatabase,
+) -> None:
+    # The count decides how far down the validator candidate list the next
+    # attempt starts, so it must separate "the provider died" from "the
+    # validator judged the evidence and said no".
+    ensure_system_session(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    store = TaskCloseReviewStore(temp_db)
+
+    def attempt(
+        *,
+        status: TerminalTaskCloseReviewStatus,
+        terminal_reason: AgentRunTerminalReason | None,
+    ) -> None:
+        review, _ = store.create_or_get_active(**_intent())
+        run = runs.create(
+            parent_session_id=system_session_id(),
+            provider="codex",
+            prompt="validate",
+        )
+        store.bind_run(review.id, run.id)
+        if terminal_reason is not None:
+            runs.fail(run.id, error="provider died", terminal_reason=terminal_reason)
+        else:
+            runs.complete(run.id, result="verdict")
+        store.finish(
+            review.id,
+            status=status,
+            result_payload={"event": "task_close_review_completed", "status": status},
+            error="ended" if terminal_reason is not None else None,
+        )
+
+    assert store.count_provider_failed_attempts(_TASK_ID) == 0
+
+    attempt(status="error", terminal_reason="provider_quota_exhausted")
+    assert store.count_provider_failed_attempts(_TASK_ID) == 1
+
+    attempt(status="error", terminal_reason="provider_error")
+    assert store.count_provider_failed_attempts(_TASK_ID) == 2
+
+    # A validator that ran and rejected the close is evidence about the work,
+    # not about the provider — it must not push the next attempt elsewhere.
+    attempt(status="invalid", terminal_reason=None)
+    assert store.count_provider_failed_attempts(_TASK_ID) == 2
+
+    # Nor does a run the user cancelled.
+    attempt(status="error", terminal_reason="user_cancelled")
+    assert store.count_provider_failed_attempts(_TASK_ID) == 2
 
 
 _TASK_ID = "00000000-0000-4000-8000-000000000801"

@@ -125,6 +125,56 @@ async def test_close_persists_and_launches_one_taskless_validator(
 
 
 @pytest.mark.asyncio
+async def test_launch_moves_down_the_candidate_list_after_a_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A quota-exhausted validator never judged the evidence, and the error it
+    # delivers tells the caller to close again. Relaunching onto the same
+    # provider makes that instruction unfollowable, so the ordered candidate
+    # list has to advance.
+    store = _Store(_review(status="launching", run_id=None), provider_failures=1)
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(
+            candidates=["codex/gpt-5.6-terra", "claude/sonnet"],
+        ),
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(ctx, evaluation=_evaluation(), close_arguments=_arguments())
+
+    launch_args = registry.call.call_args.args[1]
+    assert launch_args["provider"] == "claude"
+    assert launch_args["model"] == "sonnet"
+    assert result["validator_provider"] == "claude"
+    assert result["validator_model"] == "sonnet"
+
+
+@pytest.mark.asyncio
+async def test_launch_keeps_the_last_candidate_once_every_provider_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exhausting the list is not a reason to stop reviewing: the close gate
+    # still has to run somewhere, and the last candidate is the standing
+    # choice until one of the providers recovers.
+    store = _Store(_review(status="launching", run_id=None), provider_failures=7)
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(
+            candidates=["codex/gpt-5.6-terra", "claude/sonnet"],
+        ),
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(ctx, evaluation=_evaluation(), close_arguments=_arguments())
+
+    assert registry.call.call_args.args[1]["provider"] == "claude"
+    assert result["validator_provider"] == "claude"
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_task_update_before_review_launch_returns_stale_without_spawning(
     temp_db: HubDatabase,
@@ -537,6 +587,22 @@ def test_validator_spawn_overrides_follow_first_validation_candidate(
     overrides = agentic_close_review_module.validator_spawn_overrides(config)
 
     assert overrides == expected
+
+
+def test_validator_spawn_overrides_carry_the_reached_candidates_pinned_effort() -> None:
+    # Each candidate brings its own reasoning pin; skipping to the second one
+    # has to bring the second one's effort, not the head's.
+    config = TaskValidationConfig(
+        candidates=[
+            {"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"},
+            {"candidate": "claude/opus", "reasoning_effort": "high"},
+        ],
+        profile="feature_high",
+    )
+
+    overrides = agentic_close_review_module.validator_spawn_overrides(config, provider_failures=1)
+
+    assert overrides == {"provider": "claude", "model": "opus", "reasoning_effort": "high"}
 
 
 def test_validator_spawn_overrides_are_empty_without_config() -> None:
@@ -1036,7 +1102,13 @@ async def test_wrong_validator_run_is_rejected_without_transition(
 
 
 class _Store:
-    def __init__(self, review: TaskCloseReview, *, created: bool = True) -> None:
+    def __init__(
+        self,
+        review: TaskCloseReview,
+        *,
+        created: bool = True,
+        provider_failures: int = 0,
+    ) -> None:
         self.review = review
         self.created = created
         self.created_arguments: dict[str, Any] | None = None
@@ -1044,6 +1116,10 @@ class _Store:
         self.finished_status: str | None = None
         self.claimed = False
         self.restored = False
+        self.provider_failures = provider_failures
+
+    def count_provider_failed_attempts(self, _task_id: str) -> int:
+        return self.provider_failures
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
         self.created_arguments = dict(kwargs["close_arguments"])
