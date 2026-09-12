@@ -204,14 +204,15 @@ run those reloads ahead of the pull.
 
 Persisted titles are deterministic:
 
-- provisional: `(gobby): S#<session>`;
-- successful claim: `(gobby): Task #<task> - <title>`;
+- provisional: `<project>#<session>: <Provider>`;
+- successful claim: `<project>#<session>: Task #<task> - <title>`;
 - `set_title(title)`: sticky manual title.
 
 Manual titles outrank all automatic sources. Clear successors inherit a manual title;
 otherwise they select the latest still-open transferred claim or their own provisional
-title. Closing the current claim recomputes the same rule. Tmux and UI surfaces display
-the persisted title verbatim after terminal ownership checks.
+title. Closing the current claim recomputes the same rule. Tmux displays the persisted automatic title after terminal ownership checks.
+Terminal and Sessions activity panels suppress the provisional provider suffix
+while preserving task titles, per the completed #22163 presentation contract.
 
 ## Archival Summaries And Memory
 

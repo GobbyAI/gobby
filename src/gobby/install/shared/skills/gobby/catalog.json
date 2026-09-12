@@ -156,6 +156,56 @@
           "when": "Cancelling automation or recovering failed builds"
         }
       ]
+    },
+    {
+      "name": "sessions",
+      "description": "Discover session work, preserve context, and inspect terminals",
+      "overview": "references/sessions/overview.md",
+      "when": "Operating session identity, history, or continuation",
+      "topics": [
+        {
+          "name": "discovery",
+          "description": "Resolve identity, browse sessions, and register clients",
+          "path": "references/sessions/discovery.md",
+          "when": "Finding sessions or changing session metadata"
+        },
+        {
+          "name": "transcripts",
+          "description": "Read, search, and restore conversation evidence",
+          "path": "references/sessions/transcripts.md",
+          "when": "Retrieving transcripts, commits, or archives"
+        },
+        {
+          "name": "handoffs",
+          "description": "Author and consume structured continuation records",
+          "path": "references/sessions/handoffs.md",
+          "when": "Preparing or recovering a handoff"
+        },
+        {
+          "name": "context",
+          "description": "Select and recover compact or clear boundaries",
+          "path": "references/sessions/context.md",
+          "when": "Context pressure or session resets"
+        },
+        {
+          "name": "relationships",
+          "description": "Trace agent parentage and continuation ownership",
+          "path": "references/sessions/relationships.md",
+          "when": "Inspecting session, task, or run relationships"
+        },
+        {
+          "name": "terminals",
+          "description": "Inspect and control session terminals",
+          "path": "references/sessions/terminals.md",
+          "when": "Diagnosing prompts or sending terminal input"
+        },
+        {
+          "name": "waits",
+          "description": "Wait for agent work and terminal conditions",
+          "path": "references/sessions/waits.md",
+          "when": "Progress depends on another operation"
+        }
+      ]
     }
   ]
 }

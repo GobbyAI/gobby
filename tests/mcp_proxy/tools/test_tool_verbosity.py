@@ -99,13 +99,23 @@ async def test_worktree_verbosity_reduction() -> None:
     mock_wt.branch_name = "feat/test"
     mock_storage.create.return_value = mock_wt
     mock_storage.get_by_branch.return_value = None  # Ensure no collision
-    mock_git.create_worktree.return_value.success = True
-    mock_git.has_unpushed_commits.return_value = (False, 0)
+    mock_git.create_worktree = AsyncMock(return_value=MagicMock(success=True))
+    mock_git.has_unpushed_commits = AsyncMock(return_value=(False, 0))
 
     # Mock resolve_project_context to avoid invalid repo errors
-    with unittest.mock.patch(
-        "gobby.mcp_proxy.tools.worktrees._resolve_project_context"
-    ) as mock_ctx:
+    with (
+        unittest.mock.patch("gobby.mcp_proxy.tools.worktrees._resolve_project_context") as mock_ctx,
+        unittest.mock.patch(
+            "gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree",
+            new_callable=AsyncMock,
+        ),
+        unittest.mock.patch(
+            "gobby.mcp_proxy.tools.worktrees._create.install_provider_hooks", return_value=False
+        ),
+        unittest.mock.patch(
+            "gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event", return_value=None
+        ),
+    ):
         mock_ctx.return_value = (mock_git, "11111111-1111-4111-8111-111111110123", None)
 
         registry = create_worktrees_registry(
@@ -116,6 +126,8 @@ async def test_worktree_verbosity_reduction() -> None:
 
         assert result["success"] is True
         assert result["worktree_id"] == "wt-123"
+        mock_git.has_unpushed_commits.assert_awaited_once_with("main")
+        mock_git.create_worktree.assert_awaited_once()
         # Should be minimal
 
 

@@ -628,14 +628,25 @@ gobby mcp-proxy refresh [OPTIONS]
 
 ### Sessions
 
+Operator interfaces (agents use `gobby-sessions` MCP tools):
+
 ```bash
 gobby sessions list [--project PROJECT] [--status STATUS] [--source SOURCE] [--limit N] [--json]
 gobby sessions show SESSION [--json]
 gobby sessions messages SESSION [--limit N] [--role ROLE] [--offset N] [--json]
-gobby sessions stats
+gobby sessions stats [--project PROJECT]
 gobby sessions summarize [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
-gobby sessions delete SESSION
+gobby sessions restore SESSION [--path PATH] [--json]
+gobby sessions restore --all [--json]
+gobby sessions delete SESSION [--yes]
+gobby sessions renumber --project PROJECT [--apply]
+gobby sessions backfill-context-windows [--dry-run]
 ```
+
+`summarize` creates archival output; it never stages a recoverable handoff.
+`renumber` previews until `--apply`; context-window backfill writes unless
+`--dry-run` is present. Restoration does not overwrite an existing transcript.
+See the [session guide](sessions.md#cli-commands) for workflows and recovery.
 
 ### Agents
 

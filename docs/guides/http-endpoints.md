@@ -175,7 +175,8 @@ cases, and share the same per-client rate limit.
 | `GET` | `/api/sessions` | List sessions with query filters and resumability metadata. |
 | `POST` | `/api/sessions/register` | Register CLI/session metadata. |
 | `POST` | `/api/sessions/web-chat` | Create a durable web-chat session row. |
-| `POST` | `/api/sessions/find_current` | Find a session by `external_id`, `machine_id`, `source`, and project. |
+| `POST` | `/api/sessions/find_current` | Find a session by external identity, source, and project. |
+| `POST` | `/api/sessions/find_by_terminal_context` | Resolve a session from terminal context. |
 | `POST` | `/api/sessions/update_status` | Update a session status. |
 | `POST` | `/api/sessions/update_summary` | Update a session summary path. |
 | `GET` | `/api/sessions/usage` | Return session usage breakdowns. |
@@ -184,7 +185,7 @@ cases, and share the same per-client rate limit.
 | `POST` | `/api/sessions/{session_id}/expire` | Expire a session. |
 | `POST` | `/api/sessions/{session_id}/rename` | Rename a session. |
 | `POST` | `/api/sessions/{session_id}/generate-summary` | Generate a session summary. |
-| `GET` | `/api/sessions/{session_id}/messages` | Read persisted session messages. |
+| `GET` | `/api/sessions/{session_id}/messages` | Read rendered transcript windows. |
 | `GET` | `/api/sessions/{session_id}/transcript/status` | Inspect transcript availability. |
 | `GET` | `/api/sessions/{session_id}/transcript` | Read transcript content. |
 | `POST` | `/api/sessions/{session_id}/restore-transcript` | Restore an archived transcript. |
@@ -195,19 +196,30 @@ cases, and share the same per-client rate limit.
 | `POST` | `/api/sessions/{session_id}/variables/set` | Set a live session variable. |
 | `POST` | `/api/sessions/{session_id}/variables/get` | Get a live session variable. |
 
+These are operator/client APIs. Agents use the corresponding MCP tools; raw
+status, summary, and project moves are not handoff or task-ownership repair.
+The list endpoint uses paired `cursor_updated_at`/`cursor_id` values from
+`next_cursor`. With `include_resumability=true`, cursor pagination is disabled.
+
+Additional session APIs expose `GET /{session_id}/changes` and `/changes/diff`
+under this prefix. ACP clients can `POST /{session_id}/acp/close` or `/acp/delete`;
+these affect provider conversation lifecycle. Session-variable routes are covered
+by the variables capability.
+
 ### `POST /api/sessions/register`
 
-Required body field: `external_id`.
+Required body field: `external_id`. Resolve the project with `project_id` or
+`cwd`. Machine ownership is assigned by the daemon; a caller-supplied
+`machine_id` is not part of this request model. The accepted `status` field is
+not forwarded by registration; use the lifecycle interface for status changes.
 
 ```json
 {
   "external_id": "session-abc123",
-  "machine_id": "machine-xyz",
   "transcript_path": "/path/to/transcript.jsonl",
   "title": "Session Title",
   "source": "Claude Code",
   "parent_session_id": "uuid-of-parent",
-  "status": "active",
   "project_id": "project-uuid",
   "project_path": "/path/to/project",
   "git_branch": "main",
@@ -229,13 +241,12 @@ Response:
 
 ### `POST /api/sessions/find_current`
 
-Required body fields: `external_id`, `machine_id`, `source`, and either
+Required body fields: `external_id`, `source`, and either
 `project_id` or `cwd`.
 
 ```json
 {
   "external_id": "session-abc123",
-  "machine_id": "machine-xyz",
   "source": "Claude Code",
   "cwd": "/current/working/dir"
 }

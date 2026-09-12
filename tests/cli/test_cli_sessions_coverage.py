@@ -269,7 +269,7 @@ def test_show_messages(mock_session_manager, mock_resolve_session) -> None:
 
 
 @pytest.mark.integration
-@patch("gobby.storage.projects.LocalProjectManager")
+@patch("gobby.storage.project_checkouts.require_root", return_value="/tmp/project")
 @patch("gobby.cli.sessions.require_cli_database")
 @patch("subprocess.run")
 @patch("gobby.sessions.analyzer.TranscriptAnalyzer")
@@ -281,7 +281,7 @@ def test_create_handoff(
     mock_analyzer,
     mock_subprocess,
     mock_db,
-    mock_project_manager,
+    mock_checkout_root,
     mock_session_manager,
     mock_resolve_session,
 ):
@@ -351,7 +351,7 @@ def test_create_handoff(
 
 
 @pytest.mark.integration
-@patch("gobby.storage.projects.LocalProjectManager")
+@patch("gobby.storage.project_checkouts.require_root", return_value="/tmp/project")
 @patch("gobby.cli.sessions.require_cli_database")
 @patch("subprocess.run")
 @patch("gobby.sessions.analyzer.TranscriptAnalyzer")
@@ -363,7 +363,7 @@ def test_create_handoff_full_llm_error(
     mock_analyzer,
     mock_subprocess,
     mock_db,
-    mock_project_manager,
+    mock_checkout_root,
     mock_session_manager,
     mock_resolve_session,
 ):
@@ -607,7 +607,7 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         patch("gobby.cli.sessions.require_cli_database"),
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
         patch("gobby.llm.factory.create_llm_service", return_value=MagicMock()),
-        patch("gobby.storage.projects.LocalProjectManager"),
+        patch("gobby.storage.project_checkouts.require_root", return_value="/tmp/project"),
         patch(
             "gobby.sessions.summarize.generate_session_summaries",
             new_callable=AsyncMock,

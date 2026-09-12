@@ -11,18 +11,18 @@ agent-run metadata across daemon restarts and context compactions.
 gobby sessions list
 
 # Show one session
-gobby sessions show #42
+gobby sessions show "#42"
 
 # Read a transcript
-gobby sessions messages #42 --limit 25
+gobby sessions messages "#42" --limit 25
 
-# Create a handoff summary for the current active session
+# Operator: create an archival summary (does not stage a handoff)
 gobby sessions summarize --output db "Paused before review"
 ```
 
 ```python
-# MCP examples assume progressive discovery has already loaded the server,
-# tool list, and schema.
+# Fetch a known unleased tool schema before calling. List tools only when
+# the tool name is unknown; discover servers only when the server is unknown.
 
 # Get your current session when injected context did not include it.
 call_tool("gobby-sessions", "get_current_session", {
@@ -30,38 +30,28 @@ call_tool("gobby-sessions", "get_current_session", {
     "source": "codex"
 })
 
-# Read the latest handoff-ready context.
+# Consume the current pending compact/clear handoff, when one exists.
 call_tool("gobby-sessions", "get_handoff", {})
 ```
 
 ## Mental Model
 
-```mermaid
-stateDiagram-v2
-    [*] --> active: registered
-    active --> paused: turn ends
-    paused --> active: next turn
-    active --> awaiting_handoff: compact or handoff
-    paused --> awaiting_handoff: handoff
-    awaiting_handoff --> active: compact restart (same row)
-    active --> completed: web chat cleared
-    active --> expired: session end or stale
-    paused --> expired: stale
-    awaiting_handoff --> expired: orphaned or stale
-    expired --> active: compact revival
-```
-
-| Status | Meaning |
+| State | Meaning |
 | :--- | :--- |
-| `active` | A session is registered and currently expected to receive activity. |
-| `paused` | A turn finished or the session went idle, but the session may resume. |
-| `awaiting_handoff` | Summary context is available for a successor session. |
-| `completed` | A web-chat lifecycle ended cleanly. |
-| `expired` | The session ended, went stale, or was soft-deleted. |
+| `active`, `paused` | Working or between turns. |
+| `interrupted`, `awaiting_input`, `awaiting_approval` | Protected interaction states; automatic wake waits for safe provider evidence. |
+| `awaiting_handoff` | A context boundary is pending; inspect its marker and delivery result. |
+| `completed`, `cancelled`, `closed` | Lifecycle outcomes accepted by the status model. |
+| `expired`, `deleted` | Terminal storage states; ordinary status updates cannot revive them. |
 
-Session records are keyed by external CLI identity, machine, source, project,
-and session type. Registration is idempotent for that key, so daemon restarts
-reuse the existing row instead of creating duplicates.
+The [handoff sequence](#handoff-flow) shows the boundary protocol. Status alone
+never proves that a recoverable handoff exists. Expired terminal revival belongs
+to ownership reconciliation, with its bounded revival horizon, rather than an
+arbitrary status edit.
+
+Current-session lookup uses external CLI identity, source, and project. Machine
+ownership remains separate metadata; do not substitute a remote machine’s local
+paths. Registration reuses canonical identity rather than creating a duplicate.
 
 ## What A Session Stores
 
@@ -70,13 +60,13 @@ reuse the existing row instead of creating duplicates.
 | Identity | Internal UUID, project-scoped `#N`, external CLI ID, machine ID, source |
 | Runtime | Status, source, session type, terminal context, parent session, agent depth |
 | Work trace | Transcript path, rendered message counts, task links, commit window |
-| Handoff | `summary_markdown`, digest fields, compact continuation context |
+| Handoff | Authored `handoff_markdown`, delivery receipts, separate archival `summary_markdown` |
 | Usage | Input, output, cache-write, cache-read token counts, model |
 | Safety | Dirty-file baseline, edit marker, sandbox flags, approved tools |
 
 `agent_depth` separates human sessions from spawned agent sessions. Depth `0`
-sessions are user-facing; depth `1+` sessions are subagents and are cheaper to
-summarize during lifecycle processing.
+sessions are user-facing; depth `1+` sessions are subagents. Depth is not proof
+that a run or its assigned task has completed.
 
 ## Session Sources
 
@@ -97,7 +87,8 @@ by internal automation.
 
 ## CLI Commands
 
-This section covers the day-to-day subset; `gobby sessions renumber` and
+These are operator interfaces; agents use the MCP tools below. This section
+covers the day-to-day subset; `gobby sessions renumber` and
 `gobby sessions backfill-context-windows` also exist for maintenance.
 
 ### `gobby sessions list`
@@ -150,7 +141,9 @@ gobby sessions stats [--project TEXT]
 
 ### `gobby sessions summarize`
 
-Create a handoff summary for a session. If `--session-id` is omitted, Gobby uses
+Create a transcript-based archival summary for a session. This does not stage a
+handoff marker, compact the provider, or make `get_handoff()` return content.
+If `--session-id` is omitted, Gobby uses
 the current project's most recent active session.
 
 ```bash
@@ -191,7 +184,8 @@ gobby sessions delete SESSION_ID --yes
 ## MCP Tools
 
 Use the `gobby-sessions` server for session CRUD, transcripts, handoffs,
-registration, usage, terminal capture, and archive restoration. Fetch schemas
+registration, usage, terminal capture, and archive restoration. Session deletion
+and bulk maintenance are operator/client surfaces, not MCP CRUD tools. Fetch schemas
 with `get_tool_schema` before writing examples or automating calls.
 
 | Tool | Purpose |
@@ -205,14 +199,16 @@ with `get_tool_schema` before writing examples or automating calls.
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `set_handoff` | Stage an authored handoff and dispatch the current session's compact or clear boundary. |
 | `get_handoff` | Consume the current session's pending handoff; with `agent_run_id`, read the child run's final handoff. |
+| `feedback` | Submit the current epoch survey without marking it human-reviewed. |
+| `set_title` | Set the caller’s sticky manual title. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
-| `mark_loop_complete` | Mark an autonomous loop complete to prevent session chaining. |
+| `mark_loop_complete` | Set `stop_reason="completed"`; installed workflows determine its effect. This does not end an agent run or close a task. |
 | `capture_baseline_dirty_files` | Store the current dirty-file baseline for edit detection. |
 | `restore_session_transcript` | Restore one transcript from archive. |
 | `get_transcript_status` | Check archive availability and transcript file stats. |
-| `send_keys` | Send keystrokes to a session-backed tmux terminal. |
-| `capture_output` | Capture recent tmux output. |
+| `send_keys` | Send authorized terminal input through the managed runtime or tmux. |
+| `capture_output` | Capture a diagnostic runtime/tmux snapshot, with transcript-tail fallback. |
 
 ### Finding Your Own Session
 
@@ -239,8 +235,7 @@ call_tool("gobby-sessions", "get_session", {
 call_tool("gobby-sessions", "get_session_messages", {
     "session_id": "#42",
     "limit": 50,
-    "offset": 0,
-    "full_content": False
+    "offset": 0
 })
 
 call_tool("gobby-sessions", "get_session_commits", {
@@ -248,6 +243,12 @@ call_tool("gobby-sessions", "get_session_commits", {
     "max_commits": 25
 })
 ```
+
+`get_session_messages` returns chronological windows. Page with `offset` and
+`limit`; `truncated=false` describes full bodies, not an exhaustive transcript.
+The accepted `full_content` argument is unused: bodies are always full. Search
+also returns full bodies and scans a bounded set of sessions when no session is
+specified. Use explicit session reads when complete evidence matters.
 
 ### Creating And Reading Handoffs
 
@@ -350,8 +351,9 @@ Context pressure is configured under `context_handoff`. Windows below
 windows at or above `extended_window_tokens` use the extended thresholds. Warnings
 repeat every turn start and every
 `warn_every_tool_calls` calls. At the block threshold, only `set_handoff`,
-`feedback`, `get_handoff`, `review_task_memories`, `end_agent_run`, and MCP schema
-discovery remain callable. Plan mode and pipelines skip this enforcement. A
+`feedback`, `get_handoff`, and the configured prerequisite/coordination allowlist
+remain callable, including required schema discovery. Coordination does not clear
+the pressure gate. Plan mode and pipelines skip this enforcement. A
 non-retryable inability to compact downgrades the epoch to warning pressure;
 background delivery failures stay gated for a `set_handoff` retry.
 
@@ -403,7 +405,13 @@ call_tool("gobby-sessions", "register_session", {
 
 ### Terminal Tools
 
-Terminal tools are for session-backed tmux contexts.
+Terminal tools prefer the managed terminal runtime and fall back to tmux.
+Capture can fall back to transcript-tail evidence; inspect `via` and truncation
+metadata before treating it as a live screen. `send_keys` requires caller context,
+rejects autonomous agent-run callers, and permits only self, same-project, or
+ancestor/descendant targets. Use `gobby-agents:send_message` for messages.
+A literal trailing newline requests one Enter. `/fast` is operator-only; an
+indeterminate write requires inspecting state before retrying.
 
 ```python
 call_tool("gobby-sessions", "capture_output", {
@@ -470,6 +478,17 @@ Claude and Codex emit `SessionStart(source=compact)` after compact. Grok reports
 the same context loss through `post_compact`. Both paths reset context-epoch tracking
 and preserve the pending `set_handoff` marker for explicit retrieval.
 
+### Event-Driven Waits
+
+Use `gobby-agents:wait_for_agent(run_id=...)` for completion: handle an already
+completed result, or yield after notification registration. Do not poll or
+re-register. `wait_for_output` is a bounded run-terminal regex wait; inspect
+match, timeout, terminal, and pane-loss outcomes. It is not a durable subscription.
+No session-service wait tool exists. Use the applicable service’s `wait_for_*`
+primitive for other dependencies and reserve repeated snapshots for bounded
+diagnostics. Cross-session messaging uses `send_message`; explicit `wake=true`
+requests immediate processing, subject to protected interaction states.
+
 ### Handoff Boundaries
 
 The continuation model receives authored `handoff_markdown` only after calling
@@ -488,7 +507,7 @@ Rule authors should target semantic workflow events:
 | Semantic event | Raw runtime events that may feed it | Common use |
 | :--- | :--- | :--- |
 | `turn_start` | `before_agent`, provider-specific prompt-start events | Context injection and per-turn setup |
-| `turn_end` | `after_agent`, `stop`, provider-specific turn-complete events | Stop gates, digest capture, cleanup |
+| `turn_end` | `after_agent`, `stop`, provider-specific turn-complete events | Stop gates and lifecycle cleanup |
 
 Raw `before_agent`, `after_agent`, and `stop` events are provider/runtime
 details. They are useful for adapter work, but they are not the main authoring
@@ -519,13 +538,16 @@ stop or turn-end event does not release the agent run.
 
 ### Handoff Is Empty
 
-1. Confirm the session has `summary_markdown`.
-2. Create or update handoff context with `gobby sessions summarize` or
-   `set_handoff`.
-3. Confirm the target status is `awaiting_handoff`. A session may always read its
-   own summary regardless of status (post-compact self-reads).
-4. Pass `session_id` to `get_handoff` when multiple handoff-ready
-   sessions exist.
+1. An empty no-argument read is expected after consumption, manual provider
+   compact/clear, or when no valid pending marker exists.
+2. Only `set_handoff` stages continuation content. `sessions summarize` writes
+   archival summaries and cannot create or repair that marker.
+3. Never pass `session_id` to `get_handoff` or select a different session's summary.
+   Inspect persisted `handoff_markdown` through session reads for historical
+   evidence; it remains after consumption.
+4. A parent or its bound clear successor can separately read a child's final
+   delivered handoff with `agent_run_id`. That read is idempotent; a crash may
+   leave no authored content. Access outside the parent relationship is denied.
 
 ### Hooks Are Not Updating Sessions
 
@@ -540,7 +562,7 @@ stop or turn-end event does not release the agent run.
 | :--- | :--- |
 | `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN for sessions and related tables. |
 | `~/.gobby/logs/` | Daemon logs. |
-| `.gobby/session_summaries/` | Default file output for CLI-created handoff summaries. |
+| `.gobby/session_summaries/` | Default file output for CLI-created archival summaries. |
 
 ## See Also
 
@@ -551,4 +573,4 @@ stop or turn-end event does not release the agent run.
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings
 
-_Last verified: 2026-09-04_
+_Last verified: 2026-09-12_
