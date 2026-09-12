@@ -33,6 +33,58 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+@pytest.mark.parametrize("daemon", [True, False], ids=["daemon", "local"])
+@pytest.mark.parametrize("json_format", [True, False], ids=["json", "text"])
+@pytest.mark.parametrize(
+    "status",
+    [ExecutionStatus.FAILED, ExecutionStatus.CANCELLED, ExecutionStatus.INTERRUPTED],
+)
+def test_run_reports_unsuccessful_terminal_status(
+    runner: CliRunner,
+    mock_pipeline: PipelineDefinition,
+    daemon: bool,
+    json_format: bool,
+    status: ExecutionStatus,
+) -> None:
+    execution = PipelineExecution(
+        id="pe-unsuccessful",
+        pipeline_name="deploy",
+        project_id="proj-1",
+        status=status,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    loader = MagicMock()
+    loader.load_pipeline_sync.return_value = mock_pipeline
+    executor = MagicMock()
+    executor.execute = AsyncMock(return_value=execution)
+    response = {
+        "execution_id": execution.id,
+        "pipeline_name": execution.pipeline_name,
+        "status": status.value,
+    }
+    with (
+        patch("gobby.cli.pipelines.get_workflow_loader", return_value=loader),
+        patch("gobby.cli.pipelines._get_project_id", return_value="proj-1"),
+        patch("gobby.cli.pipelines._try_daemon_run", return_value=response if daemon else None),
+        patch("gobby.cli.pipelines.get_pipeline_executor", return_value=executor),
+    ):
+        arguments = ["pipelines", "run", "deploy", *(["--json"] if json_format else [])]
+        result = runner.invoke(cli, arguments)
+
+    assert result.exit_code == 1
+    assert "completed" not in result.output
+    if json_format:
+        assert json.loads(result.output) == response
+    else:
+        assert status.value in result.output
+        assert execution.id in result.output
+    if daemon:
+        executor.execute.assert_not_awaited()
+    else:
+        executor.execute.assert_awaited_once()
+
+
 @pytest.fixture
 def mock_pipeline() -> PipelineDefinition:
     """Create a mock pipeline definition."""

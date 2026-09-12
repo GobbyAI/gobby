@@ -72,7 +72,7 @@ def _upsert_agent(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     existing = manager.get_by_name(name, project_id=project_id)
     description = data.get("description", "")
     enabled = normalize_workflow_definition_enabled(data)
-    if existing is not None:
+    if existing is not None and existing.project_id == project_id:
         manager.update(
             existing.id,
             definition_json=parent_body,
@@ -108,7 +108,7 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
         "priority": data.get("priority", 100),
         "sources": data.get("sources"),
     }
-    if existing is not None:
+    if existing is not None and existing.project_id == project_id:
         return manager.update(existing.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 
@@ -125,7 +125,7 @@ def _upsert_variable(db: Any, data: dict[str, Any], project_id: str | None) -> A
         "description": description,
         "enabled": bool(data.get("enabled", True)),
     }
-    if existing is not None:
+    if existing is not None and existing.project_id == project_id:
         return manager.update(existing.id, **fields)
     return manager.create(
         name=name,
@@ -148,7 +148,7 @@ def _upsert_pipeline(db: Any, data: dict[str, Any], project_id: str | None) -> A
         "version": str(data.get("version", "1.0")),
         "enabled": normalize_workflow_definition_enabled(data),
     }
-    if existing is not None:
+    if existing is not None and existing.project_id == project_id:
         return manager.update(existing.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 

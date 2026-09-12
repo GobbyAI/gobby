@@ -51,7 +51,9 @@ when it finishes.
 - `export_pipeline`
 
 Definition tools store pipeline YAML in `pipeline_definitions`. Validate a
-definition without executing it with `evaluate_pipeline`.
+definition without executing it with `evaluate_pipeline`. This performs loading/model
+and loader-reference checks; it does not execute steps or prove tool availability,
+credentials, input types, or successful side effects.
 
 ### Pipeline Helper Tools
 
@@ -62,7 +64,18 @@ These helper tools are mainly for use inside pipeline `mcp` steps.
 
 ### CLI Run History
 
-Use the CLI run-history surface for broad execution lookup:
+Agents use `list_pipeline_executions` and `search_pipeline_executions` on
+`gobby-workflows`. Both support offset pagination and filter-scoped totals;
+keep filters fixed and advance by returned rows until the total is exhausted.
+`include_steps=true` expands step details; search can include outputs explicitly.
+`get_pipeline_status` retrieves one execution with its step outputs and errors.
+
+`clear_pipeline_execution_history(pipeline_name=...)` previews deletion by default.
+Only pass `confirm=true` for authorized deletion after reviewing the preview.
+Active selected executions or descendants block deletion. History deletion is
+separate from deleting a definition.
+
+Operators use the CLI run-history surface:
 
 ```bash
 gobby pipelines runs list [--status STATUS] [--name NAME] [--limit N] [--offset N] [--json]
@@ -141,9 +154,7 @@ Each step must declare exactly one execution type.
 | `invoke_pipeline` | Executes another pipeline |
 | `wait` | Blocks on a completion event |
 
-The definition model still accepts `activate_workflow`, but current pipeline
-execution reports it as unsupported. Do not author new pipelines with that
-field.
+The definition model rejects the removed `activate_workflow` field.
 
 ### Step Fields
 
@@ -152,15 +163,19 @@ field.
 | `id` | Unique step identifier |
 | `condition` | Optional expression; false skips the step |
 | `approval` | Optional approval gate before execution |
-| `tools` | Tool restrictions for `prompt` steps |
-| `input` | Explicit input reference for compatibility cases |
+| `tools` | Accepted metadata; the current prompt handler makes one LLM feature call, without a tool-running agent loop |
+| `input` | Accepted reference metadata; use rendered arguments for operational data flow |
+| `timeout_seconds` | Positive exec timeout or a full template expression; default 300 seconds |
 
 ## Step Details
 
 ### `exec`
 
 Runs a command. Gobby parses the command with `shlex.split` and executes it
-directly, so shell features require explicitly invoking a shell.
+directly, so shell features require explicitly invoking a shell. It inherits the
+daemon process working directory; `project_path` in the template context does
+not change that directory. Use absolute paths or an explicit command that sets
+its working directory. Never interpolate untrusted text into shell syntax.
 
 ```yaml
 - id: check_status
@@ -215,14 +230,17 @@ Runs another pipeline by name or with explicit arguments:
 ```yaml
 - id: expand
   invoke_pipeline:
-    name: "expand-task"
+    name: "child-check"
     arguments:
-      task_id: "${{ inputs.task_id }}"
-      wait_timeout: 600
+      value: "${{ inputs.value }}"
 ```
 
-Nested pipeline output includes the child `execution_id`, `status`, and parsed
-child `output` when the child pipeline produced JSON outputs.
+Register `child-check` before using this example. Nested execution is awaited
+inline; omitted `arguments` inherit parent inputs. Output includes the child
+`execution_id`, `status`, and parsed child `output`. Child failures fail the parent
+step. Nesting is bounded by configured depth and cross-pipeline cycle checks.
+For an independently controlled child approval workflow, use `run_pipeline` in
+an MCP step followed by a `wait` step and inspect that child execution.
 
 ### `wait`
 
@@ -262,7 +280,11 @@ exec: "uv run pytest ${{ inputs.test_path }}"
 ```
 
 Pure expressions are evaluated as native values where possible, so rendered
-numbers and booleans can stay typed for MCP arguments.
+numbers and booleans can stay typed for MCP arguments. Rendered null MCP arguments
+are omitted. Input metadata supplies defaults; it is not runtime type validation.
+Explicit inputs override defaults. Skipped steps expose `output: null`; guard
+downstream access. A completion event can report failed work, so check its status
+before performing dependent side effects.
 
 ### Output References
 
@@ -274,8 +296,10 @@ outputs:
   report: $wait_for_reviewer.output
 ```
 
-Step references are validated on load. A step may reference earlier steps, and
-pipeline outputs may reference any step in the same definition.
+References must point backward; pipeline outputs may reference any step in the
+same definition. Loader checks cover prompt, condition, input, exec, and string
+outputs. Review nested MCP/wait arguments separately: structural validation does
+not exhaustively check every embedded expression.
 
 ## Execution Lifecycle
 
@@ -298,10 +322,12 @@ Execution statuses are `pending`, `running`, `waiting_approval`, `completed`,
 
 ### Waiting
 
-Pipeline `wait` steps block inside a pipeline. External callers do not use a
-separate public wait tool; they keep the returned ID and inspect the relevant
-status surface, such as `get_pipeline_status`, `gobby-agents:get_agent_result`,
-or the run-specific task/expansion tool.
+Pipeline `wait` steps block inside a pipeline. MCP `run_pipeline` and
+`resume_pipeline` subscribe the caller and its session lineage to completion;
+keep the execution ID and yield the turn. Use `get_pipeline_status` to inspect
+the delivered result or diagnose a specific run, not in a polling loop. For an
+agent run, use `gobby-agents:wait_for_agent` with its run ID. A wait timing out
+does not establish that the child stopped; inspect the child before retrying.
 
 ### Approval
 
@@ -331,16 +357,84 @@ call_tool("gobby-workflows", "reject_pipeline", {
 })
 ```
 
+Approval tokens are single-use and project-scoped by the execution manager.
+Approval consumes the token and executes the gated step, then continues until
+completion or another approval. The captured definition is used when available;
+editing the installed definition does not rewrite an already paused run.
+Rejecting marks the gate failed and the execution cancelled. Configured approval
+timeouts are enforced by daemon maintenance (normally a 60-second sweep), with
+the same failed-step/cancelled-execution outcome. Inspect a stale token's run;
+do not retry the token or manufacture an approval identity.
+
 ### Resume
 
 `resume_pipeline` only resumes executions whose status is `failed`. Without an
 explicit `from_step`, Gobby resets from the first failed or errored step and
-re-runs from there.
+re-runs from there. It uses stored inputs and the currently loaded enabled
+definition. Inspect changes to that definition and already performed side effects
+before resuming. A concurrent resume loses the atomic claim and must inspect the
+existing run rather than starting a duplicate.
 
 `resume_on_restart: true` is separate. On daemon startup, Gobby re-queues
 running executions for definitions that opt in. Running executions for
 definitions without that flag are marked stale and surfaced to subscribers as
-interrupted.
+interrupted. Neither `interrupted` nor `cancelled` is eligible for public
+`resume_pipeline`; reconcile side effects before authorizing a fresh run.
+Native Ask owns its separate recovery state machine; use its Ask operations.
+
+`cancel_pipeline(execution_id=...)` cancels the registered background task and
+attempts to terminate agents owned by the pipeline child session. It does not
+roll back completed effects. Inspect remaining children, external commands and
+step output before declaring cleanup complete.
+
+## Installation And Operator Boundaries
+
+Runtime loading reads `pipeline_definitions` in PostgreSQL. Files under
+`.gobby/workflows/pipelines/`, `~/.gobby/workflows/pipelines/`, and the bundled
+`src/gobby/install/shared/workflows/pipelines/` are authoring/sync inputs, not
+proof of installed or enabled state. Inspect `get_pipeline` before running;
+use `export_pipeline` for complete YAML because `get_pipeline` summarizes only
+some step fields. `list_pipelines` is discovery, not a complete activation audit.
+
+Agent creation uses `create_pipeline(yaml_content=..., project_id=...)` with an
+explicit intended project UUID. Omitted project scope creates a global definition.
+Updates/export/deletion accept `definition_id`; use it for project definitions.
+Their name-only resolver selects the global row; runtime loading selects the
+project row before global, including a disabled project override.
+Full YAML updates validate the model; explicit update fields override YAML fields.
+Existing names require update, and bundled modifications belong in a custom copy.
+Deletion is soft; the bundled delete guard requires `force=true`. Ordinary sync
+preserves explicit enabled pins; unpinned bundled state follows its template.
+Do not treat forced deletion as a permanent replacement for removing the source.
+MCP create/update do not automatically write a project YAML file: export it
+explicitly when the deliverable needs a file. After authorized source changes,
+`reload_cache(project_path=..., project_id=...)` imports workflow files and syncs
+bundled rules, agents, pipelines, variables and detection manifests before clearing
+cache. This mutates installed state beyond one pipeline: inspect all returned
+sync errors/counts and coordinate shared-state changes; success alone does not
+mean every import succeeded. Project imports update only their own scope; a
+same-named global definition remains unchanged. With no project path, imported sync scans all
+locally checked-out projects; an explicit path requires its project UUID.
+
+Operator `gobby pipelines import PATH [-o OUTPUT]` converts the supported external
+format to a YAML file (default `.gobby/workflows/NAME.yaml`); it does not register
+that file in the runtime database. Inspect the conversion and install validated
+YAML through the definition API. It is not a database restore operation.
+The HTTP definition API also supports templates, duplication, scope moves,
+soft-delete restoration, and restoration of the bundled definition body; see
+[HTTP endpoints](./http-endpoints.md#pipeline-definitions).
+
+Operator `gobby pipelines run NAME -i key=value` tries the daemon first and can
+fall back to an executor without MCP access when it is unavailable. CLI inputs
+are strings. An HTTP read timeout means the daemon run may still be active;
+inspect history rather than launching again. Returned failed, cancelled, or
+interrupted statuses exit nonzero in text and JSON output. Approval wait is not
+successful completion. Agents use MCP execution and event-driven completion.
+
+Enabled installed definitions marked `expose_as_tool` can register a dynamic
+`pipeline:<name>` tool when the workflow registry is built. Discover and lease
+its actual schema; do not assume editing the flag instantly registers a tool.
+The dynamic tool uses the same project-aware run and completion path.
 
 ## Dispatch Boundary
 
@@ -360,7 +454,7 @@ Use dispatch for:
 
 - scanning opted-in tasks
 - lifecycle-stage advancement
-- enforcing `allow_automation`, `yolo`, isolation, and the resolved stage
+- enforcing `allow_automation`, unattended policy, isolation, and the resolved stage
   manifest
 - bounded worker spawning under the global agent-slot cap
 
@@ -378,4 +472,4 @@ step through `gobby-agents:end_agent_run`.
 - [Workflows Overview](./workflows-overview.md) for the complete workflow model
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-09-12_

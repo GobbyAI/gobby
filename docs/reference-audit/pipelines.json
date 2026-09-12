@@ -1,0 +1,1367 @@
+{
+  "version": 1,
+  "capability": "pipelines",
+  "verified_at": "2026-09-12",
+  "source_skills": [
+    "pipelines-and-cron"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/pipelines.md",
+      "anchors": [
+        "pipelines",
+        "what-pipelines-are-for",
+        "public-pipeline-tools",
+        "execution",
+        "definition-management",
+        "pipeline-helper-tools",
+        "cli-run-history",
+        "definition-shape",
+        "top-level-fields",
+        "minimal-example",
+        "step-types",
+        "step-fields",
+        "step-details",
+        "exec",
+        "prompt",
+        "mcp",
+        "invoke_pipeline",
+        "wait",
+        "data-flow",
+        "expressions",
+        "output-references",
+        "execution-lifecycle",
+        "waiting-approval-and-resume",
+        "waiting",
+        "approval",
+        "resume",
+        "installation-and-operator-boundaries",
+        "dispatch-boundary",
+        "related-guides"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/cron-scheduler.md",
+      "anchors": [
+        "cron-scheduler",
+        "mental-model",
+        "quick-start",
+        "scheduling",
+        "actions",
+        "action-contracts",
+        "run-history",
+        "system-automation-and-nightly-jobs",
+        "cli",
+        "http",
+        "mcp",
+        "safe-authoring-and-verification",
+        "file-locations",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "rules-and-pipelines",
+        "cron-scheduling"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "code-index-metrics-pipelines-and-other-feature-apis",
+        "pipeline-definitions"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "list_pipelines",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_list_pipelines"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "get_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_get_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "run_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/execution.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_run_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "resume_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_resume_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "approve_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/approvals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_approve_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "reject_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/approvals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_reject_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "cancel_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_cancel_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "get_pipeline_status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_get_pipeline_status"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "list_pipeline_executions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_list_pipeline_executions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "search_pipeline_executions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_search_pipeline_executions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "clear_pipeline_execution_history",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_clear_pipeline_execution_history"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "create_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_create_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "update_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_update_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "delete_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_delete_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "export_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipelines.py",
+        "symbol": "_export_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "evaluate_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/validation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "_evaluate_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "reload_cache",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "_reload_cache"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "fail_pipeline",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/validation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "_fail_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "pipeline_eval",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/validation.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/__init__.py",
+        "symbol": "_pipeline_eval"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "list_cron_jobs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "list_cron_jobs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "create_cron_job",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "create_cron_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "get_cron_job",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "get_cron_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "update_cron_job",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "update_cron_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "toggle_cron_job",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "toggle_cron_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "delete_cron_job",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "delete_cron_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "run_cron_job",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "run_cron_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-cron",
+      "tool": "list_cron_runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/cron.py",
+        "symbol": "list_cron_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-workflows",
+      "tool": "pipeline:<name>",
+      "dynamic": true,
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/execution.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workflows/_pipeline_exposed.py",
+        "symbol": "_create_pipeline_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "agent",
+      "condition": "Enabled exposed definitions discovered when registry is built; none were registered in the live 41-tool workflow inventory."
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines approve",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/approvals.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_runs.py",
+        "symbol": "approve_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines check",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/validation.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_catalog.py",
+        "symbol": "check_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines history",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_runs.py",
+        "symbol": "history_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_import.py",
+        "symbol": "import_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_catalog.py",
+        "symbol": "list_pipelines"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines reject",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/approvals.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_runs.py",
+        "symbol": "reject_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/execution.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_catalog.py",
+        "symbol": "run_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines runs list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_runs.py",
+        "symbol": "list_pipeline_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines runs show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_runs.py",
+        "symbol": "show_pipeline_run"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_runs.py",
+        "symbol": "search_executions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby pipelines show",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/cli/pipelines_catalog.py",
+        "symbol": "show_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron add",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "add_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron edit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "edit_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "list_jobs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron park",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "park_system_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron remove",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "remove_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "run_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "list_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron toggle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "toggle_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby cron wake",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/cli/cron.py",
+        "symbol": "wake_system_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-cli"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/executions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipelines.py",
+        "symbol": "list_executions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/executions/search",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipelines.py",
+        "symbol": "search_executions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/execution.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipelines.py",
+        "symbol": "run_pipeline"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/{execution_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/history.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipelines.py",
+        "symbol": "get_execution"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/approve/{token}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/approvals.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipelines.py",
+        "symbol": "approve_execution"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/reject/{token}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/approvals.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipelines.py",
+        "symbol": "reject_execution"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/definitions/templates",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "list_templates"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/definitions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "list_definitions"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/definitions/{definition_id}/export",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "export_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/pipelines/definitions/{definition_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "get_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions/import",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "import_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions/{definition_id}/duplicate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "duplicate_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "create_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "route": "/api/pipelines/definitions/{definition_id}/toggle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "toggle_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PUT",
+      "route": "/api/pipelines/definitions/{definition_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "update_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "route": "/api/pipelines/definitions/{definition_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "delete_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions/{definition_id}/restore-from-template",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "restore_from_template"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions/{definition_id}/move-to-project",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "move_to_project"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions/{definition_id}/move-to-global",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "move_to_global"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/pipelines/definitions/{definition_id}/restore",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/authoring.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/pipeline_definitions.py",
+        "symbol": "restore_definition"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/cron/jobs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "list_jobs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/cron/jobs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "create_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/cron/jobs/{job_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "get_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "PATCH",
+      "route": "/api/cron/jobs/{job_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "update_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "DELETE",
+      "route": "/api/cron/jobs/{job_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "delete_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/cron/jobs/{job_id}/toggle",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "toggle_job"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/cron/jobs/{job_id}/run",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "run_job_now"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/cron/jobs/{job_id}/runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "list_runs"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/cron/runs/{run_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/pipelines/scheduling.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/cron.py",
+        "symbol": "get_run"
+      },
+      "verification": [
+        "source-audit",
+        "focused-surfaces"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-audit",
+      "kind": "implementation-and-registry",
+      "command": "gcode outline/symbol-at for pipeline definition/load/render/step/approval/recovery/history/import/sync and cron storage/admission/executor; list_tools on gobby-workflows and gobby-cron; registered schemas for documented calls; CliRunner --help on all pipeline/cron leaves; AST-composed HTTP routes",
+      "result": "27 static MCP operations plus the dynamic pipeline:<name> registration family, 20 CLI leaves and 29 HTTP routes. Every operation has a source symbol. Workflow inventory has 41 tools, cron 8; other workflow families belong to agents/rules/variables. No dedicated pipeline/cron contract file found; task and approval authority obligations preserved."
+    },
+    {
+      "id": "installed-observation",
+      "kind": "read-only-installed-state",
+      "command": "list_pipelines(); list_cron_jobs(project_id=d45545c5-ded5-4335-b115-0245752edacf)",
+      "result": "2026-09-12: four discovered DB pipelines (expand-task, gobby-merge, native-ask, review); discovery output does not report enabled, so no activation inference. Eight project-filtered cron rows: four enabled system handlers, four disabled user jobs. This is an observation, not a persisted policy or authorization to run any job."
+    },
+    {
+      "id": "focused-surfaces",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_mcp_proxy_tools_pipelines.py tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py tests/mcp_proxy/tools/test_pipeline_cancel.py tests/mcp_proxy/tools/test_pipeline_query.py tests/mcp_proxy/tools/workflows/test_pipeline_crud.py tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py tests/mcp_proxy/test_cron_tools.py tests/scheduler/test_cron_executor.py tests/scheduler/test_cron_scheduler.py tests/scheduler/test_cron_machine_scope.py tests/scheduler/test_cron_storage.py tests/cli/test_cron_cli.py tests/servers/routes/test_servers_routes_pipeline_definitions.py tests/servers/routes/test_servers_routes_pipelines.py tests/servers/test_http_cron.py -q",
+      "result": "462 passed in 49.03s. Isolated storage/API fixtures; no live mutations."
+    },
+    {
+      "id": "focused-cli",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_pipelines.py tests/cli/test_pipelines_coverage.py -q",
+      "result": "127 passed in 0.47s. New 12-case CLI regression first failed for daemon/local and text/JSON failed/cancelled/interrupted status; fix reports actual status and exits 1."
+    },
+    {
+      "id": "focused-runtime",
+      "kind": "tests",
+      "command": "GOBBY_TEST_GDAEMON=checkout DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_pipeline_executor_approvals.py tests/workflows/test_pipeline_executor_core.py tests/workflows/test_pipeline_executor_nested.py tests/workflows/test_pipeline_executor_outputs.py tests/workflows/test_pipeline_executor_conditions.py tests/workflows/test_pipeline_renderer.py tests/workflows/test_workflows_pipeline_definitions.py tests/workflows/test_workflows_pipeline_resume.py tests/workflows/test_pipeline_loader.py tests/workflows/test_pipeline_step_types.py tests/workflows/test_pipeline_webhooks.py tests/skills/test_capability_catalog.py -q",
+      "result": "212 passed in 3.44s. Prior run: 199 passed, 13 setup errors because another session published expected schema431 before installed gdaemon430 cutover. Owner #12953/#12956 supplied coherent checkout binary; supported opt-in resolved all failures. Owner subsequently completed installed431 cutover and normal daemon restart."
+    },
+    {
+      "id": "import-scope-regression",
+      "kind": "tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_imports.py tests/mcp_proxy/tools/workflows/test_import_reload.py -q --tb=short",
+      "result": "13 passed in 2.19s. Four new real-storage cases first failed: importing a project agent/rule/variable/pipeline overwrote the global row. Exact project equality now guards import updates; same-scope repeat updates preserve row identity and global contents."
+    },
+    {
+      "id": "quality",
+      "kind": "static-checks",
+      "command": "uv run ruff check src/gobby/cli/pipelines_catalog.py src/gobby/workflows/imports.py tests/cli/test_cli_pipelines.py tests/workflows/test_imports.py; uv run ruff format --check src/gobby/cli/pipelines_catalog.py src/gobby/workflows/imports.py tests/cli/test_cli_pipelines.py tests/workflows/test_imports.py; uv run mypy src/gobby/cli/pipelines_catalog.py src/gobby/workflows/imports.py; uv run gobby test-quality audit tests/cli/test_cli_pipelines.py tests/workflows/test_imports.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low; uv run gobby test-types audit tests/cli/test_cli_pipelines.py tests/workflows/test_imports.py --baseline .gobby/test-types-baseline.json --fail-on-new; uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json",
+      "result": "All passed. Ruff checked/formatted four files; mypy found no issues in two production sources. Test-quality audited 84 functions with zero issues; test-types reported zero errors. Suppression ratchet: 4269 files, 217 baseline suppressions, zero new or stale."
+    },
+    {
+      "id": "library-validation",
+      "kind": "catalog-links-and-examples",
+      "command": "uv run python: load_capability_catalog; Markdown local-link and GitHub heading-anchor verification; AST operation symbol verification; yaml.safe_load and PipelineDefinition/PipelineStep validation; StepRenderer(TemplateEngine()) rendering with fixture values",
+      "result": "11 capabilities load successfully. All 43 local links across 12 changed Markdown files and audited guide anchors resolve; all 77 implementation symbols and reference paths exist. Nine YAML snippets parse; six full definitions/step snippets pass models. Full reviewer-spawn example renders expected arguments matching leased spawn_agent schema; list_ready_tasks example matches its leased schema. No live operation executed."
+    },
+    {
+      "id": "independent-review",
+      "kind": "agent-review",
+      "command": "Mendel review_reference_identity inspected the 18 staged paths and current source semantics",
+      "result": "18/18 reviewed, zero skipped, no critical/high/medium findings. Import scope, nested approval behavior, dynamic registration and operation audit checked. Requested final importer quality evidence is now included."
+    },
+    {
+      "id": "review-context",
+      "kind": "review-triage",
+      "command": "recall_review_context for both confirmed runtime findings; get_memory for relevant lessons",
+      "result": "Import scope: related a649c7c6-62fe-5403-9610-2c60e65db91a supports actual importer roundtrips; four real-storage regressions apply it. CLI result: related 79030930-3e67-53fd-b4f9-459bd8904649 requires semantic success before completion; the 12-case carrier matrix applies it. Neither lesson contradicts the fixes."
+    },
+    {
+      "id": "final-schema-coordination",
+      "kind": "foreign-state-recovery",
+      "command": "Final focused CLI/import/catalog pytest group; GOBBY_TEST_GDAEMON=checkout rerun; cargo build -p gobby-daemon",
+      "result": "The installed-binary run passed 144 tests with ten storage setup errors: foreign checkout schema432 vs installed431. Checkout opt-in then failed shared setup because gdaemon predated foreign schema_contract.rs edits. Both diagnostics sent to active owner #12858. Rebuilt checkout-only gdaemon successfully in16.57s without installing/restarting; final focused rerun uses this coherent isolated-test binary. Final rerun outcome is in the task close transcript. A concurrent runner_tests.rs edit then invalidated the freshly built binary; sent diagnostics to owner #12953 and rebuilt after that edit."
+    },
+    {
+      "id": "runtime-activation",
+      "kind": "coordinated-restart-receipt",
+      "command": "gobby-agents:send_message to restart owner #12858",
+      "result": "Owner confirmed main-checkout daemon PID44878 started 18:04 UTC; health passed in18.2s. It loaded the staged imports.py project-scope fix. Subsequent schema432 native-set cutover remains coordinated by that owner; no live import/reload probe was performed."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "Cron quick-start passed a whole command line as executable.",
+      "resolution": "Separate command=uv and args=[run,gobby,status]; document cwd and timeout differences from pipeline exec.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Pipeline guide claimed activate_workflow remains accepted.",
+      "resolution": "Correct to model rejection; document five supported execution types and exec timeout.",
+      "evidence": [
+        "focused-runtime"
+      ]
+    },
+    {
+      "finding": "Guides implied broad semantic validation, typed input enforcement and prompt tool restrictions.",
+      "resolution": "Describe actual model/loader coverage, defaults, one-call prompt handler, and need for isolated runtime/schema checks.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Pipeline execution/history omitted MCP pagination, cleanup, automatic completion subscription and precise approval/resume outcomes.",
+      "resolution": "Document page completeness, preview-confirm deletion, event-driven yielding, single-use tokens, captured approval definition, current-definition failed resume and Ask-specific restart recovery.",
+      "evidence": [
+        "focused-runtime"
+      ]
+    },
+    {
+      "finding": "CLI run printed completed and returned success for unsuccessful terminal result objects.",
+      "resolution": "Report actual status and exit nonzero for failed/cancelled/interrupted across daemon/local text/JSON paths.",
+      "evidence": [
+        "focused-cli"
+      ]
+    },
+    {
+      "finding": "Project workflow imports reused fallback global definition rows as mutation targets.",
+      "resolution": "All four import upserts update only rows with matching project_id; isolated tests preserve global rows and same-scope identity.",
+      "evidence": [
+        "import-scope-regression"
+      ]
+    },
+    {
+      "finding": "Source/DB scope, auto-export, dynamic registration, and reload breadth were not explained.",
+      "resolution": "Document runtime DB precedence, explicit project IDs/definition IDs, explicit file export, registration-time exposed tools and multi-kind reload side effects.",
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
+      "finding": "Cron guide omitted admission vs child completion, enabled creation default, manual bypass, system row protection and one-shot/update carrier differences.",
+      "resolution": "Add checked action/config/lifecycle contracts and safe isolated verification instructions.",
+      "evidence": [
+        "focused-surfaces"
+      ]
+    },
+    {
+      "finding": "HTTP guide omitted 14 definition-management routes; CLI guide omitted cron family.",
+      "resolution": "Add AST-verified routes and all current CLI leaves, distinguishing operator and agent surfaces.",
+      "evidence": [
+        "source-audit"
+      ]
+    }
+  ]
+}

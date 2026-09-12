@@ -72,6 +72,50 @@ async def test_sync_imported_workflows_loads_project_and_global_files_without_re
     assert await loader.load_pipeline("project-import", project.id) is not None
 
 
+@pytest.mark.parametrize(
+    "definition,manager_type",
+    [
+        ({"type": "agent", "prompts": {"agent": "Inspect only."}}, AgentDefinitionManager),
+        (
+            {
+                "type": "rule",
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "stop"}],
+            },
+            RuleDefinitionManager,
+        ),
+        ({"type": "variable", "value": 1}, SessionVariableDefaultManager),
+        (
+            {"type": "pipeline", "steps": [{"id": "check", "exec": "true"}]},
+            PipelineDefinitionManager,
+        ),
+    ],
+    ids=["agent", "rule", "variable", "pipeline"],
+)
+def test_project_import_preserves_global_definition(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    definition: dict[str, Any],
+    manager_type: type[AgentDefinitionManager]
+    | type[RuleDefinitionManager]
+    | type[SessionVariableDefaultManager]
+    | type[PipelineDefinitionManager],
+) -> None:
+    project = isolated_checkout_factory(temp_db, "scoped-import").project
+    payload = {**definition, "name": "shared-import", "description": "global"}
+    global_row = sync_imported_definition(temp_db, payload, None)
+    scoped = sync_imported_definition(temp_db, {**payload, "description": "project"}, project.id)
+    manager = manager_type(temp_db)
+
+    assert scoped.project_id == project.id
+    assert scoped.id != global_row.id
+    assert manager.get(global_row.id).description == "global"
+    updated = sync_imported_definition(temp_db, {**payload, "description": "updated"}, project.id)
+    assert updated.id == scoped.id
+    assert manager.get(scoped.id).description == "updated"
+    assert manager.get(global_row.id).description == "global"
+
+
 def test_sync_imported_definition_writes_all_four_kinds(temp_db: HubDatabase) -> None:
     agent = sync_imported_definition(
         temp_db,

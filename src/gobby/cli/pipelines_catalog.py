@@ -303,9 +303,11 @@ def run_pipeline(
         if json_format:
             click.echo(json_dumps(daemon_result, indent=2))
         else:
-            click.echo(f"✓ Pipeline '{display_name}' completed")
+            click.echo(f"Pipeline '{display_name}' {status}")
             click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
             click.echo(f"  Status: {status}")
+        if status in {"failed", "cancelled", "interrupted"}:
+            raise SystemExit(1)
         return
 
     # Fall back to local executor (no MCP tool access)
@@ -335,9 +337,11 @@ def run_pipeline(
                     result["outputs"] = execution.outputs_json
             click.echo(json_dumps(result, indent=2))
         else:
-            click.echo(f"✓ Pipeline '{display_name}' completed")
+            click.echo(f"Pipeline '{display_name}' {execution.status.value}")
             click.echo(f"  Execution ID: {execution.id}")
             click.echo(f"  Status: {execution.status.value}")
+        if execution.status.value in {"failed", "cancelled", "interrupted"}:
+            raise SystemExit(1)
 
     except ApprovalRequired as e:
         # Pipeline paused for approval

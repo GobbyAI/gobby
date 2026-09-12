@@ -688,6 +688,40 @@ breakdowns as an exhaustive inventory. See the
 | `GET` | `/api/voice/status` | Voice subsystem status. |
 | `POST` | `/api/voice/transcribe` | Transcribe audio. |
 
+### Pipeline Definitions
+
+These operator/UI routes manage database definitions. Runtime pipeline execution
+loads the installed project/global row. A template file is not activation evidence.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/pipelines/definitions` | List definitions; inspect scope/deleted filters. |
+| `GET` | `/api/pipelines/definitions/templates` | List bundled templates. |
+| `POST` | `/api/pipelines/definitions` | Create a definition. |
+| `POST` | `/api/pipelines/definitions/import` | Validate and install YAML. |
+| `GET` | `/api/pipelines/definitions/{definition_id}` | Read one definition. |
+| `PUT` | `/api/pipelines/definitions/{definition_id}` | Update fields/body. |
+| `DELETE` | `/api/pipelines/definitions/{definition_id}` | Soft-delete. |
+| `GET` | `/api/pipelines/definitions/{definition_id}/export` | Export YAML. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/duplicate` | Copy under a new name. |
+| `PUT` | `/api/pipelines/definitions/{definition_id}/toggle` | Toggle enabled state. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/restore` | Restore soft-deleted row. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/restore-from-template` | Restore bundled definition body. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/move-to-project` | Move into requested project scope. |
+| `POST` | `/api/pipelines/definitions/{definition_id}/move-to-global` | Move into global scope. |
+
+`POST /api/pipelines/run` requires `name` and `project_id`; `inputs` is optional.
+Default execution is awaited. `background=true` returns HTTP 202 with an
+execution ID; approval wait also returns 202. Inspect status, not only HTTP success.
+Execution listing/search use offset pagination and totals. Agents use the MCP run
+surface, which subscribes caller lineage to completion; see [pipelines](./pipelines.md).
+
+Cron HTTP creation supports cron/interval/once and the operator handler action;
+PATCH can update `run_at`, unlike the current MCP update tool. System row
+protection still applies. Immediate-run HTTP returns admission and can report
+capacity/active-job/retired-job rejection. Inspect linked child state through its
+own execution API; see [cron scheduler](./cron-scheduler.md).
+
 ### `GET /api/providers/models`
 
 The top-level response is `{ "providers": [...] }`. A matrix-backed provider

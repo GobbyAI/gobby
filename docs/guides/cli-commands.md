@@ -802,6 +802,37 @@ gobby pipelines search QUERY [--status STATUS] [--no-errors] [--limit N] [--offs
 gobby pipelines import PATH [-o OUTPUT]
 ```
 
+Pipeline commands are operator tooling. `check` validates loading/model constraints
+without executing or proving external tools. `run` takes string inputs and tries
+the daemon before a local fallback without MCP access. Inspect approval or timeout
+states instead of assuming completion. Failed/cancelled/interrupted returned
+statuses exit nonzero, including JSON mode. `import` converts the supported
+external format to a YAML file; it does not install a runtime database definition.
+See [pipeline operation](./pipelines.md#installation-and-operator-boundaries).
+
+### Cron Scheduling
+
+Agents use `gobby-cron` MCP lifecycle tools; operators use:
+
+```bash
+gobby cron list [-p PROJECT] [--enabled | --disabled] [--json]
+gobby cron add -n NAME -s SCHEDULE -t ACTION_TYPE -c ACTION_CONFIG_JSON [--timezone ZONE] [-p PROJECT] [--json]
+gobby cron edit JOB_ID [-s SCHEDULE] [-c ACTION_CONFIG_JSON] [--enabled | --disabled] [--json]
+gobby cron run JOB_ID [--json]
+gobby cron runs JOB_ID [-n LIMIT] [--json]
+gobby cron toggle JOB_ID [--json]
+gobby cron park JOB_ID [--json]
+gobby cron wake JOB_ID [--json]
+gobby cron remove JOB_ID [--yes]
+```
+
+CLI accepts job UUIDs or names. Schedules are intervals (`24h`, not `1d`) or cron
+expressions; use MCP/HTTP for one-shot creation. Shell config separates executable
+`command` from `args`; set `cwd` where needed. Creation is enabled by default.
+Manual `run` bypasses schedule/enabled state but still checks capacity and active
+work. It returns admission, not child completion. System jobs use `park`/`wake`
+for scheduling and reject ordinary toggle/delete. See [cron scheduler](./cron-scheduler.md).
+
 ## Integrations And Resource Portability
 
 ```bash

@@ -524,6 +524,56 @@
           "when": "Reading stored output envelopes or handling retrieval failures"
         }
       ]
+    },
+    {
+      "name": "pipelines",
+      "description": "Run deterministic workflows and scheduled automation",
+      "overview": "references/pipelines/overview.md",
+      "when": "Authoring or operating pipelines and cron schedules",
+      "topics": [
+        {
+          "name": "authoring",
+          "description": "Author and manage definitions",
+          "path": "references/pipelines/authoring.md",
+          "when": "Creating, changing or retiring pipeline definitions"
+        },
+        {
+          "name": "validation",
+          "description": "Validate automation safely",
+          "path": "references/pipelines/validation.md",
+          "when": "Checking YAML, expressions or isolated examples"
+        },
+        {
+          "name": "execution",
+          "description": "Run and compose pipelines",
+          "path": "references/pipelines/execution.md",
+          "when": "Starting or composing pipeline steps"
+        },
+        {
+          "name": "approvals",
+          "description": "Resolve approval gates",
+          "path": "references/pipelines/approvals.md",
+          "when": "Reviewing or resolving waiting pipeline steps"
+        },
+        {
+          "name": "recovery",
+          "description": "Recover failed or interrupted work",
+          "path": "references/pipelines/recovery.md",
+          "when": "Handling failure, cancellation or restart"
+        },
+        {
+          "name": "history",
+          "description": "Inspect executions and retained evidence",
+          "path": "references/pipelines/history.md",
+          "when": "Finding run results or clearing terminal history"
+        },
+        {
+          "name": "scheduling",
+          "description": "Schedule and maintain cron jobs",
+          "path": "references/pipelines/scheduling.md",
+          "when": "Creating, changing or diagnosing schedules"
+        }
+      ]
     }
   ]
 }
