@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use gobby_core::schema::schema_identity;
 
 const EXPECTED_IDENTITY_ENV: &str = "GOBBY_EXPECTED_SCHEMA_IDENTITY";
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
@@ -46,21 +47,24 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
             "runner_protocol",
         ]
     );
-    assert_eq!(identity["baseline_version"], 420);
+    // The value pin lives once, in gcore's schema_contract.rs. What this test owns is
+    // the CLI mapping: every embedded field has to reach the published JSON under its
+    // contract name, and `schema_identity` renames all six on the way out. Restating
+    // the checksums here made this a sixth place a schema bump had to be remembered,
+    // and it was the one missed at 432.
+    let embedded = schema_identity();
+    assert_eq!(
+        identity["runner_protocol"],
+        embedded.runner_protocol_version
+    );
+    assert_eq!(identity["baseline_version"], embedded.baseline.version);
+    assert_eq!(identity["baseline_checksum"], embedded.baseline.checksum);
+    assert_eq!(identity["latest_version"], embedded.latest_asset.version);
+    assert_eq!(identity["latest_checksum"], embedded.latest_asset.checksum);
+    assert_eq!(identity["assets_root_hash"], embedded.root_hash);
+    // One literal stays as the human tripwire, deliberately: a bare version number is
+    // something a reviewer can verify at a glance, which was never true of a checksum.
     assert_eq!(identity["latest_version"], 432);
-    assert_eq!(
-        identity["baseline_checksum"],
-        "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"
-    );
-    assert_eq!(
-        identity["latest_checksum"],
-        "107b5c6cdc766d847be29d76dc026bb0d6ac7674a426ffbc2fd15e5aa3202c31"
-    );
-    assert_eq!(
-        identity["assets_root_hash"],
-        "53d3bfa005082b33c835a7369131bba79eaa0735e57ba398ee1c997e40d20b2f"
-    );
-    assert_eq!(identity["runner_protocol"], 1);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)
