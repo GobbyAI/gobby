@@ -215,15 +215,18 @@ async def foreign_staged_commit_conflict(
                 conflicts.update(owners.get(path, ()))
 
         return _format_conflict_reason(conflicts) if conflicts else ""
-    except DirtyEditOwnershipInspectionError:
+    except DirtyEditOwnershipInspectionError as exc:
         logger.warning(
             "Cross-session commit ownership inspection failed",
             extra={"session_id": session_id, "project_id": project_id},
             exc_info=True,
         )
+        # The cause decides what to do next: a malformed pathspec is the
+        # caller's to fix, a pool timeout is worth retrying. Dropping it left
+        # "retry" as the only advice, which is wrong half the time.
         return (
-            "Commit blocked: Gobby could not verify staged-path ownership. "
-            "Retry after the daemon and repository are available."
+            f"Commit blocked: Gobby could not verify staged-path ownership ({exc}). "
+            "Fix that cause, or retry once the daemon and repository are available."
         )
 
 
