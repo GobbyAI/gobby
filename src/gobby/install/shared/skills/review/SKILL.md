@@ -13,7 +13,7 @@ metadata:
 # /gobby review
 
 Use this skill when the user invokes `/gobby review` to run the same epic
-epic reviewer that lifecycle dispatch uses, independent of `gobby build`.
+reviewer that lifecycle dispatch uses, independent of `gobby build`.
 
 The workflow definition is `src/gobby/install/shared/workflows/review.yaml`.
 
@@ -57,9 +57,17 @@ The epic review loop checks the approved plan, aggregate implementation
 diff, validation evidence, and child task outcomes. The reviewer emits exactly
 one verdict:
 
-- approve with `approve_review(stage_name="epic_qa")`
-- reject with `reject_review(stage_name="epic_qa")`
+- approve with `complete_stage(stage_name="epic_qa",
+  validation_override_reason="epic_qa approved by epic-reviewer")`
+- reject with `fail_stage(stage_name="epic_qa", reason=<verdict>,
+  cited_subtasks=<blocking descendants>)`
 - escalate with `escalate_task`
+
+These stage verdicts require an open epic with `epic_qa` in progress. Inspect
+state and ownership first: applying a persona does not initialize a manifest or
+start the stage. For a closed epic, deliver findings without stage transitions.
+Generic `approve_review` and `reject_review` operate on `needs_review`, not the
+in-progress epic QA stage.
 
 Use the explicit user-facing summary `approve / reject / escalate` when
 describing possible outcomes.

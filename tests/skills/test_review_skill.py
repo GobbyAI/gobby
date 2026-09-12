@@ -26,6 +26,8 @@ def test_id_opt_in_present() -> None:
         workflow_path=WORKFLOW_PATH,
     )
     assert "approve / reject / escalate" in body
-    assert "approve_review" in body
-    assert "reject_review" in body
+    assert 'complete_stage(stage_name="epic_qa"' in body
+    assert 'validation_override_reason="epic_qa approved by epic-reviewer"' in body
+    assert 'fail_stage(stage_name="epic_qa"' in body
+    assert "cited_subtasks" in body
     assert "escalate_task" in body

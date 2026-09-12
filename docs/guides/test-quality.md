@@ -6,12 +6,17 @@ replacement for pytest.
 
 ## Mental Model
 
-The analyzer walks supported test files, reports issues with severity and stable
+The analyzer walks supported Python, JavaScript/TypeScript and Rust test files,
+reports issues with severity and stable
 fingerprints, and can compare the current report to a baseline. The baseline lets
-Gobby tolerate known debt while failing on new issues. The gate is severity-agnostic:
-`--min-severity` defaults to `low`, so every new finding fails the audit and must be
-fixed rather than filtered. If the requested baseline is missing, the audit still
+Gobby tolerate known debt while failing on new issues. With `--baseline` and
+`--fail-on-new`, `--min-severity` defaults to `low`, so every new finding fails the
+audit. Without `--fail-on-new`, a successful exit does not mean the report has no
+findings; read the output. If the requested baseline is missing, the audit still
 runs and treats current supported-language issues as new.
+
+An audit with no analyzable files fails even without `--fail-on-new`. Inspect
+warnings and the scanned-file count before treating an audit as validation.
 
 Use the audit before adding or expanding tests in an area with known quality
 concerns. Use focused mutation testing when static checks pass but the risk is in
@@ -163,4 +168,4 @@ or pytest run exposes a failure, fix it before closing the task.
 - [tasks.md](tasks.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-09-12_

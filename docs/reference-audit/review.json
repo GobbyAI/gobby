@@ -1,0 +1,449 @@
+{
+  "version": 1,
+  "capability": "review",
+  "status": "verified",
+  "source_skills": [
+    "review",
+    "epic-review"
+  ],
+  "guides": [
+    {
+      "path": "docs/guides/test-quality.md",
+      "anchors": [
+        "mental-model",
+        "quick-start",
+        "audit-findings",
+        "baselines",
+        "suppressions",
+        "focused-mutation-testing",
+        "cli",
+        "http",
+        "mcp",
+        "file-locations",
+        "see-also"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ]
+    },
+    {
+      "path": "docs/guides/cli-commands.md",
+      "anchors": [
+        "feedback-review"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ]
+    },
+    {
+      "path": "docs/guides/http-endpoints.md",
+      "anchors": [
+        "feedback-review"
+      ],
+      "evidence": [
+        "source-audit",
+        "focused-review"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "surface": "mcp",
+      "server": "gobby-feedback",
+      "tool": "get_review_observations",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/feedback.py",
+        "symbol": "get_review_observations"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-feedback",
+      "tool": "submit_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/feedback.py",
+        "symbol": "submit_review"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-feedback",
+      "tool": "get_review_results",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/feedback.py",
+        "symbol": "get_review_results"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-sessions",
+      "tool": "feedback",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_handoff.py",
+        "symbol": "feedback"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "agent",
+      "primary_capability": "sessions"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "complete_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "complete_stage"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "agent",
+      "primary_capability": "tasks"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "fail_stage",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_ops.py",
+        "symbol": "fail_stage"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "agent",
+      "primary_capability": "tasks"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "submit_for_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "submit_for_review"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "shared-review-transitions"
+      ],
+      "audience": "agent",
+      "primary_capability": "tasks"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "approve_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "approve_review"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "shared-review-transitions"
+      ],
+      "audience": "agent",
+      "primary_capability": "tasks"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks-ops",
+      "tool": "reject_review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_stage_review.py",
+        "symbol": "reject_review"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "shared-review-transitions"
+      ],
+      "audience": "agent",
+      "primary_capability": "tasks"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby feedback observations",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/cli/feedback.py",
+        "symbol": "feedback_observations"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby feedback results",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/cli/feedback.py",
+        "symbol": "feedback_results"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby feedback review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/cli/feedback.py",
+        "symbol": "feedback_review"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby feedback digest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/cli/feedback.py",
+        "symbol": "feedback_digest"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby test-quality audit",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/evidence.md",
+      "implementation": {
+        "path": "src/gobby/test_quality/cli.py",
+        "symbol": "audit"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/feedback/review",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_review"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/review/latest",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_review_latest"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/review/{run_id}",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_review_run"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/review/{run_id}/observations",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/feedback.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_observations"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "http",
+      "method": "GET",
+      "route": "/api/feedback/review/{run_id}/results",
+      "reference": "src/gobby/install/shared/skills/gobby/references/review/outcomes.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/feedback.py",
+        "symbol": "feedback_results"
+      },
+      "verification": [
+        "source-audit",
+        "focused-review"
+      ],
+      "audience": "operator"
+    }
+  ],
+  "scope_notes": [
+    "All three public gobby-feedback tools are mapped. Nine MCP mappings include six shared task/session operations; five CLI leaves and five HTTP endpoints bring total mapped operations to 19.",
+    "Task lifecycle, artifacts and discovery retain primary coverage in tasks; agent definition/persona/spawn and pipeline execution retain primary coverage in agents/pipelines. Review references link their operation guidance rather than duplicating schemas.",
+    "Review learning is owned by memory; this leaf preserves the epic-specific confirmed qa-miss/validation-miss attribution contract. There is no dedicated test-quality MCP or HTTP API.",
+    "Mutating verification uses isolated test hub fixtures and temporary reports; live reads inspect installed definitions only."
+  ],
+  "evidence": [
+    {
+      "id": "registration-inventory",
+      "kind": "inspection",
+      "command": "list_tools(gobby-feedback); get_tool_schema for three feedback tools, sessions.feedback, tasks-ops.complete_stage and fail_stage; inspect Click and APIRouter decorators",
+      "result": "Three public feedback tools, four feedback CLI leaves, five feedback HTTP routes; shared stage/session tools and test-quality audit mapped by actual behavior."
+    },
+    {
+      "id": "source-audit",
+      "kind": "inspection",
+      "command": "gcode outline/symbol-at/grep over feedback registry/store/service/agent/prompt, stage review/transition implementation, epic reviewer and review workflow, test_quality CLI/analyzer/discovery, pyproject.toml and source skills",
+      "result": "Checked frozen pagination (offset>=0, limit1-100), exact observation coverage, assigned-session/running-state submission, durable daily reports, dry-run/retry behavior, stage state preconditions, cited descendants, review policy override, baseline severity and zero-file audit behavior."
+    },
+    {
+      "id": "focused-review",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/feedback/ tests/cli/test_feedback_cli.py tests/cli/test_test_quality.py tests/servers/routes/test_feedback_routes.py tests/mcp_proxy/tools/tasks/test_complete_stage.py tests/mcp_proxy/tools/tasks/test_fail_stage.py tests/skills/test_review_skill.py tests/skills/test_epic_review_skill.py tests/agents/test_epic_reviewer_definition.py tests/skills/test_capability_catalog.py -q --tb=short",
+      "result": "155 passed in 12.83s; isolated temporary DB schemas/files, no live review dispatch."
+    },
+    {
+      "id": "cli-help",
+      "kind": "inspection",
+      "command": "uv run gobby feedback digest --help; uv run gobby test-quality audit --help",
+      "result": "Verified --run-id, audit arguments, output/format/baseline/severity options against current Click surface."
+    },
+    {
+      "id": "installed-review",
+      "kind": "inspection",
+      "command": "gobby-workflows:get_pipeline(name=review); get_agent_definition(name=epic-reviewer); gobby-results:search_tool_result(result_id=a73fe307-e346-4671-8061-5388b97c572c, query=enabled complete_stage fail_stage)",
+      "result": "2026-09-12: review pipeline enabled, provider codex and empty model/worktree defaults; epic-reviewer cf947fe6-f7c7-4495-b5ac-719e100c8fd1 enabled, source installed, project_id null, provider codex/model gpt-5.6-sol. Installed prompt and step-success handlers use complete_stage/fail_stage/escalate_task; no claim that these defaults are immutable or all selected rules are enabled."
+    },
+    {
+      "id": "shared-review-transitions",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_approve_review.py tests/mcp_proxy/tools/test_reject_review.py tests/mcp_proxy/test_stage_review_schema.py -q --tb=short",
+      "result": "18 passed in 0.09s."
+    },
+    {
+      "id": "links-and-operation-anchors",
+      "kind": "validation",
+      "command": "uv run python local Markdown destination/heading validator and operation implementation-symbol existence check over review references, affected guide sections and audit mappings",
+      "result": "27 local links/anchors valid; all 19 operation reference and implementation paths/symbols valid."
+    },
+    {
+      "id": "changed-test-hygiene",
+      "kind": "validation",
+      "command": "uv run ruff check tests/skills/test_review_skill.py; uv run ruff format --check tests/skills/test_review_skill.py; uv run gobby test-types audit tests/skills/test_review_skill.py --baseline .gobby/test-types-baseline.json --fail-on-new; uv run gobby test-quality audit tests/skills/test_review_skill.py",
+      "result": "Ruff clean/formatted; test types one file zero errors; test quality one test zero issues."
+    },
+    {
+      "id": "bounded-review",
+      "kind": "review",
+      "command": "Independent code-review skill / OCR delegate review by review_reference_identity (Mendel), all 12 owned paths",
+      "result": "12 reviewed, zero skipped; no critical/high/medium findings. Audit finalization and final rerun receipts completed by owner."
+    },
+    {
+      "id": "review-recall",
+      "kind": "inspection",
+      "command": "gobby-review-learning:recall_review_context for stage verdict drift and test-quality exit documentation; read full offloaded result 908d0ee1-6b05-4a51-b867-4de21cf17794",
+      "result": "Effective composition/lifecycle boundary lessons ed773ed5-5477-5038-bef4-1fe3737695a6 and 2b84dbae-8125-51ea-a145-15bc7c872fcc support checking installed agent plus transition implementation; durable submission lesson 637ed1e5-2805-57c6-a10b-251245587b27 agrees with feedback semantics. No conflicting recommendation adopted."
+    }
+  ],
+  "discrepancies": [
+    {
+      "finding": "review launcher requested approve_review/reject_review for in-progress epic_qa, contrary to epic-review methodology and installed agent verdict tools.",
+      "evidence": [
+        "source-audit",
+        "installed-review",
+        "focused-review"
+      ],
+      "resolution": "Corrected retained migration-source skill to complete_stage with evidence override / fail_stage with cited descendants, clarified needs_review distinction and closed-epic behavior, and updated its existing contract test.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    },
+    {
+      "finding": "Test-quality guide said every new finding fails without stating --fail-on-new and omitted zero-analyzable-file failure.",
+      "evidence": [
+        "source-audit",
+        "focused-review",
+        "cli-help"
+      ],
+      "resolution": "Clarified report-only exit behavior, baseline gate, zero-file failure and supported language families.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    },
+    {
+      "finding": "Shared CLI/HTTP guides omitted feedback review, frozen readers and durable outcomes.",
+      "evidence": [
+        "source-audit",
+        "focused-review"
+      ],
+      "resolution": "Added operator sections covering every feedback CLI leaf/HTTP endpoint, pagination, dry-run writes, ownership/submission boundary and recovery.",
+      "relevant_memory": "reference-audit:effective-policy-and-lifecycle-boundaries (ed773ed5-5477-5038-bef4-1fe3737695a6)"
+    }
+  ],
+  "verified_at": "2026-09-12"
+}

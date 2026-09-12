@@ -986,6 +986,34 @@ them too. Content that needs the branch's code (new effect handlers, new MCP
 tools) needs the cutover above or the merge; forcing it in only produces rows
 the running daemon cannot serve.
 
+## Feedback Review
+
+These are operator commands for the session-feedback review loop. Assigned
+reviewer agents read and submit their frozen batches with `gobby-feedback` MCP
+tools; ordinary coding sessions capture observations with `gobby-sessions:feedback`.
+
+| Command | Behavior |
+| --- | --- |
+| `gobby feedback review` | Run one batch in the daemon, apply verified task proposals, and print its digest |
+| `gobby feedback review --dry-run` | Run the reviewer and write separate dry-run evidence, without filing tasks or marking observations reviewed |
+| `gobby feedback observations RUN_ID --offset 0 --limit 50` | Read one page of the immutable batch |
+| `gobby feedback results RUN_ID --offset 0 --limit 50` | Read accepted findings and actual task outcomes |
+| `gobby feedback digest` | Read the latest review run and digest |
+| `gobby feedback digest --run-id RUN_ID` | Read one recorded run and digest |
+
+Both paged readers accept limits 1–100 and nonnegative offsets; follow returned
+`next_offset` until null. The review command waits for the daemon operation; a
+timeout is not proof that no review was recorded. Inspect its run before
+relaunching. A `partial` run can have failed task actions; read the outcome page
+and error rather than interpreting command success as complete remediation.
+Dry runs still create run/report evidence and are not read-only diagnostics.
+
+Each day's runs revise one cumulative report keyed by local start date. Accepted
+submissions are durable separately from reviewer termination. Task outcomes are
+added by deterministic intake; human-review labels remain an operator boundary.
+See [feedback HTTP routes](http-endpoints.md#feedback-review) and
+[test-quality](test-quality.md) for local validation evidence.
+
 ## Native Code Index
 
 PostgreSQL BM25 health is available through `gobby postgres status --json`

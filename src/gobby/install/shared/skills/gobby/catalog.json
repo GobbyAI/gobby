@@ -624,6 +624,38 @@
           "path": "references/source-control/cleanup.md"
         }
       ]
+    },
+    {
+      "name": "review",
+      "description": "Review epic implementation, task evidence and feedback outcomes",
+      "overview": "references/review/overview.md",
+      "when": "Reviewing delivered work or Gobby feedback",
+      "topics": [
+        {
+          "name": "epic",
+          "description": "Launch or perform a whole-epic review",
+          "path": "references/review/epic.md",
+          "when": "Starting an interactive or delegated epic review"
+        },
+        {
+          "name": "evidence",
+          "description": "Establish scope and validation proof",
+          "path": "references/review/evidence.md",
+          "when": "Evaluating task or epic implementation evidence"
+        },
+        {
+          "name": "feedback",
+          "description": "Capture observations and review frozen batches",
+          "path": "references/review/feedback.md",
+          "when": "Recording Gobby feedback or submitting an assigned batch"
+        },
+        {
+          "name": "outcomes",
+          "description": "Record verdicts and inspect actual outcomes",
+          "path": "references/review/outcomes.md",
+          "when": "Finalizing epic review or interpreting feedback actions"
+        }
+      ]
     }
   ]
 }

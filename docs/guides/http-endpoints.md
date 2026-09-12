@@ -780,6 +780,33 @@ channel ID and name, `scope.kind` and `scope.project_id`, event pattern,
 optional session ID, priority, enabled state, and locally presented ISO
 timestamps.
 
+## Feedback Review
+
+Operator routes under `/api/feedback` use the configured daemon feedback service.
+Assigned agents use the `gobby-feedback` MCP readers and `submit_review`; there
+is no HTTP submission route for impersonating the assigned reviewer.
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| POST | `/api/feedback/review` | Run one review; JSON `dry_run` defaults to false |
+| GET | `/api/feedback/review/latest` | Latest durable run and digest |
+| GET | `/api/feedback/review/{run_id}` | One durable run and digest |
+| GET | `/api/feedback/review/{run_id}/observations` | Frozen observations, with `offset=0`, `limit=50` defaults |
+| GET | `/api/feedback/review/{run_id}/results` | Accepted clusters and recorded action outcomes, with the same pagination |
+
+Page limits are 1–100, offsets nonnegative; continue with `next_offset` until
+null. Missing run readers return 404; invalid/unknown paged reads return 400.
+Unavailable service returns 503 and a failed review operation returns 500.
+Successful POST responses can report `no_rows`, `completed` or `partial`; inspect
+the durable run and failed outcomes before deciding work is complete.
+
+The POST waits for reviewer execution and deterministic intake. Dry runs write
+run/report evidence but file no tasks and consume no observations. Use isolated
+state for mutation probes. A submitted report can survive reviewer failure;
+failed task actions, interrupted review, and failed report writes preserve
+observation retryability. Do not blindly launch another batch after a client
+timeout. See the [operator CLI](cli-commands.md#feedback-review).
+
 ## Error Handling
 
 Routes use FastAPI status codes for validation and service errors:
